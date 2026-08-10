@@ -169,7 +169,7 @@ Bootstrap configuration includes only values needed before PostgreSQL-backed adm
 
 Normal configuration such as eBay/provider credentials, ntfy settings, storage selection/non-secret S3 settings, S3 credentials, monitor defaults, and later integration tokens belongs in PostgreSQL. Sensitive runtime values are encrypted through the credential/secret service.
 
-This is formalized by ADR-0016 and [Configuration & Secrets](./configuration-and-secrets/).
+This is formalized by ADR-0016 and [Configuration & Secrets](../configuration-and-secrets/).
 
 ## Resulting first-schema direction
 
