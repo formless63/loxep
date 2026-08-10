@@ -5,8 +5,8 @@ sidebar:
 hero:
   tagline: Navigate commerce. Observe change. Understand the business.
   actions:
-    - text: Project vision
-      link: ./overview/vision/
+    - text: Phase 0 foundation
+      link: ./architecture/phase-0-foundation/
       icon: right-arrow
     - text: Master domain map
       link: ./product/master-domain-map/
@@ -15,6 +15,36 @@ hero:
 
 Loxep is an open-source, self-hosted platform being designed around three connected ideas: **market intelligence**, **business operations**, and **financial truth**.
 
-The initial implementation centers on eBay monitoring: watches, searches, sellers, prices, availability, restocks, and historical observations. The architecture is deliberately broader so those capabilities can grow into multichannel commerce, inventory, service work, billing, shipping, purchasing, accounting, tax support, and reporting without becoming a collection of disconnected tools.
+The first useful vertical slice centers on eBay monitoring: watchlists and explicit listings first, followed by searches, sellers, prices, availability, restocks, and historical observations. The architecture is deliberately broader so those capabilities can grow into multichannel commerce, inventory, service work, billing, shipping, purchasing, accounting, tax support, media/documents, and reporting without becoming a collection of disconnected tools.
 
-Loxep is documentation-first while its foundations are being established. The master domain map captures the territory; the roadmap determines what actually gets built and when.
+## Current foundation
+
+The current implementation plan is intentionally pragmatic:
+
+```text
+minimal deployment
+
+loxep                    # TanStack Start + Graphile Worker
+postgres-timescale
+```
+
+The same Loxep image supports `LOXEP_MODE=all|web|worker`, so the default stays simple while background workers can later scale onto separate processes or hosts.
+
+Media uses a `local`/generic-`s3` abstraction. Local filesystem storage requires no additional service; **RustFS** is the initial recommended/tested optional self-hosted S3 companion and can be added as a separate service in the same Compose project. Local-to-S3 migration is a supported application workflow rather than a future manual rewrite.
+
+The application UI will use **Kiranism's TanStack Start dashboard** as its initial shell/donor, preserving useful responsive layout, shadcn/Base UI patterns, and multi-theme system while replacing demo data, auth/backend assumptions, unnecessary state/dependencies, and stale version pins with Loxep's own architecture.
+
+Better Auth owns application identity, sessions, OIDC/magic-link login, and deployment roles. Loxep owns domain/resource permissions such as access to a specific marketplace/store connection.
+
+## Where to start
+
+- [Phase 0 Foundation](./architecture/phase-0-foundation/) — what must exist before Phase 1.
+- [Foundation Schema](./architecture/foundation-schema/) — concrete first-migration target.
+- [System Overview](./architecture/system-overview/) — current runtime/deployment model.
+- [Architectural Principles](./architecture/principles/) — constraints that should survive implementation details.
+- [Master Domain Map](./product/master-domain-map/) — the broad territory Loxep may eventually cover.
+- [Roadmap](./product/roadmap/) — what gets built when.
+- [Companion Services](./product/companion-services/) — mature external tools Loxep can integrate instead of prematurely rebuilding.
+- [Dependency & Version Policy](./development/dependency-policy/) — verify newest viable upstream versions before every pin.
+
+Loxep is documentation-first while its foundations are being established so contributors and coding agents can distinguish current decisions from old assumptions and implementation accidents.
