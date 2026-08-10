@@ -2,83 +2,106 @@
 title: ADR-0015 — Dashboard Starter and UI Foundation
 ---
 
-# ADR-0015 — Dashboard Starter and UI Foundation
-
 ## Status
 
-Accepted for initial implementation.
+Accepted and implemented as the initial web scaffold.
 
 ## Context
 
-Loxep is a data-heavy operational application. Building the entire dashboard shell, theme system, responsive navigation, table patterns, command palette, form layouts, notifications UI, and other common admin application primitives from scratch would spend early implementation time on solved presentation problems.
+Loxep is a data-heavy operational application. Building the entire dashboard shell, theme system, responsive navigation, table patterns, command palette, form layouts, notifications UI, DnD patterns, and other common admin application primitives from scratch would spend early implementation time on solved presentation problems.
 
-A starter is useful only if it aligns closely enough with Loxep's chosen frontend stack and does not dictate the domain/data architecture.
+A starter is useful only if it accelerates presentation without dictating Loxep's domain/data architecture.
 
 ## Decision
 
 Use **Kiranism/tanstack-start-dashboard** as the initial UI/dashboard foundation and donor for Loxep's web application.
 
-The starter currently aligns with Loxep on the important presentation stack:
+The donor has now been integrated into `apps/web` rather than remaining a future plan.
 
-- TanStack Start;
-- React;
-- TanStack Router;
-- TanStack Query;
-- TanStack Table;
-- TanStack Form + Zod;
-- shadcn/ui and Base UI;
-- Tailwind CSS;
-- Bun-compatible workflow;
-- responsive dashboard/navigation shell;
-- multi-theme support and theme switching;
-- feature-oriented application organization.
+### Workspace adaptation
 
-The repository is MIT licensed.
+The donor's former `/dashboard/*` demo surface is preserved under:
+
+```text
+/starter/*
+```
+
+Loxep's real dashboard occupies:
+
+```text
+/dashboard/*
+```
+
+The shared application shell is workspace-aware. The top of the sidebar switches between workspace roots, while sidebar navigation and Cmd+K derive from the active workspace's navigation configuration.
+
+Future major product areas are peers of `/dashboard`, not descendants of one giant dashboard route tree. See [Workspaces & Navigation](../product/workspaces/).
+
+## Preserve useful reference material
+
+The Starter Reference workspace is intentionally retained while the application is young. Working examples are useful reference for contributors and coding agents, including:
+
+- responsive shell/sidebar/header behavior;
+- theme provider and tweakcn theme system;
+- shadcn/Base UI composition;
+- tables;
+- forms;
+- Recharts dashboard charts;
+- DnD/Kanban interactions;
+- notifications;
+- command/search patterns;
+- loading/empty/error patterns.
+
+Demo content is not product-domain truth, but there is no requirement to delete useful reference code merely to minimize the repository on day one.
+
+A later production build may hide/omit the Starter Reference workspace while keeping its source available to contributors.
 
 ## Adopt, do not inherit blindly
 
-Loxep is not a fork whose architecture is governed by the starter. During scaffolding:
+Loxep remains independent of donor architectural assumptions.
 
 ### Keep/adapt
 
-- dashboard shell and responsive sidebar/header;
-- theme provider and multi-theme/tweakcn system;
-- useful shadcn component composition;
-- layout primitives;
-- TanStack Table patterns;
-- TanStack Form patterns;
-- route/layout organization where it remains idiomatic for current TanStack Start;
+- application shell and responsive sidebar/header;
+- multi-theme system;
+- useful shadcn/Base UI components;
+- TanStack Table/Form/Query patterns;
 - command palette/navigation patterns;
-- notification UI patterns;
-- useful loading, empty, error, and not-found states;
-- feature-folder organization where it maps cleanly to Loxep domains.
+- notifications UI patterns;
+- useful loading/empty/error states;
+- DnD primitives where product workflows use them;
+- Recharts for normal dashboard/business charts;
+- Zustand as an available narrowly-owned UI-state tool under ADR-0011.
 
-### Replace or evaluate
+### Replace/isolate
 
-- demo/mock data and example products/users;
-- authentication implementation/pages with Loxep's Better Auth + OIDC + magic-link design;
-- backend/server examples with Loxep domain services and database layer;
-- deployment-specific assumptions;
-- charting library: Loxep may use Apache ECharts for dense time-series/analytics even if the starter uses Recharts;
-- Zustand usage: retain only for genuine cross-client UI/workspace state, not server/domain state;
-- demo Kanban/chat features unless a Loxep use case arrives;
-- any dependencies that are unnecessary for Loxep.
+- donor authentication with Loxep's Better Auth + OIDC + magic-link design;
+- demo backend/server/data assumptions with Loxep domain services and PostgreSQL;
+- donor branding from actual Loxep product surfaces;
+- fake entities/APIs wherever they would leak into real product routes;
+- deployment-specific assumptions that conflict with Loxep self-hosting;
+- unused dependencies once they are truly unused.
+
+Apache ECharts remains an approved addition for dense time-series/analytical interfaces when Recharts is not the right tool. It does not need to replace every ordinary Recharts visualization.
+
+## State policy
+
+Zustand is not a second server-state store. TanStack Query owns server/cache state; Router owns URL state; TanStack Form owns form state; PostgreSQL owns durable product state and durable user preferences.
+
+Zustand may own immediate cross-component editing/workspace state such as dashboard layout editing, chart configuration, or complex UI selections. Durable preferences should normally be saved to PostgreSQL.
+
+See ADR-0011 and the [Implementation Contract](../development/implementation-contract/).
 
 ## Version policy
 
-The starter's package manifest is not authoritative for versions.
+The donor's package manifest and lockfile are reference inputs, not permanent authority.
 
-Before importing or pinning dependencies, verify current viable upstream versions under Loxep's dependency/version policy. A starter may supply code patterns and styling while its package versions are independently upgraded, removed, or replaced.
-
-## Alternative/reference starters
-
-The official TanStack CLI and shadcn TanStack Start template remain the reference for current framework conventions. Better Auth's official TanStack Start integration is authoritative for authentication wiring.
-
-Minimal starters combining TanStack Start, Drizzle/PostgreSQL, Better Auth, and shadcn may be consulted for backend/auth patterns, but Loxep should avoid merging multiple starter architectures wholesale.
+Before a dependency is added, changed, or pinned, verify the current viable upstream release and compatibility under Loxep's dependency/version policy. The Loxep lockfile is authoritative for a given repository revision.
 
 ## Consequences
 
-- Loxep begins with a polished, proven dashboard vocabulary instead of a blank UI.
-- The theme-switching capability is available early and remains easy to customize because shadcn components live in the project.
-- Backend architecture remains governed by Loxep ADRs, not by the starter.
-- Starter dependencies are deliberately pruned rather than becoming permanent merely because they were present on day one.
+- Loxep begins with a polished dashboard vocabulary instead of a blank UI.
+- The useful donor demos remain inspectable without occupying Loxep's real product route namespace.
+- Major feature areas can grow as top-level workspaces without making one sidebar unmanageable.
+- Backend/domain architecture remains governed by Loxep documentation and ADRs.
+- Recharts, DnD, and Zustand are retained when useful rather than removed reflexively and re-added later.
+- Starter code accelerates implementation but does not define product behavior, persistence, auth, provider models, or version policy.
