@@ -8,6 +8,11 @@ export default defineConfig({
     starlight({
       title: 'Loxep',
       description: 'Self-hosted marketplace intelligence and business operations.',
+      customCss: ['./src/styles/custom.css'],
+      tableOfContents: {
+        minHeadingLevel: 2,
+        maxHeadingLevel: 2,
+      },
       social: [
         {
           icon: 'github',
@@ -26,6 +31,7 @@ export default defineConfig({
           label: 'Product',
           items: [
             { label: 'Master Domain Map', slug: 'product/master-domain-map' },
+            { label: 'Workspaces & Navigation', slug: 'product/workspaces' },
             { label: 'Roadmap', slug: 'product/roadmap' },
             { label: 'Companion Services', slug: 'product/companion-services' },
           ],
@@ -36,6 +42,7 @@ export default defineConfig({
             { label: 'Principles', slug: 'architecture/principles' },
             { label: 'System Overview', slug: 'architecture/system-overview' },
             { label: 'Domain Boundaries', slug: 'architecture/domain-boundaries' },
+            { label: 'Configuration & Secrets', slug: 'architecture/configuration-and-secrets' },
             { label: 'Phase 0 Foundation', slug: 'architecture/phase-0-foundation' },
             { label: 'Foundational Data Model', slug: 'architecture/foundational-data-model' },
             { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
@@ -45,6 +52,7 @@ export default defineConfig({
         {
           label: 'Development',
           items: [
+            { label: 'Implementation Contract', slug: 'development/implementation-contract' },
             { label: 'Dependency & Version Policy', slug: 'development/dependency-policy' },
           ],
         },
