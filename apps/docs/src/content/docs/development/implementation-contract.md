@@ -26,7 +26,7 @@ The repository is a Bun workspace with:
 
 ```text
 apps/web      TanStack Start application
-apps/docs     Astro Starlight documentation
+apps/docs     current project documentation renderer/content
 ```
 
 The UI donor has already been integrated. Do not restart from a blank TanStack app or re-copy the donor over Loxep.
@@ -38,7 +38,9 @@ Current workspace shell:
 /starter/*      preserved donor/reference workspace
 ```
 
-The sidebar and Cmd+K command palette derive navigation from the active workspace configuration. Future major product workspaces are peers of `/dashboard`; see [Workspaces & Navigation](../product/workspaces/).
+The sidebar and Cmd+K command palette derive navigation from the active workspace configuration. Future major product workspaces are peers of `/dashboard`; see [Workspaces & Navigation](../../product/workspaces/).
+
+`apps/docs` currently uses Astro Starlight, but the docs renderer is intentionally replaceable. Preserve portable source content and do not couple product architecture to Starlight. A future `apps/site` may host the public `loxep.com` project/marketing site, with docs and a public demo remaining distinct surfaces. See [Project Surfaces & Future Sites](../project-surfaces/).
 
 ## Architecture shape
 
@@ -148,7 +150,7 @@ Loxep is not designed around classic SaaS multi-tenancy. Do not introduce an org
 
 ## Configuration and secrets
 
-Follow [Configuration & Secrets](../architecture/configuration-and-secrets/).
+Follow [Configuration & Secrets](../../architecture/configuration-and-secrets/).
 
 The default policy is:
 
@@ -309,11 +311,13 @@ Do not report a task complete while known build/type/test failures caused by the
 
 Architecture changes are incomplete until documentation is updated.
 
-For Starlight pages:
+For the current Starlight renderer:
 
 - frontmatter `title` is the page H1;
 - do not repeat it with a Markdown `#` heading;
 - use `##` and below in content;
 - keep broad architecture/product docs synchronized when an ADR changes a previous assumption.
+
+Keep documentation content portable enough to move to a different renderer later. Internal-link changes must be checked in a built/served docs site; do not assume source-relative links resolve the same way as generated directory URLs.
 
 When an implementation discovers a real conflict with these rules, surface it explicitly. Do not quietly choose the easiest framework default and make the documentation false afterward.
