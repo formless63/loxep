@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":pinVersions"
+  ],
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true
+  },
+  "packageRules": [
+    {
+      "description": "Keep GitHub Actions on explicit stable releases",
+      "matchManagers": ["github-actions"],
+      "rangeStrategy": "pin"
+    }
+  ]
+}
