@@ -21,7 +21,8 @@ Loxep has moved from architecture-only planning into foundation buildout. Curren
 - Drizzle + first-class SQL;
 - Graphile Worker for durable jobs;
 - Better Auth with OIDC + magic links and no password login initially;
-- Better Auth-owned deployment roles, with Loxep-owned per-resource permissions;
+- Better Auth-owned `admin`/`member` deployment roles with installation-wide ordinary product access initially;
+- minimal economic-entity records for personal/business/operating attribution, separate from users, provider connections, workspaces, counterparties, and future accounting books;
 - database-backed normal runtime/application settings and application-encrypted provider/runtime secrets;
 - bootstrap environment/mounted-secret configuration only for pre-database/pre-login/runtime-topology facts;
 - local filesystem media by default with generic S3-compatible storage available from the same abstraction;
@@ -42,7 +43,7 @@ The same Loxep image supports `LOXEP_MODE=all|web|worker`, so workers can later 
 
 Public project documentation: **https://formless63.github.io/loxep/**
 
-Source documentation lives in `apps/docs` and is published with Astro Starlight on GitHub Pages.
+Source documentation lives in `apps/docs` and is currently published with Astro Starlight on GitHub Pages. The documentation renderer is intentionally replaceable; product architecture is not coupled to Starlight.
 
 Useful starting points:
 
@@ -57,6 +58,7 @@ Useful starting points:
 - [Foundational Data Model](apps/docs/src/content/docs/architecture/foundational-data-model.md)
 - [Foundation Schema](apps/docs/src/content/docs/architecture/foundation-schema.md)
 - [Implementation Contract](apps/docs/src/content/docs/development/implementation-contract.md)
+- [Project Surfaces & Future Sites](apps/docs/src/content/docs/development/project-surfaces.md)
 - [Companion Services](apps/docs/src/content/docs/product/companion-services.md)
 - [Dependency & Version Policy](apps/docs/src/content/docs/development/dependency-policy.md)
 - [Architecture Decision Records](apps/docs/src/content/docs/decisions/)
