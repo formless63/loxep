@@ -36,13 +36,15 @@ This is the current directional architecture for the first implementation. ADRs 
                  Financial/economic facts
                            |
                            v
-                    Accounting
+                 Accounting books
                            |
                            v
                  Reports / tax views
 ```
 
 The ledger is downstream of operational truth. Provider payloads, orders, purchases, inventory movements, shipping facts, project work, payments, and other source facts must not disappear merely because an accounting interpretation exists.
+
+An accounting book is not the same thing as an economic entity. Multiple operating/economic identities may later share one book and chart of accounts.
 
 ## Default deployment shape
 
@@ -74,6 +76,30 @@ The smallest supported deployment is intentionally simple:
 ```
 
 `LOXEP_MODE=all` means one Loxep container provides interactive web and background-worker capability. The implementation may use sibling Node processes or another clean lifecycle arrangement; the product requirement is one easy default application container, not forcing every task onto one event loop.
+
+## Installation, users, and economic entities
+
+A Loxep installation is one shared environment, not a SaaS tenant hierarchy.
+
+```text
+installation
+├── users
+│   ├── admin
+│   └── member
+├── economic entities
+│   ├── personal / individual
+│   ├── sole proprietorship
+│   ├── LLC / corporation / partnership
+│   └── assumed name / operating identity
+└── provider connections
+    └── optionally attributed to an economic entity
+```
+
+Ordinary product access is installation-wide in the initial model. `admin` adds installation/security/administrative authority; `member` can use/view normal product data. Phase 0 intentionally does not implement connection/entity/workspace ACLs.
+
+Economic entities classify operational ownership/context. They are not users, tenants, workspaces, or permission containers.
+
+A provider connection may carry nullable `economic_entity_id` when an account clearly represents one entity. That association is context, not authorization.
 
 ## Optional object storage
 
@@ -119,7 +145,7 @@ Current route roots:
 
 The shared shell owns the workspace switcher, sidebar frame, header, command palette, theme controls, and account controls. The active workspace supplies its navigation tree. Sidebar navigation and Cmd+K therefore follow the same active-workspace configuration.
 
-Future major product surfaces are peer route roots such as `/market`, `/commerce`, `/inventory`, `/projects`, `/finance`, and `/settings`. Workspaces are UX/navigation boundaries, **not** backend/domain ownership boundaries. See [Workspaces & Navigation](../product/workspaces/).
+Future major product surfaces are peer route roots such as `/market`, `/commerce`, `/inventory`, `/projects`, `/finance`, and `/settings`. Workspaces are UX/navigation boundaries, **not** backend/domain ownership, permission, economic-entity, or accounting-book boundaries. See [Workspaces & Navigation](../product/workspaces/).
 
 ## Authentication and authorization
 
@@ -127,11 +153,27 @@ Better Auth owns:
 
 - application users and sessions;
 - OIDC and magic-link authentication;
-- deployment-level roles such as `admin` and `member`.
+- deployment-level roles `admin` and `member`.
 
-Loxep owns business/resource authorization, such as which users may view or manage a particular eBay account, WooCommerce store, or other connection.
+Initial access is deliberately simple:
 
-External provider identities remain distinct from application-login identities. Future legal/economic entity ownership also remains a separate concern rather than being inferred from either users or provider connections.
+- `member` has ordinary product access across the installation;
+- `admin` adds installation/security/administrative capabilities where elevation is warranted;
+- no per-connection/per-workspace/per-economic-entity ACL model in Phase 0.
+
+External provider identities remain distinct from application-login identities. Economic-entity attribution is also separate from both.
+
+Fine-grained authorization can be added later if a concrete shared-install workflow requires it; it is not a foundation prerequisite.
+
+## Economic entities versus accounting books
+
+Phase 0 introduces minimal `economic_entities` so one installation can represent personal and multiple-business activity without becoming multi-tenant.
+
+The model deliberately supports operating identities such as assumed names/DBAs beneath another entity.
+
+Accounting books are deferred to the Accounting domain and remain a separate concept. More than one economic entity/operating identity may share one book and chart of accounts, with separation handled through accounts or future accounting dimensions. Loxep must not encode one economic entity = one ledger.
+
+See ADR-0017.
 
 ## Configuration and secrets
 
@@ -172,6 +214,8 @@ Recharts remains appropriate for ordinary dashboard/business charts. Apache ECha
 - Drizzle as the typed SQL/application data layer, with first-class SQL where appropriate.
 - Graphile Worker for durable background work.
 - Better Auth with generic OIDC and magic links; no password login initially.
+- Installation-wide `admin`/`member` access initially; no speculative per-resource ACL engine.
+- Minimal economic-entity attribution in Phase 0, separate from later accounting books.
 - Database-backed runtime settings and application-encrypted runtime secrets.
 - Generic local/S3 media abstraction; RustFS as the initial recommended self-hosted S3 companion.
 - Zod or equivalent schema validation at external boundaries.
