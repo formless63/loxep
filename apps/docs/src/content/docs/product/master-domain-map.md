@@ -21,32 +21,25 @@ These labels are planning signals, not commitments.
 
 - Connect one or more eBay accounts independently of application users.
 - Import and monitor eBay watchlists.
-- Define persistent marketplace searches independent of the eBay watchlist.
 - Monitor explicit listings/items.
-- Monitor sellers and seller inventory.
-- Poll at configurable/adaptive intervals, initially around 60 seconds where API limits permit.
+- Data-driven polling around a configurable 60-second baseline where API constraints permit.
 - Persist granular observations over time rather than only current state.
-- Detect price changes.
-- Detect availability/restock transitions.
-- Detect sellout/unavailable transitions.
-- Detect quantity changes where observable.
-- Detect new matching listings.
-- Detect listing endings/ended state.
-- Retain raw provider payload/evidence where useful.
+- Detect price, availability/restock, sellout/unavailable, quantity, and listing-state changes where observable.
+- Retain provider payload/evidence where useful.
 - ntfy notifications with deep links and configurable rules.
 - Durable, idempotent event processing.
 
 ### NEXT
 
-- Price-history charts.
-- Availability/stock-history charts.
-- Restock frequency and time-of-day analysis.
+- Persistent marketplace searches independent of the eBay watchlist.
+- Seller monitoring and seller inventory history.
+- New matching listing detection.
+- Price-history and stock-history charts.
+- Restock frequency/time-of-day analysis.
 - Approximate sellout duration from observation boundaries.
-- Seller-level inventory and pricing trends.
-- Search-result history and market trend views.
-- Opportunity/deal scoring.
-- Configurable target-price and acquisition rules.
-- More adaptive polling around interesting transitions.
+- Seller/search dashboards and market trend views.
+- Opportunity/deal scoring and target-price rules.
+- Adaptive polling around interesting transitions.
 
 ### DESIGN-FOR
 
@@ -65,24 +58,27 @@ These labels are planning signals, not commitments.
 
 ### NOW
 
-- Generic connection/account model.
+- Generic external connection/account model.
 - Multiple accounts for the same provider.
-- Credentials encrypted at rest.
+- Application-encrypted credentials with rotation/versioning.
 - Per-connection health and synchronization status.
-- Provider-specific configuration without leaking provider details through the domain model.
+- Per-user `owner/manage/view` access to connections.
+- Provider-specific configuration without leaking provider types through the whole domain model.
 - eBay adapter built on a maintained API library where appropriate.
 - Incoming provider-event/raw-object persistence and idempotency.
+- Generic `external_resources` / `resource_links` model for companion applications.
 
 ### NEXT
 
 - WooCommerce adapter.
 - Medusa adapter.
 - Webhook ingestion where providers support it.
-- Connection diagnostics and resynchronization tools.
+- Connection diagnostics, resynchronization, and integration-health dashboards.
+- First companion integrations where useful: backup health, task/document links, billing links.
 
 ### DESIGN-FOR
 
-- Shopify, Etsy, payment processors, banks, shipping services, tax services, and other commerce providers.
+- Shopify, Etsy, payment processors, banks, shipping services, tax services, knowledge/task systems, and other providers.
 - External sidecars/integrations using a stable Loxep API.
 - Import/export connectors.
 
@@ -99,11 +95,10 @@ These labels are planning signals, not commitments.
 
 ### DESIGN-FOR
 
-- Listing creation and synchronization.
-- Channel-specific pricing.
-- Channel-specific availability.
+- Listing creation/synchronization.
+- Channel-specific pricing/availability.
 - Bundles/kits.
-- Returns and exchanges.
+- Returns/exchanges.
 - Customer service history.
 
 ## 4. Catalog and listings
@@ -114,6 +109,7 @@ These labels are planning signals, not commitments.
 - Map one catalog item to multiple marketplace/store listings.
 - Listing state and channel metadata.
 - Product costs and sale prices.
+- Product/listing media through the common media layer.
 
 ### DESIGN-FOR
 
@@ -151,13 +147,11 @@ These labels are planning signals, not commitments.
 ### DESIGN-FOR
 
 - Vendors.
-- Purchase orders.
+- Purchase orders and lines.
 - Purchase receipts.
-- Vendor bills.
-- Vendor credits/refunds.
+- Vendor bills/credits/refunds.
 - Payment terms.
-- Inbound freight.
-- Duties/tariffs.
+- Inbound freight and duties/tariffs.
 - Landed cost distributed to inventory.
 - Vendor price history.
 
@@ -173,13 +167,11 @@ These labels are planning signals, not commitments.
 ### DESIGN-FOR
 
 - Shippo/EasyPost/carrier integrations.
-- Pirate Ship or other shipping-data ingestion where feasible.
+- Other shipping-data ingestion where feasible.
 - Label purchasing.
-- Packages, dimensions, and weights.
-- Insurance.
-- Carrier adjustments/refunds.
+- Packages, dimensions, weights, insurance, adjustments/refunds.
 - Split shipments.
-- Shipping cost allocation across order lines.
+- Shipping-cost allocation across order lines.
 - Shipping-performance analytics.
 
 ## 8. Customers and CRM foundation
@@ -187,12 +179,11 @@ These labels are planning signals, not commitments.
 ### DESIGN-FOR
 
 - Individuals and organizations.
-- Multiple contacts.
-- Multiple addresses/sites.
+- Multiple contacts and addresses/sites.
 - Communication details.
 - Tax status/exemption metadata.
 - Payment/billing terms.
-- Notes and attachments.
+- Notes, attachments, and external resource links.
 - Unified operational history across commerce, projects, services, and billing.
 
 The intent is operational customer context, not a general-purpose enterprise CRM.
@@ -202,34 +193,29 @@ The intent is operational customer context, not a general-purpose enterprise CRM
 ### DESIGN-FOR
 
 - Projects/jobs linked to customers and sites.
-- Project lifecycle/status.
-- Estimates/budgets.
-- Tasks/milestones where operationally useful.
-- Time entries.
-- Billable and non-billable work.
+- Lifecycle/status, estimates/budgets, tasks/milestones.
+- Time entries and billable/non-billable work.
 - Materials allocated from inventory.
-- Project expenses.
-- Reimbursable expenses.
-- Mileage/travel attribution.
-- Subcontractor/vendor costs.
-- Work orders.
+- Project expenses/reimbursables/mileage/travel.
+- Subcontractor/vendor costs and work orders.
+- Documents/media/external resources attached to work.
 - Project/job profitability.
 
-Use cases include consulting, development, hosting work, technology integration, installation, repair, and similar service activity.
+Use cases include consulting, development, hosting, technology integration, installation, repair, and similar service activity.
+
+### TRANSITION OPTION
+
+- Integrate with Vikunja or another task/project platform before Loxep's native task functionality is mature.
 
 ## 10. Services and subscriptions
 
 ### DESIGN-FOR
 
-- Service plans.
-- Customer subscriptions.
-- Subscription items.
-- Monthly, annual, and arbitrary billing cadences.
-- Service periods.
-- Renewal dates.
+- Service plans and customer subscriptions.
+- Subscription items, service periods, renewal dates.
+- Monthly/annual/arbitrary billing cadences.
 - Recurring and usage/manual charges.
-- Hosting/service operational metadata.
-- Internal cost basis for recurring services.
+- Hosting/service operational metadata and cost basis.
 - Subscription profitability.
 - Suspension/cancellation/history.
 
@@ -240,19 +226,11 @@ Subscriptions should be operational objects that can produce billing, not merely
 ### DESIGN-FOR
 
 - Quotes/estimates.
-- Invoices.
-- Invoice lines from products, time, projects, subscriptions, expenses, and manual billables.
+- Invoices and invoice lines from products, time, projects, subscriptions, expenses, and manual billables.
 - Recurring billing.
-- Credit notes.
-- Payments.
-- Payment allocation.
-- Accounts receivable aging.
-- Payment reminders.
-- Invoice numbering.
-- Taxes.
-- Customer-facing PDFs.
-- Email delivery.
-- Customer portal/payment links.
+- Credit notes and payments/allocation.
+- AR aging and reminders.
+- Invoice numbering, taxes, PDFs, email delivery, customer portal/payment links.
 
 ### TRANSITION OPTION
 
@@ -263,17 +241,12 @@ Subscriptions should be operational objects that can produce billing, not merely
 ### DESIGN-FOR
 
 - Payment-provider transactions.
-- Marketplace fees.
-- Processor fees.
-- Refunds.
-- Chargebacks.
+- Marketplace/processor fees.
+- Refunds and chargebacks.
 - Marketplace reserves/holds.
-- Payout batches.
-- Clearing accounts.
-- Bank transactions.
-- Bank feeds/imports.
-- Reconciliation.
-- Transfers.
+- Payout batches and clearing accounts.
+- Bank transactions/feeds/imports.
+- Reconciliation and transfers.
 
 A sale and its eventual bank deposit must remain reconcilable through intervening fees, refunds, taxes, and clearing balances.
 
@@ -284,23 +257,9 @@ A sale and its eventual bank deposit must remain reconcilable through intervenin
 - Expenses and receipts.
 - Vendors/payees.
 - Categories/accounting accounts.
-- Recurring expenses.
-- Reimbursable expenses.
+- Recurring/reimbursable expenses.
 - Fixed-asset candidates.
-- Flexible attribution of costs to relevant operational objects.
-
-A cost may relate to any combination of:
-
-- customer;
-- project/job;
-- order;
-- shipment;
-- inventory acquisition;
-- product/SKU;
-- sales channel;
-- vendor;
-- service/subscription;
-- accounting entry.
+- Flexible attribution of costs to customer, project, order, shipment, acquisition, SKU, channel, vendor, service, and accounting references.
 
 Cost attribution is a first-class analytical concern, not merely an expense category.
 
@@ -310,23 +269,17 @@ Cost attribution is a first-class analytical concern, not merely an expense cate
 
 - Double-entry ledger.
 - Chart of accounts.
-- Journal entries and lines.
-- Posted versus draft states.
+- Journal entries/lines and draft/posted state.
 - Fiscal periods and closing controls.
-- Accounts receivable and payable integration.
-- Inventory/COGS postings.
-- Marketplace clearing accounts.
-- Payment-processor clearing accounts.
-- Declarative posting rules translating operational/financial events into journal entries.
-- Replay/rebuild of derived accounting when posting logic changes, subject to appropriate controls.
-- Trial balance.
-- Profit and loss.
-- Balance sheet.
-- Cash-flow-oriented reporting.
+- AR/AP integration.
+- Inventory/COGS and clearing-account postings.
+- Declarative posting rules translating operational facts into journal entries.
+- Replay/rebuild of derived accounting when posting logic changes, subject to controls.
+- Trial balance, P&L, balance sheet, cash-flow-oriented reporting.
 
 ### Principle
 
-The ledger is downstream of operational truth. Orders, shipments, purchases, payments, inventory movements, and other source facts should not be destroyed merely because accounting treatment changes.
+The ledger is downstream of operational truth. Orders, shipments, purchases, payments, inventory movements, and other source facts must survive changes in accounting treatment.
 
 ## 15. Tax
 
@@ -334,13 +287,10 @@ The ledger is downstream of operational truth. Orders, shipments, purchases, pay
 
 - Sales-tax amounts and jurisdiction facts attached to transactions.
 - Marketplace-facilitator treatment.
-- Taxable/non-taxable products and services.
-- Customer exemption information.
+- Taxability/exemption data.
 - Sales-tax liability reporting by jurisdiction/period.
-- External tax-calculation integrations rather than inventing a comprehensive tax engine.
-- Income-tax-oriented reporting and exports.
-- Estimated-tax periods/reminders.
-- 1099/vendor reporting inputs where applicable.
+- External tax-calculation integrations rather than a comprehensive tax engine.
+- Income-tax-oriented reporting/exports, estimated-tax periods/reminders, and vendor-reporting inputs where applicable.
 
 Loxep should preserve tax facts and support reporting; it should not attempt to become tax-law software.
 
@@ -349,29 +299,27 @@ Loxep should preserve tax facts and support reporting; it should not attempt to 
 ### POSSIBLE / DESIGN-FOR
 
 - Business equipment/tools/computers/vehicles.
-- Acquisition and disposal.
-- Assignment/location.
-- Depreciation inputs and accounting references.
-- Vehicle mileage logs.
-- Mileage attribution to projects/customers/business purpose.
+- Acquisition/disposal, assignment/location, depreciation inputs.
+- Vehicle mileage logs and business-purpose attribution.
 
-## 17. Documents
+## 17. Media and documents
+
+### NOW — foundation
+
+- Stable `media_objects` identity and `media_links` relationships.
+- PostgreSQL stores metadata; ordinary binary bytes live outside the database.
+- `local` storage driver for the smallest deployment.
+- generic `s3` storage driver.
+- RustFS as the initial recommended/tested self-hosted S3 companion.
+- resumable local-to-S3 and S3-to-S3 migration with verification before cutover.
+- storage topology warning when multi-host application runtimes use unsafe node-local media.
 
 ### DESIGN-FOR
 
-- Attach documents to domain objects without duplicating storage concepts in every module.
-- Receipts.
-- Vendor bills/invoices.
-- Customer purchase orders.
-- Quotes/contracts.
-- Packing slips.
-- Shipping documents.
-- Statements.
+- Receipts, vendor bills/invoices, customer POs, contracts, quotes, packing slips, shipping docs, statements.
 - Searchable metadata.
-- OCR/text extraction.
-- Structured extraction of invoice/receipt fields.
-- Matching extracted documents to existing transactions, vendors, products, and purchases.
-- Object storage abstraction.
+- OCR/text extraction and structured invoice/receipt extraction.
+- Matching extracted documents to transactions, vendors, products, purchases, projects, etc.
 
 ## 18. Reporting and analytics
 
@@ -385,29 +333,25 @@ Loxep should preserve tax facts and support reporting; it should not attempt to 
 
 - Profitability by item, SKU, order, customer, project, channel, and service.
 - Realized acquisition ROI.
-- Shipping variance.
-- Marketplace/processor fee analysis.
-- Inventory valuation.
-- Inventory aging/turnover.
-- AR/AP aging.
-- Recurring revenue and subscription profitability.
+- Shipping variance and marketplace/processor fee analysis.
+- Inventory valuation/aging/turnover.
+- AR/AP aging and recurring-revenue metrics.
 - Vendor/purchasing analytics.
-- P&L, balance sheet, trial balance.
-- Sales-tax liability.
-- Cash and clearing reconciliation.
+- P&L, balance sheet, trial balance, tax liability, cash/clearing reconciliation.
 
 ## 19. Time-series data
 
 ### NOW
 
-- PostgreSQL with TimescaleDB available from the initial deployment.
+- PostgreSQL with TimescaleDB from the initial deployment.
 - Marketplace/listing observations modeled as hypertables from the beginning.
 - Preserve raw observation resolution where valuable.
+- Initial 7-day chunk policy with current Hypercore/columnstore direction for older observations and no automatic deletion by default.
 
 ### NEXT
 
-- Continuous aggregates for hourly/daily analytical views.
-- Retention/compression policies chosen from measured data volume rather than assumptions.
+- Continuous aggregates for hourly/daily analytical views where real queries justify them.
+- Tune chunk/columnstore/retention behavior from measured data volume and query patterns rather than assumptions.
 
 ### DESIGN-FOR
 
@@ -416,27 +360,26 @@ Loxep should preserve tax facts and support reporting; it should not attempt to 
 - Operational KPI history.
 - Shipping/market/channel metrics over time.
 
-Transactional relational data remains ordinary PostgreSQL tables; Timescale is used where the data is genuinely temporal.
+Transactional relational data remains ordinary PostgreSQL tables; Timescale is used where data is genuinely temporal.
 
 ## 20. Events and background work
 
 ### NOW
 
 - Graphile Worker backed by the same PostgreSQL deployment.
-- Scheduled polling.
-- Durable jobs.
-- Retries/backoff.
-- Priorities.
-- Job-key deduplication/idempotency.
+- Scheduled polling, durable jobs, retries/backoff, priorities, job-key deduplication/idempotency.
 - Database-driven monitor scheduling rather than a permanent cron entry per watched item.
 - Raw provider events/objects separated from normalized domain processing.
+- One Loxep image supports `LOXEP_MODE=all|web|worker`.
+- Default deployment runs web + worker in one Loxep container.
 
 ### DESIGN-FOR
 
+- Multiple worker processes/hosts sharing the same PostgreSQL queue.
 - Replayable ingestion pipelines.
 - Dead-letter/error investigation workflows.
 - Operational job visibility.
-- Domain events consumed independently by notifications, commerce, inventory, accounting, and analytics processors.
+- Specialized worker pools if measured workloads justify them.
 
 ## 21. Authentication, users, and authorization
 
@@ -444,16 +387,16 @@ Transactional relational data remains ordinary PostgreSQL tables; Timescale is u
 
 - Multiple application users even though Loxep is not designed around SaaS tenancy.
 - Better Auth.
-- Generic OIDC, with Pocket ID as an intended deployment.
+- Generic OIDC, with Pocket ID as an intended tested deployment.
 - Magic-link authentication.
-- Password authentication disabled by default/initially unsupported.
-- First-run administrator bootstrap.
+- Password authentication disabled initially.
+- Better Auth-owned deployment-level roles such as `admin`/`member`.
+- First-run administrator bootstrap/recovery.
+- Loxep-owned per-resource permissions for external connections.
 
 ### NEXT / DESIGN-FOR
 
-- Users can access multiple provider connections/accounts.
-- Connection-level owner/manage/view permissions.
-- Roles/capabilities where needed.
+- Broader domain capabilities/permissions where real workflows require them.
 - Audit trail for consequential actions.
 
 An external marketplace account is not the same thing as an application login identity.
@@ -466,7 +409,7 @@ An external marketplace account is not the same thing as an application login id
 - OpenAPI contract.
 - Authentication/API credentials appropriate to self-hosted deployments.
 - Webhooks/outbound events eventually.
-- Internal application code calls shared domain services rather than implementing business logic separately in the API.
+- Internal application code calls shared domain services rather than implementing business logic separately in API handlers.
 
 The browser application may use framework-native server functions internally; Loxep should not depend on a TypeScript-only RPC protocol as its sole integration boundary.
 
@@ -475,63 +418,95 @@ The browser application may use framework-native server functions internally; Lo
 ### NOW
 
 - ntfy integration.
-- Priority, title, message, tags, and deep links.
+- Priority/title/message/tags/deep links.
 - Notification rules separated from event detection.
 
 ### DESIGN-FOR
 
-- Email.
-- Web push.
-- Other notification providers through adapters.
-- Quiet hours/escalation/routing.
+- Email, web push, other adapters, quiet hours/escalation/routing.
 
-## 24. Deployment and operations
+## 24. Companion services and operational integrations
+
+### NOW / NEXT
+
+- Generic external resource/link model.
+- RustFS optional S3 Compose profile.
+- ntfy as a first-class notification companion.
+- Document an opinionated but optional self-hosting toolkit.
+- Databasus backup-health webhook integration is a strong early candidate.
+
+### RECOMMENDED / EVALUATE
+
+- Knowledge/docs: Outline, AFFiNE, other compatible platforms.
+- Tasks/projects: Vikunja or other compatible systems.
+- Billing portal/delivery: Invoice Ninja.
+- Database backups: Databasus.
+- File/config backups: Backrest/restic.
+- Container management: Dockhand.
+- SSH/terminal management: TermixSSH.
+- Metrics: Beszel.
+- Uptime: Gatus.
+- Private networking: Tailscale.
+
+These are independent applications, not required Loxep dependencies. Their APIs, versions, and licenses must be reverified before implementation or version-specific documentation.
+
+## 25. UI/application experience
+
+### NOW
+
+- TanStack Start + React.
+- TanStack Router/Query/Table/Form where useful.
+- shadcn/ui + Base UI + Tailwind.
+- Kiranism `tanstack-start-dashboard` as the initial UI foundation/donor.
+- Preserve/adapt its polished responsive shell and multi-theme/tweakcn theme system.
+- Remove demo domain/backend/auth assumptions.
+- Zustand only where genuine cross-client UI/workspace state warrants it.
+- Prefer Apache ECharts for dense analytical visualization when starter charting is insufficient.
+
+### Principle
+
+Starter code accelerates presentation; it does not own Loxep architecture or dependency versions.
+
+## 26. Deployment and operations
 
 ### NOW
 
 - Generic, unbranded self-hosted containers.
-- Docker Compose reference deployment.
-- Separate web/app and worker processes.
-- PostgreSQL + TimescaleDB.
+- One Loxep image with `all|web|worker` runtime modes.
+- Default minimal Compose deployment: `loxep + postgres-timescale`.
+- Optional RustFS Compose service/profile for S3-compatible media.
 - No Redis requirement merely for queueing.
-- Environment-based configuration/secrets.
-- Health checks.
-- Database migrations.
+- Environment/file-backed configuration and secrets.
+- Health checks and database migrations.
 - Backup/restore documentation.
+- Dependency/version policy requiring current viable upstream verification before pins.
 
 ### DESIGN-FOR
 
 - Reverse-proxy-agnostic deployment.
 - Container registry releases.
 - Upgrade/migration guidance.
-- Observability and structured logs.
-- Optional OpenTelemetry.
-- Scale-out workers if actual workload requires them.
+- Observability and structured logs; optional OpenTelemetry.
+- Scale-out web/worker hosts when actual workload requires them.
+- Shared S3-compatible object storage for multi-host operation.
 
-## 25. Documentation and open-source project needs
+## 27. Documentation and open-source project needs
 
 ### NOW
 
 - Documentation stored with the repository.
-- Astro Starlight documentation site.
-- Public GitHub Pages deployment.
-- Product/domain documentation.
-- Architecture documentation.
-- Architecture Decision Records (ADRs).
-- Development/setup documentation as implementation begins.
+- Astro Starlight documentation site and public GitHub Pages deployment.
+- Product/domain documentation, architecture docs, ADRs, Phase 0 spec, foundation schema.
+- Dependency/version freshness policy.
 - MIT license.
+- Keep broad docs updated when later ADRs supersede earlier assumptions.
 
 ### DESIGN-FOR
 
-- User guide.
-- Integration authoring guide.
-- API documentation.
-- Contributor guide.
-- Deployment and upgrade guides.
+- User guide, integration authoring guide, API docs, contributor guide, deployment/upgrade/backup guides.
+- Copyable companion-service Compose/config templates.
 
 ## Cross-domain flow
-
-The intended high-level relationship is:
 
 ```text
 External providers / manual activity
@@ -587,7 +562,8 @@ This document does **not** mean Loxep should immediately become:
 - a payment processor;
 - a shipping carrier;
 - a universal marketplace abstraction;
-- a project-management suite;
-- an HR system.
+- a complete project-management suite;
+- an HR system;
+- an infrastructure management platform.
 
-Where mature external systems solve specialized problems well, Loxep should integrate rather than reproduce them until owning that capability provides clear value.
+Where mature external systems solve specialized problems well, Loxep should integrate or recommend them until owning that capability provides clear value.
