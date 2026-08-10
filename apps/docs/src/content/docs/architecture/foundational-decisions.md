@@ -29,9 +29,7 @@ Use Better Auth's current Admin/access-control capabilities for deployment roles
 
 Do not create a parallel Loxep `user_roles` table merely to duplicate those global roles.
 
-Loxep-owned relations still model permissions that are business/domain data rather than authentication-system concerns. For example, `connection_users` can express that one user may `owner`, `manage`, or `view` a specific eBay/WooCommerce connection while another user cannot access it.
-
-This gives Better Auth responsibility for what it is designed to manage while preventing business-resource authorization from becoming coupled to auth-plugin schemas.
+Loxep-owned relations still model permissions that are business/domain data rather than authentication-system concerns. For example, `connection_users` expresses that one user may `owner`, `manage`, or `view` a specific eBay/WooCommerce connection while another user cannot access it.
 
 ## 3. Monetary representation
 
@@ -50,8 +48,6 @@ Application code must not convert persisted money to JavaScript `number` for ari
 
 Display and settlement rounding occur according to the currency/provider/accounting context, not implicitly at storage time.
 
-Accounting may adopt a wider precision if required, but it should use the same exact-decimal semantics.
-
 ## 4. Timescale observation policy
 
 **Decision:** create `marketplace_item_observations` as a Timescale hypertable from the first migration.
@@ -61,22 +57,18 @@ Initial physical policy:
 - partition column: `observed_at`;
 - initial chunk interval: **7 days**;
 - recent chunks remain in the rowstore;
-- enable Hypercore/columnstore for older observation data;
+- enable current Hypercore/columnstore features for older observation data;
 - initial columnstore policy target: **30 days**;
 - segment primarily by `marketplace_item_id` and order by `observed_at DESC` where supported by the deployed Timescale version;
 - **no automatic retention/deletion policy by default**.
 
-The 7-day interval is a starting value, not a performance promise. Chunk sizing should be revisited after real ingestion volume exists.
-
-The 30-day columnstore threshold keeps recent data optimized for active ingestion while compacting historical observations for analytics. This should be configurable later, but the initial migration should not build around legacy compression APIs.
+The 7-day interval is a starting value, not a performance promise. Chunk sizing should be revisited after real ingestion volume exists. Exact migration/API syntax must be verified against the current supported Timescale release immediately before implementation.
 
 ## 5. Observation connection provenance
 
 **Decision:** keep nullable `connection_id` on marketplace observations.
 
 When an observation came from an authenticated provider connection, record that connection even when the listing itself is public. Account context can affect availability, shipping, location, marketplace behavior, and fields returned by the provider.
-
-`connection_id` is nullable so future public/unauthenticated or imported observations remain representable.
 
 Canonical marketplace-item identity remains independent of connection identity.
 
@@ -88,7 +80,7 @@ Canonical marketplace-item identity remains independent of connection identity.
 
 `provider_objects` are debugging/synchronization snapshots. For object types where history is useful, keep changed snapshots and deduplicate identical payloads by hash. High-frequency polling must not dump a complete provider JSON response every minute when a narrow observation row already preserves the useful state.
 
-Initial cleanup policy for historical provider-object snapshots should be configurable, with a conservative default such as 90 days while retaining the current/latest useful snapshot. No destructive cleanup should be enabled until the ingestion implementation identifies which object classes are safely reconstructable.
+Initial cleanup policy for historical provider-object snapshots should be configurable and conservative. No destructive cleanup should be enabled until the ingestion implementation identifies which object classes are safely reconstructable.
 
 ## 7. Enum/state strategy
 
@@ -97,8 +89,6 @@ Initial cleanup policy for historical provider-object snapshots should be config
 Use `text` columns with application-owned TypeScript constants/unions. Add database `CHECK` constraints for stable closed state sets where database enforcement materially helps.
 
 Provider identifiers, connection providers, integration-specific object types, and other intentionally extensible identifiers remain text without a database enum.
-
-Rationale: PostgreSQL enums create unnecessary migration friction for an application explicitly expected to add providers and states over time. We still want database constraints where a state machine is truly closed; avoiding PG enums does not mean accepting arbitrary strings everywhere.
 
 ## 8. User/configuration audit model
 
@@ -132,14 +122,14 @@ System-generated domain events such as `restocked` or `price_changed` remain in 
 
 **Decision:** do not use PostgreSQL as the normal storage layer for images, PDFs, receipts, attachments, product media, or other potentially large binary objects.
 
-PostgreSQL stores metadata, ownership, hashes, MIME type, size, and references. File bytes go through a storage abstraction with at least two backends:
+PostgreSQL stores metadata, ownership, hashes, MIME type, size, and relationships. File bytes go through a storage abstraction with at least two drivers:
 
 - `local`: filesystem-backed storage for the smallest deployment with no additional service;
 - `s3`: standard S3-compatible object storage for production/shared deployments.
 
-The default Compose install may use `local` so Loxep can start with only the application and PostgreSQL. A recommended production/self-hosted profile should support Garage or another S3-compatible endpoint without application-specific code.
+**RustFS is the initial recommended/tested self-hosted S3 companion.** It runs as a separate service/container but may be supplied as an optional profile in Loxep's Compose project. Loxep's application contract remains generic S3, so Garage, SeaweedFS S3, hosted S3 services, and future alternatives can replace RustFS without a domain-schema redesign.
 
-Logical metadata should resemble:
+Logical metadata resembles:
 
 ```text
 media_objects
@@ -160,11 +150,13 @@ media_links
   purpose
 ```
 
-Do not store public bucket URLs as canonical identity. Generate URLs from the configured storage backend so deployments can move between local, Garage, cloud S3, R2, or another compatible service.
+Do not store public bucket URLs as canonical identity. Generate access URLs from the configured backend.
+
+Local-to-S3 migration is a product feature: resumable copy, verification, metadata cutover only after verification, retry, reporting, and explicit delayed source cleanup.
 
 ## 10. Process and container topology
 
-**Decision:** a separate worker process is an architectural capability, not a mandatory container for small installations.
+**Decision:** a worker runtime is an architectural capability, not a mandatory separate container.
 
 Build one Loxep application image with explicit runtime modes:
 
@@ -174,11 +166,48 @@ LOXEP_MODE=web
 LOXEP_MODE=worker
 ```
 
-`all` starts the web application and Graphile Worker in one container/process supervisor/runtime for the simplest deployment. This is the default initial self-hosted profile.
+`all` is the default initial self-hosted profile. It runs the web runtime and Graphile Worker in the same Loxep container. They do not need to share one event loop; implementation may use clean sibling Node processes or another lifecycle arrangement that preserves a single application container.
 
-Larger or more failure-sensitive deployments can run the same image as independent `web` and `worker` services. Because jobs are durable in PostgreSQL/Graphile Worker, splitting workers later does not require redesigning the job model.
+Larger deployments can run the same image as independent `web` and `worker` services/processes on one or more hosts. Because jobs are durable in PostgreSQL/Graphile Worker, splitting workers later does not require redesigning the job model.
 
-A dedicated worker becomes useful when background work is CPU/memory-heavy, needs independent scaling/restarts, or begins to include risky workloads. It should not be required merely for conceptual purity.
+A dedicated worker becomes useful when background work needs independent resources, concurrency, restarts, or host placement. It should not be required merely for conceptual purity.
+
+## 11. UI/dashboard starting point
+
+**Decision:** use Kiranism's TanStack Start dashboard as Loxep's initial UI shell/donor rather than building common dashboard presentation infrastructure from scratch.
+
+Adopt/adapt:
+
+- responsive application shell;
+- sidebar/header/navigation;
+- multi-theme/tweakcn theme system;
+- shadcn/Base UI composition;
+- useful TanStack Table/Form/Query patterns;
+- command palette and application-state patterns.
+
+Do not blindly inherit:
+
+- demo data or domain model;
+- starter auth/backend implementation;
+- unnecessary dependencies;
+- broad Zustand usage;
+- starter charting choices where Loxep needs denser analytical visualization;
+- dependency versions without current upstream verification.
+
+The starter supplies presentation acceleration; Loxep ADRs remain authoritative for architecture.
+
+## 12. External companion-resource links
+
+**Decision:** establish generic external resource/link records early so future integrations with knowledge, task, billing, and other specialist platforms do not require provider-specific ID columns in every domain.
+
+The foundation uses concepts equivalent to:
+
+```text
+external_resources
+resource_links
+```
+
+Provider adapters may add richer operations, but Loxep domain records should be able to link to Outline documents, Vikunja tasks/projects, AFFiNE pages, GitHub issues, Invoice Ninja objects, or future systems through the same relationship model.
 
 # Resulting first-schema direction
 
@@ -192,7 +221,9 @@ These choices allow the first migrations and application scaffold to proceed wit
 - raw-data retention;
 - extensible state values;
 - user/configuration auditing;
-- binary/media storage;
-- simple vs split runtime deployment.
+- local/S3 media storage and migration;
+- simple vs split runtime deployment;
+- UI starter adoption;
+- generic companion-resource relationships.
 
-Implementation work must verify the exact current APIs and supported syntax of PostgreSQL, TimescaleDB, Drizzle, Better Auth, Graphile Worker, storage dependencies, and runtime dependencies immediately before pinning versions or writing migrations, per the project dependency/version policy.
+Implementation work must verify the exact current APIs and supported syntax of PostgreSQL, TimescaleDB, Drizzle, Better Auth, Graphile Worker, TanStack Start, storage dependencies, and runtime dependencies immediately before pinning versions or writing migrations, per the project dependency/version policy.
