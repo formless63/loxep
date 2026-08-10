@@ -28,7 +28,7 @@ Workspaces are navigation surfaces that compose one or more backend domains.
 | Customers | `/customers` | people, organizations, contacts, addresses/sites, operational history |
 | Projects | `/projects` | projects/jobs, time, materials, expenses, services/subscriptions |
 | Finance | `/finance` | billing/AR, expenses/AP, payments/payouts, banking, reconciliation, accounting, tax |
-| Settings | `/settings` | users/access, provider connections, notifications, storage, runtime settings/secrets, diagnostics |
+| Settings | `/settings` | users/access, economic entities, provider connections, notifications, storage, runtime settings/secrets, diagnostics |
 | Starter Reference | `/starter` | donor demos and reusable UI patterns; not product-domain data |
 
 This UI grouping does **not** merge the underlying domains. For example, Finance may display Billing, Payments, Banking, Accounting, Tax, and Reporting without turning those into one backend module.
@@ -67,19 +67,26 @@ This UI grouping does **not** merge the underlying domains. For example, Finance
 - Correlation of acquisition opportunities with actual resale performance.
 - Cross-market intelligence and statistical pricing/demand models.
 
-## 2. Connections, integrations, and runtime configuration
+## 2. Installation identity, economic entities, connections, and configuration
 
 ### NOW
 
+- Multiple application users in one shared installation without classic SaaS tenancy.
+- Better Auth-owned `admin`/`member` deployment roles.
+- Installation-wide ordinary product access initially; `admin` adds installation/security/administrative authority.
+- Minimal `economic_entities` records for personal activity, sole proprietorships, companies, assumed names/DBAs, and operating identities.
+- Optional parent relation between economic entities/operating identities.
 - Generic external connection/account model.
 - Multiple accounts for the same provider.
+- Nullable connection attribution to an economic entity where one account clearly represents one entity.
 - Application-encrypted credentials with rotation/versioning.
 - Per-connection health/synchronization state.
-- Per-user `owner/manage/view` access to connections.
 - Provider-specific configuration without leaking SDK/provider types through the domain model.
 - Incoming source-event/raw-object persistence and idempotency.
 - Generic `external_resources` / `resource_links` model for companion applications.
 - Database-backed application settings and application-encrypted runtime secrets.
+
+Phase 0 does **not** implement per-connection/per-workspace/per-economic-entity ACLs. Fine-grained access can be added later when a concrete shared-install workflow requires it.
 
 Normal provider settings and credentials are configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before database-backed administration or login can work. See [Configuration & Secrets](../architecture/configuration-and-secrets/).
 
@@ -90,6 +97,11 @@ Normal provider settings and credentials are configured in-app and stored in Pos
 - Connection diagnostics/resynchronization and integration-health dashboards.
 - Shopify, Etsy, payment processors, banks, shipping/tax providers, knowledge/task systems, and other connectors as real needs arrive.
 - Stable external API/import/export boundaries.
+- Fine-grained access controls only if real use cases justify them.
+
+### Principle
+
+Do not equate application users, workspaces, provider connections, economic entities, counterparties, or accounting books. They are different concepts.
 
 ## 3. Commerce, catalog, and listings
 
@@ -104,6 +116,7 @@ Normal provider settings and credentials are configured in-app and stored in Pos
 - Map one catalog item to multiple marketplace/store listings.
 - Listing state/channel metadata.
 - Product costs/sale prices and product/listing media.
+- Explicit economic-entity attribution for owned commerce activity where appropriate.
 
 ### DESIGN-FOR
 
@@ -123,6 +136,7 @@ Normal provider settings and credentials are configured in-app and stored in Pos
 - Acquisitions/receipts.
 - Sales/fulfillment depletion.
 - Adjustments, reservations/allocations, and cost basis.
+- Economic-entity ownership/context where inventory is not installation-global.
 
 ### DESIGN-FOR
 
@@ -156,7 +170,7 @@ Normal provider settings and credentials are configured in-app and stored in Pos
 
 ### DESIGN-FOR
 
-- Individuals and organizations.
+- Individuals and organizations as counterparties.
 - Multiple contacts and addresses/sites.
 - Communication details.
 - Tax status/exemption metadata.
@@ -165,6 +179,8 @@ Normal provider settings and credentials are configured in-app and stored in Pos
 - Unified operational history across commerce, projects, services, and billing.
 
 The intent is operational customer context, not a general-purpose enterprise CRM.
+
+A customer/vendor/other counterparty is not automatically an installation-owned economic entity. The same real-world organization may be an economic entity in one Loxep installation and merely a counterparty in another.
 
 ## 7. Projects, jobs, service work, and subscriptions
 
@@ -182,6 +198,7 @@ The intent is operational customer context, not a general-purpose enterprise CRM
 - Service periods, renewal dates, billing cadences, usage/manual charges.
 - Hosting/service operational metadata and cost basis.
 - Subscription profitability and suspension/cancellation/history.
+- Economic-entity attribution for the party providing the service where needed.
 
 Use cases include consulting, development, hosting, technology integration, installation, repair, and similar service activity.
 
@@ -197,6 +214,7 @@ External task/project systems such as Vikunja may remain useful transition/compa
 - Credit notes and payments/allocation.
 - AR aging and reminders.
 - Invoice numbering, tax facts, PDFs, email delivery, portal/payment links.
+- Explicit economic-entity attribution for the seller/service provider represented by the invoice.
 
 Invoice Ninja can remain an initial delivery/payment/customer-portal companion while Loxep owns the deeper operational source data.
 
@@ -213,7 +231,7 @@ Invoice Ninja can remain an initial delivery/payment/customer-portal companion w
 - Reconciliation and transfers.
 - Expenses/receipts and recurring/reimbursable expenses.
 - Vendors/payees and accounting classifications.
-- Flexible cost attribution to customer, project, order, shipment, acquisition, SKU, channel, vendor, service, and other supported dimensions.
+- Flexible cost attribution to customer, project, order, shipment, acquisition, SKU, channel, vendor, service, economic entity, and other supported dimensions.
 
 A sale and its eventual bank deposit must remain reconcilable through intervening fees, refunds, taxes, and clearing balances. Cost attribution is operational metadata and must survive changes to accounting classification.
 
@@ -221,8 +239,11 @@ A sale and its eventual bank deposit must remain reconcilable through intervenin
 
 ### DESIGN-FOR
 
-- Explicit economic/legal accounting entities before broad financial schema expands.
+- Explicit `accounting_books` separate from economic entities.
+- Relationship between accounting books and economic entities/operating identities.
+- Ability for multiple economic entities/operating identities to share one accounting book.
 - Chart of accounts.
+- Accounting dimensions/classes/departments where useful for separating activity within one book.
 - Journal entries/lines and draft/posted state.
 - Fiscal periods and closing controls.
 - AR/AP, inventory/COGS, and clearing-account postings.
@@ -238,7 +259,7 @@ A sale and its eventual bank deposit must remain reconcilable through intervenin
 
 The ledger is downstream of operational truth. Orders, shipments, purchases, payments, inventory movements, time/project facts, and other source records must survive changes in accounting treatment.
 
-One deployment may eventually contain personal and business activity. Economic/legal ownership must not be inferred solely from application users or provider connections, and it must not be disguised as SaaS tenancy.
+An economic entity is not automatically a separate set of books. An LLC with multiple assumed names/operating identities may intentionally use one chart of accounts/ledger while separating activity through accounts or accounting dimensions. Do not hardcode one economic entity = one accounting book.
 
 ## 11. Assets and vehicles
 
@@ -284,13 +305,14 @@ Media owns binary identity/storage. The Documents domain owns document meaning/e
 
 ### DESIGN-FOR
 
-- Profitability by item, SKU, order, customer, project, channel, and service.
+- Profitability by item, SKU, order, customer, project, channel, service, and economic entity.
 - Acquisition ROI, shipping variance, and marketplace/processor fee analysis.
 - Inventory valuation/aging/turnover.
 - AR/AP aging and recurring-revenue metrics.
 - Vendor/purchasing analytics.
 - Financial/tax/clearing reports.
 - Inventory/balance/operational KPI snapshots and other genuinely temporal metrics.
+- Reporting by economic entity independently of how accounting books group those entities.
 
 Transactional relational data remains ordinary PostgreSQL tables; Timescale is used where data is genuinely temporal.
 
@@ -321,13 +343,15 @@ Transactional relational data remains ordinary PostgreSQL tables; Timescale is u
 - Generic OIDC, with Pocket ID as an intended tested deployment.
 - Magic-link authentication.
 - Password authentication disabled initially.
-- Better Auth-owned deployment roles such as `admin`/`member`.
+- Better Auth-owned deployment roles `admin`/`member`.
+- Installation-wide ordinary product access for trusted members.
+- Admin-only installation/security/administrative actions where elevation is justified.
 - Explicit first-admin bootstrap/recovery.
-- Loxep-owned per-resource permissions for external connections.
+- No Phase 0 per-connection/per-workspace/per-economic-entity ACL model.
 - Database-backed application settings.
 - Application-encrypted runtime secrets with external root key/keyring.
 
-An external marketplace account is not the same thing as an application login identity. A workspace is not a tenant. A provider connection is not automatically a legal/economic owner.
+An external marketplace account is not the same thing as an application login identity. A workspace is not a tenant. An economic entity is neither a user nor a permission container. Fine-grained access remains a later extension if real use demands it.
 
 ## 16. Public/integration API and notifications
 
@@ -416,9 +440,10 @@ Starter code accelerates presentation; it does not own Loxep architecture, data 
 ### NOW
 
 - Documentation stored with the repository.
-- Astro Starlight documentation site and GitHub Pages deployment.
+- Current Astro Starlight documentation site and GitHub Pages deployment.
 - Product/domain documentation, architecture docs, ADRs, Phase 0 spec, foundation schema, workspace map, configuration policy, and implementation contract.
 - Dependency/version freshness policy.
+- Internal-doc-link validation in CI.
 - MIT license.
 - Broad docs updated when later decisions supersede earlier assumptions.
 
@@ -426,6 +451,8 @@ Starter code accelerates presentation; it does not own Loxep architecture, data 
 
 - User guide, integration-authoring guide, API docs, contributor guide, deployment/upgrade/backup guides.
 - Copyable companion-service Compose/config templates.
+- Future docs-renderer migration without coupling product architecture to Starlight.
+- Separate public `loxep.com` informational/marketing site and public demo surface.
 
 ## Cross-domain flow
 
@@ -447,7 +474,7 @@ Commerce   Inventory    Services      Projects
       Financial/economic facts
               |
               v
-        Accounting ledger
+        Accounting books
               |
               v
        Reporting / tax views
