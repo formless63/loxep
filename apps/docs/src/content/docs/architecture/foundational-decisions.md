@@ -4,7 +4,7 @@ title: Foundational Implementation Decisions
 
 # Foundational Implementation Decisions
 
-These decisions resolve the implementation questions left open by the foundational data model. They are defaults for the initial schema and runtime, not irreversible product constraints. A future change that alters a foundational invariant should be recorded as an ADR.
+These decisions resolve implementation questions left open by the foundational data model. They are defaults for the initial schema and runtime, not irreversible product constraints. A future change that alters a foundational invariant should be recorded as an ADR.
 
 ## 1. Credential encryption and key management
 
@@ -18,20 +18,20 @@ Key rotation is explicit: a new key becomes active for writes; existing credenti
 
 Why not PostgreSQL `pgcrypto`: Loxep must ultimately present the plaintext token to an external provider API, and keeping encryption/key handling at the application boundary gives generic self-hosted deployments a clearer secret-management and rotation story.
 
-## 2. Deployment roles
+## 2. Authentication and authorization ownership
 
-**Decision:** keep Loxep authorization in Loxep-owned tables rather than Better Auth metadata.
+**Decision:** Better Auth owns authentication, sessions, login-provider state, and deployment-level user roles. Loxep owns domain/resource authorization.
 
-Better Auth owns authentication identity, sessions, and login-provider state. Loxep owns authorization.
-
-Initial deployment-level roles:
+Use Better Auth's current Admin/access-control capabilities for deployment roles such as:
 
 - `admin`
 - `member`
 
-Use a small `user_roles` relation keyed to the Better Auth user ID. Resource-specific access remains modeled separately, e.g. `connection_users` with `owner/manage/view` access.
+Do not create a parallel Loxep `user_roles` table merely to duplicate those global roles.
 
-This avoids coupling domain authorization to a particular authentication library's metadata conventions.
+Loxep-owned relations still model permissions that are business/domain data rather than authentication-system concerns. For example, `connection_users` can express that one user may `owner`, `manage`, or `view` a specific eBay/WooCommerce connection while another user cannot access it.
+
+This gives Better Auth responsibility for what it is designed to manage while preventing business-resource authorization from becoming coupled to auth-plugin schemas.
 
 ## 3. Monetary representation
 
@@ -66,7 +66,7 @@ Initial physical policy:
 - segment primarily by `marketplace_item_id` and order by `observed_at DESC` where supported by the deployed Timescale version;
 - **no automatic retention/deletion policy by default**.
 
-The 7-day interval is a starting value, not a performance promise. Timescale recommends sizing chunks based on actual data/index size relative to memory, so Loxep should expose operational metrics and revisit the interval after real ingestion volume exists.
+The 7-day interval is a starting value, not a performance promise. Chunk sizing should be revisited after real ingestion volume exists.
 
 The 30-day columnstore threshold keeps recent data optimized for active ingestion while compacting historical observations for analytics. This should be configurable later, but the initial migration should not build around legacy compression APIs.
 
@@ -128,17 +128,71 @@ Audit serialization must redact secrets and sensitive credential material before
 
 System-generated domain events such as `restocked` or `price_changed` remain in their owning domain and are not shoved into the audit table.
 
+## 9. Media and object storage
+
+**Decision:** do not use PostgreSQL as the normal storage layer for images, PDFs, receipts, attachments, product media, or other potentially large binary objects.
+
+PostgreSQL stores metadata, ownership, hashes, MIME type, size, and references. File bytes go through a storage abstraction with at least two backends:
+
+- `local`: filesystem-backed storage for the smallest deployment with no additional service;
+- `s3`: standard S3-compatible object storage for production/shared deployments.
+
+The default Compose install may use `local` so Loxep can start with only the application and PostgreSQL. A recommended production/self-hosted profile should support Garage or another S3-compatible endpoint without application-specific code.
+
+Logical metadata should resemble:
+
+```text
+media_objects
+  id
+  storage_backend
+  storage_key
+  original_filename
+  mime_type
+  size_bytes
+  sha256
+  created_by_user_id
+  created_at
+
+media_links
+  media_object_id
+  resource_type
+  resource_id
+  purpose
+```
+
+Do not store public bucket URLs as canonical identity. Generate URLs from the configured storage backend so deployments can move between local, Garage, cloud S3, R2, or another compatible service.
+
+## 10. Process and container topology
+
+**Decision:** a separate worker process is an architectural capability, not a mandatory container for small installations.
+
+Build one Loxep application image with explicit runtime modes:
+
+```text
+LOXEP_MODE=all
+LOXEP_MODE=web
+LOXEP_MODE=worker
+```
+
+`all` starts the web application and Graphile Worker in one container/process supervisor/runtime for the simplest deployment. This is the default initial self-hosted profile.
+
+Larger or more failure-sensitive deployments can run the same image as independent `web` and `worker` services. Because jobs are durable in PostgreSQL/Graphile Worker, splitting workers later does not require redesigning the job model.
+
+A dedicated worker becomes useful when background work is CPU/memory-heavy, needs independent scaling/restarts, or begins to include risky workloads. It should not be required merely for conceptual purity.
+
 # Resulting first-schema direction
 
-These choices allow the first migrations to proceed without further foundational ambiguity around:
+These choices allow the first migrations and application scaffold to proceed with clear defaults around:
 
-- who authenticates vs who authorizes;
-- how provider secrets are protected;
-- how exact money is persisted;
-- how observation history ages in Timescale;
-- how provider/account provenance is retained;
-- which raw data is kept;
-- how state values evolve;
-- how configuration changes are explained later.
+- Better Auth authentication/global roles vs Loxep resource authorization;
+- provider-secret protection;
+- exact money persistence;
+- Timescale observation aging;
+- provider/account provenance;
+- raw-data retention;
+- extensible state values;
+- user/configuration auditing;
+- binary/media storage;
+- simple vs split runtime deployment.
 
-Implementation work should verify the exact current APIs and supported syntax of PostgreSQL, TimescaleDB, Drizzle, Better Auth, Graphile Worker, and cryptographic/runtime dependencies immediately before pinning versions or writing migrations, per the project dependency/version policy.
+Implementation work must verify the exact current APIs and supported syntax of PostgreSQL, TimescaleDB, Drizzle, Better Auth, Graphile Worker, storage dependencies, and runtime dependencies immediately before pinning versions or writing migrations, per the project dependency/version policy.
