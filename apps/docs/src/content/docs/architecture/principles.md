@@ -68,7 +68,7 @@ If a value can be safely loaded after PostgreSQL is available and is normally cr
 
 Provider credentials such as eBay keys/tokens should not require editing Compose. The external root encryption key/keyring, database connectivity, Better Auth secret, and enough pre-login OIDC/SMTP configuration remain bootstrap concerns.
 
-See [Configuration & Secrets](./configuration-and-secrets/).
+See [Configuration & Secrets](../configuration-and-secrets/).
 
 ## 12. Idempotency is designed in
 
