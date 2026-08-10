@@ -10,10 +10,10 @@ The UI donor/reference workspace does not own this schema. Backend architecture 
 
 The first schema physically covers only:
 
-- Better Auth-owned authentication tables and deployment-level role support;
+- Better Auth-owned authentication tables and deployment-level `admin`/`member` roles;
+- minimal economic-entity identity/attribution;
 - database-backed application settings and encrypted runtime secrets;
-- provider connections and Loxep resource access;
-- encrypted connection credentials;
+- provider connections and encrypted connection credentials;
 - provider/source provenance;
 - monitoring targets;
 - canonical marketplace items;
@@ -25,11 +25,11 @@ The first schema physically covers only:
 - user/configuration audit events;
 - Graphile Worker-owned job schema.
 
-No placeholder full commerce/accounting/project tables are created yet.
+Phase 0 does **not** create per-connection/per-entity ACL tables or placeholder full commerce/accounting/project tables.
 
 ## Application settings and runtime secrets
 
-Normal runtime configuration should be manageable inside Loxep rather than encoded as environment variables. See [Configuration & Secrets](./configuration-and-secrets/) and ADR-0016.
+Normal runtime configuration should be manageable inside Loxep rather than encoded as environment variables. See [Configuration & Secrets](../configuration-and-secrets/) and ADR-0016.
 
 ### `application_settings`
 
@@ -72,6 +72,42 @@ The external root encryption key/keyring is bootstrap configuration and never li
 
 Connection-specific credentials keep their own model because token expiry/refresh/version semantics are part of a connection lifecycle.
 
+## Economic entities
+
+An installation may represent activity for more than one person, business, or operating identity even though the installation is not multi-tenant. ADR-0017 defines this distinction.
+
+### `economic_entities`
+
+```text
+id                    uuid primary key
+name                  text not null
+kind                  text not null
+parent_entity_id      uuid null references economic_entities(id)
+legal_name            text null
+active                boolean not null default true
+created_at            timestamptz not null
+updated_at            timestamptz not null
+```
+
+Initial application-owned `kind` values may include:
+
+```text
+individual
+sole_proprietorship
+llc
+partnership
+corporation
+assumed_name
+operating_unit
+other
+```
+
+`kind` is descriptive application state, not a tax/legal determination. Keep it as text with TypeScript-owned validation rather than a PostgreSQL enum.
+
+`parent_entity_id` allows an operating identity or assumed name to sit beneath another entity without claiming that it is a separate legal person.
+
+Economic entities are **not authorization containers** and are **not accounting books**. Multiple economic entities/operating identities may later participate in the same accounting book, with separation handled by chart-of-accounts structure or other accounting dimensions. Phase 0 intentionally does not create `accounting_books` or put a required book ID on this table.
+
 ## Connection foundation
 
 ### `connections`
@@ -82,6 +118,7 @@ provider              text not null
 kind                  text not null
 name                  text not null
 status                text not null
+economic_entity_id    uuid null references economic_entities(id)
 external_account_id   text null
 external_account_name text null
 config                 jsonb not null default '{}'
@@ -97,25 +134,17 @@ Indexes/constraints:
 
 ```text
 index(provider, status)
+index(economic_entity_id)
 index(created_by_user_id)
 ```
 
 Do not globally enforce uniqueness of `external_account_id`; provider semantics differ. Provider-specific adapters may enforce stronger scoped uniqueness where reliable.
 
+`economic_entity_id` is nullable because some integrations are shared, infrastructural, or not meaningfully attributable to one entity. Where an account clearly represents one economic entity—such as a business marketplace account—the relationship should be recorded.
+
 Provider connections are created and managed through authenticated Loxep workflows. They are not Compose environment entries.
 
-### `connection_users`
-
-```text
-connection_id         uuid not null references connections(id)
-user_id               text not null
-role                  text not null
-created_at            timestamptz not null
-primary key(connection_id, user_id)
-check role in ('owner','manage','view')
-```
-
-Deployment-wide `admin/member` roles remain Better Auth-owned. This relation represents Loxep resource authorization.
+Phase 0 intentionally has no `connection_users` relation. Better Auth `admin` and `member` users have installation-wide ordinary product access. `created_by_user_id` is audit/provenance metadata, not an ACL or ownership rule. Fine-grained connection/entity/workspace permissions are deferred until a real use case requires them.
 
 ### `connection_credentials`
 
@@ -190,7 +219,7 @@ external_object_id    text not null
 fetched_at            timestamptz not null
 provider_updated_at   timestamptz null
 payload               jsonb not null
-payload_hash          text not null
+payload_hash           text not null
 ```
 
 Indexes:
@@ -214,12 +243,12 @@ name                  text not null
 enabled               boolean not null default true
 interval_seconds      integer not null
 priority              integer not null default 0
-next_poll_at          timestamptz null
-last_poll_at          timestamptz null
-last_success_at       timestamptz null
-backoff_until         timestamptz null
+next_poll_at           timestamptz null
+last_poll_at           timestamptz null
+last_success_at        timestamptz null
+backoff_until          timestamptz null
 consecutive_errors    integer not null default 0
-config                jsonb not null default '{}'
+config                 jsonb not null default '{}'
 created_by_user_id    text not null
 created_at            timestamptz not null
 updated_at            timestamptz not null
@@ -440,7 +469,7 @@ media_object_id       uuid not null references media_objects(id)
 status                text not null
 attempt_count         integer not null default 0
 verified_at           timestamptz null
-last_error            text null
+last_error             text null
 primary key(migration_id, media_object_id)
 ```
 
@@ -461,8 +490,8 @@ external_id           text null
 url                   text not null
 title                 text null
 metadata              jsonb not null default '{}'
-created_at            timestamptz not null
-updated_at            timestamptz not null
+created_at             timestamptz not null
+updated_at             timestamptz not null
 ```
 
 ### `resource_links`
@@ -472,7 +501,7 @@ external_resource_id  uuid not null references external_resources(id)
 resource_type         text not null
 resource_id           text not null
 purpose               text not null
-created_at            timestamptz not null
+created_at             timestamptz not null
 ```
 
 This supports relationships to knowledge documents, tasks/projects, GitHub issues, billing records, and future companion systems without provider-specific columns in every domain table.
@@ -485,12 +514,12 @@ This supports relationships to knowledge documents, tasks/projects, GitHub issue
 id                    uuid primary key
 provider              text not null
 name                  text not null
-enabled               boolean not null default true
-config                jsonb not null default '{}'
+enabled                boolean not null default true
+config                 jsonb not null default '{}'
 secret_id             uuid null references application_secrets(id)
 created_by_user_id    text not null
-created_at            timestamptz not null
-updated_at            timestamptz not null
+created_at             timestamptz not null
+updated_at             timestamptz not null
 ```
 
 A notification endpoint is not necessarily an external account connection. Its secret therefore uses application-level encrypted secret storage unless a future provider model makes a real connection record appropriate.
@@ -500,14 +529,14 @@ A notification endpoint is not necessarily an external account connection. Its s
 ```text
 id                    uuid primary key
 name                  text not null
-enabled               boolean not null default true
+enabled                boolean not null default true
 market_event_type     text null
 monitor_target_id     uuid null references monitor_targets(id)
 endpoint_id           uuid not null references notification_endpoints(id)
 conditions            jsonb not null default '{}'
 created_by_user_id    text not null
-created_at            timestamptz not null
-updated_at            timestamptz not null
+created_at             timestamptz not null
+updated_at             timestamptz not null
 ```
 
 ### `notification_deliveries`
@@ -521,8 +550,8 @@ attempt_count         integer not null default 0
 last_attempt_at       timestamptz null
 delivered_at          timestamptz null
 provider_message_id   text null
-last_error            text null
-created_at            timestamptz not null
+last_error             text null
+created_at             timestamptz not null
 unique(market_event_id, endpoint_id)
 ```
 
@@ -552,31 +581,39 @@ The first schema is intentionally narrow. The important relationships are:
 ```text
 Better Auth users
     |
-    +--> connection_users --> connections --> connection_credentials
-    |                               |
-    |                               +--> source_events / provider_objects
-    |                               +--> monitor_targets --> monitor_items
-    |                                                       |
-    |                                                       v
-    |                                                marketplace_items
-    |                                                       |
-    |                                                       +--> observations (Timescale)
-    |                                                       +--> market_events
-    |                                                                |
-    |                                                                v
-    |                                                       notification_deliveries
+    +--> installation-wide admin/member access
+    +--> audit/provenance fields
+
+economic_entities
     |
-    +--> application_settings
-    +--> application_secrets --> storage_backends --> media_objects --> media_links
-    |                              |
-    |                              +--> storage_migrations
-    |
-    +--> audit_events
+    +--> economic_entities.parent_entity_id
+    +--> connections --> connection_credentials
+                      |
+                      +--> source_events / provider_objects
+                      +--> monitor_targets --> monitor_items
+                                              |
+                                              v
+                                       marketplace_items
+                                              |
+                                              +--> observations (Timescale)
+                                              +--> market_events
+                                                       |
+                                                       v
+                                              notification_deliveries
+
+application_settings
+application_secrets --> storage_backends --> media_objects --> media_links
+                         |
+                         +--> storage_migrations
+
+audit_events
 
 connections / domain resources <--> external_resources <--> resource_links
 ```
 
-This is not the eventual business schema. Commerce, inventory, projects, finance, and accounting are added when their workflows become implementation scope.
+This is not the eventual business schema. Commerce, inventory, projects, finance, accounting books, and accounting are added when their workflows become implementation scope.
+
+A future Accounting model must keep accounting books distinct from `economic_entities`: more than one entity/operating identity may share the same book and chart of accounts.
 
 ## Runtime topology constraints
 
@@ -613,10 +650,12 @@ Immediately before generating the actual Drizzle schema/migrations:
 
 1. verify current viable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, Bun, and other foundational packages;
 2. verify current Timescale hypertable/Hypercore migration syntax;
-3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin roles;
+3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin/member roles;
 4. verify the exact first-admin bootstrap/recovery implementation against the current Better Auth API;
-5. select the exact maintained decimal library after current verification;
-6. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
-7. implement storage conformance tests shared by `local` and generic `s3` drivers;
-8. implement settings/secret validation and redacted audit behavior before provider credentials are used;
-9. use the Kiranism donor/reference workspace for UI patterns without copying its demo backend architecture into Loxep.
+5. implement ADR-0017's installation-wide access model without a speculative `connection_users` ACL table;
+6. keep `economic_entities` independent of future accounting books and counterparties;
+7. select the exact maintained decimal library after current verification;
+8. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
+9. implement storage conformance tests shared by `local` and generic `s3` drivers;
+10. implement settings/secret validation and redacted audit behavior before provider credentials are used;
+11. use the Kiranism donor/reference workspace for UI patterns without copying its demo backend architecture into Loxep.
