@@ -2,8 +2,6 @@
 title: Vision
 ---
 
-# Vision
-
 Loxep is an open-source, self-hosted platform for understanding and operating the commercial activity of individuals and small businesses.
 
 It begins with a concrete problem: continuously observe marketplaces such as eBay, detect meaningful changes quickly, retain the history that marketplaces do not expose conveniently, and turn those observations into useful actions. That first use case naturally connects to the other side of commerce: products acquired are inventoried, listed, sold, shipped, paid out, and ultimately reflected in the books.
