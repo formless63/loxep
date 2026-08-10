@@ -2,8 +2,6 @@
 title: Dependency and Version Policy
 ---
 
-# Dependency and Version Policy
-
 Loxep should not adopt stale framework, runtime, library, container, or GitHub Action versions simply because they are familiar, widely represented in training data, or present in an older example, boilerplate, starter, or deployment guide.
 
 ## Core rule
