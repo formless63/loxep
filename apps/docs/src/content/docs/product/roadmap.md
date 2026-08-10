@@ -2,7 +2,7 @@
 title: Roadmap
 ---
 
-The [Master Domain Map](./master-domain-map/) describes the territory. This roadmap deliberately does not attempt to build all of it at once.
+The [Master Domain Map](../master-domain-map/) describes the territory. This roadmap deliberately does not attempt to build all of it at once.
 
 ## Phase 0 — Foundation and decisions
 
@@ -36,7 +36,7 @@ Remaining Phase 0 implementation work includes:
 - establish generic Docker Compose deployment and optional companion profiles;
 - continuously validate both application and documentation builds.
 
-Normal runtime/provider settings should be configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before DB-backed administration or login is possible. See [Configuration & Secrets](../architecture/configuration-and-secrets/).
+Normal runtime/provider settings should be configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before DB-backed administration or login is possible. See [Configuration & Secrets](../../architecture/configuration-and-secrets/).
 
 The normal minimal deployment target is:
 
@@ -51,7 +51,7 @@ A media-heavy or expansion-ready deployment can add:
 rustfs                   # optional S3-compatible companion
 ```
 
-The exact future product workspace split is documented separately in [Workspaces & Navigation](./workspaces/). Major areas should be peer workspace roots rather than one enormous `/dashboard/*` tree.
+The exact future product workspace split is documented separately in [Workspaces & Navigation](../workspaces/). Major areas should be peer workspace roots rather than one enormous `/dashboard/*` tree.
 
 ## Phase 1 — Useful eBay monitor
 
