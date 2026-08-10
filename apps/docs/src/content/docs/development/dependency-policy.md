@@ -4,7 +4,7 @@ title: Dependency and Version Policy
 
 # Dependency and Version Policy
 
-Loxep should not adopt stale framework, runtime, library, container, or GitHub Action versions simply because they are familiar, widely represented in training data, or present in an older example.
+Loxep should not adopt stale framework, runtime, library, container, or GitHub Action versions simply because they are familiar, widely represented in training data, or present in an older example, boilerplate, starter, or deployment guide.
 
 ## Core rule
 
@@ -18,8 +18,24 @@ Do not assume a remembered major version is current.
 2. Do not select an older version without documenting the reason when a newer stable release exists.
 3. Avoid prerelease/canary/nightly versions unless a documented requirement justifies the risk.
 4. Verify breaking changes and peer-dependency compatibility before adopting a new major.
-5. Prefer primary sources for version verification: official release pages, package registries, official documentation, and upstream changelogs.
+5. Prefer primary sources for version verification: official release pages, package registries, official documentation, upstream changelogs, and official container registries.
 6. For major architectural dependencies, record intentional version constraints or compatibility exceptions in the relevant ADR.
+7. Container-image versions/tags are dependencies too; verify the current viable release before writing Compose examples or production recommendations.
+
+## Starters and boilerplates
+
+A starter supplies code, patterns, and presentation—not authoritative dependency versions.
+
+When adopting code from Kiranism's TanStack Start dashboard or another starter:
+
+1. inventory the dependencies actually needed by the retained code;
+2. remove demo/unused dependencies first;
+3. verify the current upstream version of every retained direct dependency;
+4. check current framework/peer compatibility before upgrading across the starter's original versions;
+5. generate/update Loxep's own lockfile rather than treating the starter lockfile as canonical;
+6. preserve a starter's older version only when current compatibility work genuinely requires it, and document that exception.
+
+The same rule applies to copied GitHub Actions, Docker Compose files, README commands, and configuration examples.
 
 ## Reproducibility
 
@@ -29,9 +45,11 @@ Exact versions are acceptable and preferred for application/tooling dependencies
 
 CI actions should use explicit verified release versions rather than obsolete examples. Security-oriented SHA pinning may be introduced where appropriate, provided automated tooling is configured to keep the pinned digest current.
 
+Container images used in reference/production Compose should also use deliberate reproducible versioning once an image is part of Loxep's tested stack. Do not confuse a convenient exploratory `latest` run with a reproducible supported deployment.
+
 ## Automated updates
 
-Loxep intends to use Renovate for dependency maintenance because it supports Bun manifests/lockfiles as well as GitHub Actions.
+Loxep intends to use Renovate for dependency maintenance because it supports Bun manifests/lockfiles as well as GitHub Actions and container references.
 
 Automated updates do not remove the requirement to review major-version migrations. The desired workflow is:
 
@@ -46,10 +64,10 @@ Lockfile maintenance should also be automated once the application workspace and
 
 When an agent introduces a dependency or changes a version, it should:
 
-1. Check the current stable version from an upstream/current source.
+1. Check the current stable version from a current upstream/primary source.
 2. Check compatibility with the project's runtime and related dependencies.
 3. Use that version unless there is a concrete reason not to.
 4. State/document the reason if deliberately selecting an older version.
-5. Update lockfiles and CI where applicable.
+5. Update lockfiles, container references, CI, and compatibility documentation where applicable.
 
-Examples copied from documentation should be treated as examples, not authoritative current version pins.
+Examples copied from documentation, starters, prior commits, or model memory are examples—not authoritative current version pins.
