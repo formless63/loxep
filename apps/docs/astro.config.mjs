@@ -27,6 +27,7 @@ export default defineConfig({
           items: [
             { label: 'Master Domain Map', slug: 'product/master-domain-map' },
             { label: 'Roadmap', slug: 'product/roadmap' },
+            { label: 'Companion Services', slug: 'product/companion-services' },
           ],
         },
         {
