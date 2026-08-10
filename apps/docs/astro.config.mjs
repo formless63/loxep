@@ -40,7 +40,9 @@ export default defineConfig({
         },
         {
           label: 'Decisions',
-          autogenerate: { directory: 'decisions' },
+          items: [
+            { autogenerate: { directory: 'decisions' } },
+          ],
         },
       ],
     }),
