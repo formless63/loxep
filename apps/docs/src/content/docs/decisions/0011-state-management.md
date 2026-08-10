@@ -2,27 +2,45 @@
 title: "ADR-0011: Client State Management"
 ---
 
-# ADR-0011: Do not add a global client-state model until required
-
-**Status:** Accepted; applies to starter adoption in ADR-0015.
+**Status:** Accepted; clarified after the initial UI scaffold.
 
 ## Context
 
-Loxep already has natural owners for most application state: PostgreSQL for durable state, TanStack Query for server/cache state, Router for URL/navigation state, Form for form state, and React for local UI state.
+Loxep has natural owners for most application state: PostgreSQL for durable state, TanStack Query for server/cache state, Router for URL/navigation state, TanStack Form for form state, and React for local component state.
 
-Kiranism's TanStack Start dashboard currently includes Zustand. Adopting that project as a UI donor does not make Zustand part of Loxep's architecture automatically.
+The adopted Kiranism dashboard includes Zustand, and Loxep has credible near-term uses for cross-component editing/workspace state such as configurable dashboards, chart/view configuration, table layouts, and other interactions that benefit from a small client store.
+
+The risk is not Zustand itself. The risk is turning it into a second home for server or durable product state.
 
 ## Decision
 
-Do not use Zustand or another global client-state store merely because the starter includes it.
+Retain Zustand in the frontend dependency set while keeping its ownership narrow.
 
-During starter adaptation, remove Zustand if no retained feature genuinely requires it. Add or retain Zustand only for concrete cross-component ephemeral/workspace state that is not naturally server, URL, form, or local component state.
+Use Zustand for concrete cross-component **ephemeral/editing UI state** that is not naturally URL, server/cache, form, or local component state.
 
-Examples that may eventually justify it include temporary dashboard customization, multi-step workspace state, or persisted UI selections that do not belong in the URL/server.
+For durable user customization, use the pattern:
+
+```text
+interactive editing state
+       (Zustand)
+          |
+          v
+   validated save
+          |
+          v
+ durable preference
+    (PostgreSQL)
+```
+
+Examples include dashboard widget position/size during editing, chart configuration, visible/reordered columns, multi-panel UI selections, or other workspace state where immediate cross-component updates are useful.
+
+Do not mirror TanStack Query data or canonical PostgreSQL records into a global Zustand store merely for convenience.
 
 ## Consequences
 
-- Fewer overlapping state models initially.
-- Starter dependencies are evaluated rather than inherited blindly.
-- Zustand remains an approved possible tool rather than a rejected technology.
-- New state must be classified by ownership before introducing a global store.
+- Zustand is an intentional available tool rather than donor baggage to remove reflexively.
+- Server data remains owned by Query/domain APIs.
+- URL-shareable state remains owned by Router.
+- Forms remain owned by TanStack Form.
+- Device/browser-independent user preferences are persisted to PostgreSQL when they need to survive sessions/devices.
+- New global state still requires an explicit ownership justification.
