@@ -4,15 +4,16 @@ title: Foundational Data Model
 
 This document defines the conceptual data model Loxep should implement first. Exact first-migration columns, indexes, and constraints live in the [Foundation Schema Draft](../foundation-schema/).
 
-The foundation is intentionally smaller than the master domain map. It establishes identities, database-backed configuration, encrypted secrets, external connections, provenance/replay, durable monitoring, time-series observations, media/storage, external-resource links, notifications, and auditability without prematurely creating broad commerce/accounting/project tables.
+The foundation is intentionally smaller than the master domain map. It establishes identities, economic-entity attribution, database-backed configuration, encrypted secrets, external connections, provenance/replay, durable monitoring, time-series observations, media/storage, external-resource links, notifications, and auditability without prematurely creating broad commerce/accounting/project tables.
 
 ## Design goals
 
 The foundation must support:
 
 - multiple application users without SaaS-style tenancy;
+- simple installation-wide `admin`/`member` access initially;
+- multiple economic entities/operating identities within one installation;
 - multiple accounts for the same external provider;
-- sharing an external connection with more than one Loxep user;
 - provider/runtime credentials that can be refreshed or rotated independently of business records;
 - normal application/provider configuration managed in-app rather than Compose;
 - polling, webhooks, imports, and retries without duplicate side effects;
@@ -21,7 +22,8 @@ The foundation must support:
 - high-volume time-series observations through TimescaleDB;
 - local media storage that can migrate cleanly to generic S3-compatible storage;
 - generic links to companion-service resources without provider-specific columns throughout the schema;
-- explicit separation between observed marketplace facts and Loxep-owned operational data.
+- explicit separation between observed marketplace facts and Loxep-owned operational data;
+- future accounting books that are not forced into a one-book-per-economic-entity model.
 
 ## Conventions
 
@@ -51,21 +53,45 @@ Use text columns with application-owned TypeScript constants/unions. Add databas
 
 ## Identity, authentication, and authorization
 
-Better Auth owns application authentication identity, sessions, login-provider state, and deployment-level roles such as `admin` and `member`.
+Better Auth owns application authentication identity, sessions, login-provider state, and deployment-level roles `admin` and `member`.
 
 Loxep does **not** duplicate Better Auth's user/session/account tables or create a parallel global `user_roles` table.
 
-A small optional `user_profiles` relation may hold Loxep-specific presentation/profile data such as locale/time zone keyed by Better Auth user ID.
+A small optional `user_profiles` relation may hold Loxep-specific presentation/profile data such as locale/time zone keyed by the Better Auth user ID.
 
-Loxep owns **resource/business authorization**. `connection_users`, for example, associates users with a particular external connection using roles such as:
+The initial access model is deliberately installation-wide:
+
+- `member` can access normal product data throughout the installation;
+- `admin` adds installation/security/administrative authority where elevation is actually required;
+- Phase 0 does not implement per-connection, per-workspace, or per-economic-entity ACLs.
+
+Fine-grained resource permissions remain a later extension if concrete shared-install workflows require them. `created_by_user_id` is provenance/audit metadata, not private ownership.
+
+Application user identity, provider connection identity, workspace identity, and economic-entity identity remain separate concepts.
+
+## Economic entities and accounting books
+
+An installation may represent activity for multiple people, businesses, or operating identities. `economic_entities` is the foundation concept for that attribution.
+
+Examples include:
 
 ```text
-owner
-manage
-view
+individual / personal activity
+sole proprietorship
+LLC
+partnership
+corporation
+assumed name / DBA
+operating unit
 ```
 
-Application user identity, provider account/connection identity, workspace identity, and future economic/legal ownership are distinct concepts.
+The term is intentionally broader than legal entity. A parent relationship can express that an assumed name or operating identity belongs beneath another entity without treating it as a separate legal person.
+
+Economic entities are not users, tenants, workspaces, provider accounts, or counterparties.
+
+They are also **not accounting books**. When accounting arrives, books will own chart-of-accounts, fiscal-period, posting, journal, and financial-statement concerns. More than one economic entity/operating identity may share the same book, with separation handled by accounts, dimensions, classes, departments, or another accounting classification model.
+
+Therefore Phase 0 creates `economic_entities` but does not create `accounting_books` and does not add a required book ID to each entity. See ADR-0017.
 
 ## Bootstrap configuration versus database configuration
 
@@ -89,11 +115,11 @@ See [Configuration & Secrets](../configuration-and-secrets/).
 
 ## External connections
 
-A connection represents one configured relationship to an external account/store/service where account identity, synchronization state, and resource authorization matter: eBay account, WooCommerce store, Medusa store, bank/provider account, shipping/payment integration, and similar provider relationships.
+A connection represents one configured relationship to an external account/store/service where account identity and synchronization state matter: eBay account, WooCommerce store, Medusa store, bank/provider account, shipping/payment integration, and similar provider relationships.
 
 `connections` owns common identity/status fields and non-secret provider configuration. Provider-specific data remains provider-specific where normalization would be fake.
 
-`connection_users` provides per-user resource access.
+A connection may carry nullable `economic_entity_id` when the account clearly represents one entity. The relationship is attribution/context, not authorization. Shared/infrastructural connections may remain unassigned.
 
 Not every external endpoint needs to become a `connection`. For example, a simple ntfy notification endpoint can remain a notification-owned configuration record with an application secret rather than pretending it has provider-account lifecycle semantics.
 
@@ -155,6 +181,8 @@ Search and seller monitor types follow without changing the scheduling model.
 One canonical record per provider/marketplace/external-item identity.
 
 A public eBay listing discovered by two Loxep connections or by a watchlist plus search remains one marketplace item. Connection/account-specific observations remain representable separately.
+
+Marketplace intelligence is largely economic-entity-neutral: the public listing exists independently of which business or personal activity is interested in it. Account/entity context can still be inferred from the monitor's connection where relevant.
 
 ### `monitor_items`
 
@@ -305,10 +333,10 @@ The first useful eBay-monitor foundation should physically require roughly:
 ```text
 Better Auth tables/config
 optional user_profiles
+economic_entities
 application_settings
 application_secrets
 connections
-connection_users
 connection_credentials
 source_events
 provider_objects
@@ -330,5 +358,7 @@ notification_deliveries
 audit_events
 Graphile Worker schema
 ```
+
+There is intentionally no `connection_users` ACL table in Phase 0 and no `accounting_books` table yet.
 
 The exact physical target and constraints remain defined by the [Foundation Schema Draft](../foundation-schema/). Commerce, inventory, project, billing, and accounting tables are deliberately not pre-created merely because future domains are known.
