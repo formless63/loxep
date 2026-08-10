@@ -36,8 +36,16 @@ export default defineConfig({
             { label: 'Principles', slug: 'architecture/principles' },
             { label: 'System Overview', slug: 'architecture/system-overview' },
             { label: 'Domain Boundaries', slug: 'architecture/domain-boundaries' },
+            { label: 'Phase 0 Foundation', slug: 'architecture/phase-0-foundation' },
             { label: 'Foundational Data Model', slug: 'architecture/foundational-data-model' },
             { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
+            { label: 'Foundation Schema', slug: 'architecture/foundation-schema' },
+          ],
+        },
+        {
+          label: 'Development',
+          items: [
+            { label: 'Dependency & Version Policy', slug: 'development/dependency-policy' },
           ],
         },
         {
