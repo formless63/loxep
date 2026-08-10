@@ -1,50 +1,55 @@
 ---
-title: Loxep
+title: Documentation
+description: Architecture, product map, and implementation guidance for Loxep.
 sidebar:
   hidden: true
 hero:
-  tagline: Navigate commerce. Observe change. Understand the business.
+  title: Loxep
+  tagline: Self-hosted marketplace intelligence and business operations.
   actions:
-    - text: Phase 0 foundation
-      link: ./architecture/phase-0-foundation/
-      icon: right-arrow
-    - text: Master domain map
+    - text: Architecture overview
+      link: ./architecture/system-overview/
+    - text: Product map
       link: ./product/master-domain-map/
-      variant: minimal
 ---
 
-Loxep is an open-source, self-hosted platform being designed around three connected ideas: **market intelligence**, **business operations**, and **financial truth**.
+Loxep is an open-source, self-hosted application for observing marketplace activity and operating the commercial work that follows from it. The initial vertical slice is eBay monitoring and historical intelligence, built on a foundation intended to grow into commerce, inventory, projects and services, billing, accounting, tax support, documents, and reporting without turning into disconnected tools.
 
-The first useful vertical slice centers on eBay monitoring: watchlists and explicit listings first, followed by searches, sellers, prices, availability, restocks, and historical observations. The architecture is deliberately broader so those capabilities can grow into multichannel commerce, inventory, service work, billing, shipping, purchasing, accounting, tax support, media/documents, and reporting without becoming a collection of disconnected tools.
+This site is the project specification as well as the public documentation. During foundation work, it should answer the questions a contributor or coding agent would otherwise have to guess.
 
-## Current foundation
+## Start here
 
-The current implementation plan is intentionally pragmatic:
+- [Vision](./overview/vision/) — what Loxep is trying to become and what it is not.
+- [Workspaces & Navigation](./product/workspaces/) — the current application-shell model and proposed top-level product workspaces.
+- [Master Domain Map](./product/master-domain-map/) — the broader product territory and scope labels.
+- [System Overview](./architecture/system-overview/) — runtime, deployment, provider-ingestion, and domain flow.
+- [Configuration & Secrets](./architecture/configuration-and-secrets/) — what belongs in environment/bootstrap configuration versus the application database.
+- [Phase 0 Foundation](./architecture/phase-0-foundation/) — the capabilities that must exist before marketplace implementation becomes the primary focus.
+- [Foundation Schema](./architecture/foundation-schema/) — the current first-migration target.
+- [Implementation Contract](./development/implementation-contract/) — load-bearing rules for implementation work and coding agents.
+- [Dependency & Version Policy](./development/dependency-policy/) — verify current viable upstream releases before every new pin.
+
+## Current repository state
+
+The web application is no longer a blank planned scaffold. The Kiranism TanStack Start dashboard has been adopted as a UI donor and moved into a Loxep workspace-aware shell:
 
 ```text
-minimal deployment
-
-loxep                    # TanStack Start + Graphile Worker
-postgres-timescale
+/dashboard/*    Loxep's real dashboard workspace
+/starter/*      preserved donor/demo reference workspace
 ```
 
-The same Loxep image supports `LOXEP_MODE=all|web|worker`, so the default stays simple while background workers can later scale onto separate processes or hosts.
+The sidebar and command palette derive their navigation from the active workspace. Future major product areas should be peers of `/dashboard`, not children of one giant `/dashboard/*` navigation tree.
 
-Media uses a `local`/generic-`s3` abstraction. Local filesystem storage requires no additional service; **RustFS** is the initial recommended/tested optional self-hosted S3 companion and can be added as a separate service in the same Compose project. Local-to-S3 migration is a supported application workflow rather than a future manual rewrite.
+The default runtime direction remains deliberately small:
 
-The application UI will use **Kiranism's TanStack Start dashboard** as its initial shell/donor, preserving useful responsive layout, shadcn/Base UI patterns, and multi-theme system while replacing demo data, auth/backend assumptions, unnecessary state/dependencies, and stale version pins with Loxep's own architecture.
+```text
+loxep                    # TanStack Start + Graphile Worker
+postgres-timescale       # PostgreSQL + TimescaleDB
+rustfs                   # optional S3-compatible companion
+```
 
-Better Auth owns application identity, sessions, OIDC/magic-link login, and deployment roles. Loxep owns domain/resource permissions such as access to a specific marketplace/store connection.
+One Loxep image supports `LOXEP_MODE=all|web|worker`. Local media storage remains the zero-extra-service default; generic S3 storage is supported when shared object storage is desired.
 
-## Where to start
+## Documentation rule
 
-- [Phase 0 Foundation](./architecture/phase-0-foundation/) — what must exist before Phase 1.
-- [Foundation Schema](./architecture/foundation-schema/) — concrete first-migration target.
-- [System Overview](./architecture/system-overview/) — current runtime/deployment model.
-- [Architectural Principles](./architecture/principles/) — constraints that should survive implementation details.
-- [Master Domain Map](./product/master-domain-map/) — the broad territory Loxep may eventually cover.
-- [Roadmap](./product/roadmap/) — what gets built when.
-- [Companion Services](./product/companion-services/) — mature external tools Loxep can integrate instead of prematurely rebuilding.
-- [Dependency & Version Policy](./development/dependency-policy/) — verify newest viable upstream versions before every pin.
-
-Loxep is documentation-first while its foundations are being established so contributors and coding agents can distinguish current decisions from old assumptions and implementation accidents.
+Starlight renders each page's frontmatter `title` as the page heading. New documentation pages should therefore **not** repeat the title as a Markdown `# H1`. Use `##` as the first content heading.
