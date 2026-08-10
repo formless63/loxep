@@ -2,51 +2,44 @@
 title: Foundational Implementation Decisions
 ---
 
-# Foundational Implementation Decisions
-
-These decisions resolve implementation questions left open by the foundational data model. They are defaults for the initial schema and runtime, not irreversible product constraints. A future change that alters a foundational invariant should be recorded as an ADR.
+These decisions resolve implementation questions left open by the foundational data model. They are defaults for the initial schema/runtime. Accepted ADRs remain authoritative where they supersede this summary.
 
 ## 1. Credential encryption and key management
 
-**Decision:** encrypt provider credential payloads in the application layer using AES-256-GCM from Node's built-in `crypto` implementation.
+**Decision:** encrypt runtime/provider credential payloads in the application layer using AES-256-GCM from Node's built-in `crypto` implementation.
 
-The deployment provides a 256-bit root encryption key through an environment variable or mounted secret. Ciphertext rows store a key identifier/version, random nonce/IV, authentication tag, and ciphertext. Secrets are never stored in ordinary connection `config` JSON and are never returned through general connection APIs.
+The deployment provides a 256-bit root encryption key/keyring through environment or mounted-secret bootstrap configuration. Ciphertext rows store key version, random nonce/IV, authentication tag, and ciphertext. Secrets never live in ordinary connection/settings JSON and are never returned through general APIs.
 
-The credential service is the only application component that directly encrypts/decrypts secret payloads. Provider adapters request credentials through that service.
+The credential/secret service is the only application boundary that directly encrypts/decrypts plaintext. Provider adapters and other infrastructure request secrets through that service.
 
-Key rotation is explicit: a new key becomes active for writes; existing credentials can be re-encrypted in a controlled migration/job while old key versions remain available for reads until rotation is complete.
+Key rotation is explicit: a new key becomes active for writes; existing credentials/secrets can be re-encrypted through a controlled durable job while old key versions remain available for reads until rotation completes.
 
-Why not PostgreSQL `pgcrypto`: Loxep must ultimately present the plaintext token to an external provider API, and keeping encryption/key handling at the application boundary gives generic self-hosted deployments a clearer secret-management and rotation story.
+Why not PostgreSQL `pgcrypto`: Loxep ultimately has to present plaintext credentials to external APIs. Keeping encryption/key handling at the application boundary gives self-hosted deployments a clearer secret-management and rotation story.
 
 ## 2. Authentication and authorization ownership
 
 **Decision:** Better Auth owns authentication, sessions, login-provider state, and deployment-level user roles. Loxep owns domain/resource authorization.
 
-Use Better Auth's current Admin/access-control capabilities for deployment roles such as:
+Use Better Auth's current Admin/access-control capabilities for deployment roles such as `admin` and `member`. Do not create a parallel Loxep global-role table merely to duplicate them.
 
-- `admin`
-- `member`
+Loxep-owned relations model business/resource permissions. For example, `connection_users` expresses that one user may `owner`, `manage`, or `view` a specific eBay/WooCommerce connection while another cannot.
 
-Do not create a parallel Loxep `user_roles` table merely to duplicate those global roles.
-
-Loxep-owned relations still model permissions that are business/domain data rather than authentication-system concerns. For example, `connection_users` expresses that one user may `owner`, `manage`, or `view` a specific eBay/WooCommerce connection while another user cannot access it.
+Application users, provider accounts/connections, and future economic/legal entity ownership remain separate concepts.
 
 ## 3. Monetary representation
 
-**Decision:** use PostgreSQL fixed-precision `numeric`, never floating point and not a universal minor-unit integer representation.
+**Decision:** use PostgreSQL fixed-precision `numeric`, never floating point and not one universal minor-unit integer representation.
 
-Initial operational convention:
+Initial convention:
 
 ```text
 amount       numeric(20,6)
 currency     char(3)
 ```
 
-Six fractional decimal places preserve provider precision, shipping/fee allocations, exchange-rate-derived values, and future cost allocation without requiring every amount to be rounded prematurely to a currency's display exponent.
+Application code must not convert persisted money to JavaScript `number` for arithmetic. Drizzle should expose monetary numerics without precision loss and the domain layer should use a verified exact-decimal implementation.
 
-Application code must not convert persisted money to JavaScript `number` for arithmetic. Drizzle should expose monetary numerics as strings and the domain layer should use an exact decimal implementation for calculations.
-
-Display and settlement rounding occur according to the currency/provider/accounting context, not implicitly at storage time.
+Display/settlement rounding belongs to the currency/provider/accounting context rather than storage.
 
 ## 4. Timescale observation policy
 
@@ -54,21 +47,21 @@ Display and settlement rounding occur according to the currency/provider/account
 
 Initial physical policy:
 
-- partition column: `observed_at`;
-- initial chunk interval: **7 days**;
-- recent chunks remain in the rowstore;
-- enable current Hypercore/columnstore features for older observation data;
-- initial columnstore policy target: **30 days**;
-- segment primarily by `marketplace_item_id` and order by `observed_at DESC` where supported by the deployed Timescale version;
-- **no automatic retention/deletion policy by default**.
+- partition column `observed_at`;
+- 7-day chunks as a starting point;
+- recent chunks remain rowstore;
+- use current Hypercore/columnstore features for older observations;
+- initial columnstore policy target around 30 days;
+- segment primarily by `marketplace_item_id` and order by `observed_at DESC` where supported;
+- no automatic retention/deletion policy by default.
 
-The 7-day interval is a starting value, not a performance promise. Chunk sizing should be revisited after real ingestion volume exists. Exact migration/API syntax must be verified against the current supported Timescale release immediately before implementation.
+Exact migration syntax must be verified against the current supported Timescale release immediately before implementation.
 
 ## 5. Observation connection provenance
 
 **Decision:** keep nullable `connection_id` on marketplace observations.
 
-When an observation came from an authenticated provider connection, record that connection even when the listing itself is public. Account context can affect availability, shipping, location, marketplace behavior, and fields returned by the provider.
+When an observation came from an authenticated provider connection, record it even when the listing itself is public. Account context can affect availability, shipping, location, provider behavior, and returned fields.
 
 Canonical marketplace-item identity remains independent of connection identity.
 
@@ -76,23 +69,21 @@ Canonical marketplace-item identity remains independent of connection identity.
 
 **Decision:** treat source events and provider-object snapshots differently.
 
-`source_events` are provenance/replay records and should be retained by default unless a user explicitly configures a retention policy for a provider/event class.
+`source_events` are provenance/replay records and are retained by default unless the user explicitly configures an appropriate retention policy.
 
-`provider_objects` are debugging/synchronization snapshots. For object types where history is useful, keep changed snapshots and deduplicate identical payloads by hash. High-frequency polling must not dump a complete provider JSON response every minute when a narrow observation row already preserves the useful state.
-
-Initial cleanup policy for historical provider-object snapshots should be configurable and conservative. No destructive cleanup should be enabled until the ingestion implementation identifies which object classes are safely reconstructable.
+`provider_objects` are debugging/synchronization snapshots. Where history is useful, keep changed snapshots and deduplicate identical payloads by hash. High-frequency polling must not dump a full provider JSON response every minute when a narrow observation row already preserves the useful state.
 
 ## 7. Enum/state strategy
 
 **Decision:** do not use PostgreSQL enum types for application/domain states initially.
 
-Use `text` columns with application-owned TypeScript constants/unions. Add database `CHECK` constraints for stable closed state sets where database enforcement materially helps.
+Use text columns with application-owned TypeScript constants/unions. Add database `CHECK` constraints for stable closed sets where database enforcement materially helps.
 
-Provider identifiers, connection providers, integration-specific object types, and other intentionally extensible identifiers remain text without a database enum.
+Provider identifiers and intentionally extensible values remain text without a DB enum.
 
 ## 8. User/configuration audit model
 
-**Decision:** add a separate append-oriented `audit_events` model for user-initiated and administrative changes.
+**Decision:** use a separate append-oriented `audit_events` model for user-initiated and administrative changes.
 
 Logical fields:
 
@@ -109,56 +100,28 @@ request_id      text nullable
 metadata        jsonb nullable
 ```
 
-Audit serialization must redact secrets and sensitive credential material before persistence.
+Audit serialization must redact secrets and sensitive credential material.
 
-`audit_events` is distinct from `source_events`:
-
-- `source_events` explain what an external provider told Loxep;
-- `audit_events` explain what a user/system administrator changed in Loxep.
-
-System-generated domain events such as `restocked` or `price_changed` remain in their owning domain and are not shoved into the audit table.
+`audit_events` is distinct from `source_events`: external provider provenance and Loxep user/admin changes are different concerns. System-generated domain events such as `restocked` remain in their owning domain.
 
 ## 9. Media and object storage
 
-**Decision:** do not use PostgreSQL as the normal storage layer for images, PDFs, receipts, attachments, product media, or other potentially large binary objects.
+**Decision:** do not use PostgreSQL as the normal byte store for images, PDFs, receipts, attachments, product media, or other potentially large binary objects.
 
-PostgreSQL stores metadata, ownership, hashes, MIME type, size, and relationships. File bytes go through a storage abstraction with at least two drivers:
+PostgreSQL stores stable identity, metadata, hashes, MIME type, size, relationships, and configured storage backend. Bytes go through a storage abstraction with at least:
 
-- `local`: filesystem-backed storage for the smallest deployment with no additional service;
-- `s3`: standard S3-compatible object storage for production/shared deployments.
+- `local`: filesystem-backed zero-extra-service storage;
+- `s3`: standard S3-compatible object storage.
 
-**RustFS is the initial recommended/tested self-hosted S3 companion.** It runs as a separate service/container but may be supplied as an optional profile in Loxep's Compose project. Loxep's application contract remains generic S3, so Garage, SeaweedFS S3, hosted S3 services, and future alternatives can replace RustFS without a domain-schema redesign.
+RustFS is the initial recommended/tested self-hosted S3 companion. It remains a separate optional service and a conformance target rather than a domain dependency.
 
-Logical metadata resembles:
-
-```text
-media_objects
-  id
-  storage_backend
-  storage_key
-  original_filename
-  mime_type
-  size_bytes
-  sha256
-  created_by_user_id
-  created_at
-
-media_links
-  media_object_id
-  resource_type
-  resource_id
-  purpose
-```
-
-Do not store public bucket URLs as canonical identity. Generate access URLs from the configured backend.
-
-Local-to-S3 migration is a product feature: resumable copy, verification, metadata cutover only after verification, retry, reporting, and explicit delayed source cleanup.
+Storage backends are application records so local-to-S3 and S3-to-S3 migration can be represented. Migration is a product workflow: resumable copy, verification, metadata cutover only after verification, retry/reporting, and delayed explicit source cleanup.
 
 ## 10. Process and container topology
 
 **Decision:** a worker runtime is an architectural capability, not a mandatory separate container.
 
-Build one Loxep application image with explicit runtime modes:
+Build one Loxep application image with:
 
 ```text
 LOXEP_MODE=all
@@ -166,39 +129,28 @@ LOXEP_MODE=web
 LOXEP_MODE=worker
 ```
 
-`all` is the default initial self-hosted profile. It runs the web runtime and Graphile Worker in the same Loxep container. They do not need to share one event loop; implementation may use clean sibling Node processes or another lifecycle arrangement that preserves a single application container.
-
-Larger deployments can run the same image as independent `web` and `worker` services/processes on one or more hosts. Because jobs are durable in PostgreSQL/Graphile Worker, splitting workers later does not require redesigning the job model.
-
-A dedicated worker becomes useful when background work needs independent resources, concurrency, restarts, or host placement. It should not be required merely for conceptual purity.
+`all` is the default initial self-hosted profile. Larger deployments can run the same image as independent web/worker services or hosts. Graphile Worker coordinates through PostgreSQL, so splitting workers later does not require a new queue architecture.
 
 ## 11. UI/dashboard starting point
 
-**Decision:** use Kiranism's TanStack Start dashboard as Loxep's initial UI shell/donor rather than building common dashboard presentation infrastructure from scratch.
+**Decision:** use Kiranism's TanStack Start dashboard as Loxep's initial UI donor/reference rather than rebuilding common dashboard presentation infrastructure from scratch.
 
-Adopt/adapt:
+This is now implemented in `apps/web`:
 
-- responsive application shell;
-- sidebar/header/navigation;
-- multi-theme/tweakcn theme system;
-- shadcn/Base UI composition;
-- useful TanStack Table/Form/Query patterns;
-- command palette and application-state patterns.
+```text
+/dashboard/*    real Loxep dashboard workspace
+/starter/*      preserved donor/reference workspace
+```
 
-Do not blindly inherit:
+The shared shell is workspace-aware and sidebar/Cmd+K navigation derive from the active workspace. Future major product surfaces are peer workspace roots rather than children of `/dashboard`.
 
-- demo data or domain model;
-- starter auth/backend implementation;
-- unnecessary dependencies;
-- broad Zustand usage;
-- starter charting choices where Loxep needs denser analytical visualization;
-- dependency versions without current upstream verification.
+Keep/adapt useful shell, themes, shadcn/Base UI, tables, forms, Recharts, DnD, notification, command, and application-state patterns. Replace donor authentication/backend/data assumptions on real product routes.
 
-The starter supplies presentation acceleration; Loxep ADRs remain authoritative for architecture.
+Zustand is retained as an available narrow UI-state tool under ADR-0011, not as a second server-state store. Recharts remains useful for ordinary charts; ECharts can be added when dense analytical views justify it.
 
 ## 12. External companion-resource links
 
-**Decision:** establish generic external resource/link records early so future integrations with knowledge, task, billing, and other specialist platforms do not require provider-specific ID columns in every domain.
+**Decision:** establish generic external resource/link records early so integrations with knowledge, task, billing, backup, and other specialist platforms do not require provider-specific ID columns in every domain.
 
 The foundation uses concepts equivalent to:
 
@@ -207,14 +159,25 @@ external_resources
 resource_links
 ```
 
-Provider adapters may add richer operations, but Loxep domain records should be able to link to Outline documents, Vikunja tasks/projects, AFFiNE pages, GitHub issues, Invoice Ninja objects, or future systems through the same relationship model.
+Provider adapters may add richer operations, but Loxep records should be able to link to Outline/AFFiNE documents, Vikunja tasks/projects, GitHub issues, Invoice Ninja objects, and future systems through the same relationship model.
 
-# Resulting first-schema direction
+## 13. Runtime configuration and secret ownership
 
-These choices allow the first migrations and application scaffold to proceed with clear defaults around:
+**Decision:** environment/mounted-secret configuration is for bootstrap/deployment facts; normal runtime/provider settings are database-backed and managed in-app.
+
+Bootstrap configuration includes only values needed before PostgreSQL-backed administration or login can function: database connectivity, runtime mode, canonical auth origin, Better Auth secret, the external encryption root/keyring, at least one initial OIDC and/or SMTP magic-link path, first-admin/recovery information, and genuine deployment topology.
+
+Normal configuration such as eBay/provider credentials, ntfy settings, storage selection/non-secret S3 settings, S3 credentials, monitor defaults, and later integration tokens belongs in PostgreSQL. Sensitive runtime values are encrypted through the credential/secret service.
+
+This is formalized by ADR-0016 and [Configuration & Secrets](./configuration-and-secrets/).
+
+## Resulting first-schema direction
+
+These choices allow implementation to proceed with clear defaults around:
 
 - Better Auth authentication/global roles vs Loxep resource authorization;
-- provider-secret protection;
+- database-backed runtime settings plus external bootstrap configuration;
+- application-encrypted provider/runtime secrets and key rotation;
 - exact money persistence;
 - Timescale observation aging;
 - provider/account provenance;
@@ -223,7 +186,7 @@ These choices allow the first migrations and application scaffold to proceed wit
 - user/configuration auditing;
 - local/S3 media storage and migration;
 - simple vs split runtime deployment;
-- UI starter adoption;
+- workspace-aware donor UI adoption;
 - generic companion-resource relationships.
 
 Implementation work must verify the exact current APIs and supported syntax of PostgreSQL, TimescaleDB, Drizzle, Better Auth, Graphile Worker, TanStack Start, storage dependencies, and runtime dependencies immediately before pinning versions or writing migrations, per the project dependency/version policy.
