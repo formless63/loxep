@@ -12,9 +12,9 @@ The UI shell portion of Phase 0 has already begun: `apps/web` exists, the dashbo
 loxep/
 ├── apps/
 │   ├── web/                  # TanStack Start application + runtime entrypoints
-│   └── docs/                 # Astro Starlight
+│   └── docs/                 # current docs source/renderer
 ├── packages/                 # add only when real ownership/reuse warrants them
-│   ├── auth/                 # likely Better Auth config + domain auth helpers
+│   ├── auth/                 # likely Better Auth config + auth helpers
 │   ├── config/               # typed bootstrap/runtime configuration helpers
 │   ├── db/                   # Drizzle schema, migrations, database client
 │   ├── domain/               # shared domain primitives/contracts where justified
@@ -81,9 +81,26 @@ Secret inputs used at bootstrap should support mounted-file/Docker-secret style 
 - Drizzle migration workflow.
 - UUID and timestamp conventions established.
 - Timescale extension enabled by migration/bootstrap.
-- Initial tables limited to foundation/auth/connections/settings/events/monitoring/media/external-resource links needed for early vertical slices.
+- Initial tables limited to foundation/auth/economic-entities/connections/settings/events/monitoring/media/external-resource links needed for early vertical slices.
 - No speculative full accounting/commerce/project schema in Phase 0.
 - Integration tests use real PostgreSQL/Timescale semantics.
+
+### Economic entities
+
+Phase 0 includes minimal `economic_entities` because one installation may contain personal activity and multiple business/operating identities even though it is not multi-tenant.
+
+The foundation must support:
+
+- individual/personal contexts;
+- sole proprietorships and companies;
+- assumed-name/DBA or operating identities beneath another entity;
+- nullable attribution from a provider connection to an economic entity;
+- entity records that are not permission containers;
+- future accounting books that remain a separate concept.
+
+Do not create accounting books yet. More than one economic entity/operating identity may later share one book and chart of accounts, with activity separated through accounts or accounting dimensions. Do not bake a one-entity-one-book assumption into Phase 0.
+
+See ADR-0017.
 
 ### Jobs
 
@@ -104,12 +121,16 @@ Polling uses database-controlled scheduling. Do not create one recurring cron en
 - Generic OIDC configuration with Pocket ID as an intended tested provider.
 - Magic-link authentication.
 - Password login disabled initially.
-- Better Auth owns deployment-level roles such as `admin` and `member`.
+- Better Auth owns deployment-level roles `admin` and `member`.
+- `member` has ordinary product access across the installation.
+- `admin` adds installation/security/administrative capabilities where elevation is justified.
 - Concrete first-admin bootstrap and shell-level recovery path.
-- Application user and provider connection identities remain separate.
-- Loxep relations own resource-specific authorization such as connection `owner/manage/view` permissions.
+- Application users, economic entities, workspaces, and provider connections remain distinct identities.
+- No per-connection, per-workspace, or per-economic-entity ACL tables in Phase 0.
 
 At least one viable pre-login auth path must be available from bootstrap configuration. Do not build a permanent unauthenticated web backdoor for setup.
+
+Fine-grained resource authorization is a later extension if real shared-install workflows require it. Do not prebuild a speculative permissions matrix.
 
 ### Application settings and runtime secrets
 
@@ -146,6 +167,8 @@ Initial generic connection records represent configured external accounts/stores
 Credentials are encrypted in the application layer using AES-256-GCM with an externally supplied/versioned root key. Provider-specific non-secret metadata may use JSON where schema diversity is legitimate; frequently queried canonical fields remain relational.
 
 Creating and managing eBay and later Woo/Medusa connections is an authenticated in-app workflow, not a Compose-edit workflow.
+
+Connections may have nullable `economic_entity_id` where the account clearly represents one entity. That association is business context, not access control. `created_by_user_id` is audit/provenance metadata, not private ownership.
 
 ### Source events and raw provider objects
 
@@ -201,6 +224,7 @@ This can later represent Outline/AFFiNE documents, Vikunja tasks/projects, GitHu
 - Storage conformance tests against both `local` and S3-compatible targets.
 - Playwright for critical browser flows once product flows exist.
 - Type/lint/format/build checks.
+- Automated docs-link validation so broken internal links fail CI rather than relying on manual browsing.
 
 ### Deployment
 
@@ -232,8 +256,9 @@ No Redis, message broker, or separate analytical database is required.
 
 Do not build yet:
 
-- full accounting schema;
+- accounting books/full accounting schema;
 - full commerce/inventory/projects implementation merely because the domain map exists;
+- per-resource/per-entity RBAC or a generic ACL engine;
 - universal marketplace abstraction;
 - generic workflow engine;
 - plugin marketplace/runtime;
@@ -255,16 +280,17 @@ Phase 0 is complete when a fresh clone can:
 3. migrate PostgreSQL/TimescaleDB from zero;
 4. start Loxep in default `all` mode;
 5. start the same image successfully in separate `web` and `worker` modes;
-6. authenticate through at least one supported login path and enforce deployment roles;
+6. authenticate through at least one supported login path and enforce `admin`/`member` deployment roles;
 7. bootstrap/recover an administrator without manual SQL or a default password;
-8. read/write validated database-backed application settings and encrypted application/runtime secrets;
-9. create/read an authorized external connection through a minimal internal flow;
-10. enqueue and execute a durable Graphile Worker job;
-11. upload/read/delete media through the local storage driver;
-12. run the same storage contract against an S3-compatible target, initially RustFS;
-13. prove a resumable local-to-S3 migration path;
-14. expose useful database/job/storage/integration health and structured logs;
-15. run automated tests and type/lint/format checks;
-16. build the documentation and application reproducibly in CI.
+8. create/read/update a minimal economic entity and represent a parent/assumed-name relationship;
+9. read/write validated database-backed application settings and encrypted application/runtime secrets;
+10. create/read an external connection and optionally attribute it to an economic entity;
+11. enqueue and execute a durable Graphile Worker job;
+12. upload/read/delete media through the local storage driver;
+13. run the same storage contract against an S3-compatible target, initially RustFS;
+14. prove a resumable local-to-S3 migration path;
+15. expose useful database/job/storage/integration health and structured logs;
+16. run automated tests and type/lint/format checks;
+17. build the documentation/application reproducibly and validate internal documentation links in CI.
 
 Only then should Phase 1 eBay monitoring become the primary implementation focus.
