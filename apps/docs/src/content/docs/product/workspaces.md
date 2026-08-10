@@ -4,7 +4,7 @@ title: Workspaces & Navigation
 
 Workspaces are Loxep's **top-level user-interface navigation surfaces**. They prevent one enormous sidebar from accumulating every feature in the product while allowing each major area to present navigation that fits the task at hand.
 
-A workspace is **not** a database schema, microservice, tenancy boundary, or domain-ownership boundary. Backend ownership remains defined by [Domain Boundaries](../../architecture/domain-boundaries/). A workspace may compose data and operations from several domains.
+A workspace is **not** a database schema, microservice, tenancy boundary, permission boundary, economic entity, or domain-ownership boundary. Backend ownership remains defined by [Domain Boundaries](../../architecture/domain-boundaries/). A workspace may compose data and operations from several domains.
 
 ## Current shell
 
@@ -71,10 +71,10 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 | **Customers** | `/customers` | people, organizations, contacts, addresses/sites, operational history, terms/tax metadata |
 | **Projects** | `/projects` | jobs/projects, tasks/milestones, time, materials, expenses, service delivery, subscriptions/recurring services |
 | **Finance** | `/finance` | billing/AR, expenses/AP, payments, marketplace payouts/fees, banking, reconciliation, accounting, tax-oriented reporting |
-| **Settings** | `/settings` | users/access, connections, integrations, notifications, storage, application settings, secret status/rotation, health/diagnostics |
+| **Settings** | `/settings` | users/admin, economic entities, connections/integrations, notifications, storage, application settings, secret status/rotation, health/diagnostics |
 | **Starter Reference** | `/starter` | preserved donor demos and UI patterns; development/reference use rather than product data |
 
-Not every proposed workspace needs to be implemented during Phase 0. The value of defining the map now is to keep route structure, sidebar architecture, permissions, and future deep links from assuming that Dashboard owns everything.
+Not every proposed workspace needs to be implemented during Phase 0. The value of defining the map now is to keep route structure and future deep links from assuming that Dashboard owns everything.
 
 ## Cross-cutting capabilities
 
@@ -103,7 +103,7 @@ Dashboard  ▾
 
 Switching workspaces navigates to that workspace's configured default route. Deep-linking directly into a workspace must select the correct workspace automatically from the URL.
 
-The switcher should eventually filter or disable workspaces based on real authorization/capability rules, but it must not equate a workspace with an external provider connection or legal/economic entity.
+The initial `admin`/`member` model does not require workspace filtering: trusted members have ordinary product access across the installation. The switcher can later filter/disable workspaces if real authorization/capability rules are introduced, but it must never equate a workspace with a provider connection, economic entity, or accounting book.
 
 ## Navigation configuration
 
@@ -167,9 +167,9 @@ A later production build may hide or omit the Starter Reference workspace while 
 ## Implementation constraints
 
 1. Do not nest new major product workspaces beneath `/dashboard`.
-2. Do not treat workspace boundaries as backend/domain ownership boundaries.
+2. Do not treat workspace boundaries as backend/domain ownership, permission, economic-entity, or accounting-book boundaries.
 3. Sidebar and command palette must derive from the same active-workspace configuration.
 4. Preserve stable route roots once real product deep links are in use.
-5. Keep the workspace switcher independent of application user identity, provider account identity, and future economic/legal entity ownership.
+5. Keep the workspace switcher independent of application user identity, provider account identity, economic-entity identity, and accounting-book identity.
 6. Persist durable user customization in PostgreSQL rather than relying only on browser-local state.
 7. Keep `/starter` isolated from production data and Loxep domain services unless a demo is deliberately converted into a real product feature.
