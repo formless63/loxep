@@ -6,40 +6,40 @@ title: Companion Services and Recommended Stack
 
 Loxep is intended to become a broad business-operations platform, but it should not delay useful capability by rebuilding mature specialist software prematurely.
 
-The project therefore distinguishes three relationships with external self-hosted tools:
+The project distinguishes three relationships with external tools:
 
 1. **First-class integrations** — Loxep exchanges structured data, health state, links, events, or actions with the external service.
 2. **Recommended companions** — a well-suited tool that solves an adjacent problem and is documented as part of a practical deployment pattern.
-3. **Optional implementation references** — projects whose ideas or workflows inform future Loxep-native functionality without being runtime dependencies.
+3. **Implementation references** — projects whose ideas/workflows inform future Loxep-native functionality without becoming runtime dependencies.
 
 Companion software remains independently deployed and independently licensed. Loxep's MIT license does not imply that every recommended companion is MIT-licensed.
+
+Because companion projects evolve quickly, API/version/licensing claims must be reverified against current upstream sources before implementation or before publishing a version-specific deployment template.
 
 ## Knowledge, documentation, and notes
 
 ### Outline
 
-**Role:** recommended knowledge-base integration candidate.
-
-Outline has a broad authenticated API that exposes the same application capabilities used by its own frontend. That makes it attractive for linking Loxep customers, projects, products, procedures, and other records to canonical documentation or for creating/updating documents through automation.
-
-Outline is currently BSL 1.1, not OSI open source. It can still be supported as an independent external integration; Loxep should not bundle or redistribute Outline as though it were an MIT component.
+**Role:** strong knowledge-base integration candidate.
 
 Potential Loxep integration:
 
-- attach an Outline document/collection URL to any supported Loxep entity;
-- create a document from a project/customer/product template;
-- surface backlinks from Loxep to relevant operational records;
-- optionally synchronize selected metadata rather than copying document content into Loxep.
+- attach an Outline document/collection to any supported Loxep entity;
+- create documents from project/customer/product templates;
+- surface backlinks from knowledge documents to operational records;
+- synchronize selected metadata rather than copying document content into Loxep.
+
+Outline remains independently deployed. Its current license/API behavior must be checked before implementation; Loxep should never treat an external companion's license as inherited from Loxep.
 
 ### AFFiNE
 
-**Role:** recommended evaluation candidate for users wanting a more open, canvas/document-oriented workspace.
+**Role:** evaluation candidate for users wanting a more open canvas/document-oriented workspace.
 
-AFFiNE Community Edition is MIT-licensed and combines documents, whiteboards/canvas, tables, and knowledge-management concepts. Integration should wait on a stable, supported API surface rather than relying on internal implementation endpoints.
+Potential value includes documents, whiteboards/canvas, tables, and knowledge-management workflows. A first-class adapter should wait for a stable supported external API rather than relying on undocumented internal endpoints.
 
 ### Generic external resources
 
-Loxep should not require a bespoke schema change for each documentation provider. A generic external-resource relationship can eventually support URLs/references such as:
+Loxep should not require a bespoke schema change for each documentation or work-management provider. The foundation includes generic relationships:
 
 ```text
 external_resources
@@ -59,7 +59,7 @@ resource_links
   purpose
 ```
 
-Provider-specific adapters can then add richer actions where APIs permit them.
+Provider-specific adapters can add richer actions where APIs permit them.
 
 ## Task and project management
 
@@ -67,19 +67,17 @@ Provider-specific adapters can then add richer actions where APIs permit them.
 
 **Role:** recommended early task-management companion and strong first integration candidate.
 
-Vikunja is self-hostable and AGPL-licensed. Its current v2 API uses standard REST semantics and publishes an OpenAPI 3.1 specification; it also supports webhooks, API tokens, OIDC, and a single deployable container.
-
-This makes it a practical way to gain mature task/project capability before Loxep's native Projects/Tasks domains are complete.
+Vikunja is a practical way to gain mature task/project capability before Loxep's native Projects/Tasks domains are complete.
 
 Potential Loxep integration:
 
 - link Loxep projects/customers/orders to Vikunja projects/tasks;
 - create tasks from Loxep events or workflows;
-- consume webhook updates for task completion/status;
+- consume supported webhook/API updates for task completion/status;
 - show related task counts/status in Loxep without duplicating the entire task model;
 - provide a later migration/import path if native Loxep task management eventually supersedes it.
 
-The integration boundary should preserve the option for other task systems later rather than making Vikunja IDs first-class columns throughout Loxep.
+The integration boundary must preserve other task systems later rather than placing Vikunja-specific IDs throughout domain tables.
 
 ## Billing and customer-facing invoicing
 
@@ -87,31 +85,58 @@ The integration boundary should preserve the option for other task systems later
 
 **Role:** recommended companion and initial billing/delivery surface.
 
-Loxep can own customers, projects, subscriptions, billable facts, and eventually accounting while Invoice Ninja continues to provide mature invoice delivery, recurring billing, PDFs, payment links, reminders, and customer-facing workflows until replacing those capabilities is justified.
+Loxep can own customers, projects, subscriptions, billable facts, and eventually accounting while Invoice Ninja provides mature invoice delivery, recurring billing, PDFs, payment links, reminders, and customer-facing workflows until replacing those capabilities is justified.
 
-The long-term goal is not to make Loxep permanently dependent on Invoice Ninja, but to avoid blocking useful service/business functionality on rebuilding a mature invoicing product.
+The long-term goal is not permanent dependency; it is to avoid blocking useful service/business functionality on rebuilding a mature invoicing product too early.
 
 ## Notifications
 
 ### ntfy
 
-**Role:** first-class integration.
+**Role:** first-class integration and initial default notification adapter.
 
-ntfy's HTTP publish API makes it a natural default notification provider for Loxep. Self-hosted ntfy also exposes subscription APIs and access-control capabilities.
-
-Initial integration should focus on a user-supplied ntfy endpoint/topic/token rather than requiring Loxep to administer the ntfy server. Server-management capabilities can be added later if a stable API and real user need justify them.
+Initial integration should focus on a user-supplied ntfy endpoint/topic/token. Loxep does not need to administer the ntfy server merely to publish useful notifications. Server-management capabilities can be added only if current supported APIs and real user needs justify them.
 
 ## Object storage
 
+Loxep itself owns the storage abstraction, media metadata, and migration workflow. The object-storage implementation remains replaceable.
+
+### RustFS
+
+**Role:** initial recommended/tested self-hosted S3 companion.
+
+The smallest Loxep deployment can use local filesystem storage with no object-storage service. When object storage is desired, official Loxep Compose examples should offer RustFS as an **optional separate service/profile** in the same stack.
+
+```text
+minimal:
+  loxep
+  postgres-timescale
+
+with object storage:
+  loxep
+  postgres-timescale
+  rustfs
+```
+
+RustFS is deliberately not embedded into the Loxep container. It has an independent storage/runtime/upgrade lifecycle, while the Compose project can still make the combined deployment simple to manage.
+
+Loxep integrates through generic S3 semantics, not RustFS-specific object identity. Local -> RustFS and RustFS -> another S3 backend must not require domain-schema changes.
+
 ### Garage
 
-**Role:** recommended S3-compatible self-hosted storage companion.
+**Role:** supported/recommended alternative for operators who value its distributed/multi-site self-hosting design.
 
-Garage is an S3-compatible, lightweight object store designed for small-to-medium self-hosted deployments and is licensed AGPLv3.
+Garage remains a useful future pivot because Loxep's contract is S3 compatibility. It is not the initial backend Loxep plans to test/document most heavily.
 
-Loxep should integrate through standard S3 semantics rather than a Garage-specific API. This preserves compatibility with AWS S3, Cloudflare R2, Backblaze B2 S3, and other S3-compatible implementations.
+### SeaweedFS
 
-The smallest Loxep deployment can use local filesystem media storage; Garage becomes a recommended profile once shared/durable object storage is desirable.
+**Role:** advanced alternative for users who need a broader distributed storage/filesystem platform.
+
+SeaweedFS provides substantially more than Loxep needs for ordinary media storage. It may be attractive to operators who already want its wider storage, filesystem, replication, or tiering capabilities.
+
+### Hosted/other S3-compatible storage
+
+AWS S3, Cloudflare R2, Backblaze B2 S3, and other sufficiently compatible implementations should remain viable through the same `s3` driver. Provider-specific optimizations may be optional capability layers; they must not replace the portable baseline.
 
 ## Backup and recovery
 
@@ -119,9 +144,9 @@ Backup tooling is operational infrastructure, not a feature Loxep should reinven
 
 ### Databasus
 
-**Role:** recommended PostgreSQL backup companion; candidate for first-class backup-health integration.
+**Role:** recommended PostgreSQL backup companion; strong candidate for first-class backup-health integration.
 
-Databasus supports PostgreSQL backups, GFS retention, multiple storage targets, encryption, restore-oriented features, and webhook notifications. Loxep should provide a documented configuration/template for backing up its PostgreSQL/Timescale database.
+Loxep should provide a documented configuration/template for PostgreSQL/Timescale backups with retention and off-host storage appropriate to the deployment.
 
 A useful first integration is inbound backup-health reporting:
 
@@ -130,25 +155,22 @@ Databasus success/failure webhook
             ↓
 Loxep integration endpoint
             ↓
-backup status / last verified backup
+backup status / last successful evidence
             ↓
 health dashboard + ntfy alert if stale
 ```
 
-Loxep should not claim a backup is healthy merely because a schedule exists; integrations should favor evidence of successful and ideally verified backups/restores.
+Loxep should not claim a backup is healthy merely because a schedule exists. Integration health should favor evidence of successful backups and, where available, restore verification.
 
 ### Backrest / restic
 
-**Role:** recommended file/object-configuration backup companion.
+**Role:** recommended file/config/object-backup companion.
 
-Backrest provides a web UI and orchestration layer over restic, including scheduling, repository maintenance, snapshot browsing/restores, hooks, and many storage backends.
+Use this class of tooling for Loxep's local media/configuration volumes and surrounding self-hosted infrastructure. Deployment guidance should distinguish:
 
-It is appropriate for protecting Loxep media/configuration volumes and other self-hosted infrastructure outside the PostgreSQL database.
-
-A deployment guide should distinguish:
-
-- database-consistent PostgreSQL/Timescale backups (Databasus or equivalent);
-- file/object/config backups (restic/Backrest or equivalent);
+- database-consistent PostgreSQL/Timescale backups;
+- file/config/local-media backups;
+- object-store backup/replication appropriate to the selected backend;
 - off-host/off-site copies;
 - restore testing.
 
@@ -165,9 +187,10 @@ Initial recommended-tool categories include:
 - **private networking/VPN:** Tailscale;
 - **notifications:** ntfy;
 - **database backups:** Databasus;
-- **file/config backups:** Backrest/restic.
+- **file/config backups:** Backrest/restic;
+- **object storage:** RustFS initially, with Garage/SeaweedFS/hosted S3 alternatives.
 
-These recommendations should have copyable examples and compatibility notes, but remain optional. Loxep should run using ordinary Docker/Compose and standard networking/storage primitives without requiring any of them.
+These recommendations should eventually have copyable templates and compatibility notes, but remain optional. Loxep must run using ordinary Docker/Compose and standard networking/storage primitives without requiring the surrounding toolkit.
 
 ## Integration health as a Loxep feature
 
@@ -190,11 +213,12 @@ Examples:
 - last successful eBay synchronization;
 - last successful Databasus backup webhook;
 - ntfy publish test;
-- object-storage read/write test;
+- RustFS/S3 read-write health test;
 - Invoice Ninja API connectivity;
-- Vikunja API/webhook connectivity.
+- Vikunja API/webhook connectivity;
+- linked documentation/task platform connectivity.
 
-This turns the integrations page into a practical operational dashboard while keeping the specialist applications independently deployable.
+This turns the integrations page into a practical operational dashboard while keeping specialist applications independently deployable.
 
 # Guiding rule
 
