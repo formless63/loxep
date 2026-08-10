@@ -2,38 +2,46 @@
 title: Roadmap
 ---
 
-# Roadmap
-
-The master domain map describes the territory. This roadmap deliberately does not attempt to build all of it at once.
+The [Master Domain Map](./master-domain-map/) describes the territory. This roadmap deliberately does not attempt to build all of it at once.
 
 ## Phase 0 — Foundation and decisions
 
-Goal: create a repository and architecture that can support the first useful vertical slice without prematurely implementing future domains.
+Goal: finish the platform foundation required for the first useful vertical slice without prematurely implementing future domains.
 
-- Finalize initial stack decisions and ADRs.
-- Use Kiranism's TanStack Start dashboard as the initial UI shell/donor, while replacing its demo backend/auth/data assumptions.
-- Establish the Bun workspace/monorepo structure.
-- Establish PostgreSQL + TimescaleDB development environment.
-- Establish Drizzle migrations and database conventions.
-- Establish Graphile Worker runtime and job conventions.
-- Ship one Loxep image with `LOXEP_MODE=all|web|worker`; `all` is the default self-hosted deployment.
-- Establish TanStack Start application shell, routing, Query/Table/Form patterns, shadcn/Base UI, and theme system.
-- Establish Better Auth with generic OIDC, Pocket ID as a tested provider, magic links, no passwords, and Better Auth-owned deployment roles.
-- Establish Loxep-owned per-resource authorization such as connection `owner/manage/view` access.
-- Establish connection/credential model and application-layer credential encryption.
-- Establish source-event/raw-provider-object conventions.
-- Establish media metadata and a `local`/generic-`s3` storage abstraction.
-- Make local-to-S3 media migration a resumable application workflow.
-- Provide RustFS as the initial recommended/tested optional S3 Compose companion without coupling Loxep to RustFS-specific APIs.
-- Establish generic external-resource links so Outline/Vikunja/AFFiNE/GitHub-style companion objects do not require provider-specific columns throughout future domains.
-- Establish logging, configuration, health checks, and tests.
-- Establish generic Docker Compose deployment and optional companion profiles.
-- Publish and continuously validate project documentation.
+Already established:
+
+- Bun workspace/monorepo with `apps/web` and `apps/docs`;
+- Kiranism TanStack Start dashboard integrated as the UI donor/reference;
+- `/starter/*` preserved for working UI examples;
+- real `/dashboard/*` workspace;
+- workspace-aware sidebar switcher and Cmd+K navigation;
+- product/architecture documentation and ADR process;
+- PostgreSQL + TimescaleDB, Drizzle, Graphile Worker, Better Auth, local/S3 storage, and runtime topology decisions.
+
+Remaining Phase 0 implementation work includes:
+
+- establish the PostgreSQL + TimescaleDB development/Compose environment;
+- establish Drizzle migrations and database conventions;
+- implement Graphile Worker runtime and job conventions;
+- ship one Loxep image with `LOXEP_MODE=all|web|worker`, with `all` as the default deployment;
+- implement Better Auth with generic OIDC, magic links, no passwords, and deployment roles;
+- implement concrete first-admin bootstrap and shell-level recovery;
+- implement database-backed application settings plus application-encrypted runtime secrets;
+- implement the generic connection/credential model and per-resource `owner/manage/view` access;
+- establish source-event/raw-provider-object conventions;
+- implement media metadata, storage-backend records, and the `local`/generic-`s3` abstraction;
+- prove resumable local-to-S3 migration with RustFS as the initial S3 conformance target;
+- establish generic external-resource links;
+- establish structured logging, health/readiness, redacted auditing, and tests;
+- establish generic Docker Compose deployment and optional companion profiles;
+- continuously validate both application and documentation builds.
+
+Normal runtime/provider settings should be configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before DB-backed administration or login is possible. See [Configuration & Secrets](../architecture/configuration-and-secrets/).
 
 The normal minimal deployment target is:
 
 ```text
-loxep                    # web + Graphile Worker
+loxep                    # web + Graphile Worker capability
 postgres-timescale
 ```
 
@@ -43,19 +51,22 @@ A media-heavy or expansion-ready deployment can add:
 rustfs                   # optional S3-compatible companion
 ```
 
+The exact future product workspace split is documented separately in [Workspaces & Navigation](./workspaces/). Major areas should be peer workspace roots rather than one enormous `/dashboard/*` tree.
+
 ## Phase 1 — Useful eBay monitor
 
 Goal: Loxep replaces manual checking and creates immediate daily value.
 
-- Connect an eBay account through supported authentication.
+- Create/manage an eBay connection in-app through supported authentication.
 - Import/synchronize watchlist membership.
 - Monitor watched listings around a configurable 60-second baseline within API constraints.
 - Monitor explicit item IDs.
 - Store listing observations in TimescaleDB.
 - Detect price, availability, quantity, and listing-state changes.
-- Configure ntfy.
+- Configure ntfy in-app.
 - Deliver useful notifications with direct listing links.
-- Basic web UI for connections, watches, current item state, events, runtime/job health, and integration health.
+- Market workspace UI for connections/monitors, watched items, current state, event history, and price/availability history where available.
+- Dashboard/Settings surfaces for runtime, job, storage, and integration health.
 
 ## Phase 2 — Search, sellers, and market intelligence
 
@@ -75,13 +86,17 @@ Goal: move from watchlist alerts to a personal market dataset.
 
 Goal: connect market intelligence to actual selling outcomes.
 
-- Normalize eBay sales/orders and related fees/fulfillment facts.
-- Add WooCommerce connection and order ingestion.
-- Add Medusa connection and order ingestion.
-- Establish internal catalog/SKU and channel-listing relationships.
-- Preserve provider-native source data.
-- Initial cross-channel order and profitability views.
-- Begin using media storage for product/listing assets where useful.
+Before broad commerce/financial schema work expands materially, finalize the explicit legal/economic-entity ownership model so personal and business activity can coexist without using application users, provider connections, or a SaaS tenant abstraction as a proxy for ownership.
+
+Then:
+
+- normalize eBay sales/orders and related fee/fulfillment facts;
+- add WooCommerce connection and order ingestion;
+- add Medusa connection and order ingestion;
+- establish internal catalog/SKU and channel-listing relationships;
+- preserve provider-native source data;
+- initial cross-channel order and profitability views;
+- begin using media storage for product/listing assets where useful.
 
 ## Phase 4 — Inventory, acquisition, and fulfillment
 
@@ -90,6 +105,7 @@ Goal: follow physical goods from acquisition through sale.
 - Acquisitions and inventory movements.
 - Cost basis.
 - Inventory locations.
+- Purchasing/vendors/receiving foundation where acquisition workflows need them.
 - Order allocations/depletion.
 - Shipments and tracking.
 - Actual outbound shipping costs.
@@ -99,7 +115,7 @@ Goal: follow physical goods from acquisition through sale.
 
 ## Phase 5 — Financial foundation
 
-Goal: create trustworthy financial facts without attempting to replace every accounting workflow immediately.
+Goal: create trustworthy financial facts without making the ledger the only representation of operational reality.
 
 - Expenses and flexible cost attribution.
 - Receipt/document attachments through the media layer.
@@ -144,6 +160,6 @@ Examples include:
 
 ## Later directions
 
-Potential later work includes purchasing/AP, landed-cost automation, richer shipping integrations, document/OCR workflows, fixed assets and mileage, direct listing synchronization, additional commerce providers, customer portals, deeper tax/reporting integrations, native task/project capabilities, and richer operational-health integrations.
+Potential later work includes richer purchasing/AP, landed-cost automation, shipping integrations, document/OCR workflows, fixed assets and mileage, direct listing synchronization, additional commerce providers, customer portals, deeper tax/reporting integrations, native task/project capabilities, and richer operational-health integrations.
 
-These should be pulled forward only when actual use exposes the need.
+These should be pulled forward only when actual use exposes the need. The domain map is territory, not a requirement to prebuild every subsystem.
