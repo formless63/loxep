@@ -2,17 +2,16 @@
 title: Foundation Schema Draft
 ---
 
-# Foundation Schema Draft
-
 This document turns the foundational data model into a concrete first-migration target. It remains implementation-oriented documentation until the exact current Drizzle, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, and related dependency versions are verified immediately before code generation.
 
-The application scaffold will use Kiranism's TanStack Start dashboard as a UI donor, but the schema and backend architecture described here are Loxep-owned and independent of the starter's demo data/backend choices.
+The UI donor/reference workspace does not own this schema. Backend architecture is Loxep-owned and independent of the starter's demo data/backend choices.
 
 ## Scope
 
 The first schema physically covers only:
 
 - Better Auth-owned authentication tables and deployment-level role support;
+- database-backed application settings and encrypted runtime secrets;
 - provider connections and Loxep resource access;
 - encrypted connection credentials;
 - provider/source provenance;
@@ -21,16 +20,61 @@ The first schema physically covers only:
 - Timescale-backed observations;
 - derived market events;
 - notifications;
-- media/object-storage metadata and migration state;
+- media/storage-backend metadata and migration state;
 - external-resource links;
 - user/configuration audit events;
 - Graphile Worker-owned job schema.
 
-No placeholder commerce/accounting/project tables are created yet.
+No placeholder full commerce/accounting/project tables are created yet.
 
-# Connection foundation
+## Application settings and runtime secrets
 
-## `connections`
+Normal runtime configuration should be manageable inside Loxep rather than encoded as environment variables. See [Configuration & Secrets](./configuration-and-secrets/) and ADR-0016.
+
+### `application_settings`
+
+```text
+key                   text primary key
+value                 jsonb not null
+schema_version        integer not null default 1
+updated_by_user_id    text null
+updated_at            timestamptz not null
+```
+
+This table is for genuinely application-level settings. It is **not** a substitute for proper domain tables: monitor settings belong with monitors, connection settings with connections, and feature-specific relational configuration with the feature that owns it.
+
+Settings are validated through a typed registry/domain service before persistence. Values requiring a restart should be exceptional and identified explicitly.
+
+### `application_secrets`
+
+```text
+id                    uuid primary key
+secret_key            text not null
+version               integer not null
+key_version           integer not null
+nonce                 bytea not null
+auth_tag              bytea not null
+ciphertext            bytea not null
+created_by_user_id    text null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+```
+
+Suggested uniqueness:
+
+```text
+unique(secret_key, version)
+```
+
+Use this for encrypted runtime secrets that are not naturally credentials of a provider connection, for example an S3 backend credential or a global notification-service token.
+
+The external root encryption key/keyring is bootstrap configuration and never lives in PostgreSQL. Plaintext values are available only through the narrow credential/secret service and are never returned through general settings APIs.
+
+Connection-specific credentials keep their own model because token expiry/refresh/version semantics are part of a connection lifecycle.
+
+## Connection foundation
+
+### `connections`
 
 ```text
 id                    uuid primary key
@@ -42,11 +86,11 @@ external_account_id   text null
 external_account_name text null
 config                 jsonb not null default '{}'
 created_by_user_id    text not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
-last_success_at        timestamptz null
-last_error_at          timestamptz null
-last_error_code        text null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+last_success_at       timestamptz null
+last_error_at         timestamptz null
+last_error_code       text null
 ```
 
 Indexes/constraints:
@@ -58,7 +102,9 @@ index(created_by_user_id)
 
 Do not globally enforce uniqueness of `external_account_id`; provider semantics differ. Provider-specific adapters may enforce stronger scoped uniqueness where reliable.
 
-## `connection_users`
+Provider connections are created and managed through authenticated Loxep workflows. They are not Compose environment entries.
+
+### `connection_users`
 
 ```text
 connection_id         uuid not null references connections(id)
@@ -71,7 +117,7 @@ check role in ('owner','manage','view')
 
 Deployment-wide `admin/member` roles remain Better Auth-owned. This relation represents Loxep resource authorization.
 
-## `connection_credentials`
+### `connection_credentials`
 
 ```text
 id                    uuid primary key
@@ -81,11 +127,11 @@ key_version           integer not null
 nonce                 bytea not null
 auth_tag              bytea not null
 ciphertext            bytea not null
-expires_at             timestamptz null
-refresh_after          timestamptz null
-version                integer not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
+expires_at            timestamptz null
+refresh_after         timestamptz null
+version               integer not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
 Suggested uniqueness:
@@ -96,9 +142,9 @@ unique(connection_id, credential_type, version)
 
 Only the credential service accesses plaintext credentials. The encryption implementation follows the accepted AES-256-GCM/key-versioning decision.
 
-# Provider provenance
+## Provider provenance
 
-## `source_events`
+### `source_events`
 
 ```text
 id                    uuid primary key
@@ -108,14 +154,14 @@ event_type            text not null
 external_event_id     text null
 external_object_type  text null
 external_object_id    text null
-occurred_at             timestamptz null
-received_at             timestamptz not null
-payload                jsonb not null
-payload_hash           text not null
-processing_status      text not null
-processing_attempts    integer not null default 0
-processed_at            timestamptz null
-last_error             text null
+occurred_at           timestamptz null
+received_at           timestamptz not null
+payload               jsonb not null
+payload_hash          text not null
+processing_status     text not null
+processing_attempts   integer not null default 0
+processed_at          timestamptz null
+last_error            text null
 ```
 
 Indexes:
@@ -133,7 +179,7 @@ unique(connection_id, provider, external_event_id)
 where external_event_id is not null
 ```
 
-## `provider_objects`
+### `provider_objects`
 
 ```text
 id                    uuid primary key
@@ -141,10 +187,10 @@ connection_id         uuid null references connections(id)
 provider              text not null
 object_type           text not null
 external_object_id    text not null
-fetched_at             timestamptz not null
-provider_updated_at    timestamptz null
-payload                jsonb not null
-payload_hash           text not null
+fetched_at            timestamptz not null
+provider_updated_at   timestamptz null
+payload               jsonb not null
+payload_hash          text not null
 ```
 
 Indexes:
@@ -156,27 +202,27 @@ index(payload_hash)
 
 High-frequency marketplace observations use the narrow Timescale table rather than repeated full JSON snapshots.
 
-# Monitoring
+## Monitoring
 
-## `monitor_targets`
+### `monitor_targets`
 
 ```text
 id                    uuid primary key
 connection_id         uuid null references connections(id)
 target_type           text not null
 name                  text not null
-enabled                boolean not null default true
+enabled               boolean not null default true
 interval_seconds      integer not null
 priority              integer not null default 0
-next_poll_at           timestamptz null
-last_poll_at           timestamptz null
-last_success_at        timestamptz null
-backoff_until          timestamptz null
+next_poll_at          timestamptz null
+last_poll_at          timestamptz null
+last_success_at       timestamptz null
+backoff_until         timestamptz null
 consecutive_errors    integer not null default 0
-config                 jsonb not null default '{}'
+config                jsonb not null default '{}'
 created_by_user_id    text not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
 Indexes:
@@ -193,14 +239,14 @@ ebay_watchlist
 ebay_item
 ```
 
-Phase 2 adds search/seller types without changing the scheduling model.
+A later phase adds search/seller types without changing the scheduling model.
 
-## `marketplace_items`
+### `marketplace_items`
 
 ```text
 id                    uuid primary key
 provider              text not null
-marketplace            text not null
+marketplace           text not null
 external_item_id      text not null
 seller_external_id    text null
 canonical_url         text null
@@ -213,8 +259,8 @@ listing_ends_at       timestamptz null
 first_seen_at         timestamptz not null
 last_seen_at          timestamptz not null
 current_state         text not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 unique(provider, marketplace, external_item_id)
 ```
 
@@ -225,7 +271,7 @@ index(provider, marketplace, seller_external_id)
 index(last_seen_at desc)
 ```
 
-## `monitor_items`
+### `monitor_items`
 
 ```text
 monitor_target_id     uuid not null references monitor_targets(id)
@@ -237,9 +283,9 @@ metadata              jsonb not null default '{}'
 primary key(monitor_target_id, marketplace_item_id)
 ```
 
-# Timescale observations
+## Timescale observations
 
-## `marketplace_item_observations`
+### `marketplace_item_observations`
 
 Logical columns:
 
@@ -272,24 +318,24 @@ Physical policy:
 
 Successful unchanged observations are retained because they establish time bounds for state changes.
 
-Exact current Timescale syntax is intentionally not frozen here; it must be verified immediately before migration implementation.
+Exact current Timescale syntax is intentionally not frozen here; verify it immediately before migration implementation.
 
-# Derived market events
+## Derived market events
 
-## `market_events`
+### `market_events`
 
 ```text
 id                    uuid primary key
 marketplace_item_id   uuid not null references marketplace_items(id)
 monitor_target_id     uuid null references monitor_targets(id)
 event_type            text not null
-detected_at            timestamptz not null
-from_observed_at       timestamptz null
-to_observed_at         timestamptz not null
-payload                jsonb not null default '{}'
-rule_id                uuid null
-deduplication_key      text not null unique
-created_at             timestamptz not null
+detected_at           timestamptz not null
+from_observed_at      timestamptz null
+to_observed_at        timestamptz not null
+payload               jsonb not null default '{}'
+rule_id               uuid null
+deduplication_key     text not null unique
+created_at            timestamptz not null
 ```
 
 Initial events:
@@ -303,35 +349,59 @@ quantity_changed
 listing_ended
 ```
 
-# Media and object storage
+## Media and object storage
 
-## `media_objects`
+Storage backends are configured resources rather than hardcoded driver names. This allows one installation to migrate between local storage and one or more S3-compatible destinations without changing media identity.
+
+### `storage_backends`
 
 ```text
 id                    uuid primary key
-storage_backend       text not null
+name                  text not null
+driver                text not null
+enabled               boolean not null default true
+is_default            boolean not null default false
+config                jsonb not null default '{}'
+secret_id             uuid null references application_secrets(id)
+created_by_user_id    text null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+```
+
+Initial driver families:
+
+```text
+local
+s3
+```
+
+For `s3`, non-secret endpoint/region/bucket/addressing settings live in `config`; credentials use encrypted secret storage. RustFS is the initial recommended/tested self-hosted S3 conformance target, but no RustFS-specific identity belongs in this schema.
+
+The local filesystem mount/root may still involve bootstrap deployment topology even when backend selection is represented in-app.
+
+### `media_objects`
+
+```text
+id                    uuid primary key
+storage_backend_id    uuid not null references storage_backends(id)
 storage_key           text not null
 original_filename     text null
 mime_type             text null
 size_bytes            bigint not null
 sha256                text not null
 created_by_user_id    text null
-created_at             timestamptz not null
+created_at            timestamptz not null
 metadata              jsonb not null default '{}'
 ```
 
 Constraints/indexes:
 
 ```text
-unique(storage_backend, storage_key)
+unique(storage_backend_id, storage_key)
 index(sha256)
 ```
 
-`storage_backend` identifies a configured backend, not merely the driver family, so a future migration between two S3 stores remains representable.
-
-Initial driver families are `local` and generic `s3`. RustFS is the initial recommended/tested S3 conformance target, but no RustFS-specific identity belongs in this schema.
-
-## `media_links`
+### `media_links`
 
 ```text
 media_object_id       uuid not null references media_objects(id)
@@ -339,48 +409,48 @@ resource_type         text not null
 resource_id           text not null
 purpose               text not null
 sort_order            integer null
-created_at             timestamptz not null
+created_at            timestamptz not null
 ```
 
 Suggested uniqueness should be based on actual attachment semantics rather than enforcing one universal relationship rule.
 
-# Storage migration state
+## Storage migration state
 
 Storage migrations are durable jobs and have persisted administrative state rather than relying only on worker logs.
 
-## `storage_migrations`
+### `storage_migrations`
 
 ```text
-id                    uuid primary key
-source_backend        text not null
-destination_backend   text not null
-status                text not null
+id                     uuid primary key
+source_backend_id      uuid not null references storage_backends(id)
+destination_backend_id uuid not null references storage_backends(id)
+status                 text not null
 started_at             timestamptz null
 completed_at           timestamptz null
-created_by_user_id    text not null
+created_by_user_id     text not null
 created_at             timestamptz not null
 summary                jsonb not null default '{}'
 ```
 
-## `storage_migration_objects`
+### `storage_migration_objects`
 
 ```text
 migration_id          uuid not null references storage_migrations(id)
 media_object_id       uuid not null references media_objects(id)
 status                text not null
 attempt_count         integer not null default 0
-verified_at            timestamptz null
-last_error             text null
+verified_at           timestamptz null
+last_error            text null
 primary key(migration_id, media_object_id)
 ```
 
-Migration jobs are resumable and idempotent. Source data is never deleted as part of the copy/verify step.
+Migration jobs are resumable and idempotent. Source data is never deleted as part of copy/verify. Metadata cutover occurs only after successful verification.
 
-The first conformance path should prove `local -> RustFS/S3`; the workflow must remain equally valid for other S3-compatible destinations and later S3-to-S3 migration.
+The first conformance path should prove `local -> RustFS/S3`; the workflow must remain valid for other S3-compatible destinations and later S3-to-S3 migration.
 
-# External companion resources
+## External companion resources
 
-## `external_resources`
+### `external_resources`
 
 ```text
 id                    uuid primary key
@@ -391,54 +461,56 @@ external_id           text null
 url                   text not null
 title                 text null
 metadata              jsonb not null default '{}'
-created_at             timestamptz not null
-updated_at             timestamptz not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
-## `resource_links`
+### `resource_links`
 
 ```text
 external_resource_id  uuid not null references external_resources(id)
 resource_type         text not null
 resource_id           text not null
 purpose               text not null
-created_at             timestamptz not null
+created_at            timestamptz not null
 ```
 
 This supports relationships to knowledge documents, tasks/projects, GitHub issues, billing records, and future companion systems without provider-specific columns in every domain table.
 
-# Notifications
+## Notifications
 
-## `notification_endpoints`
+### `notification_endpoints`
 
 ```text
 id                    uuid primary key
 provider              text not null
 name                  text not null
-enabled                boolean not null default true
-config                 jsonb not null default '{}'
-secret_credential_id  uuid null references connection_credentials(id)
+enabled               boolean not null default true
+config                jsonb not null default '{}'
+secret_id             uuid null references application_secrets(id)
 created_by_user_id    text not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
-## `notification_rules`
+A notification endpoint is not necessarily an external account connection. Its secret therefore uses application-level encrypted secret storage unless a future provider model makes a real connection record appropriate.
+
+### `notification_rules`
 
 ```text
 id                    uuid primary key
 name                  text not null
-enabled                boolean not null default true
+enabled               boolean not null default true
 market_event_type     text null
 monitor_target_id     uuid null references monitor_targets(id)
 endpoint_id           uuid not null references notification_endpoints(id)
 conditions            jsonb not null default '{}'
 created_by_user_id    text not null
-created_at             timestamptz not null
-updated_at             timestamptz not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
 ```
 
-## `notification_deliveries`
+### `notification_deliveries`
 
 ```text
 id                    uuid primary key
@@ -449,18 +521,18 @@ attempt_count         integer not null default 0
 last_attempt_at       timestamptz null
 delivered_at          timestamptz null
 provider_message_id   text null
-last_error             text null
-created_at             timestamptz not null
+last_error            text null
+created_at            timestamptz not null
 unique(market_event_id, endpoint_id)
 ```
 
-# Audit events
+## Audit events
 
-## `audit_events`
+### `audit_events`
 
 ```text
 id                    uuid primary key
-occurred_at             timestamptz not null
+occurred_at           timestamptz not null
 actor_user_id         text null
 action                text not null
 resource_type         text not null
@@ -471,9 +543,42 @@ request_id            text null
 metadata              jsonb not null default '{}'
 ```
 
-Secrets must be redacted before audit serialization.
+Secrets must be redacted before audit serialization. Secret-change events record metadata/status, never plaintext values.
 
-# Runtime topology constraints
+## Relationship overview
+
+The first schema is intentionally narrow. The important relationships are:
+
+```text
+Better Auth users
+    |
+    +--> connection_users --> connections --> connection_credentials
+    |                               |
+    |                               +--> source_events / provider_objects
+    |                               +--> monitor_targets --> monitor_items
+    |                                                       |
+    |                                                       v
+    |                                                marketplace_items
+    |                                                       |
+    |                                                       +--> observations (Timescale)
+    |                                                       +--> market_events
+    |                                                                |
+    |                                                                v
+    |                                                       notification_deliveries
+    |
+    +--> application_settings
+    +--> application_secrets --> storage_backends --> media_objects --> media_links
+    |                              |
+    |                              +--> storage_migrations
+    |
+    +--> audit_events
+
+connections / domain resources <--> external_resources <--> resource_links
+```
+
+This is not the eventual business schema. Commerce, inventory, projects, finance, and accounting are added when their workflows become implementation scope.
+
+## Runtime topology constraints
 
 The schema is independent of deployment topology.
 
@@ -502,14 +607,16 @@ shared S3-compatible object storage
 
 If Loxep detects multiple application hosts with a `local` media backend that is not known to be shared, administration should display a prominent migration/topology warning.
 
-# Before implementing this schema
+## Before implementing this schema
 
 Immediately before generating the actual Drizzle schema/migrations:
 
 1. verify current viable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, Bun, and other foundational packages;
 2. verify current Timescale hypertable/Hypercore migration syntax;
 3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin roles;
-4. select the exact maintained decimal library after current verification;
-5. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
-6. implement storage conformance tests shared by `local` and generic `s3` drivers;
-7. use the Kiranism starter as a UI donor without copying its dependency pins or demo backend architecture blindly.
+4. verify the exact first-admin bootstrap/recovery implementation against the current Better Auth API;
+5. select the exact maintained decimal library after current verification;
+6. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
+7. implement storage conformance tests shared by `local` and generic `s3` drivers;
+8. implement settings/secret validation and redacted audit behavior before provider credentials are used;
+9. use the Kiranism donor/reference workspace for UI patterns without copying its demo backend architecture into Loxep.
