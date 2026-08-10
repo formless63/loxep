@@ -2,7 +2,7 @@
 title: Foundational Data Model
 ---
 
-This document defines the conceptual data model Loxep should implement first. Exact first-migration columns, indexes, and constraints live in the [Foundation Schema Draft](./foundation-schema/).
+This document defines the conceptual data model Loxep should implement first. Exact first-migration columns, indexes, and constraints live in the [Foundation Schema Draft](../foundation-schema/).
 
 The foundation is intentionally smaller than the master domain map. It establishes identities, database-backed configuration, encrypted secrets, external connections, provenance/replay, durable monitoring, time-series observations, media/storage, external-resource links, notifications, and auditability without prematurely creating broad commerce/accounting/project tables.
 
@@ -85,7 +85,7 @@ Stores application-encrypted runtime secrets that are not naturally credentials 
 
 The external root encryption key/keyring never lives in PostgreSQL.
 
-See [Configuration & Secrets](./configuration-and-secrets/).
+See [Configuration & Secrets](../configuration-and-secrets/).
 
 ## External connections
 
@@ -331,4 +331,4 @@ audit_events
 Graphile Worker schema
 ```
 
-The exact physical target and constraints remain defined by the [Foundation Schema Draft](./foundation-schema/). Commerce, inventory, project, billing, and accounting tables are deliberately not pre-created merely because future domains are known.
+The exact physical target and constraints remain defined by the [Foundation Schema Draft](../foundation-schema/). Commerce, inventory, project, billing, and accounting tables are deliberately not pre-created merely because future domains are known.
