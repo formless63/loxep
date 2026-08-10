@@ -36,6 +36,7 @@ export default defineConfig({
             { label: 'System Overview', slug: 'architecture/system-overview' },
             { label: 'Domain Boundaries', slug: 'architecture/domain-boundaries' },
             { label: 'Foundational Data Model', slug: 'architecture/foundational-data-model' },
+            { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
           ],
         },
         {
