@@ -17,7 +17,7 @@ See [Workspaces & Navigation](../product/workspaces/) for the UX map.
 The shared foundation owns infrastructural concepts rather than commercial business logic:
 
 - application identity references and profile data;
-- Loxep resource-authorization relationships;
+- minimal economic-entity identity/attribution;
 - external connections/accounts and credentials;
 - database-backed application settings and encrypted application/runtime secrets;
 - source/provider events and retained raw provider objects;
@@ -27,11 +27,30 @@ The shared foundation owns infrastructural concepts rather than commercial busin
 - audit metadata and health state;
 - stable identifiers and cross-domain references.
 
-Better Auth owns application authentication/session state and deployment-level roles. Shared foundation references that identity rather than duplicating Better Auth's global-role model.
+Better Auth owns application authentication/session state and deployment-level `admin`/`member` roles. The initial access model is installation-wide for ordinary product data; Phase 0 does not create connection/entity/workspace ACL relations.
 
 Bootstrap environment/mounted-secret configuration remains outside this domain where it must exist before PostgreSQL-backed administration or login can work. Normal runtime/provider settings belong in PostgreSQL. See [Configuration & Secrets](./configuration-and-secrets/).
 
 Shared foundation must not become a dumping ground for unrelated business logic.
+
+## Economic entities
+
+The foundation owns the minimal identity of people, businesses, and operating identities whose activity Loxep represents.
+
+Examples include:
+
+- personal/individual activity;
+- sole proprietorships;
+- LLCs, partnerships, and corporations;
+- assumed names/DBAs and operating units beneath another entity.
+
+An economic entity is neither a tenant nor an authorization container. A parent relation may express an assumed name beneath an LLC without implying that it is a separate legal person.
+
+Provider connections and later operational records may reference an economic entity when ownership/context is meaningful.
+
+Economic entities are also distinct from accounting books. The Accounting domain may later associate multiple economic entities/operating identities with one book and chart of accounts. Do not force one accounting ledger per economic entity.
+
+See ADR-0017.
 
 ## Market Intelligence
 
@@ -47,6 +66,8 @@ Owns observations about things Loxep does not necessarily own or sell:
 - opportunity rules/scores.
 
 It does not own internal inventory, orders, customers, or accounting records.
+
+Marketplace listings/observations are generally entity-neutral public facts. A monitor or authenticated observation may still carry connection context that indirectly identifies the interested economic entity.
 
 ## Integrations
 
@@ -100,6 +121,8 @@ Owns sales transactions originating from commerce channels:
 
 Commerce does not directly create journal lines or mutate inventory quantities. It requests/causes inventory movements and emits economic facts consumed downstream.
 
+Commerce facts that represent owned activity should carry explicit economic-entity attribution rather than inferring it from the logged-in user or workspace.
+
 ## Inventory and Acquisition
 
 Owns physical ownership and movement of goods:
@@ -115,6 +138,8 @@ Owns physical ownership and movement of goods:
 - serial/lot information where needed.
 
 An order line can reference inventory, but Commerce does not own stock state.
+
+Inventory ownership/location design must allow entity attribution where required rather than assuming all stock in an installation belongs to one business.
 
 ## Purchasing
 
@@ -141,9 +166,9 @@ Owns movement from seller to buyer after a sale and shipping-related operational
 
 Customer-paid shipping is a Commerce fact; actual carrier cost is a Shipping/Cost fact. They remain distinguishable.
 
-## Customers
+## Customers and counterparties
 
-Owns the reusable party/contact model for people and organizations Loxep users do business with:
+Owns the reusable party/contact model for people and organizations Loxep economic entities do business with:
 
 - people/organizations;
 - contacts;
@@ -151,7 +176,9 @@ Owns the reusable party/contact model for people and organizations Loxep users d
 - customer preferences/terms;
 - tax/exemption metadata belonging to the customer identity.
 
-Domains may reference customers but should not duplicate customer identity records.
+Domains may reference customers/counterparties but should not duplicate party identity records.
+
+An external organization is not automatically an installation-owned economic entity. The same real-world company could be an economic entity in one Loxep installation and merely a customer/vendor/payer in another.
 
 ## Projects and Work
 
@@ -205,13 +232,13 @@ Owns movement/settlement facts involving payment processors, marketplaces, and f
 - imported bank transactions;
 - reconciliation state.
 
-This domain records financial reality; Accounting determines how those facts post to the ledger.
+This domain records financial reality; Accounting determines how those facts post to a book/ledger.
 
 ## Costs and Expenses
 
 Owns costs not already represented as inventory acquisition or another specialized source fact, plus flexible attribution of costs to operational objects.
 
-A cost may reference customer, project, order, shipment, acquisition, product/SKU, channel, service, or other supported dimensions.
+A cost may reference customer, project, order, shipment, acquisition, product/SKU, channel, service, economic entity, or other supported dimensions.
 
 Cost attribution is operational metadata and must survive changes to accounting classification.
 
@@ -219,17 +246,19 @@ Cost attribution is operational metadata and must survive changes to accounting 
 
 Owns accounting interpretation, not source business facts:
 
-- explicit economic/legal accounting entities;
+- accounting books;
+- relationships between books and economic entities/operating identities;
 - chart of accounts;
 - fiscal periods;
 - journal entries/lines;
 - posting rules;
+- accounting dimensions/classes/departments where justified;
 - reconciliation links needed by the ledger;
 - trial balance and financial statements.
 
 The ledger is downstream of operational facts. Journal entries generated from rules should retain references back to source facts and be reproducible where practical.
 
-The exact economic/legal-entity model is intentionally not part of the current Phase 0 schema, but it must be finalized before broad commerce/financial schema expansion. It must not be replaced by user identity, provider connection identity, workspace identity, or SaaS tenancy.
+An accounting book is **not** synonymous with an economic entity. Multiple economic entities/operating identities may share one book and be separated by chart-of-accounts structure or accounting dimensions. Conversely, the eventual book/entity cardinality should be chosen from real accounting needs rather than encoded prematurely in the Phase 0 foundation.
 
 ## Tax
 
@@ -260,6 +289,8 @@ Owns derived read models, aggregates, dashboards, and metrics. It does not becom
 
 Timescale continuous aggregates, materialized views, and analytical SQL belong here when they represent derived views rather than source observations.
 
+Reporting may aggregate or segment by economic entity independently of how Accounting groups those entities into books.
+
 ## Cross-domain rules
 
 1. A domain may reference another domain's stable ID but should not mutate another domain's canonical tables directly from presentation code.
@@ -267,8 +298,9 @@ Timescale continuous aggregates, materialized views, and analytical SQL belong h
 3. Raw provider data is retained at the integration/source boundary; normalized business facts are stored by the owning domain.
 4. Derived state identifies the source facts from which it was computed where practical.
 5. Avoid shared tables containing unrelated optional columns from many domains merely to reduce table count.
-6. Do not create generic abstractions until concrete workflows show the abstraction is real; media, settings/secrets, and external-resource links are early exceptions because they solve already-known cross-cutting needs.
+6. Do not create generic abstractions until concrete workflows show the abstraction is real; media, settings/secrets, economic-entity attribution, and external-resource links are early exceptions because they solve already-known cross-cutting needs.
 7. Financial and tax interpretations must not overwrite operational history.
 8. External companion applications remain independently authoritative for data Loxep has not deliberately chosen to own.
 9. UI workspace placement does not transfer backend ownership between domains.
-10. Application users, provider connections, and economic/legal owners are distinct concepts.
+10. Application users, provider connections, economic entities, counterparties, and accounting books are distinct concepts.
+11. Economic entities classify owned/operated activity; they do not define who may access data in the installation.
