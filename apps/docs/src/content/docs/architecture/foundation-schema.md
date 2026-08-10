@@ -4,14 +4,16 @@ title: Foundation Schema Draft
 
 # Foundation Schema Draft
 
-This document turns the foundational data model into a concrete first-migration target. It remains implementation-oriented documentation until the exact current Drizzle, Better Auth, Graphile Worker, PostgreSQL, and TimescaleDB versions are verified immediately before code generation.
+This document turns the foundational data model into a concrete first-migration target. It remains implementation-oriented documentation until the exact current Drizzle, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, and related dependency versions are verified immediately before code generation.
+
+The application scaffold will use Kiranism's TanStack Start dashboard as a UI donor, but the schema and backend architecture described here are Loxep-owned and independent of the starter's demo data/backend choices.
 
 ## Scope
 
 The first schema physically covers only:
 
-- Better Auth-owned authentication tables;
-- provider connections and resource access;
+- Better Auth-owned authentication tables and deployment-level role support;
+- provider connections and Loxep resource access;
 - encrypted connection credentials;
 - provider/source provenance;
 - monitoring targets;
@@ -19,7 +21,7 @@ The first schema physically covers only:
 - Timescale-backed observations;
 - derived market events;
 - notifications;
-- media/object-storage metadata;
+- media/object-storage metadata and migration state;
 - external-resource links;
 - user/configuration audit events;
 - Graphile Worker-owned job schema.
@@ -62,7 +64,7 @@ Do not globally enforce uniqueness of `external_account_id`; provider semantics 
 connection_id         uuid not null references connections(id)
 user_id               text not null
 role                  text not null
-created_at             timestamptz not null
+created_at            timestamptz not null
 primary key(connection_id, user_id)
 check role in ('owner','manage','view')
 ```
@@ -92,7 +94,7 @@ Suggested uniqueness:
 unique(connection_id, credential_type, version)
 ```
 
-Only the credential service accesses plaintext credentials.
+Only the credential service accesses plaintext credentials. The encryption implementation follows the accepted AES-256-GCM/key-versioning decision.
 
 # Provider provenance
 
@@ -265,10 +267,12 @@ Physical policy:
 - Timescale hypertable partitioned by `observed_at`;
 - initial chunk interval 7 days;
 - index optimized for `(marketplace_item_id, observed_at desc)`;
-- Hypercore/columnstore policy after roughly 30 days initially;
+- current Hypercore/columnstore policy after roughly 30 days initially;
 - no automatic retention deletion by default.
 
 Successful unchanged observations are retained because they establish time bounds for state changes.
+
+Exact current Timescale syntax is intentionally not frozen here; it must be verified immediately before migration implementation.
 
 # Derived market events
 
@@ -323,7 +327,9 @@ unique(storage_backend, storage_key)
 index(sha256)
 ```
 
-`storage_backend` initially distinguishes configured backend identities, not just `local` vs `s3`, so future migrations between two S3 stores remain representable.
+`storage_backend` identifies a configured backend, not merely the driver family, so a future migration between two S3 stores remains representable.
+
+Initial driver families are `local` and generic `s3`. RustFS is the initial recommended/tested S3 conformance target, but no RustFS-specific identity belongs in this schema.
 
 ## `media_links`
 
@@ -338,9 +344,9 @@ created_at             timestamptz not null
 
 Suggested uniqueness should be based on actual attachment semantics rather than enforcing one universal relationship rule.
 
-# Local-to-S3 migration state
+# Storage migration state
 
-Storage migrations are durable jobs and should have persisted administrative state rather than relying only on worker logs.
+Storage migrations are durable jobs and have persisted administrative state rather than relying only on worker logs.
 
 ## `storage_migrations`
 
@@ -370,6 +376,8 @@ primary key(migration_id, media_object_id)
 
 Migration jobs are resumable and idempotent. Source data is never deleted as part of the copy/verify step.
 
+The first conformance path should prove `local -> RustFS/S3`; the workflow must remain equally valid for other S3-compatible destinations and later S3-to-S3 migration.
+
 # External companion resources
 
 ## `external_resources`
@@ -397,7 +405,7 @@ purpose               text not null
 created_at             timestamptz not null
 ```
 
-This supports relationships to Outline documents, Vikunja projects/tasks, GitHub issues, AFFiNE pages, and future companion systems without provider-specific columns in every domain table.
+This supports relationships to knowledge documents, tasks/projects, GitHub issues, billing records, and future companion systems without provider-specific columns in every domain table.
 
 # Notifications
 
@@ -472,28 +480,36 @@ The schema is independent of deployment topology.
 Default deployment:
 
 ```text
-loxep (web + worker)
-postgres/timescale
-local media or optional S3
+loxep (LOXEP_MODE=all: web + worker)
+postgres-timescale
+local media
+```
+
+Optional object-storage profile:
+
+```text
+rustfs (generic S3 target)
 ```
 
 Expanded deployment:
 
 ```text
-one or more web runtimes
-one or more worker runtimes
-shared postgres/timescale
+one or more LOXEP_MODE=web runtimes
+one or more LOXEP_MODE=worker runtimes
+shared postgres-timescale
 shared S3-compatible object storage
 ```
 
-If Loxep detects multiple application hosts/processes with a `local` media backend that is not known to be shared, administration should display a prominent migration/topology warning.
+If Loxep detects multiple application hosts with a `local` media backend that is not known to be shared, administration should display a prominent migration/topology warning.
 
 # Before implementing this schema
 
 Immediately before generating the actual Drizzle schema/migrations:
 
-1. verify current stable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, and TanStack Start;
+1. verify current viable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, Bun, and other foundational packages;
 2. verify current Timescale hypertable/Hypercore migration syntax;
 3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin roles;
-4. decide the exact decimal library after checking current maintenance/status;
-5. implement storage conformance tests shared by `local` and `s3` drivers.
+4. select the exact maintained decimal library after current verification;
+5. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
+6. implement storage conformance tests shared by `local` and generic `s3` drivers;
+7. use the Kiranism starter as a UI donor without copying its dependency pins or demo backend architecture blindly.
