@@ -133,20 +133,42 @@ Use Better Auth for:
 
 - application users/sessions;
 - OIDC and magic-link authentication;
-- deployment-level roles such as `admin` and `member`.
+- deployment-level roles `admin` and `member`.
 
 Password login is disabled initially.
 
-Loxep owns resource/domain authorization such as per-connection `owner/manage/view` access.
+Initial access is intentionally simple:
+
+- `member` can use/view ordinary product data across the installation;
+- `admin` has the same ordinary product access plus installation/security/administrative operations that genuinely require elevation;
+- Phase 0 does not implement per-connection, per-workspace, or per-economic-entity ACLs.
+
+Do **not** create `connection_users` or a generic ACL engine as part of Phase 0. Fine-grained authorization may be added later when a real shared-install workflow requires it.
 
 Do not equate:
 
 - application user;
 - eBay/Woo/other provider account;
 - provider connection;
-- future legal/economic entity ownership.
+- workspace;
+- economic entity;
+- accounting book.
 
 Loxep is not designed around classic SaaS multi-tenancy. Do not introduce an organization/workspace tenant hierarchy as a default architecture.
+
+## Economic entities, counterparties, and accounting books
+
+ADR-0017 resolves the initial ownership model.
+
+One installation may represent personal activity plus multiple businesses/operating identities. Phase 0 therefore includes a minimal `economic_entities` model. It may represent an individual, sole proprietorship, LLC, partnership/corporation, assumed name/DBA, operating unit, or another explicitly tracked context.
+
+Economic entities are attribution/business-context records. They are **not** users or permission containers.
+
+Provider connections may have nullable `economic_entity_id` when one account clearly represents one entity. The association is context, not access control. `created_by_user_id` is audit provenance and does not confer private ownership.
+
+An external organization that pays, buys from, or sells to an entity is a future customer/vendor/counterparty concern; do not automatically treat every organization as an installation-owned economic entity.
+
+Accounting books are separate from economic entities. Do not add a required one-book-per-entity relationship during Phase 0. Multiple economic entities/operating identities may share one accounting book/chart of accounts and be separated through accounts or accounting dimensions. The Accounting phase should introduce explicit book records and a book-to-entity relationship based on actual accounting needs.
 
 ## Configuration and secrets
 
@@ -171,7 +193,9 @@ Never put plaintext credentials into logs, source events, job payloads, audit sn
 - Money uses fixed-precision PostgreSQL `numeric`; do not do persisted monetary arithmetic with JavaScript `number`.
 - Application/domain state uses text + TypeScript unions/constants, with DB checks where useful; avoid PostgreSQL enums initially.
 
-Phase 0 should create only foundation tables required by early vertical slices. Do not eagerly create the full future commerce/accounting/project schema because the domain map describes it.
+Phase 0 should create only foundation tables required by early vertical slices, including minimal `economic_entities`. Do not eagerly create the full future commerce/accounting/project schema because the domain map describes it.
+
+Do not create `accounting_books` merely because economic entities now exist; books belong to the later Accounting domain.
 
 ### Time-series observations
 
@@ -262,7 +286,7 @@ normalized economic facts
 accounting/posting rules
          |
          v
-ledger
+ledger / accounting book
          |
          v
 financial/tax reporting
@@ -270,18 +294,7 @@ financial/tax reporting
 
 The ledger is downstream of reality. Do not make journal entries the only surviving representation of orders, purchases, shipping, inventory movement, payments, project work, or other source facts.
 
-## Economic/legal entity ownership
-
-The eventual accounting/book owner of transactions is important because one deployment may represent personal and business activity. The exact economic/legal-entity model is intentionally not yet expanded into the Phase 0 schema.
-
-Until that decision is finalized:
-
-- do not weld ownership to application users;
-- do not infer ownership solely from a provider connection;
-- do not introduce a SaaS tenant model as a substitute;
-- keep stable references and schema choices flexible enough to add explicit economic-entity ownership before broad commerce/accounting implementation.
-
-This becomes a required design decision before financial/commerce schemas expand materially.
+An accounting book is an accounting interpretation/container, not the identity of the economic entity that generated the activity.
 
 ## Notifications
 
@@ -303,7 +316,8 @@ Foundation work should establish:
 - storage conformance tests for local and S3 drivers;
 - Playwright for critical browser flows;
 - type/lint/format/build checks;
-- application and docs builds in CI.
+- application and docs builds in CI;
+- automated internal-doc-link validation.
 
 Do not report a task complete while known build/type/test failures caused by the change remain unresolved.
 
