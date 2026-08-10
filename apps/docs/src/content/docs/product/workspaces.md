@@ -4,7 +4,7 @@ title: Workspaces & Navigation
 
 Workspaces are Loxep's **top-level user-interface navigation surfaces**. They prevent one enormous sidebar from accumulating every feature in the product while allowing each major area to present navigation that fits the task at hand.
 
-A workspace is **not** a database schema, microservice, tenancy boundary, or domain-ownership boundary. Backend ownership remains defined by [Domain Boundaries](../architecture/domain-boundaries/). A workspace may compose data and operations from several domains.
+A workspace is **not** a database schema, microservice, tenancy boundary, or domain-ownership boundary. Backend ownership remains defined by [Domain Boundaries](../../architecture/domain-boundaries/). A workspace may compose data and operations from several domains.
 
 ## Current shell
 
