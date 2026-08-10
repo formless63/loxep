@@ -23,6 +23,7 @@ This site is the project specification as well as the public documentation. Duri
 - [Foundation Schema](./architecture/foundation-schema/) — the current first-migration target.
 - [Implementation Contract](./development/implementation-contract/) — load-bearing rules for implementation work and coding agents.
 - [Dependency & Version Policy](./development/dependency-policy/) — verify current viable upstream releases before every new pin.
+- [Project Surfaces & Future Sites](./development/project-surfaces/) — current `apps/*` roles plus the planned separation of product, docs, public site, and future demo.
 
 ## Current repository state
 
@@ -47,4 +48,6 @@ One Loxep image supports `LOXEP_MODE=all|web|worker`. Local media storage remain
 
 ## Documentation rule
 
-Starlight renders each page's frontmatter `title` as the page heading. New documentation pages should therefore **not** repeat the title as a Markdown `# H1`. Use `##` as the first content heading.
+Starlight currently renders each page's frontmatter `title` as the page heading. New documentation pages should therefore **not** repeat the title as a Markdown `# H1`. Use `##` as the first content heading.
+
+The docs content should remain portable. Astro/Starlight is the current renderer, not a permanent product dependency; migration to another documentation stack later is explicitly acceptable.
