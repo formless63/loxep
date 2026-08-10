@@ -8,9 +8,13 @@ export default defineConfig({
     starlight({
       title: 'Loxep',
       description: 'Self-hosted marketplace intelligence and business operations.',
-      social: {
-        github: 'https://github.com/formless63/loxep',
-      },
+      social: [
+        {
+          icon: 'github',
+          label: 'GitHub',
+          href: 'https://github.com/formless63/loxep',
+        },
+      ],
       sidebar: [
         {
           label: 'Overview',
@@ -30,7 +34,13 @@ export default defineConfig({
           items: [
             { label: 'Principles', slug: 'architecture/principles' },
             { label: 'System Overview', slug: 'architecture/system-overview' },
+            { label: 'Domain Boundaries', slug: 'architecture/domain-boundaries' },
+            { label: 'Foundational Data Model', slug: 'architecture/foundational-data-model' },
           ],
+        },
+        {
+          label: 'Decisions',
+          autogenerate: { directory: 'decisions' },
         },
       ],
     }),
