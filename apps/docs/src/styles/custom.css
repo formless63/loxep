@@ -1,0 +1,49 @@
+:root {
+  /* Starlight defaults to a narrow ~45rem reading column. Loxep docs contain
+     schema drafts, architecture notes, and wide tables/code that benefit from
+     using more of a desktop display. */
+  --sl-content-width: 70rem;
+}
+
+/* Existing docs historically repeated the frontmatter title as a Markdown H1.
+   Starlight already renders the page title, so suppress the redundant content
+   heading until source pages are normalized. New docs should not add a second H1. */
+.sl-markdown-content > h1:first-child {
+  display: none;
+}
+
+/* The stock Starlight hero reserves an image column and very large vertical
+   padding on desktop even when no hero image is configured. Loxep's landing
+   page is documentation navigation, not a marketing splash page. */
+@media (min-width: 50rem) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) !important;
+    padding-block: 2.5rem 2rem !important;
+  }
+
+  .hero .stack {
+    max-width: 70rem;
+  }
+
+  .hero .copy > * {
+    max-width: 72ch !important;
+  }
+}
+
+/* Keep the desktop on-page outline useful without allowing it to consume a
+   huge fraction of wide monitors. The main content receives the freed space. */
+@media (min-width: 72rem) {
+  html[data-has-sidebar][data-has-toc] .main-pane {
+    width: calc(100% - 15rem) !important;
+  }
+
+  .right-sidebar-container {
+    width: 15rem !important;
+    flex: 0 0 15rem;
+  }
+
+  .right-sidebar-panel .sl-container {
+    width: 13rem !important;
+    max-width: 13rem !important;
+  }
+}
