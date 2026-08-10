@@ -5,11 +5,11 @@
   --sl-content-width: 70rem;
 }
 
-/* Existing docs historically repeated the frontmatter title as a Markdown H1.
-   Starlight already renders the page title, so suppress the redundant content
-   heading until source pages are normalized. New docs should not add a second H1. */
-.sl-markdown-content > h1:first-child {
-  display: none;
+/* Older docs may still repeat the frontmatter title as a Markdown H1.
+   Starlight already renders the page title, so hide the first content H1 as a
+   compatibility fallback while source pages are normalized. */
+.sl-markdown-content h1:first-of-type {
+  display: none !important;
 }
 
 /* The stock Starlight hero reserves an image column and very large vertical
