@@ -9,7 +9,9 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   EbayAdapterError,
+  defaultSandboxUserTokenFilePath,
   loadSandboxCredentialsFromEnvFile,
+  loadSandboxUserTokenFromFile,
 } from "../src/index.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "loxep-ebay-creds-"));
@@ -96,6 +98,61 @@ describe("loadSandboxCredentialsFromEnvFile", () => {
       expect(error).toBeInstanceOf(EbayAdapterError);
       expect((error as Error).message).toContain("malformed line");
       expect((error as Error).message).not.toContain("not a key value");
+    }
+  });
+});
+
+describe("loadSandboxUserTokenFromFile", () => {
+  const bundle = {
+    accessToken: "v^1.1#i^1#FAKE-ACCESS",
+    refreshToken: "v^1.1#i^1#FAKE-REFRESH",
+    accessTokenExpiresAt: "2026-08-11T12:00:00.000Z",
+    refreshTokenExpiresAt: "2028-02-09T22:00:00.000Z",
+    scopes: ["https://api.ebay.com/oauth/api_scope"],
+  };
+
+  it("defaults to the documented dev artifact path", () => {
+    expect(defaultSandboxUserTokenFilePath()).toMatch(
+      /\/\.config\/loxep\/ebay-sandbox-user-token\.json$/,
+    );
+  });
+
+  it("returns null when the artifact does not exist (live tests skip)", () => {
+    expect(loadSandboxUserTokenFromFile(join(dir, "absent.json"))).toBeNull();
+  });
+
+  it("parses a well-formed bundle", () => {
+    expect(
+      loadSandboxUserTokenFromFile(
+        writeEnv("token.json", JSON.stringify(bundle)),
+      ),
+    ).toEqual(bundle);
+  });
+
+  it("rejects non-JSON and invalid bundles without echoing token values", () => {
+    expect(() =>
+      loadSandboxUserTokenFromFile(writeEnv("bad.json", "{nope")),
+    ).toThrowError(EbayAdapterError);
+    try {
+      loadSandboxUserTokenFromFile(
+        writeEnv(
+          "invalid.json",
+          JSON.stringify({ ...bundle, accessTokenExpiresAt: "soon" }),
+        ),
+      );
+      expect.unreachable("must throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(EbayAdapterError);
+      const serialized = JSON.stringify(error, [
+        "message",
+        "kind",
+        "detail",
+        "issues",
+        "path",
+        "code",
+      ]);
+      expect(serialized).not.toContain(bundle.accessToken);
+      expect(serialized).not.toContain(bundle.refreshToken);
     }
   });
 });

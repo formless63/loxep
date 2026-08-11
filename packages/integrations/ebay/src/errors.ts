@@ -55,6 +55,20 @@ export class EbayAdapterError extends Error {
 /** Browse "item not found" errorId (EBayNotFound.code in ebay-api). */
 const NOT_FOUND_ERROR_ID = 11001;
 
+/**
+ * RFC 6749 error codes eBay's identity endpoint returns for credential,
+ * grant, and consent failures — all of them mean "the token/keyset is not
+ * usable", i.e. Loxep's `auth` kind, whatever HTTP status accompanies them.
+ */
+const OAUTH_AUTH_ERROR_CODES = new Set([
+  "invalid_client",
+  "invalid_grant",
+  "invalid_scope",
+  "unauthorized_client",
+  "access_denied",
+  "insufficient_scope",
+]);
+
 const AUTH_ERROR_CLASSES = [
   ebayErrors.EBayAccessDenied,
   ebayErrors.EBayInvalidGrant,
@@ -163,10 +177,17 @@ export function normalizeEbayError(error: unknown): EbayAdapterError {
     ).response;
     if (typeof response?.status === "number") {
       const status = response.status;
-      const kind = kindFromStatus(status, undefined);
       const data = response.data as
         | { error?: unknown; error_description?: unknown }
         | undefined;
+      // eBay's identity endpoint reports grant/scope failures as HTTP 400
+      // with an RFC 6749 `error` code. Those are credential problems, not
+      // malformed requests: an expired refresh token must surface as `auth`
+      // so callers re-request consent instead of retrying forever.
+      const kind =
+        typeof data?.error === "string" && OAUTH_AUTH_ERROR_CODES.has(data.error)
+          ? "auth"
+          : kindFromStatus(status, undefined);
       return new EbayAdapterError(kind, `eBay HTTP ${status} (${kind})`, {
         httpStatus: status,
         ...(typeof data?.error === "string"

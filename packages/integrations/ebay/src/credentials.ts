@@ -20,6 +20,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EbayAdapterError } from "./errors.ts";
+import { parseEbayUserTokenBundle } from "./tokens.ts";
+import type { EbayUserTokenBundle } from "./tokens.ts";
 
 export interface EbaySandboxCredentials {
   appId: string;
@@ -101,4 +103,60 @@ export function loadSandboxCredentialsFromEnvFile(
     ...(ruName !== undefined && ruName !== "" ? { ruName } : {}),
     environment: "sandbox",
   };
+}
+
+/**
+ * DEV-ONLY user token artifact (loxep-62y.1.2/1.3 live legs).
+ *
+ * The real user token lives encrypted in `connection_credentials`; nothing in
+ * production ever reads it from disk. This file exists so the sandbox live
+ * tests can exercise Trading calls after a one-off manual consent, and it is
+ * created deliberately by a developer — Loxep never writes it.
+ *
+ * Format (JSON, the exact {@link EbayUserTokenBundle} shape):
+ *
+ * ```json
+ * {
+ *   "accessToken": "v^1.1#...",
+ *   "refreshToken": "v^1.1#...",
+ *   "accessTokenExpiresAt": "2026-08-11T12:00:00.000Z",
+ *   "refreshTokenExpiresAt": "2028-02-09T22:00:00.000Z",
+ *   "scopes": ["https://api.ebay.com/oauth/api_scope"]
+ * }
+ * ```
+ *
+ * Treat it like a password: `chmod 600`, outside the repo, never committed.
+ */
+export function defaultSandboxUserTokenFilePath(): string {
+  return join(homedir(), ".config", "loxep", "ebay-sandbox-user-token.json");
+}
+
+/**
+ * Returns the parsed dev user-token bundle, or `null` when the file does not
+ * exist (live tests skip cleanly in that case). Malformed content throws
+ * `invalid_request` reporting paths and codes, never values.
+ */
+export function loadSandboxUserTokenFromFile(
+  path: string = defaultSandboxUserTokenFilePath(),
+): EbayUserTokenBundle | null {
+  let content: string;
+  try {
+    content = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new EbayAdapterError(
+      "invalid_request",
+      "eBay sandbox user token file is not valid JSON",
+      { path },
+    );
+  }
+  return parseEbayUserTokenBundle(parsed);
 }

@@ -246,7 +246,9 @@ Loxep domain services
 
 Retain enough provider evidence for replay/debugging without writing full heavyweight JSON snapshots every minute when a narrow observation row already captures the useful state.
 
-Use maintained provider libraries where they fit, behind Loxep-owned adapters. The initial eBay direction is `ebay-api`, not provider types leaking through the application. This boundary is implemented in `packages/integrations/ebay` (`@loxep/integration-ebay`), with `ebay-api` v10 as the pinned client behind the adapter (Buy Browse item snapshots, observation mapping, error taxonomy, per-connection rate budget).
+Use maintained provider libraries where they fit, behind Loxep-owned adapters. The initial eBay direction is `ebay-api`, not provider types leaking through the application. This boundary is implemented in `packages/integrations/ebay` (`@loxep/integration-ebay`), with `ebay-api` v10 as the pinned client behind the adapter (Buy Browse item snapshots, observation mapping, error taxonomy, per-connection rate budget). Per-connection user access is an OAuth authorization-code consent run through the web app (consent URL → callback → encrypted `oauth_tokens` connection credential with `expires_at`/`refresh_after`, refreshed before expiry), while the installation's eBay application keyset is one typed application secret under the `integration.ebay.keyset` convention — never an environment variable.
+
+WooCommerce has the same boundary in `packages/integrations/woo` (`@loxep/integration-woo`): a read-only adapter over the native REST API v3 with no client dependency (HTTPS Basic Auth, the same error taxonomy and rate-budget shapes, header-driven pagination, and order/product normalization into Loxep-owned facts), whose credentials are a `woo_credentials` bundle while the store URL stays non-secret connection config — persistence of the normalized orders is deliberately deferred pending review of the [Commerce Schema Design](../../architecture/commerce-schema-design/).
 
 ## Background work
 
