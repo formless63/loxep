@@ -11,25 +11,29 @@ The UI shell portion of Phase 0 has already begun: `apps/web` exists, the dashbo
 ```text
 loxep/
 ├── apps/
-│   ├── web/                  # TanStack Start application + runtime entrypoints
+│   ├── web/                  # TanStack Start application
 │   └── docs/                 # current docs source/renderer
-├── packages/                 # add only when real ownership/reuse warrants them
-│   ├── auth/                 # likely Better Auth config + auth helpers
-│   ├── config/               # typed bootstrap/runtime configuration helpers
+├── bin/
+│   └── loxep.ts              # runtime entrypoint: migrate | start | admin (ADR-0018)
+├── packages/                 # created as real ownership/reuse warranted them
+│   ├── auth/                 # Better Auth construction, role guards, first-admin bootstrap
+│   ├── config/               # typed bootstrap configuration loading
 │   ├── db/                   # Drizzle schema, migrations, database client
-│   ├── domain/               # shared domain primitives/contracts where justified
-│   ├── integrations/         # provider adapter modules/packages
-│   ├── jobs/                 # Graphile task contracts/helpers
-│   ├── storage/              # local + S3 media abstraction/migration
-│   └── observability/        # logging/telemetry conventions
-├── docker/
+│   ├── domain/               # entity/connection/settings/secrets domain services
+│   ├── jobs/                 # Graphile task contracts/helpers, embedded-runner conventions
+│   ├── market/               # monitoring dispatch, observation/event write paths
+│   ├── notifications/        # notification rules and delivery write paths
+│   ├── observability/        # logging/correlation conventions
+│   ├── runtime/              # health state/probes, embedded worker, worker-mode health server
+│   └── storage/              # local + S3 media abstraction/migration
+├── docker/                   # production Dockerfile + dev database compose file
 ├── compose.yml
 ├── package.json
 ├── bun.lock
 └── tsconfig.base.json
 ```
 
-Do not create every proposed package immediately. Loxep is a modular monolith; split code when a real dependency/ownership boundary exists rather than mirroring the future domain map mechanically.
+Provider adapter packages (the planned `integrations/` family) arrive with Phase 1 eBay work. Loxep is a modular monolith; packages split when a real dependency/ownership boundary exists rather than mirroring the future domain map mechanically.
 
 ## Foundation capabilities
 
@@ -250,6 +254,8 @@ Implemented conventions (`@loxep/observability`): `createLogger` (Pino) applies 
 - Playwright for critical browser flows once product flows exist.
 - Type/lint/format/build checks.
 - Automated docs-link validation so broken internal links fail CI rather than relying on manual browsing.
+
+Implemented: package vitest suites (~330 tests across `config`/`observability`/`db`/`domain`/`jobs`/`auth`/`market`/`notifications`/`storage`) run against real PostgreSQL/TimescaleDB scratch databases on the dev container (`docker/compose.dev.yml`, host port 5433) — never SQLite substitutes; the storage conformance suite is implementation-blind across `local` and whatever S3 endpoint `LOXEP_TEST_S3_*` points at. Playwright chromium e2e specs (`apps/web/e2e/*.spec.ts`) cover the critical browser flows — magic-link authentication end to end (Mailpit captures the email), session guards, settings health, and economic-entity creation with parent attribution — against a **built** app started through `bin/loxep.ts`; the harness is documented in `apps/web/e2e/harness.md`. Type/lint/format checks and docs internal-link validation run through the workspace scripts (`typecheck`, `lint`, `format:check`, `docs:build`).
 
 ### Deployment
 

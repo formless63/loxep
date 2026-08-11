@@ -8,7 +8,9 @@ The name combines **loxodrome** and **ephemeris**: navigation and observation ov
 
 ## Current implementation direction
 
-Loxep has moved from architecture-only planning into foundation buildout. Current accepted direction includes:
+The Phase 0 platform foundation is implemented: one Loxep image with `LOXEP_MODE=all|web|worker` runtime modes, explicit advisory-locked Drizzle migrations, Better Auth sign-in (magic links + generic OIDC, `admin`/`member` deployment roles, first-admin bootstrap and shell-level recovery), database-backed application settings with application-encrypted runtime secrets, the embedded Graphile Worker job runtime with database-controlled polling dispatch, local/S3 media storage behind one contract with resumable migration, monitoring/notification write-path foundations, structured logging and health probes, and the `/settings` administration workspace. Phase 1 — eBay ingestion and the first useful monitor — is the next implementation focus.
+
+The foundation follows this accepted direction:
 
 - TanStack Start + React with TanStack Router/Query/Table/Form;
 - Kiranism's TanStack Start dashboard integrated as the initial UI/theme/reference donor;
@@ -54,6 +56,45 @@ docker compose up -d
 Loxep is then available at `http://localhost:3020` (readiness: `/health/ready`). Add the optional S3-compatible object-storage companion with `docker compose --profile rustfs up -d`. For scale-out, the same image runs `LOXEP_MODE=web` and `LOXEP_MODE=worker` replicas against the shared PostgreSQL, so background processing can scale independently of web traffic without any architectural change.
 
 Note: the bundled database image is TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
+
+## Development quickstart
+
+```bash
+bun install
+
+# Real PostgreSQL + TimescaleDB for development and tests (host port 5433;
+# package integration tests create their own scratch databases here)
+docker compose -f docker/compose.dev.yml up -d --wait
+psql postgres://postgres:loxep-dev@localhost:5433/postgres -c 'CREATE DATABASE loxep'
+
+# Bootstrap configuration for the dev server
+cp apps/web/env.example.txt apps/web/.env
+# then replace the keyring key and LOXEP_AUTH_SECRET placeholders with real
+# values: head -c 32 /dev/urandom | base64
+
+# Apply migrations — always explicit; application startup never migrates
+node --env-file=apps/web/.env bin/loxep.ts migrate
+
+bun run dev    # web dev server on http://localhost:3020
+```
+
+The dev server is web-only. When background jobs matter, run a worker alongside it from the same configuration (on a different health port):
+
+```bash
+LOXEP_PORT=3021 node --env-file=apps/web/.env bin/loxep.ts start --mode=worker
+```
+
+Checks:
+
+```bash
+bun run test:packages   # package vitest suites against real Postgres/TimescaleDB
+bun run typecheck       # aggregate tsc across the workspace
+bun run lint            # oxlint (apps/web)
+bun run format:check    # oxfmt
+bun run docs:build      # docs build + internal-link validation
+```
+
+Browser e2e tests (Playwright, chromium) run against a **built** app plus a Mailpit SMTP sink; the harness — scratch database, environment, server start — is documented in [`apps/web/e2e/harness.md`](apps/web/e2e/harness.md) (`bun --cwd apps/web test:e2e`).
 
 ## Documentation
 
