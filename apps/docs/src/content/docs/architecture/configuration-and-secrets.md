@@ -59,7 +59,7 @@ Examples:
 - companion-service API tokens;
 - future bank/provider tokens.
 
-These values are encrypted at the application boundary using the accepted AES-256-GCM/key-versioning design. The external root encryption key remains bootstrap configuration; storing the key beside ciphertext in the same database would defeat the boundary.
+These values are encrypted at the application boundary using the accepted AES-256-GCM/key-versioning design with ADR-0019's context-binding AAD. The external root encryption keyring — a defined document carrying the active key version plus versioned 256-bit keys, delivered preferably as a mounted file/Docker secret — remains bootstrap configuration; storing keys beside ciphertext in the same database would defeat the boundary.
 
 ## Authentication bootstrap exception
 
@@ -109,15 +109,22 @@ application_settings
 
 application_secrets
 ├── id
-├── key / purpose
-├── secret_version
+├── secret_key / purpose
+├── current_version
+├── created_at
+└── updated_at
+
+application_secret_versions
+├── secret_id
+├── version
 ├── key_version
 ├── nonce
 ├── auth_tag
 ├── ciphertext
-├── created_at
-└── updated_at
+└── created_at
 ```
+
+Secrets separate a stable logical record (what consumers reference) from immutable ciphertext versions, with `current_version` as the explicit active pointer. Plaintext payloads are typed bundles validated per purpose — an S3 credential atomically carries its access key ID and secret access key — and ciphertext is bound to its record/version/key context through AES-256-GCM additional authenticated data. See ADR-0019.
 
 Feature-specific relational configuration remains preferable when it is queried or constrained like normal domain data. For example:
 

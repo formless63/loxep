@@ -107,7 +107,9 @@ It is not a generic replacement for proper domain models. Monitor configuration 
 
 ### `application_secrets`
 
-Stores application-encrypted runtime secrets that are not naturally credentials of one provider connection, for example S3 credentials or a global notification-service token.
+Stores application-encrypted runtime secrets that are not naturally credentials of one provider connection, for example an S3 credential bundle or a global notification-service token.
+
+Per ADR-0019, a stable logical secret record carries an explicit `current_version` pointer while immutable version rows hold the ciphertext; consumers reference the logical record. Plaintext payloads are typed validated bundles, and AES-256-GCM AAD binds ciphertext to its record/version/key context.
 
 The external root encryption key/keyring never lives in PostgreSQL.
 
@@ -125,13 +127,13 @@ Not every external endpoint needs to become a `connection`. For example, a simpl
 
 ## Connection credentials and secrets
 
-`connection_credentials` stores application-encrypted credential material associated with provider connections using the accepted AES-256-GCM design with versioned externally supplied keys.
+`connection_credentials` stores application-encrypted credential material associated with provider connections using the accepted AES-256-GCM design with versioned externally supplied keys and ADR-0019's logical-record-plus-versions structure.
 
 Requirements:
 
 - plaintext credentials are only exposed through a credential/secret service;
 - tokens/secrets never appear in ordinary APIs, logs, job payloads, source events, or audit snapshots;
-- rotation is version-aware;
+- rotation is version-aware with an explicit current-version pointer, and multi-part credentials rotate as one typed bundle;
 - credential revocation/deletion does not delete imported historical data.
 
 Connection credentials and application secrets may share encryption primitives/services while retaining separate schema semantics.

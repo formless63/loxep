@@ -2,7 +2,7 @@
 title: "ADR-0016: Runtime Configuration and Secret Storage"
 ---
 
-**Status:** Accepted
+**Status:** Accepted; secret schema, versioning, and cryptographic binding specified by ADR-0019.
 
 ## Context
 

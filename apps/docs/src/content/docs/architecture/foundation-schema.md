@@ -45,30 +45,36 @@ This table is for genuinely application-level settings. It is **not** a substitu
 
 Settings are validated through a typed registry/domain service before persistence. Values requiring a restart should be exceptional and identified explicitly.
 
-### `application_secrets`
+### `application_secrets` and `application_secret_versions`
+
+Per ADR-0019, secret storage separates the stable logical secret from immutable ciphertext versions:
 
 ```text
+application_secrets
 id                    uuid primary key
-secret_key            text not null
+secret_key            text not null unique
+purpose               text not null
+current_version       integer not null
+created_by_user_id    text null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+
+application_secret_versions
+secret_id             uuid not null references application_secrets(id)
 version               integer not null
 key_version           integer not null
 nonce                 bytea not null
 auth_tag              bytea not null
 ciphertext            bytea not null
-created_by_user_id    text null
 created_at            timestamptz not null
-updated_at            timestamptz not null
+primary key(secret_id, version)
 ```
 
-Suggested uniqueness:
+Use this for encrypted runtime secrets that are not naturally credentials of a provider connection, for example an S3 backend credential bundle or a global notification-service token. Consumers such as `storage_backends.secret_id` reference the logical `application_secrets.id`, never a version row. `current_version` is the explicit active pointer; rotation writes a new immutable version and then moves the pointer.
 
-```text
-unique(secret_key, version)
-```
+Plaintext payloads are typed bundles validated per purpose/type before encryption (an S3 credential atomically contains access key ID and secret access key). Encryption uses AES-256-GCM with AAD binding ciphertext to record class, logical ID, version, and key version, so ciphertext moved between rows fails authentication.
 
-Use this for encrypted runtime secrets that are not naturally credentials of a provider connection, for example an S3 backend credential or a global notification-service token.
-
-The external root encryption key/keyring is bootstrap configuration and never lives in PostgreSQL. Plaintext values are available only through the narrow credential/secret service and are never returned through general settings APIs.
+The external root encryption keyring — a defined document carrying an active key version plus versioned 256-bit keys, delivered preferably as a mounted file/Docker secret — is bootstrap configuration and never lives in PostgreSQL. Plaintext values are available only through the narrow credential/secret service and are never returned through general settings APIs.
 
 Connection-specific credentials keep their own model because token expiry/refresh/version semantics are part of a connection lifecycle.
 
@@ -146,30 +152,36 @@ Provider connections are created and managed through authenticated Loxep workflo
 
 Phase 0 intentionally has no `connection_users` relation. Better Auth `admin` and `member` users have installation-wide ordinary product access. `created_by_user_id` is audit/provenance metadata, not an ACL or ownership rule. Fine-grained connection/entity/workspace permissions are deferred until a real use case requires them.
 
-### `connection_credentials`
+### `connection_credentials` and `connection_credential_versions`
+
+Per ADR-0019, connection credentials follow the same logical-record-plus-versions pattern:
 
 ```text
+connection_credentials
 id                    uuid primary key
 connection_id         uuid not null references connections(id)
 credential_type       text not null
+current_version       integer not null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+unique(connection_id, credential_type)
+
+connection_credential_versions
+credential_id         uuid not null references connection_credentials(id)
+version               integer not null
 key_version           integer not null
 nonce                 bytea not null
 auth_tag              bytea not null
 ciphertext            bytea not null
 expires_at            timestamptz null
 refresh_after         timestamptz null
-version               integer not null
 created_at            timestamptz not null
-updated_at            timestamptz not null
+primary key(credential_id, version)
 ```
 
-Suggested uniqueness:
+Expiry/refresh metadata lives on the version row because it describes one issued token, not the logical credential slot. Plaintext payloads are typed bundles validated per credential type before encryption.
 
-```text
-unique(connection_id, credential_type, version)
-```
-
-Only the credential service accesses plaintext credentials. The encryption implementation follows the accepted AES-256-GCM/key-versioning decision.
+Only the credential service accesses plaintext credentials. The encryption implementation follows the accepted AES-256-GCM/key-versioning design with ADR-0019's AAD context binding.
 
 ## Provider provenance
 

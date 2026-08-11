@@ -148,15 +148,22 @@ application_settings
 
 application_secrets
 ├── id
-├── key / purpose
-├── secret_version
+├── secret_key / purpose
+├── current_version
+├── created_at
+└── updated_at
+
+application_secret_versions
+├── secret_id
+├── version
 ├── key_version
 ├── nonce
 ├── auth_tag
 ├── ciphertext
-├── created_at
-└── updated_at
+└── created_at
 ```
+
+Secrets separate the stable logical record from immutable ciphertext versions with an explicit `current_version` pointer, use typed validated payload bundles, and bind ciphertext to its context through AES-256-GCM AAD. See ADR-0019.
 
 These are not a substitute for proper feature/domain tables. Connection metadata belongs with connections, monitor configuration with monitors, and durable user preferences in an appropriate preference model once their shape is known.
 
