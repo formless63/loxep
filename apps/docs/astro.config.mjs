@@ -52,6 +52,7 @@ export default defineConfig({
             { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
             { label: 'Foundation Schema', slug: 'architecture/foundation-schema' },
             { label: 'Commerce Schema Design (Phase 3)', slug: 'architecture/commerce-schema-design' },
+            { label: 'Inventory & Acquisition Schema Design (Phase 4)', slug: 'architecture/inventory-schema-design' },
           ],
         },
         {
