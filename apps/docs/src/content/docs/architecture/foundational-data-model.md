@@ -237,6 +237,8 @@ Observation writes are retry-safe: each provider fetch mints one `observation_ba
 
 Initial Timescale policy uses 7-day chunks, recent rowstore data, later columnstore conversion around 30 days, and no automatic retention deletion. These are starting values and current Timescale syntax must be verified before implementation.
 
+`@loxep/market` reads this history through four plain, ungrouped-by-a-continuous-aggregate queries: time-bucketed price series, time-bucketed availability/quantity series, restock/sellout interval derivation from `market_events` (pure pairing logic, unit-tested independent of the database), and a per-item activity summary (event counts, price change over a window, observation volume, freshness) — all `time_bucket`/`GROUP BY` reads with gaps left absent rather than zero-filled. A Timescale continuous aggregate remains deliberately unbuilt until measured volume or query latency justifies one (roughly 100k–1M observation rows for a single item, or measured p95 query latency past ~200ms); `priceHistory` is the query most likely to need one first.
+
 ## Detected market events
 
 Observations are source facts; `market_events` are derived interpretations of changes between observations.
