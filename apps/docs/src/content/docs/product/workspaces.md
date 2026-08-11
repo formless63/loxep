@@ -73,7 +73,7 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 | **Customers** | `/customers` | people, organizations, contacts, addresses/sites, operational history, terms/tax metadata |
 | **Projects** | `/projects` | jobs/projects, tasks/milestones, time, materials, expenses, service delivery, subscriptions/recurring services |
 | **Finance** | `/finance` | billing/AR, expenses/AP, payments, marketplace payouts/fees, banking, reconciliation, accounting, tax-oriented reporting |
-| **Settings** | `/settings` | users/admin, economic entities, connections/integrations, notifications, storage, application settings, secret status/rotation, health/diagnostics |
+| **Settings** | `/settings` | users/admin, economic entities, integrations (the catalog of supported services and their set-up: eBay keyset, WooCommerce, Medusa, notification transports), connections (accounts added under a chosen service), notifications, storage, application settings, secret status/rotation, health/diagnostics |
 | **Starter Reference** | `/starter` | preserved donor demos and UI patterns; development/reference use rather than product data |
 
 Not every proposed workspace needs to be implemented during Phase 0. The value of defining the map now is to keep route structure and future deep links from assuming that Dashboard owns everything.

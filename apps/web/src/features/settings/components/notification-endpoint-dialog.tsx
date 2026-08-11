@@ -116,8 +116,8 @@ export default function NotificationEndpointDialog({
             {isEdit ? 'Edit notification endpoint' : 'New notification endpoint'}
           </DialogTitle>
           <DialogDescription>
-            ntfy is the first transport, not the model — one endpoint is a `POST` destination (base
-            URL + topic) that rules can route market events to.
+            An endpoint is one delivery destination that rules can route events to. ntfy is the
+            first supported endpoint type: a server base URL plus a topic.
           </DialogDescription>
         </DialogHeader>
         <form

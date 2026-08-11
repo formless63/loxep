@@ -87,8 +87,8 @@ export default function NotificationEndpointsTable({ isAdmin }: { isAdmin: boole
           <EmptyHeader>
             <EmptyTitle>No notification endpoints</EmptyTitle>
             <EmptyDescription>
-              Register a ntfy endpoint (base URL + topic) as a destination rules can route market
-              events to.
+              Endpoints are the destinations rules deliver to. Register one to start receiving
+              notifications — ntfy is the first supported endpoint type.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

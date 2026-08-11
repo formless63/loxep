@@ -10,7 +10,7 @@ function SettingsApplication() {
   return (
     <SettingsPage
       title='Application settings'
-      description='Database-backed application configuration (ADR-0016) — secrets never appear here.'
+      description='Database-backed application configuration — secrets never appear here.'
     >
       <ApplicationSettings />
     </SettingsPage>

@@ -223,7 +223,7 @@ export default function MonitorFormDialog({
           <DialogTitle>{isEdit ? 'Edit monitor' : 'New monitor'}</DialogTitle>
           <DialogDescription>
             Scheduling state — interval, priority, backoff — lives in the database; a small number
-            of dispatcher jobs claim due monitors (ADR-0003), never one cron entry per item.
+            of dispatcher jobs claim due monitors, never one cron entry per item.
           </DialogDescription>
         </DialogHeader>
         <form
