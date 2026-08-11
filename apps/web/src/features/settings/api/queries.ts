@@ -12,6 +12,7 @@ import {
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
+import { fetchEbayKeysetStatus } from '@/server/ebay-oauth';
 
 export const healthReportQuery = queryOptions({
   queryKey: ['settings', 'health'],
@@ -27,6 +28,11 @@ export const entitiesQuery = queryOptions({
 export const connectionsQuery = queryOptions({
   queryKey: ['settings', 'connections'],
   queryFn: () => fetchConnections()
+});
+
+export const ebayKeysetStatusQuery = queryOptions({
+  queryKey: ['settings', 'ebay-keyset-status'],
+  queryFn: () => fetchEbayKeysetStatus()
 });
 
 export const storageBackendsQuery = queryOptions({

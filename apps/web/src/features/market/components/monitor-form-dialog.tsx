@@ -21,10 +21,13 @@ import {
 
 const monitorFormSchema = z
   .object({
-    targetType: z.enum(['ebay_item', 'ebay_watchlist']),
+    targetType: z.enum(['ebay_item', 'ebay_watchlist', 'ebay_search', 'ebay_seller']),
     name: z.string().trim().min(1, 'Name is required'),
     connectionId: z.string(),
     externalItemId: z.string(),
+    query: z.string(),
+    categoryId: z.string(),
+    sellerUsername: z.string(),
     intervalSeconds: z.number({ error: 'Interval is required' }).int().positive(),
     priority: z.number({ error: 'Priority is required' }).int(),
     enabled: z.boolean()
@@ -42,6 +45,24 @@ const monitorFormSchema = z
         code: 'custom',
         path: ['connectionId'],
         message: 'A connection is required to identify the watchlist'
+      });
+    }
+    if (
+      values.targetType === 'ebay_search' &&
+      values.query.trim() === '' &&
+      values.categoryId.trim() === ''
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['query'],
+        message: 'A search monitor needs a query or a category'
+      });
+    }
+    if (values.targetType === 'ebay_seller' && values.sellerUsername.trim() === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sellerUsername'],
+        message: 'Seller username is required for an eBay seller monitor'
       });
     }
   });
@@ -75,6 +96,8 @@ export default function MonitorFormDialog({
   const mutation = useMutation({
     mutationFn: (values: MonitorFormValues) => {
       const connectionId = values.connectionId === NO_CONNECTION_VALUE ? null : values.connectionId;
+      const query = values.query.trim();
+      const categoryId = values.categoryId.trim();
       if (isEdit) {
         return updateMonitor({
           data: {
@@ -86,32 +109,74 @@ export default function MonitorFormDialog({
             enabled: values.enabled,
             ...(monitor.targetType === 'ebay_item'
               ? { externalItemId: values.externalItemId.trim() }
+              : {}),
+            ...(monitor.targetType === 'ebay_search' || monitor.targetType === 'ebay_seller'
+              ? {
+                  ...(query !== '' ? { query } : {}),
+                  ...(categoryId !== '' ? { categoryId } : {})
+                }
+              : {}),
+            ...(monitor.targetType === 'ebay_seller'
+              ? { sellerUsername: values.sellerUsername.trim() }
               : {})
           }
         });
       }
-      return createMonitor({
-        data:
-          values.targetType === 'ebay_item'
-            ? {
-                targetType: 'ebay_item',
-                name: values.name,
-                connectionId,
-                intervalSeconds: values.intervalSeconds,
-                priority: values.priority,
-                enabled: values.enabled,
-                externalItemId: values.externalItemId.trim()
-              }
-            : {
-                targetType: 'ebay_watchlist',
-                name: values.name,
-                // Validated non-empty (not the sentinel) by superRefine above.
-                connectionId: connectionId as string,
-                intervalSeconds: values.intervalSeconds,
-                priority: values.priority,
-                enabled: values.enabled
-              }
-      });
+      switch (values.targetType) {
+        case 'ebay_item':
+          return createMonitor({
+            data: {
+              targetType: 'ebay_item',
+              name: values.name,
+              connectionId,
+              intervalSeconds: values.intervalSeconds,
+              priority: values.priority,
+              enabled: values.enabled,
+              externalItemId: values.externalItemId.trim()
+            }
+          });
+        case 'ebay_search':
+          return createMonitor({
+            data: {
+              targetType: 'ebay_search',
+              name: values.name,
+              connectionId,
+              intervalSeconds: values.intervalSeconds,
+              priority: values.priority,
+              enabled: values.enabled,
+              ...(query !== '' ? { query } : {}),
+              ...(categoryId !== '' ? { categoryId } : {})
+            }
+          });
+        case 'ebay_seller':
+          return createMonitor({
+            data: {
+              targetType: 'ebay_seller',
+              name: values.name,
+              connectionId,
+              intervalSeconds: values.intervalSeconds,
+              priority: values.priority,
+              enabled: values.enabled,
+              // Validated non-empty by superRefine above.
+              sellerUsername: values.sellerUsername.trim(),
+              ...(query !== '' ? { query } : {}),
+              ...(categoryId !== '' ? { categoryId } : {})
+            }
+          });
+        case 'ebay_watchlist':
+        default:
+          return createMonitor({
+            data: {
+              targetType: 'ebay_watchlist',
+              name: values.name,
+              // Validated non-empty (not the sentinel) by superRefine above.
+              connectionId: connectionId as string,
+              intervalSeconds: values.intervalSeconds,
+              priority: values.priority,
+              enabled: values.enabled
+            }
+          });
+      }
     },
     onSuccess: () => {
       toast.success(isEdit ? 'Monitor updated' : 'Monitor created');
@@ -123,7 +188,12 @@ export default function MonitorFormDialog({
     }
   });
 
-  const config = (monitor?.config ?? {}) as { externalItemId?: string };
+  const config = (monitor?.config ?? {}) as {
+    externalItemId?: string;
+    query?: string;
+    categoryId?: string;
+    sellerUsername?: string;
+  };
 
   const form = useAppForm({
     defaultValues: {
@@ -131,6 +201,9 @@ export default function MonitorFormDialog({
       name: monitor?.name ?? '',
       connectionId: monitor?.connectionId ?? NO_CONNECTION_VALUE,
       externalItemId: config.externalItemId ?? '',
+      query: config.query ?? '',
+      categoryId: config.categoryId ?? '',
+      sellerUsername: config.sellerUsername ?? '',
       intervalSeconds: monitor?.intervalSeconds ?? 3600,
       priority: monitor?.priority ?? 0,
       enabled: monitor?.enabled ?? true
@@ -198,6 +271,48 @@ export default function MonitorFormDialog({
                         />
                       )}
                     />
+                  )}
+                  {targetType === 'ebay_seller' && (
+                    <form.AppField
+                      name='sellerUsername'
+                      children={(field) => (
+                        <field.TextField
+                          label='Seller username'
+                          required
+                          placeholder='e.g. vintage-radios-co'
+                          description='Every currently purchasable listing of this eBay seller.'
+                        />
+                      )}
+                    />
+                  )}
+                  {(targetType === 'ebay_search' || targetType === 'ebay_seller') && (
+                    <div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
+                      <form.AppField
+                        name='query'
+                        children={(field) => (
+                          <field.TextField
+                            label='Query'
+                            required={targetType === 'ebay_search'}
+                            placeholder='e.g. vintage radio'
+                            description={
+                              targetType === 'ebay_search'
+                                ? 'Search keywords — a query or a category is required.'
+                                : 'Optional keyword narrowing within this seller’s listings.'
+                            }
+                          />
+                        )}
+                      />
+                      <form.AppField
+                        name='categoryId'
+                        children={(field) => (
+                          <field.TextField
+                            label='Category id'
+                            placeholder='e.g. 293'
+                            description='Optional eBay category id narrowing.'
+                          />
+                        )}
+                      />
+                    </div>
                   )}
                   <form.AppField
                     name='connectionId'

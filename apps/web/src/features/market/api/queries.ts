@@ -9,7 +9,9 @@ import {
   fetchMarketItem,
   fetchMarketItems,
   fetchMarketOverview,
-  fetchMonitors
+  fetchMonitors,
+  fetchOpportunityEvents,
+  fetchSearchDashboard
 } from '@/server/market-functions';
 
 export const marketOverviewQuery = queryOptions({
@@ -69,4 +71,17 @@ export const itemEventsQuery = (marketplaceItemId: string, page: number) =>
   queryOptions({
     queryKey: ['market', 'items', marketplaceItemId, 'events', page],
     queryFn: () => fetchItemEvents({ data: { marketplaceItemId, page } })
+  });
+
+export const searchDashboardQuery = queryOptions({
+  queryKey: ['market', 'search-dashboard'],
+  queryFn: () => fetchSearchDashboard(),
+  refetchInterval: 30_000
+});
+
+export const opportunityEventsQuery = (page: number) =>
+  queryOptions({
+    queryKey: ['market', 'opportunities', page],
+    queryFn: () => fetchOpportunityEvents({ data: { page } }),
+    refetchInterval: 30_000
   });

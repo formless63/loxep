@@ -4,19 +4,28 @@
  * `@/server/admin`'s `getMarketModule` doc) reaches the client bundle.
  *
  * `SupportedMonitorTargetType` is deliberately a local literal union, not an
- * import of `@loxep/market`'s `MonitorTargetType` — this workspace's Phase 1
- * scope (loxep-62y.4) is create/edit for `ebay_item`/`ebay_watchlist` only
- * (`monitors.ts`'s `MonitorTargetType` may grow further target types under
- * other beads; the market-functions.ts server input validator is similarly
- * scoped to these two literals). `monitorTargetTypeLabel` still falls back to
- * the raw stored value for any other `monitor_targets.target_type` value, so
- * unsupported types display instead of erroring.
+ * import of `@loxep/market`'s `MonitorTargetType` — so a future addition to
+ * that package's type fails typechecking HERE (the `satisfies` below) rather
+ * than silently drifting. As of loxep-7dp.6, `@loxep/market`'s
+ * `MONITOR_TARGET_TYPES` already carries all four members
+ * (`ebay_item`/`ebay_watchlist`/`ebay_search`/`ebay_seller` — the Phase 2
+ * discovery types poll through the same claim/backoff/adaptive machinery,
+ * `monitors.ts`'s doc), and this union and the create/edit UI below cover all
+ * four. `monitorTargetTypeLabel` still falls back to the raw stored value for
+ * any other `monitor_targets.target_type` value, so a type this union hasn't
+ * caught up to yet displays instead of erroring.
  */
-export type SupportedMonitorTargetType = 'ebay_item' | 'ebay_watchlist';
+export type SupportedMonitorTargetType =
+  | 'ebay_item'
+  | 'ebay_watchlist'
+  | 'ebay_search'
+  | 'ebay_seller';
 
 const MONITOR_TARGET_TYPE_LABELS = {
   ebay_item: 'eBay item',
-  ebay_watchlist: 'eBay watchlist'
+  ebay_watchlist: 'eBay watchlist',
+  ebay_search: 'eBay search',
+  ebay_seller: 'eBay seller'
 } satisfies Record<SupportedMonitorTargetType, string>;
 
 export const MONITOR_TARGET_TYPE_VALUES = Object.keys(

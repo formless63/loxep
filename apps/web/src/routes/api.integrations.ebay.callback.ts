@@ -9,15 +9,18 @@ import { createFileRoute } from '@tanstack/react-router';
  * generated RuName with the keyset. eBay's authorization request carries the
  * RuName as `redirect_uri`, never this URL directly.
  *
- * All logic lives in `@/server/ebay-oauth` and is loaded dynamically so the
- * server-only module (and the integration package behind it) stays out of the
- * client bundle, matching the `/api/auth/$` route's shape.
+ * All logic lives in `@/server/ebay-oauth-callback` and is loaded dynamically
+ * so the server-only module (and the integration package behind it) stays
+ * out of the client bundle, matching the `/api/auth/$` route's shape — see
+ * that module's doc, and `@/server/ebay-oauth-internal`'s doc, for why the
+ * callback handler lives in its own module rather than alongside the
+ * client-imported `@/server/ebay-oauth` server functions.
  */
 export const Route = createFileRoute('/api/integrations/ebay/callback')({
   server: {
     handlers: {
       GET: async ({ request }: { request: Request }) => {
-        const { handleEbayConsentCallback } = await import('@/server/ebay-oauth');
+        const { handleEbayConsentCallback } = await import('@/server/ebay-oauth-callback');
         return handleEbayConsentCallback(request);
       }
     }
