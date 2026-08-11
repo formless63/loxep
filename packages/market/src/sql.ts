@@ -43,6 +43,19 @@ export function intLiteral(value: number): string {
   return String(value);
 }
 
+/**
+ * Returns a `jsonb` literal for a JSON-serializable value. Serialization
+ * goes through {@link textLiteral}, so quotes/backslashes inside the JSON are
+ * escaped by the same single rule as any other text literal.
+ */
+export function jsonbLiteral(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) {
+    throw new MarketValidationError("value is not JSON-serializable");
+  }
+  return `${textLiteral(json)}::jsonb`;
+}
+
 /** Returns a `timestamptz` literal for a valid Date. */
 export function timestamptzLiteral(value: Date): string {
   const millis = value.getTime();

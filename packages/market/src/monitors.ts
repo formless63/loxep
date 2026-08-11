@@ -35,12 +35,45 @@
  * ({@link MAX_BACKOFF_SECONDS}). {@link recordPollSuccess} resets
  * `consecutive_errors`/`backoff_until`. The dispatcher never claims a target
  * whose `backoff_until` is in the future.
+ *
+ * ## Adaptive cadence
+ *
+ * `interval_seconds` is the operator-set BASE cadence and never changes by
+ * itself. When a caller reports poll CHANGE information,
+ * {@link recordPollSuccess} advances `next_poll_at` by the activity-adaptive
+ * interval from `computeAdaptiveInterval` instead of the flat base, and
+ * merges the transient streak state into `config.adaptive` — no schema
+ * change, no extra table (see `adaptive.ts` for the exact tiers). Callers
+ * that report nothing keep the historical flat behaviour, as does a target
+ * configured with `config.adaptive.enabled = false`.
+ *
+ * The claim statement is deliberately untouched: adaptivity is computed at
+ * RECORD time, so claim atomicity and at-least-once safety are exactly what
+ * they were. The claim's own flat advance remains the safety net that keeps
+ * a target scheduled when a poll job dies before recording anything.
  */
 import { monitorTargets } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
 import { z } from "zod";
+import {
+  ADAPTIVE_CONFIG_KEY,
+  DEFAULT_ADAPTIVE_SIGNAL_WINDOW_SECONDS,
+  adaptiveConfigSchema,
+  adaptiveStatePatch,
+  evaluateAdaptiveInterval,
+  nextUnchangedStreak,
+  readAdaptiveState,
+} from "./adaptive.ts";
+import type { AdaptiveBounds, AdaptiveDecision } from "./adaptive.ts";
 import { MarketNotFoundError, MarketValidationError } from "./errors.ts";
-import { intLiteral, timestamptzLiteral, uuidLiteral } from "./sql.ts";
+import { LISTING_STATE_ENDED } from "./events.ts";
+import {
+  intLiteral,
+  jsonbLiteral,
+  textLiteral,
+  timestamptzLiteral,
+  uuidLiteral,
+} from "./sql.ts";
 
 /** Initial monitor target types (foundation schema); text + TS union, no PG enum. */
 export const MONITOR_TARGET_TYPES = ["ebay_watchlist", "ebay_item"] as const;
@@ -67,14 +100,22 @@ export function backoffSeconds(
  * Per-target-type `config` validation (Phase 0 shapes; provider adapters
  * arrive in Phase 1 and may extend these without changing the scheduling
  * model).
+ *
+ * Every target type also accepts the namespaced `adaptive` key
+ * (`adaptiveConfigSchema`): the scheduler's transient adaptivity state and
+ * its `enabled` opt-out live there, so activity-adaptive cadence needs no
+ * schema change and no new table.
  */
 export const monitorTargetConfigSchemas = {
   /** The watchlist itself is identified by the target's connection. */
-  ebay_watchlist: z.strictObject({}),
+  ebay_watchlist: z.strictObject({
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
   /** A single public listing identified by its external item id. */
   ebay_item: z.strictObject({
     externalItemId: z.string().min(1),
     marketplace: z.string().min(1).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
 } as const satisfies Record<MonitorTargetType, z.ZodType>;
 
@@ -338,21 +379,266 @@ export async function claimDueTargets(
   return claimed;
 }
 
+/** Activity signals derived from stored history for one monitor target. */
+export interface AdaptiveSignals {
+  /** `market_events` for the target's items inside the window. */
+  recentEventCount: number;
+  /** Observation `raw_state_hash` deltas inside the window. */
+  recentChangeCount: number;
+  /** Seconds to the soonest future `listing_ends_at`, or null. */
+  secondsUntilListingEnd: number | null;
+  /** The window actually used, in seconds. */
+  windowSeconds: number;
+}
+
+/**
+ * Derive the adaptive policy's activity inputs from tables that already
+ * exist — `market_events`, `marketplace_item_observations` (hash deltas), and
+ * `marketplace_items.listing_ends_at` — for the items linked to a target.
+ * One statement, read-only; the policy itself stays pure.
+ *
+ * An event counts when it is attributed to this target OR concerns one of
+ * its actively linked items. Auction proximity only considers items that are
+ * still linked, not `ended`, and whose end is in the future.
+ */
+export async function collectAdaptiveSignals(
+  db: LoxepDb,
+  monitorTargetId: string,
+  options: { now?: Date; windowSeconds?: number } = {},
+): Promise<AdaptiveSignals> {
+  const now = options.now ?? new Date();
+  const windowSeconds =
+    options.windowSeconds ?? DEFAULT_ADAPTIVE_SIGNAL_WINDOW_SECONDS;
+  if (!Number.isSafeInteger(windowSeconds) || windowSeconds < 1) {
+    throw new MarketValidationError(
+      "windowSeconds must be a positive integer number of seconds",
+    );
+  }
+  const targetLiteral = uuidLiteral(monitorTargetId);
+  const nowLiteral = timestamptzLiteral(now);
+  const sinceLiteral = timestamptzLiteral(
+    new Date(now.getTime() - windowSeconds * 1000),
+  );
+  const result = await db.execute(
+    `with linked as (
+        select marketplace_item_id
+          from monitor_items
+         where monitor_target_id = ${targetLiteral}
+           and active = true
+      ),
+      event_counts as (
+        select count(*)::int as n
+          from market_events e
+         where (
+                 e.monitor_target_id = ${targetLiteral}
+                 or e.marketplace_item_id in (select marketplace_item_id from linked)
+               )
+           and e.detected_at > ${sinceLiteral}
+           and e.detected_at <= ${nowLiteral}
+      ),
+      hashes as (
+        select o.raw_state_hash,
+               lag(o.raw_state_hash) over (
+                 partition by o.marketplace_item_id order by o.observed_at
+               ) as previous_hash
+          from marketplace_item_observations o
+         where o.marketplace_item_id in (select marketplace_item_id from linked)
+           and o.observed_at > ${sinceLiteral}
+           and o.observed_at <= ${nowLiteral}
+      ),
+      change_counts as (
+        select count(*)::int as n
+          from hashes
+         where raw_state_hash is not null
+           and previous_hash is not null
+           and raw_state_hash <> previous_hash
+      ),
+      ends as (
+        select min(
+                 extract(epoch from (i.listing_ends_at - ${nowLiteral}))
+               )::double precision as seconds
+          from marketplace_items i
+         where i.id in (select marketplace_item_id from linked)
+           and i.listing_ends_at is not null
+           and i.listing_ends_at >= ${nowLiteral}
+           and i.current_state <> ${textLiteral(LISTING_STATE_ENDED)}
+      )
+      select event_counts.n as event_count,
+             change_counts.n as change_count,
+             ends.seconds as seconds_until_end
+        from event_counts, change_counts, ends`,
+  );
+  const row = result.rows[0];
+  const secondsRaw = row?.["seconds_until_end"];
+  return {
+    recentEventCount: Number(row?.["event_count"] ?? 0),
+    recentChangeCount: Number(row?.["change_count"] ?? 0),
+    secondsUntilListingEnd:
+      secondsRaw === null || secondsRaw === undefined
+        ? null
+        : Number(secondsRaw),
+    windowSeconds,
+  };
+}
+
+/**
+ * Poll-outcome facts a caller may report to {@link recordPollSuccess}.
+ * Supplying `changed` is what opts a call into adaptive advancement.
+ */
+export interface RecordPollSuccessOptions {
+  at?: Date;
+  /**
+   * Whether this poll observed any change (a `raw_state_hash` delta, a new
+   * item, a derived event). Omitted → the historical flat behaviour.
+   */
+  changed?: boolean;
+  /** Seconds to the soonest future `listing_ends_at` for this target. */
+  secondsUntilListingEnd?: number | null;
+  /** `market_events` count in the recent window (default 0). */
+  recentEventCount?: number;
+  /** Observation-change count in the recent window (default: 1 if changed). */
+  recentChangeCount?: number;
+  /**
+   * Hard interval bounds. `bounds.minSeconds` is where the caller injects its
+   * per-connection RATE BUDGET floor — the eBay executor passes the floor its
+   * limiter allows for the connection.
+   */
+  bounds?: Partial<AdaptiveBounds>;
+  /**
+   * Derive omitted signals from stored history via
+   * {@link collectAdaptiveSignals} (one extra read). Default false: the poll
+   * path performs no query a caller did not ask for.
+   */
+  deriveSignals?: boolean;
+  /** Window for derived signals (default one hour). */
+  signalWindowSeconds?: number;
+}
+
+/** What {@link recordPollSuccess} did with the schedule. */
+export interface PollSuccessResult {
+  /** The adaptive decision, or null when the flat path ran. */
+  adaptive: (AdaptiveDecision & { unchangedStreak: number }) | null;
+  /** The stored `next_poll_at` after the adaptive advance, else null. */
+  nextPollAt: Date | null;
+}
+
 /**
  * Record a successful poll: stamps `last_poll_at`/`last_success_at` and
  * clears `consecutive_errors`/`backoff_until`. Safe to re-run (idempotent
  * for a fixed `at`).
+ *
+ * When `options.changed` is supplied and the target has not opted out
+ * (`config.adaptive.enabled === false`), this also advances `next_poll_at` by
+ * the adaptive interval and merges the new streak state into
+ * `config.adaptive`. Replaying the same `at` recomputes the identical
+ * interval and does not inflate the streak.
  */
 export async function recordPollSuccess(
   db: LoxepDb,
   targetId: string,
-  options: { at?: Date } = {},
-): Promise<void> {
-  const at = timestamptzLiteral(options.at ?? new Date());
+  options: RecordPollSuccessOptions = {},
+): Promise<PollSuccessResult> {
+  const at = options.at ?? new Date();
+  if (options.changed === undefined) {
+    await recordFlatPollSuccess(db, targetId, at);
+    return { adaptive: null, nextPollAt: null };
+  }
+
+  const target = await db.query.monitorTargets.findFirst({
+    where: (table, { eq }) => eq(table.id, targetId),
+  });
+  if (target === undefined) {
+    throw new MarketNotFoundError(`unknown monitor target "${targetId}"`);
+  }
+  const state = readAdaptiveState(target.config);
+  if (!state.enabled) {
+    await recordFlatPollSuccess(db, targetId, at);
+    return { adaptive: null, nextPollAt: null };
+  }
+
+  const changed = options.changed;
+  let recentEventCount = options.recentEventCount;
+  let recentChangeCount = options.recentChangeCount;
+  let secondsUntilListingEnd = options.secondsUntilListingEnd;
+  if (
+    options.deriveSignals === true &&
+    (recentEventCount === undefined ||
+      recentChangeCount === undefined ||
+      secondsUntilListingEnd === undefined)
+  ) {
+    const signals = await collectAdaptiveSignals(db, targetId, {
+      now: at,
+      ...(options.signalWindowSeconds === undefined
+        ? {}
+        : { windowSeconds: options.signalWindowSeconds }),
+    });
+    recentEventCount ??= signals.recentEventCount;
+    recentChangeCount ??= signals.recentChangeCount;
+    secondsUntilListingEnd ??= signals.secondsUntilListingEnd;
+  }
+
+  const unchangedStreak = nextUnchangedStreak({ state, changed, at });
+  const decision = evaluateAdaptiveInterval({
+    baseIntervalSeconds: target.intervalSeconds,
+    recentEventCount: recentEventCount ?? 0,
+    // A changed poll is itself one observed change when nothing else is known.
+    recentChangeCount: recentChangeCount ?? (changed ? 1 : 0),
+    unchangedStreak,
+    secondsUntilListingEnd: secondsUntilListingEnd ?? null,
+    previousIntervalSeconds: state.lastComputedInterval,
+    ...(options.bounds === undefined ? {} : { bounds: options.bounds }),
+  });
+
+  const atLiteral = timestamptzLiteral(at);
+  const patch = jsonbLiteral({
+    [ADAPTIVE_CONFIG_KEY]: adaptiveStatePatch({ unchangedStreak, decision, at }),
+  });
   const result = await db.execute(
     `update monitor_targets
-        set last_poll_at = ${at},
-            last_success_at = ${at},
+        set last_poll_at = ${atLiteral},
+            last_success_at = ${atLiteral},
+            consecutive_errors = 0,
+            backoff_until = null,
+            next_poll_at = ${atLiteral}
+              + ${intLiteral(decision.intervalSeconds)} * interval '1 second',
+            config = case
+                       when jsonb_typeof(config) = 'object'
+                         then case
+                                when jsonb_typeof(config -> '${ADAPTIVE_CONFIG_KEY}') = 'object'
+                                  then jsonb_set(
+                                         config,
+                                         '{${ADAPTIVE_CONFIG_KEY}}',
+                                         (config -> '${ADAPTIVE_CONFIG_KEY}') || (${patch} -> '${ADAPTIVE_CONFIG_KEY}')
+                                       )
+                                else config || ${patch}
+                              end
+                       else ${patch}
+                     end,
+            updated_at = now()
+      where id = ${uuidLiteral(targetId)}
+      returning next_poll_at`,
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new MarketNotFoundError(`unknown monitor target "${targetId}"`);
+  }
+  return {
+    adaptive: { ...decision, unchangedStreak },
+    nextPollAt: toDate(row["next_poll_at"]),
+  };
+}
+
+/** The historical flat success bookkeeping (never touches `next_poll_at`). */
+async function recordFlatPollSuccess(
+  db: LoxepDb,
+  targetId: string,
+  at: Date,
+): Promise<void> {
+  const atLiteral = timestamptzLiteral(at);
+  const result = await db.execute(
+    `update monitor_targets
+        set last_poll_at = ${atLiteral},
+            last_success_at = ${atLiteral},
             consecutive_errors = 0,
             backoff_until = null,
             updated_at = now()
