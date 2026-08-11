@@ -32,12 +32,31 @@
  *
  * A first observation (no previous) derives nothing: events are
  * interpretations of change between observations.
+ *
+ * ## `new_listing` is the exception
+ *
+ * `new_listing` (Phase 2) is a DISCOVERY event, not a comparison: it fires
+ * when a search or seller monitor finds an item Loxep has never seen. It
+ * therefore lives in `discovery.ts`, has no `from_observed_at`, and puts the
+ * item's first-discovery instant in the deduplication key's timestamp slot —
+ * the same `<item>:<type>:<ISO>` convention, so the same UNIQUE column keeps
+ * it idempotent.
  */
 import { marketEvents } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
 import { MarketValidationError } from "./errors.ts";
 
-/** Initial derived event types; text + TS union, no PG enum. */
+/**
+ * Derived event types; text + TS union, no PG enum.
+ *
+ * All but `new_listing` are COMPARISONS of two observations of one item and
+ * come out of {@link compareObservations}. `new_listing` is the one
+ * DISCOVERY event: it has no previous observation to compare against and is
+ * derived in `discovery.ts` instead (see the module doc there for its
+ * first-global-discovery semantics). It still uses this module's
+ * {@link deduplicationKeyFor} convention, with the item's first-discovery
+ * instant in the timestamp slot.
+ */
 export const MARKET_EVENT_TYPES = [
   "price_changed",
   "price_dropped",
@@ -45,8 +64,12 @@ export const MARKET_EVENT_TYPES = [
   "sold_out",
   "quantity_changed",
   "listing_ended",
+  "new_listing",
 ] as const;
 export type MarketEventType = (typeof MARKET_EVENT_TYPES)[number];
+
+/** The one event type that is a discovery, not an observation comparison. */
+export const NEW_LISTING_EVENT_TYPE = "new_listing" as const;
 
 /** Availability conventions used by restock/sellout detection. */
 export const AVAILABILITY_IN_STOCK = "in_stock";

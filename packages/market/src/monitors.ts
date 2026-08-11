@@ -75,8 +75,19 @@ import {
   uuidLiteral,
 } from "./sql.ts";
 
-/** Initial monitor target types (foundation schema); text + TS union, no PG enum. */
-export const MONITOR_TARGET_TYPES = ["ebay_watchlist", "ebay_item"] as const;
+/**
+ * Monitor target types; text + TS union, no PG enum (`monitor_targets`
+ * `target_type` is a plain `text` column, so adding a type needs no
+ * migration). `ebay_search`/`ebay_seller` are the Phase 2 discovery types —
+ * they poll through the SAME claim/backoff/adaptive machinery as the Phase 1
+ * types; only their executor differs.
+ */
+export const MONITOR_TARGET_TYPES = [
+  "ebay_watchlist",
+  "ebay_item",
+  "ebay_search",
+  "ebay_seller",
+] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
 
 /** Exponential-backoff cap: one hour. */
@@ -96,15 +107,69 @@ export function backoffSeconds(
   return Math.min(intervalSeconds * 2 ** exponent, MAX_BACKOFF_SECONDS);
 }
 
+const decimalString = z
+  .string()
+  .regex(/^-?\d+(\.\d+)?$/, "expected a decimal string");
+
 /**
- * Per-target-type `config` validation (Phase 0 shapes; provider adapters
- * arrive in Phase 1 and may extend these without changing the scheduling
- * model).
+ * The stored form of the eBay integration's small Loxep-owned search filter
+ * shape (`EbaySearchFilters` in `@loxep/integration-ebay`). It is
+ * re-declared rather than imported: `@loxep/market` owns the scheduling and
+ * observation model and must not depend on a provider integration package
+ * (ADR-0009's boundary direction). The two shapes are structurally identical
+ * by design, so an executor can hand a validated config straight to
+ * `searchListings` — the ONE deliberate difference is `listedAfter`, which is
+ * an ISO-8601 string here because `config` is jsonb and jsonb has no date
+ * type.
+ *
+ * Provider grammar (`price:[10..50]`, `sellers:{alice|bob}`, …) is encoded by
+ * the integration package alone and never appears in a monitor config.
+ */
+export const ebaySearchFiltersSchema = z.strictObject({
+  priceMin: decimalString.optional(),
+  priceMax: decimalString.optional(),
+  /** ISO-4217; the provider requires it whenever a price bound is set. */
+  priceCurrency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  buyingOptions: z
+    .array(z.enum(["FIXED_PRICE", "AUCTION", "BEST_OFFER", "CLASSIFIED_AD"]))
+    .min(1)
+    .optional(),
+  conditions: z
+    .array(
+      z.enum([
+        "NEW",
+        "USED",
+        "UNSPECIFIED",
+        "CERTIFIED_REFURBISHED",
+        "EXCELLENT_REFURBISHED",
+        "VERY_GOOD_REFURBISHED",
+        "GOOD_REFURBISHED",
+        "SELLER_REFURBISHED",
+      ]),
+    )
+    .min(1)
+    .optional(),
+  conditionIds: z.array(z.string().regex(/^\d+$/)).min(1).optional(),
+  sellers: z.array(z.string().min(1)).min(1).optional(),
+  /** ISO-8601 instant; only listings created at/after it are considered. */
+  listedAfter: z.iso.datetime().optional(),
+});
+
+export type EbaySearchFiltersConfig = z.infer<typeof ebaySearchFiltersSchema>;
+
+/**
+ * Per-target-type `config` validation. Provider adapters extend these
+ * without changing the scheduling model — Phase 2's `ebay_search` and
+ * `ebay_seller` add no columns and no tables.
  *
  * Every target type also accepts the namespaced `adaptive` key
  * (`adaptiveConfigSchema`): the scheduler's transient adaptivity state and
  * its `enabled` opt-out live there, so activity-adaptive cadence needs no
  * schema change and no new table.
+ *
+ * `maxItems` is the discovery types' COST knob: search and seller polls page
+ * the provider, and each page spends the connection's rate budget, so the
+ * config bounds how far one poll may page.
  */
 export const monitorTargetConfigSchemas = {
   /** The watchlist itself is identified by the target's connection. */
@@ -115,6 +180,42 @@ export const monitorTargetConfigSchemas = {
   ebay_item: z.strictObject({
     externalItemId: z.string().min(1),
     marketplace: z.string().min(1).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * A persistent search rule. At least one of `query`/`categoryId` is
+   * required: the provider rejects a search with no anchoring criterion, and
+   * a filters-only rule ("everything under $20") would be an unbounded crawl
+   * rather than a monitor.
+   */
+  ebay_search: z
+    .strictObject({
+      query: z.string().min(1).optional(),
+      categoryId: z.string().min(1).optional(),
+      filters: ebaySearchFiltersSchema.optional(),
+      maxItems: z.number().int().positive().max(1000).optional(),
+      [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+    })
+    .refine(
+      (config) =>
+        config.query !== undefined || config.categoryId !== undefined,
+      {
+        message: "ebay_search config needs at least one of query, categoryId",
+        path: ["query"],
+      },
+    ),
+  /**
+   * Every currently purchasable listing of one seller. `query`/`categoryId`
+   * are OPTIONAL narrowing: the provider refuses a filter-only search, so the
+   * integration supplies a whole-site anchor when neither is set (see
+   * `sellers.ts`). One seller per target, so each keeps its own cadence,
+   * backoff, and event provenance.
+   */
+  ebay_seller: z.strictObject({
+    sellerUsername: z.string().min(1),
+    query: z.string().min(1).optional(),
+    categoryId: z.string().min(1).optional(),
+    maxItems: z.number().int().positive().max(1000).optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
 } as const satisfies Record<MonitorTargetType, z.ZodType>;

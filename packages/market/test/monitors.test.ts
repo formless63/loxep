@@ -116,8 +116,9 @@ describe("monitor target CRUD", () => {
   it("rejects unknown target types and bad intervals", async () => {
     await expect(
       service.createTarget({
-        // @ts-expect-error — intentionally invalid target type
-        targetType: "ebay_search",
+        // @ts-expect-error — intentionally invalid target type (no such type;
+        // `ebay_search`/`ebay_seller` became real in Phase 2)
+        targetType: "ebay_offer",
         name: "later phase",
         intervalSeconds: 300,
       }),

@@ -17,6 +17,7 @@ export {
   claimDueTargets,
   collectAdaptiveSignals,
   createMonitorService,
+  ebaySearchFiltersSchema,
   monitorTargetConfigSchemas,
   recordPollFailure,
   recordPollSuccess,
@@ -25,6 +26,7 @@ export type {
   AdaptiveSignals,
   ClaimedTarget,
   CreateMonitorTargetInput,
+  EbaySearchFiltersConfig,
   MonitorService,
   MonitorTargetRow,
   MonitorTargetType,
@@ -88,6 +90,7 @@ export {
   AVAILABILITY_OUT_OF_STOCK,
   LISTING_STATE_ENDED,
   MARKET_EVENT_TYPES,
+  NEW_LISTING_EVENT_TYPE,
   compareDecimalStrings,
   compareObservations,
   deduplicationKeyFor,
@@ -99,6 +102,20 @@ export type {
   MarketEventType,
   ObservationSnapshot,
 } from "./events.ts";
+
+export {
+  deriveNewListingEvents,
+  diffDiscoveredItems,
+  knownExternalItemIds,
+} from "./discovery.ts";
+export type {
+  DeriveNewListingEventsInput,
+  DeriveNewListingEventsResult,
+  DiffDiscoveredItemsInput,
+  DiffDiscoveredItemsResult,
+  DiscoveredSummary,
+  NewlyLinkedItem,
+} from "./discovery.ts";
 
 export {
   OPPORTUNITY_PAYLOAD_KEY,
