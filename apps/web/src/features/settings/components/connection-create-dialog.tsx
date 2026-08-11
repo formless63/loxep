@@ -15,6 +15,11 @@ import { createConnection, type EntityDto } from '@/server/admin-functions';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
 
+/** `connections.provider` value the eBay OAuth flow (`@/server/ebay-oauth`) accepts. */
+const EBAY_PROVIDER = 'ebay';
+/** Placeholder `kind` an eBay connection is created with — no per-provider `kind` taxonomy exists yet. */
+const EBAY_CONNECTION_KIND = 'marketplace_account';
+
 function parseConfigJson(value: string): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -25,15 +30,30 @@ function parseConfigJson(value: string): Record<string, unknown> | null {
   }
 }
 
-const connectionFormSchema = z.object({
-  provider: z.string().trim().min(1, 'Provider is required'),
-  kind: z.string().trim().min(1, 'Kind is required'),
-  name: z.string().trim().min(1, 'Name is required'),
-  config: z.string().refine((value) => parseConfigJson(value) !== null, {
-    message: 'Config must be a JSON object'
-  }),
-  economicEntityId: z.string()
-});
+function isEbayProvider(provider: string): boolean {
+  return provider.trim().toLowerCase() === EBAY_PROVIDER;
+}
+
+const connectionFormSchema = z
+  .object({
+    provider: z.string().trim().min(1, 'Provider is required'),
+    kind: z.string().trim(),
+    name: z.string().trim().min(1, 'Name is required'),
+    config: z.string(),
+    economicEntityId: z.string()
+  })
+  .superRefine((values, ctx) => {
+    // eBay connections auto-fill kind/config (see EBAY_CONNECTION_KIND) — the
+    // shared keyset and OAuth environment live in the eBay integration card,
+    // not per-connection config, so nothing to validate here for them.
+    if (isEbayProvider(values.provider)) return;
+    if (values.kind === '') {
+      ctx.addIssue({ code: 'custom', path: ['kind'], message: 'Kind is required' });
+    }
+    if (parseConfigJson(values.config) === null) {
+      ctx.addIssue({ code: 'custom', path: ['config'], message: 'Config must be a JSON object' });
+    }
+  });
 
 type ConnectionFormValues = z.infer<typeof connectionFormSchema>;
 
@@ -61,17 +81,19 @@ export default function ConnectionCreateDialog({
   ];
 
   const mutation = useMutation({
-    mutationFn: (values: ConnectionFormValues) =>
-      createConnection({
+    mutationFn: (values: ConnectionFormValues) => {
+      const ebay = isEbayProvider(values.provider);
+      return createConnection({
         data: {
-          provider: values.provider,
-          kind: values.kind,
+          provider: ebay ? EBAY_PROVIDER : values.provider,
+          kind: ebay ? EBAY_CONNECTION_KIND : values.kind,
           name: values.name,
-          config: parseConfigJson(values.config) ?? {},
+          config: ebay ? {} : (parseConfigJson(values.config) ?? {}),
           economicEntityId:
             values.economicEntityId === NO_ENTITY_VALUE ? null : values.economicEntityId
         }
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success('Connection created');
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
@@ -116,38 +138,63 @@ export default function ConnectionCreateDialog({
           }}
         >
           <FieldGroup>
-            <div className='grid grid-cols-1 gap-6 md:grid-cols-2'>
-              <form.AppField
-                name='provider'
-                children={(field) => (
-                  <field.TextField label='Provider' required placeholder='e.g. ebay' />
-                )}
-              />
-              <form.AppField
-                name='kind'
-                children={(field) => (
-                  <field.TextField label='Kind' required placeholder='e.g. marketplace_account' />
-                )}
-              />
-            </div>
+            <form.AppField
+              name='provider'
+              children={(field) => (
+                <field.TextField label='Provider' required placeholder='e.g. ebay' />
+              )}
+            />
+            <form.Subscribe selector={(state) => state.values.provider}>
+              {(provider) =>
+                isEbayProvider(provider) ? (
+                  <div className='rounded-md border p-3 text-sm'>
+                    <p className='font-medium'>eBay connection</p>
+                    <p className='text-muted-foreground'>
+                      Kind and config are set automatically. eBay connections share ONE application
+                      keyset and OAuth environment (sandbox/production) — configure it once via the
+                      &quot;eBay integration&quot; card above the table. After this connection is
+                      created, use its row&apos;s &quot;Connect&quot; action to run the eBay consent
+                      flow and bind a user token to it.
+                    </p>
+                  </div>
+                ) : (
+                  <form.AppField
+                    name='kind'
+                    children={(field) => (
+                      <field.TextField
+                        label='Kind'
+                        required
+                        placeholder='e.g. marketplace_account'
+                      />
+                    )}
+                  />
+                )
+              }
+            </form.Subscribe>
             <form.AppField
               name='name'
               children={(field) => (
                 <field.TextField label='Name' required placeholder='Display name' />
               )}
             />
-            <form.AppField
-              name='config'
-              children={(field) => (
-                <field.TextareaField
-                  label='Config (JSON)'
-                  required
-                  rows={4}
-                  placeholder='{}'
-                  description='Non-secret provider configuration as a JSON object.'
-                />
-              )}
-            />
+            <form.Subscribe selector={(state) => state.values.provider}>
+              {(provider) =>
+                isEbayProvider(provider) ? null : (
+                  <form.AppField
+                    name='config'
+                    children={(field) => (
+                      <field.TextareaField
+                        label='Config (JSON)'
+                        required
+                        rows={4}
+                        placeholder='{}'
+                        description='Non-secret provider configuration as a JSON object.'
+                      />
+                    )}
+                  />
+                )
+              }
+            </form.Subscribe>
             <form.AppField
               name='economicEntityId'
               children={(field) => (

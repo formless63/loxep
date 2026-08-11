@@ -43,5 +43,31 @@ export const marketNavGroups: NavGroup[] = [
         items: []
       }
     ]
+  },
+  {
+    label: 'Discovery',
+    items: [
+      {
+        title: 'Searches',
+        url: '/market/searches',
+        icon: 'search',
+        isActive: false,
+        shortcut: ['g', 'd'],
+        items: []
+      }
+    ]
+  },
+  {
+    label: 'Opportunities',
+    items: [
+      {
+        title: 'Opportunities',
+        url: '/market/opportunities',
+        icon: 'dashboard',
+        isActive: false,
+        shortcut: ['g', 'p'],
+        items: []
+      }
+    ]
   }
 ];

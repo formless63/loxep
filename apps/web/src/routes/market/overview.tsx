@@ -44,14 +44,54 @@ function MarketOverview() {
           </div>
         )}
 
+        {isPending ? (
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <Skeleton className='h-24 w-full' />
+            <Skeleton className='h-24 w-full' />
+          </div>
+        ) : (
+          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+            <Link to='/market/searches'>
+              <Card className='h-full transition-colors hover:bg-muted/50'>
+                <CardHeader className='pb-2'>
+                  <CardDescription>New listings (24h)</CardDescription>
+                  <CardTitle className='text-3xl'>{data?.newListingCount24h ?? 0}</CardTitle>
+                </CardHeader>
+              </Card>
+            </Link>
+            <Link to='/market/opportunities'>
+              <Card className='h-full transition-colors hover:bg-muted/50'>
+                <CardHeader className='pb-2'>
+                  <CardDescription>Top opportunity</CardDescription>
+                  {data?.topOpportunity ? (
+                    <>
+                      <CardTitle className='text-3xl'>
+                        {data.topOpportunity.score.toFixed(2)}
+                      </CardTitle>
+                      <p className='text-muted-foreground truncate text-sm'>
+                        {data.topOpportunity.itemTitle ?? data.topOpportunity.marketplaceItemId} —{' '}
+                        {data.topOpportunity.ruleName}
+                      </p>
+                    </>
+                  ) : (
+                    <CardTitle className='text-muted-foreground text-base font-normal'>
+                      No scored opportunities yet
+                    </CardTitle>
+                  )}
+                </CardHeader>
+              </Card>
+            </Link>
+          </div>
+        )}
+
         <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
           <Link to='/market/monitors'>
             <Card className='transition-colors hover:bg-muted/50'>
               <CardHeader>
                 <CardTitle className='text-base'>Monitors</CardTitle>
                 <CardDescription>
-                  What to poll, on what cadence — create, edit, enable/disable eBay item and
-                  watchlist monitors.
+                  What to poll, on what cadence — create, edit, enable/disable eBay item, watchlist,
+                  search, and seller monitors.
                 </CardDescription>
               </CardHeader>
             </Card>
@@ -62,6 +102,26 @@ function MarketOverview() {
                 <CardTitle className='text-base'>Watched items</CardTitle>
                 <CardDescription>
                   Marketplace items linked to your monitors, joined with their latest observation.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+          <Link to='/market/searches'>
+            <Card className='transition-colors hover:bg-muted/50'>
+              <CardHeader>
+                <CardTitle className='text-base'>Search &amp; seller monitors</CardTitle>
+                <CardDescription>
+                  Discovered-item counts and recent new-listing activity per discovery monitor.
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          </Link>
+          <Link to='/market/opportunities'>
+            <Card className='transition-colors hover:bg-muted/50'>
+              <CardHeader>
+                <CardTitle className='text-base'>Opportunities</CardTitle>
+                <CardDescription>
+                  Events stamped and scored by an opportunity rule, ranked and linked to their item.
                 </CardDescription>
               </CardHeader>
             </Card>

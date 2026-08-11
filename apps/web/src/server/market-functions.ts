@@ -85,7 +85,13 @@ export const fetchMonitors = createServerFn({ method: 'GET' }).handler(
  * Mirrors `monitorTargetConfigSchemas` in `@loxep/market/monitors.ts`:
  * `ebay_item` carries its own `externalItemId` and an optional connection;
  * `ebay_watchlist` is identified by its connection, so the connection is
- * required.
+ * required; `ebay_search` (Phase 2 discovery) needs at least one of
+ * `query`/`categoryId`; `ebay_seller` (Phase 2 discovery) is identified by
+ * `sellerUsername`, with `query`/`categoryId` as optional narrowing — both
+ * discovery types take an optional `maxItems` poll-paging cap. Search/seller
+ * filter grammar beyond query/category (price bounds, conditions, …) is not
+ * exposed by this Phase 2 dashboard UI; the underlying config schema accepts
+ * it and a future settings surface can add it without a server-fn change.
  */
 const createMonitorInput = z.discriminatedUnion('targetType', [
   z.strictObject({
@@ -104,8 +110,67 @@ const createMonitorInput = z.discriminatedUnion('targetType', [
     intervalSeconds: z.number().int().positive(),
     priority: z.number().int(),
     enabled: z.boolean()
+  }),
+  z
+    .strictObject({
+      targetType: z.literal('ebay_search'),
+      name: z.string().trim().min(1),
+      connectionId: z.uuid().nullable(),
+      intervalSeconds: z.number().int().positive(),
+      priority: z.number().int(),
+      enabled: z.boolean(),
+      query: z.string().trim().min(1).optional(),
+      categoryId: z.string().trim().min(1).optional(),
+      maxItems: z.number().int().positive().max(1000).optional()
+    })
+    .refine((data) => data.query !== undefined || data.categoryId !== undefined, {
+      message: 'A search monitor needs a query or a category',
+      path: ['query']
+    }),
+  z.strictObject({
+    targetType: z.literal('ebay_seller'),
+    name: z.string().trim().min(1),
+    connectionId: z.uuid().nullable(),
+    intervalSeconds: z.number().int().positive(),
+    priority: z.number().int(),
+    enabled: z.boolean(),
+    sellerUsername: z.string().trim().min(1),
+    query: z.string().trim().min(1).optional(),
+    categoryId: z.string().trim().min(1).optional(),
+    maxItems: z.number().int().positive().max(1000).optional()
   })
 ]);
+
+/** Builds the per-target-type `config` payload for `createMonitor`. */
+function createMonitorConfig(data: z.infer<typeof createMonitorInput>): Record<string, unknown> {
+  switch (data.targetType) {
+    case 'ebay_item':
+      return { externalItemId: data.externalItemId };
+    case 'ebay_watchlist':
+      return {};
+    case 'ebay_search':
+      return {
+        ...(data.query !== undefined ? { query: data.query } : {}),
+        ...(data.categoryId !== undefined ? { categoryId: data.categoryId } : {}),
+        ...(data.maxItems !== undefined ? { maxItems: data.maxItems } : {})
+      };
+    case 'ebay_seller':
+      return {
+        sellerUsername: data.sellerUsername,
+        ...(data.query !== undefined ? { query: data.query } : {}),
+        ...(data.categoryId !== undefined ? { categoryId: data.categoryId } : {}),
+        ...(data.maxItems !== undefined ? { maxItems: data.maxItems } : {})
+      };
+    default: {
+      // Exhaustiveness guard: `data` is `never` here only while every
+      // `createMonitorInput` branch above is handled — a future branch left
+      // unhandled fails typecheck instead of silently falling through.
+      const exhaustive: never = data;
+      void exhaustive;
+      return {};
+    }
+  }
+}
 
 export const createMonitor = createServerFn({ method: 'POST' })
   .inputValidator(createMonitorInput)
@@ -120,7 +185,7 @@ export const createMonitor = createServerFn({ method: 'POST' })
       intervalSeconds: data.intervalSeconds,
       priority: data.priority,
       enabled: data.enabled,
-      config: data.targetType === 'ebay_item' ? { externalItemId: data.externalItemId } : {},
+      config: createMonitorConfig(data),
       createdByUserId: session.user.id
     });
     return { id: target.id };
@@ -135,9 +200,24 @@ const updateMonitorInput = z
     priority: z.number().int().optional(),
     enabled: z.boolean().optional(),
     /** Only meaningful for `ebay_item` targets; merged into existing config. */
-    externalItemId: z.string().trim().min(1).optional()
+    externalItemId: z.string().trim().min(1).optional(),
+    /** Only meaningful for `ebay_search`/`ebay_seller` targets; merged into existing config. */
+    query: z.string().trim().min(1).optional(),
+    categoryId: z.string().trim().min(1).optional(),
+    /** Only meaningful for `ebay_seller` targets; merged into existing config. */
+    sellerUsername: z.string().trim().min(1).optional(),
+    maxItems: z.number().int().positive().max(1000).optional()
   })
   .refine((patch) => Object.keys(patch).length > 1, { message: 'empty update' });
+
+/** Config keys `updateMonitorInput` may carry — merged into existing config, not replaced. */
+const UPDATABLE_CONFIG_KEYS = [
+  'externalItemId',
+  'query',
+  'categoryId',
+  'sellerUsername',
+  'maxItems'
+] as const;
 
 export const updateMonitor = createServerFn({ method: 'POST' })
   .inputValidator(updateMonitorInput)
@@ -145,11 +225,17 @@ export const updateMonitor = createServerFn({ method: 'POST' })
     const { requireAdmin, getMonitorService } = await import('@/server/admin');
     await requireAdmin();
     const monitorService = await getMonitorService();
-    const { id, externalItemId, ...patch } = data;
+    const { id, externalItemId, query, categoryId, sellerUsername, maxItems, ...patch } = data;
+    const configPatch = { externalItemId, query, categoryId, sellerUsername, maxItems };
+    const hasConfigPatch = UPDATABLE_CONFIG_KEYS.some((key) => configPatch[key] !== undefined);
     let config: Record<string, unknown> | undefined;
-    if (externalItemId !== undefined) {
+    if (hasConfigPatch) {
       const existing = await monitorService.getTarget(id);
-      config = { ...(existing.config as Record<string, unknown>), externalItemId };
+      config = { ...(existing.config as Record<string, unknown>) };
+      for (const key of UPDATABLE_CONFIG_KEYS) {
+        const value = configPatch[key];
+        if (value !== undefined) config[key] = value;
+      }
     }
     const target = await monitorService.updateTarget(id, {
       ...patch,
@@ -669,7 +755,52 @@ export const fetchItemEvents = createServerFn({ method: 'GET' })
   });
 
 // ---------------------------------------------------------------------------
-// Overview (loxep-62y.4.1)
+// Opportunity payload helper (shared by overview + opportunities dashboard)
+// ---------------------------------------------------------------------------
+
+/**
+ * `market_events.payload.opportunity` — the block `stampEventWithRule`
+ * (`@loxep/market/opportunities.ts`) merges onto a rule-stamped event's
+ * payload. No typed export exists for this shape (the package deliberately
+ * keeps `payload` as opaque jsonb), so it is read defensively here: a
+ * present-but-malformed block returns `null` rather than throwing, since a
+ * dashboard read should never break on unexpected historical data.
+ */
+export interface OpportunityPayloadDto {
+  ruleId: string;
+  ruleName: string;
+  priority: number;
+  score: number;
+  reasons: string[];
+  matchCount: number;
+  evaluatedAt: string | null;
+}
+
+function readOpportunityPayload(payload: Record<string, JsonValue>): OpportunityPayloadDto | null {
+  const block = payload['opportunity'];
+  if (block === null || typeof block !== 'object' || Array.isArray(block)) return null;
+  const record = block as Record<string, JsonValue>;
+  const ruleId = record['ruleId'];
+  const score = record['score'];
+  if (typeof ruleId !== 'string' || typeof score !== 'number') return null;
+  const ruleName = record['ruleName'];
+  const reasons = record['reasons'];
+  const evaluatedAt = record['evaluatedAt'];
+  return {
+    ruleId,
+    ruleName: typeof ruleName === 'string' ? ruleName : ruleId,
+    priority: typeof record['priority'] === 'number' ? record['priority'] : 0,
+    score,
+    reasons: Array.isArray(reasons)
+      ? reasons.filter((reason): reason is string => typeof reason === 'string')
+      : [],
+    matchCount: typeof record['matchCount'] === 'number' ? record['matchCount'] : 0,
+    evaluatedAt: typeof evaluatedAt === 'string' ? evaluatedAt : null
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Overview (loxep-62y.4.1, extended loxep-7dp.6 with discovery/opportunity cards)
 // ---------------------------------------------------------------------------
 
 export interface MarketEventSummaryDto {
@@ -682,14 +813,36 @@ export interface MarketEventSummaryDto {
   monitorTargetName: string | null;
 }
 
+export interface TopOpportunityDto {
+  id: string;
+  marketplaceItemId: string;
+  itemTitle: string | null;
+  ruleId: string;
+  ruleName: string;
+  score: number;
+  detectedAt: string;
+}
+
 export interface MarketOverviewDto {
   activeMonitorCount: number;
   watchedItemCount: number;
   eventsLast24hCount: number;
+  /** New-listing discovery events (Phase 2 `ebay_search`/`ebay_seller`) in the last 24h. */
+  newListingCount24h: number;
+  /** Highest-scoring rule-stamped event among the most recent ones, if any. */
+  topOpportunity: TopOpportunityDto | null;
   recentEvents: MarketEventSummaryDto[];
 }
 
 const RECENT_EVENTS_LIMIT = 10;
+/**
+ * How many of the most recent rule-stamped events `topOpportunity` scans.
+ * `market_events` has no index on `payload->'opportunity'->>'score'`, so
+ * "top of the last N" (not "top of all time") keeps this an ordinary
+ * `detected_at DESC LIMIT` read — see `fetchOpportunityEvents`'s doc for the
+ * same trade-off spelled out at Phase 1/2 read-model scale.
+ */
+const TOP_OPPORTUNITY_SCAN_LIMIT = 50;
 
 export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
   async (): Promise<MarketOverviewDto> => {
@@ -698,7 +851,14 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
     const { handle } = getAdminServices();
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const [activeMonitors, watchedItems, events24h, recentEvents] = await Promise.all([
+    const [
+      activeMonitors,
+      watchedItems,
+      events24h,
+      newListings24h,
+      recentEvents,
+      recentOpportunities
+    ] = await Promise.all([
       handle.db.query.monitorTargets.findMany({
         where: (table, { eq }) => eq(table.enabled, true),
         columns: { id: true }
@@ -709,8 +869,18 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
         columns: { id: true }
       }),
       handle.db.query.marketEvents.findMany({
+        where: (table, { gt, and, eq }) =>
+          and(gt(table.detectedAt, since), eq(table.eventType, 'new_listing')),
+        columns: { id: true }
+      }),
+      handle.db.query.marketEvents.findMany({
         orderBy: (table, { desc }) => [desc(table.detectedAt)],
         limit: RECENT_EVENTS_LIMIT
+      }),
+      handle.db.query.marketEvents.findMany({
+        where: (table, { isNotNull }) => isNotNull(table.ruleId),
+        orderBy: (table, { desc }) => [desc(table.detectedAt)],
+        limit: TOP_OPPORTUNITY_SCAN_LIMIT
       })
     ]);
 
@@ -737,10 +907,36 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
     const itemTitleById = new Map(itemRows.map((row) => [row.id, row.title]));
     const targetNameById = new Map(targetRows.map((row) => [row.id, row.name]));
 
+    let topOpportunity: TopOpportunityDto | null = null;
+    for (const event of recentOpportunities) {
+      const opportunity = readOpportunityPayload(event.payload as Record<string, JsonValue>);
+      if (opportunity === null) continue;
+      if (topOpportunity === null || opportunity.score > topOpportunity.score) {
+        topOpportunity = {
+          id: event.id,
+          marketplaceItemId: event.marketplaceItemId,
+          itemTitle: null,
+          ruleId: opportunity.ruleId,
+          ruleName: opportunity.ruleName,
+          score: opportunity.score,
+          detectedAt: iso(event.detectedAt)
+        };
+      }
+    }
+    if (topOpportunity !== null) {
+      const item = await handle.db.query.marketplaceItems.findFirst({
+        where: (table, { eq }) => eq(table.id, topOpportunity!.marketplaceItemId),
+        columns: { title: true }
+      });
+      topOpportunity = { ...topOpportunity, itemTitle: item?.title ?? null };
+    }
+
     return {
       activeMonitorCount: activeMonitors.length,
       watchedItemCount: watchedItems.length,
       eventsLast24hCount: events24h.length,
+      newListingCount24h: newListings24h.length,
+      topOpportunity,
       recentEvents: recentEvents.map((event) => ({
         id: event.id,
         eventType: event.eventType,
@@ -755,3 +951,246 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
     };
   }
 );
+
+// ---------------------------------------------------------------------------
+// Search/seller discovery dashboard (loxep-7dp.6, /market/searches)
+//
+// No `@loxep/market` read model exists yet for "discovered items per
+// discovery monitor" or "recent new_listing events" — `discovery.ts` only
+// exports the pure derivation functions the poller uses, not a dashboard
+// read path. Implemented here as direct queries over `monitor_targets`,
+// `monitor_items` (active links = currently-discovered items), and
+// `market_events` (`event_type = 'new_listing'`), the same tables/relations
+// `fetchMarketOverview` and `fetchMarketItems` already read.
+// ---------------------------------------------------------------------------
+
+const DISCOVERY_TARGET_TYPES = ['ebay_search', 'ebay_seller'] as const;
+
+export interface DiscoveryMonitorStatsDto {
+  monitorTargetId: string;
+  /** Active `monitor_items` links — items this monitor currently has discovered. */
+  discoveredItemCount: number;
+  newListingCount24h: number;
+  lastNewListingAt: string | null;
+}
+
+export interface NewListingEventDto {
+  id: string;
+  detectedAt: string;
+  marketplaceItemId: string;
+  itemTitle: string | null;
+  itemCanonicalUrl: string | null;
+  monitorTargetId: string | null;
+  monitorTargetName: string | null;
+}
+
+export interface SearchDashboardDto {
+  monitorStats: DiscoveryMonitorStatsDto[];
+  recentNewListings: NewListingEventDto[];
+}
+
+const RECENT_NEW_LISTINGS_LIMIT = 25;
+
+export const fetchSearchDashboard = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<SearchDashboardDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+
+    const discoveryTargets = await handle.db.query.monitorTargets.findMany({
+      where: (table, { inArray }) => inArray(table.targetType, [...DISCOVERY_TARGET_TYPES]),
+      columns: { id: true }
+    });
+    const targetIds = discoveryTargets.map((row) => row.id);
+    if (targetIds.length === 0) {
+      return { monitorStats: [], recentNewListings: [] };
+    }
+
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [itemLinks, newListingEvents, recentEventRows] = await Promise.all([
+      handle.db.query.monitorItems.findMany({
+        where: (table, { inArray, eq, and }) =>
+          and(inArray(table.monitorTargetId, targetIds), eq(table.active, true)),
+        columns: { monitorTargetId: true }
+      }),
+      handle.db.query.marketEvents.findMany({
+        where: (table, { inArray, eq, and }) =>
+          and(inArray(table.monitorTargetId, targetIds), eq(table.eventType, 'new_listing')),
+        columns: { monitorTargetId: true, detectedAt: true }
+      }),
+      handle.db.query.marketEvents.findMany({
+        where: (table, { inArray, eq, and }) =>
+          and(inArray(table.monitorTargetId, targetIds), eq(table.eventType, 'new_listing')),
+        orderBy: (table, { desc }) => [desc(table.detectedAt)],
+        limit: RECENT_NEW_LISTINGS_LIMIT
+      })
+    ]);
+
+    const discoveredCountByTarget = new Map<string, number>();
+    for (const link of itemLinks) {
+      discoveredCountByTarget.set(
+        link.monitorTargetId,
+        (discoveredCountByTarget.get(link.monitorTargetId) ?? 0) + 1
+      );
+    }
+    const newListingCount24hByTarget = new Map<string, number>();
+    const lastNewListingByTarget = new Map<string, Date>();
+    for (const event of newListingEvents) {
+      if (event.monitorTargetId === null) continue;
+      if (event.detectedAt > since) {
+        newListingCount24hByTarget.set(
+          event.monitorTargetId,
+          (newListingCount24hByTarget.get(event.monitorTargetId) ?? 0) + 1
+        );
+      }
+      const last = lastNewListingByTarget.get(event.monitorTargetId);
+      if (last === undefined || event.detectedAt > last) {
+        lastNewListingByTarget.set(event.monitorTargetId, event.detectedAt);
+      }
+    }
+
+    const monitorStats: DiscoveryMonitorStatsDto[] = targetIds.map((monitorTargetId) => ({
+      monitorTargetId,
+      discoveredItemCount: discoveredCountByTarget.get(monitorTargetId) ?? 0,
+      newListingCount24h: newListingCount24hByTarget.get(monitorTargetId) ?? 0,
+      lastNewListingAt: iso(lastNewListingByTarget.get(monitorTargetId) ?? null)
+    }));
+
+    const itemIds = [...new Set(recentEventRows.map((event) => event.marketplaceItemId))];
+    const eventTargetIds = [
+      ...new Set(
+        recentEventRows
+          .map((event) => event.monitorTargetId)
+          .filter((id): id is string => id !== null)
+      )
+    ];
+    const [itemRows, targetRows] = await Promise.all([
+      itemIds.length > 0
+        ? handle.db.query.marketplaceItems.findMany({
+            where: (table, { inArray }) => inArray(table.id, itemIds),
+            columns: { id: true, title: true, canonicalUrl: true }
+          })
+        : Promise.resolve([]),
+      eventTargetIds.length > 0
+        ? handle.db.query.monitorTargets.findMany({
+            where: (table, { inArray }) => inArray(table.id, eventTargetIds),
+            columns: { id: true, name: true }
+          })
+        : Promise.resolve([])
+    ]);
+    const itemById = new Map(itemRows.map((row) => [row.id, row]));
+    const targetNameById = new Map(targetRows.map((row) => [row.id, row.name]));
+
+    return {
+      monitorStats,
+      recentNewListings: recentEventRows.map((event) => ({
+        id: event.id,
+        detectedAt: iso(event.detectedAt),
+        marketplaceItemId: event.marketplaceItemId,
+        itemTitle: itemById.get(event.marketplaceItemId)?.title ?? null,
+        itemCanonicalUrl: itemById.get(event.marketplaceItemId)?.canonicalUrl ?? null,
+        monitorTargetId: event.monitorTargetId,
+        monitorTargetName: event.monitorTargetId
+          ? (targetNameById.get(event.monitorTargetId) ?? null)
+          : null
+      }))
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Opportunities dashboard (loxep-7dp.6, /market/opportunities)
+//
+// No `@loxep/market` read model exists for "rule-stamped events" either —
+// `opportunities.ts` owns evaluation/stamping (`market_events.rule_id`), not
+// a paginated read. Implemented as a direct query, same two-pass
+// count-then-page shape `fetchMarketItems`/`fetchItemEvents` already use at
+// this scale.
+// ---------------------------------------------------------------------------
+
+export interface OpportunityEventDto {
+  id: string;
+  eventType: string;
+  detectedAt: string;
+  marketplaceItemId: string;
+  itemTitle: string | null;
+  itemCanonicalUrl: string | null;
+  ruleId: string;
+  /** The rule's CURRENT name if it still exists, else the name frozen in the payload at stamp time. */
+  ruleName: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface OpportunityEventsPageDto {
+  events: OpportunityEventDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export const OPPORTUNITY_EVENTS_PAGE_SIZE = 25;
+
+export const fetchOpportunityEvents = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ page: z.number().int().nonnegative().optional() }))
+  .handler(async ({ data }): Promise<OpportunityEventsPageDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const page = data.page ?? 0;
+    const pageSize = OPPORTUNITY_EVENTS_PAGE_SIZE;
+
+    const allEvents = await handle.db.query.marketEvents.findMany({
+      where: (table, { isNotNull }) => isNotNull(table.ruleId),
+      orderBy: (table, { desc }) => [desc(table.detectedAt)]
+    });
+    const total = allEvents.length;
+    const pageEvents = allEvents.slice(page * pageSize, (page + 1) * pageSize);
+    if (pageEvents.length === 0) {
+      return { events: [], total, page, pageSize };
+    }
+
+    const itemIds = [...new Set(pageEvents.map((event) => event.marketplaceItemId))];
+    const ruleIds = [
+      ...new Set(pageEvents.map((event) => event.ruleId).filter((id): id is string => id !== null))
+    ];
+    const [itemRows, ruleRows] = await Promise.all([
+      handle.db.query.marketplaceItems.findMany({
+        where: (table, { inArray }) => inArray(table.id, itemIds),
+        columns: { id: true, title: true, canonicalUrl: true }
+      }),
+      ruleIds.length > 0
+        ? handle.db.query.opportunityRules.findMany({
+            where: (table, { inArray }) => inArray(table.id, ruleIds),
+            columns: { id: true, name: true }
+          })
+        : Promise.resolve([])
+    ]);
+    const itemById = new Map(itemRows.map((row) => [row.id, row]));
+    const ruleNameById = new Map(ruleRows.map((row) => [row.id, row.name]));
+
+    return {
+      events: pageEvents.map((event) => {
+        const opportunity = readOpportunityPayload(event.payload as Record<string, JsonValue>);
+        const ruleId = event.ruleId ?? opportunity?.ruleId ?? '';
+        return {
+          id: event.id,
+          eventType: event.eventType,
+          detectedAt: iso(event.detectedAt),
+          marketplaceItemId: event.marketplaceItemId,
+          itemTitle: itemById.get(event.marketplaceItemId)?.title ?? null,
+          itemCanonicalUrl: itemById.get(event.marketplaceItemId)?.canonicalUrl ?? null,
+          ruleId,
+          // Current rule name wins (renames stay reflected); falls back to the
+          // name frozen in the payload at stamp time for a since-deleted rule.
+          ruleName:
+            (ruleId && ruleNameById.get(ruleId)) || (opportunity?.ruleName ?? 'unknown rule'),
+          score: opportunity?.score ?? 0,
+          reasons: opportunity?.reasons ?? []
+        };
+      }),
+      total,
+      page,
+      pageSize
+    };
+  });

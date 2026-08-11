@@ -29,6 +29,13 @@ import {
 import { connectionsQuery, entitiesQuery } from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
 import ConnectionCreateDialog from '@/features/settings/components/connection-create-dialog';
+import EbayIntegrationCard from '@/features/settings/components/ebay-integration-card';
+import {
+  EbayConnectionActions,
+  EbayCredentialStatus
+} from '@/features/settings/components/ebay-connection-actions';
+
+const EBAY_PROVIDER = 'ebay';
 
 function statusVariant(status: ConnectionDto['status']): 'secondary' | 'outline' | 'destructive' {
   if (status === 'active') return 'secondary';
@@ -82,6 +89,8 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <div className='flex flex-col gap-4'>
+      {isAdmin && <EbayIntegrationCard />}
+
       {isAdmin && (
         <div className='flex justify-end'>
           <Button size='sm' onClick={() => setCreateOpen(true)}>
@@ -157,7 +166,9 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
                     )}
                   </TableCell>
                   <TableCell>
-                    {connection.credentials.length === 0 ? (
+                    {connection.provider === EBAY_PROVIDER ? (
+                      <EbayCredentialStatus connection={connection} />
+                    ) : connection.credentials.length === 0 ? (
                       <span className='text-muted-foreground'>none</span>
                     ) : (
                       <div className='flex flex-wrap gap-1'>
@@ -179,19 +190,24 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
                   </TableCell>
                   {isAdmin && (
                     <TableCell className='text-right'>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        disabled={statusMutation.isPending}
-                        onClick={() =>
-                          statusMutation.mutate({
-                            id: connection.id,
-                            status: connection.status === 'disabled' ? 'active' : 'disabled'
-                          })
-                        }
-                      >
-                        {connection.status === 'disabled' ? 'Enable' : 'Disable'}
-                      </Button>
+                      <div className='flex justify-end gap-2'>
+                        {connection.provider === EBAY_PROVIDER && (
+                          <EbayConnectionActions connection={connection} />
+                        )}
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          disabled={statusMutation.isPending}
+                          onClick={() =>
+                            statusMutation.mutate({
+                              id: connection.id,
+                              status: connection.status === 'disabled' ? 'active' : 'disabled'
+                            })
+                          }
+                        >
+                          {connection.status === 'disabled' ? 'Enable' : 'Disable'}
+                        </Button>
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
