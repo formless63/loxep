@@ -101,6 +101,8 @@ Goal: connect market intelligence to actual selling outcomes while preserving ex
 
 The economic-entity foundation is already decided by ADR-0017. Accounting books remain deliberately separate and are not required for Phase 3 ingestion.
 
+The physical schema for this phase — orders, lines, fees, refunds, fulfillment, catalog items, and channel listings, plus what Phase 3 deliberately does not create — is designed in [Commerce Schema Design (Phase 3)](../../architecture/commerce-schema-design/).
+
 ## Phase 4 — Inventory, acquisition, and fulfillment
 
 Goal: follow physical goods from acquisition through sale.
