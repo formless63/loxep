@@ -48,6 +48,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
+import type { EbayErrorKind } from '@loxep/integration-ebay';
 
 /** Application-secret key holding the eBay application keyset. */
 export const EBAY_KEYSET_SECRET_KEY = 'integration.ebay.keyset';
@@ -455,3 +456,149 @@ export async function handleEbayConsentCallback(request: Request): Promise<Respo
 
   return redirectToConnections('connected', connection.id);
 }
+
+// ---------------------------------------------------------------------------
+// Validation (loxep-62y.5)
+// ---------------------------------------------------------------------------
+
+/** Non-secret facts `startEbayConsent`/the callback write to `connections.config`. */
+interface EbayOAuthConnectionConfig {
+  scopes?: unknown;
+  refreshTokenExpiresAt?: unknown;
+}
+
+export interface EbayValidationResult {
+  ok: boolean;
+  /** Which credential the validation call actually authenticated with. */
+  mode: 'user' | 'application';
+  /** Safe to show an administrator — never provider headers/request material. */
+  message: string;
+  /** Present only on failure; the integration boundary's stable error taxonomy. */
+  errorKind?: EbayErrorKind;
+}
+
+/**
+ * Reports whether an eBay connection can currently authenticate, using the
+ * cheapest call that actually exercises the credential in play:
+ *
+ * - **user mode** (an `ebay_oauth` credential exists): one page of
+ *   {@link fetchWatchlist} at `entriesPerPage: 1` — the exact Trading
+ *   `GetMyeBayBuying` call the watchlist poller itself makes, so a pass here
+ *   means the poller will work. The stored bundle is refreshed first if it is
+ *   due (`refreshTokenBundleIfNeeded`), and a refreshed bundle is persisted
+ *   before the call — a validate action should never leave a rotated token
+ *   un-persisted.
+ * - **application mode** (no user consent yet): {@link EbayAdapter.mintApplicationToken},
+ *   which validates the keyset can complete the client-credentials grant.
+ *   (A Browse search was considered instead, but the integration package's
+ *   own `sellers.ts` documents `category_ids=0` — the only query-free anchor
+ *   available — as unverified/undocumented eBay behavior; minting the
+ *   application token directly is both cheaper and unambiguous.)
+ *
+ * Every failure is the integration boundary's own {@link EbayAdapterError}
+ * taxonomy (`kind`) — never a raw provider/HTTP error — and is also recorded
+ * on the connection via `recordConnectionFailure` (`ebay_validate_<kind>`),
+ * matching the callback's error-recording convention. A success records
+ * `recordConnectionSuccess`, so validating doubles as a manual health check.
+ */
+export const validateEbayConnection = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ connectionId: z.uuid() }))
+  .handler(async ({ data }): Promise<EbayValidationResult> => {
+    const [{ requireAdmin, getAdminServices }, integration] = await Promise.all([
+      import('@/server/admin'),
+      ebayIntegration()
+    ]);
+    const session = await requireAdmin();
+    const services = getAdminServices();
+
+    const connection = await services.connections.getConnection(data.connectionId);
+    if (connection.provider !== EBAY_CONNECTION_PROVIDER) {
+      throw new EbayOAuthSetupError(
+        `Connection ${connection.id} has provider "${connection.provider}"; eBay validation needs an "${EBAY_CONNECTION_PROVIDER}" connection.`,
+        400
+      );
+    }
+
+    let keyset: EbayKeyset;
+    try {
+      keyset = (await requireKeyset()).keyset;
+    } catch (error) {
+      const message =
+        error instanceof EbayOAuthSetupError ? error.message : 'eBay is not configured.';
+      return { ok: false, mode: 'application', message };
+    }
+    const adapter = await adapterForKeyset(keyset);
+
+    const credentialMetas = await services.connections.listConnectionCredentials(connection.id);
+    const oauthMeta = credentialMetas.find(
+      (credential) => credential.credentialType === EBAY_OAUTH_CREDENTIAL_TYPE
+    );
+    const mode: EbayValidationResult['mode'] = oauthMeta ? 'user' : 'application';
+
+    try {
+      if (oauthMeta) {
+        const { payload } = await services.connections.getConnectionCredentialPayload(
+          connection.id,
+          EBAY_OAUTH_CREDENTIAL_TYPE
+        );
+        const ebayOAuthConfig = (connection.config as { ebayOAuth?: EbayOAuthConnectionConfig })
+          .ebayOAuth;
+        const scopes = Array.isArray(ebayOAuthConfig?.scopes)
+          ? (ebayOAuthConfig.scopes as string[])
+          : undefined;
+        const refreshTokenExpiresAt =
+          typeof ebayOAuthConfig?.refreshTokenExpiresAt === 'string'
+            ? ebayOAuthConfig.refreshTokenExpiresAt
+            : null;
+        const bundle = integration.bundleFromCredential({
+          payload,
+          expiresAt: oauthMeta.expiresAt,
+          scopes,
+          refreshTokenExpiresAt
+        });
+        const refresh = await integration.refreshTokenBundleIfNeeded({ bundle, adapter });
+        if (refresh.refreshed) {
+          const write = integration.credentialWriteForBundle(refresh.bundle);
+          await services.connections.setConnectionCredential(
+            connection.id,
+            write.credentialType,
+            write.payload,
+            {
+              expiresAt: write.expiresAt,
+              refreshAfter: write.refreshAfter,
+              actorUserId: session.user.id
+            }
+          );
+        }
+        const userAdapter = integration.userAdapterFromBundle(adapter, refresh.bundle);
+        await integration.fetchWatchlist(userAdapter, { entriesPerPage: 1 });
+      } else {
+        await adapter.mintApplicationToken();
+      }
+    } catch (error) {
+      const rawKind = (error as { kind?: unknown } | undefined)?.kind;
+      const kind: EbayErrorKind =
+        typeof rawKind === 'string' ? (rawKind as EbayErrorKind) : 'provider_unavailable';
+      const message = error instanceof Error ? error.message : 'eBay validation failed.';
+      await services.connections
+        .recordConnectionFailure(
+          connection.id,
+          { errorCode: `ebay_validate_${kind}` },
+          { actorUserId: session.user.id }
+        )
+        .catch(() => undefined);
+      return { ok: false, mode, message, errorKind: kind };
+    }
+
+    await services.connections.recordConnectionSuccess(connection.id, {
+      actorUserId: session.user.id
+    });
+    return {
+      ok: true,
+      mode,
+      message:
+        mode === 'user'
+          ? 'eBay accepted the stored user token (watchlist read succeeded).'
+          : 'eBay accepted the application keyset (no user consent yet).'
+    };
+  });

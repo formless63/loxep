@@ -1,0 +1,118 @@
+/**
+ * The registered application settings Loxep ships with (loxep-62y.2.3).
+ *
+ * ## Why the definitions live in `@loxep/domain`
+ *
+ * {@link defineSetting} registers into a MODULE-LEVEL registry, and
+ * `SettingsService.list()` — the `/settings` application surface — can only
+ * show what has been registered in the process that renders it. The worker
+ * composition root (`@loxep/app`) is deliberately never imported by
+ * `apps/web` (ADR-0013/ADR-0018: the request process must not pull in
+ * graphile-worker or the provider integrations), so a definition declared
+ * there would be invisible to the settings UI.
+ *
+ * Declaring them here — beside the registry itself, imported by every process
+ * through `@loxep/domain`'s entrypoint — gives the operator surface and the
+ * worker ONE definition, one key, one schema, one default. Nothing in this
+ * module imports `@loxep/market` or an integration package: a setting
+ * definition is a typed key with a default, not domain logic, so this does
+ * not make `@loxep/domain` depend on the polling stack.
+ *
+ * ## What is here and what is deliberately not
+ *
+ * These are INSTALLATION-WIDE defaults. Per-target overrides already exist in
+ * the schema (`monitor_targets.interval_seconds`, `config.maxItems`,
+ * `config.adaptive`) and always win over a setting; a setting only moves the
+ * value a target inherits or the cost ceiling a poll respects.
+ *
+ * Secret material never appears here — that is the secrets/credentials
+ * services' job (ADR-0019). The eBay *keyset* is a secret; the eBay *rate
+ * budget* is a non-secret operational limit, which is why only the latter is
+ * a setting.
+ */
+import { z } from "zod";
+import { defineSetting } from "./settings.ts";
+
+/**
+ * Installation-wide monitor cadence defaults.
+ *
+ * `intervalSeconds` is the ~60 s baseline a NEW monitor target inherits when
+ * the operator does not choose a cadence. It is a starting point, not a
+ * guarantee: the adaptive policy scales it per tier and the per-connection
+ * rate-budget floor clamps it from below, so a 60 s default on a connection
+ * whose budget implies a 90 s floor polls every 90 s.
+ */
+export const monitorDefaultsSetting = defineSetting({
+  key: "monitors.defaults",
+  schema: z.strictObject({
+    /** Baseline cadence, in seconds, for newly created monitor targets. */
+    intervalSeconds: z.number().int().min(5).max(86_400),
+  }),
+  description:
+    "Default polling cadence new monitor targets inherit, in seconds " +
+    "(the adaptive policy and the per-connection rate-budget floor still apply)",
+  schemaVersion: 1,
+  defaultValue: { intervalSeconds: 60 },
+});
+
+/**
+ * How many items ONE poll may observe.
+ *
+ * A membership/discovery poll routinely sees more items than it should write
+ * an observation for: a watchlist member snapshot costs one provider call
+ * (one rate-budget token), and a search page can carry 200 summaries whose
+ * observations all land in the hypertable. Both paths therefore observe
+ * STALEST-FIRST up to a cap, so a monitor larger than its cap is covered
+ * round-robin across polls instead of leaving its tail permanently
+ * unobserved.
+ *
+ * Raising `watchlistItemsPerPoll` costs provider calls; raising
+ * `searchItemsPerPoll` costs observation rows only (the summaries were
+ * already fetched by the search itself).
+ */
+export const monitorObservationCapsSetting = defineSetting({
+  key: "monitors.observation_caps",
+  schema: z.strictObject({
+    /** Watchlist member snapshots per poll — one provider call each. */
+    watchlistItemsPerPoll: z.number().int().min(1).max(200),
+    /** Search/seller summaries observed per poll — no extra provider call. */
+    searchItemsPerPoll: z.number().int().min(1).max(1000),
+  }),
+  description:
+    "Per-poll observation caps: watchlist member snapshots (one provider " +
+    "call each) and search/seller summaries observed per discovery poll",
+  schemaVersion: 1,
+  defaultValue: { watchlistItemsPerPoll: 20, searchItemsPerPoll: 50 },
+});
+
+/**
+ * The per-connection eBay token bucket (`capacity`, `refillPerSecond`).
+ *
+ * This is the operational half of the pair whose other half is the secret
+ * keyset. Every eBay connection gets one bucket with these parameters, and
+ * the ADAPTIVE INTERVAL FLOOR is derived from `refillPerSecond` — tightening
+ * the budget automatically slows every monitor on the connection, because a
+ * rate budget is a safety constraint rather than a preference. See
+ * `@loxep/app`'s `rateBudgetIntervalFloorSeconds` for the formula.
+ */
+export const ebayRateBudgetSetting = defineSetting({
+  key: "integration.ebay.rate_budget",
+  schema: z.strictObject({
+    /** Burst size, in provider calls. */
+    capacity: z.number().int().min(1).max(1000),
+    /** Sustained provider calls per second. */
+    refillPerSecond: z.number().positive().max(100),
+  }),
+  description:
+    "Per-connection eBay rate budget (token-bucket capacity and refill per " +
+    "second); the refill rate also derives the adaptive interval floor",
+  schemaVersion: 1,
+  defaultValue: { capacity: 10, refillPerSecond: 1.5 },
+});
+
+/** Every definition this module registers, for diagnostics and tests. */
+export const registeredApplicationSettings = [
+  monitorDefaultsSetting,
+  monitorObservationCapsSetting,
+  ebayRateBudgetSetting,
+] as const;

@@ -40,6 +40,16 @@ export type {
   SettingsService,
 } from "./settings.ts";
 
+// Importing this module is what REGISTERS Loxep's shipped settings; every
+// process that reaches the registry through `@loxep/domain` therefore sees
+// the same keys (see the module doc for why they live in this package).
+export {
+  ebayRateBudgetSetting,
+  monitorDefaultsSetting,
+  monitorObservationCapsSetting,
+  registeredApplicationSettings,
+} from "./settings-defaults.ts";
+
 export {
   applicationSecretAad,
   connectionCredentialAad,

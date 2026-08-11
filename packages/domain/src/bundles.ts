@@ -61,6 +61,31 @@ export const secretBundleSchemas = {
     consumerKey: z.string().min(1),
     consumerSecret: z.string().min(1),
   }),
+  /**
+   * Medusa v2 Admin API secret key (ADR-0009): the single long-lived secret
+   * token a Medusa backend issues for one integration, created once in the
+   * admin dashboard (Settings → Developer → Secret API Keys). Sent as
+   * `Authorization: Basic <apiToken>` — NOT base64("user:pass") the way
+   * ordinary HTTP Basic auth works; the token itself (always prefixed
+   * `sk_`) goes directly after `Basic `. See
+   * `packages/integrations/medusa/src/config.ts` for the verified source
+   * trail behind that wire format.
+   *
+   * Only one field, unlike `woo_credentials`'s key/secret pair — Medusa's
+   * Admin API authenticates with a single secret token, so there is no
+   * second part to keep atomic with it.
+   *
+   * The backend URL is deliberately NOT part of this bundle, for the same
+   * reasoning `woo_credentials` excludes the store URL: it is non-secret
+   * connection configuration that must stay readable without a decryption
+   * round-trip (to render the connection, run a health check, and compute
+   * the commerce design's `source_account_key`), and a Medusa secret key is
+   * issued by exactly one backend — pointing it at the wrong URL fails as a
+   * clean HTTP 401, not as apparent credential corruption.
+   */
+  medusa_credentials: z.strictObject({
+    apiToken: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;
