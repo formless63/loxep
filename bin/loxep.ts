@@ -125,7 +125,7 @@ async function commandStart(modeOverride?: LoxepMode): Promise<void> {
 
   let worker: EmbeddedWorker | undefined;
   if (config.mode === 'all' || config.mode === 'worker') {
-    worker = startEmbeddedWorker({ logger });
+    worker = await startEmbeddedWorker({ logger, databaseUrl: config.databaseUrl });
   }
   if (config.mode === 'all' || config.mode === 'web') {
     await startWebRuntime(config, logger);

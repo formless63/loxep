@@ -113,6 +113,8 @@ See ADR-0017.
 
 The default deployment does **not** require a separate worker container. The same image must support later worker-only replicas on other hosts.
 
+Implemented conventions (`@loxep/jobs`, graphile-worker 0.17): the `graphile_worker` schema is **Graphile-owned** — the embedded runner creates/migrates it at startup; it is *not* part of Loxep's Drizzle migrations and never appears in `packages/db/migrations`. Tasks are defined with `defineTask({ name, payloadSchema, handler })` (Zod-validated payloads; execution scoped in `runWithLogContext({ jobId, correlationId })`). Handlers are at-least-once; dedupe-able work uses `jobKeyFor(taskName, stableId)` (`taskName:stableId`) with `jobKeyMode: "replace"`. Retries use Graphile's exponential backoff (`exp(least(attempts, 10))` seconds); Loxep's default retry budget is **`max_attempts = 8`** (typed enqueue helpers and cron items apply it; raw SQL enqueues fall back to Graphile's 25), overridable per task or per enqueue. The first maintenance task, `maintenance.heartbeat`, runs on a 5-minute cron and upserts `application_settings` key `runtime.heartbeat` (`{ lastRunAt, hostname }`), proving the job → database write path; queue statistics (pending/running/failed/oldest-pending) surface through the `worker-jobs` readiness check as detail — backlog is observable, never automatic unreadiness (ADR-0018).
+
 Polling uses database-controlled scheduling. Do not create one recurring cron entry per watched item; a small number of recurring dispatchers enqueue jobs for due monitor targets.
 
 ### Authentication and authorization
