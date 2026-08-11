@@ -61,6 +61,8 @@ Implemented: the real sign-in surface lives at `/auth/sign-in` (magic-link email
 
 Major future areas must be peer workspace roots such as `/market`, `/commerce`, or `/inventory`, not children of one giant `/dashboard/*` tree. See [Workspaces & Navigation](../../product/workspaces/).
 
+Implemented: the first such peer is the `/settings/*` workspace — wired through the shared workspace configuration (sidebar + Cmd+K) and session-guarded like `/dashboard/*` — surfacing readiness/health detail, economic entities, connections (credential metadata only), storage backends (write-only S3 credential entry), users/roles via the Better Auth admin API, and registered/raw application settings; reads are member-accessible while mutations and user listing enforce the deployment `admin` role server-side (ADR-0017).
+
 Do not aggressively remove useful donor tooling merely to minimize dependencies. Recharts, DnD, and Zustand all have credible Loxep uses. Zustand remains constrained to genuine UI/editing state; PostgreSQL/Query/Router/Form retain their natural state ownership.
 
 ### Configuration and setup
