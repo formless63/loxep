@@ -1,7 +1,15 @@
+import { Suspense, lazy } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
 import { HeadContent, Outlet, Scripts, createRootRouteWithContext } from '@tanstack/react-router';
-import { TanStackRouterDevtools } from '@tanstack/react-router-devtools';
 import { createServerFn } from '@tanstack/react-start';
+
+// Dev-only lazy import keeps @tanstack/react-router-devtools a devDependency
+// and out of production bundles.
+const TanStackRouterDevtools = import.meta.env.PROD
+  ? () => null
+  : lazy(() =>
+      import('@tanstack/react-router-devtools').then((m) => ({ default: m.TanStackRouterDevtools }))
+    );
 
 import { Toaster } from '@/components/ui/sonner';
 import { ActiveThemeProvider } from '@/components/themes/active-theme';
@@ -81,7 +89,9 @@ function RootDocument() {
             <Outlet />
           </ActiveThemeProvider>
         </ThemeProvider>
-        <TanStackRouterDevtools position='bottom-left' />
+        <Suspense>
+          <TanStackRouterDevtools position='bottom-left' />
+        </Suspense>
         <Scripts />
       </body>
     </html>
