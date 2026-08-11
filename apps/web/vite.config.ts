@@ -10,7 +10,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3020,
     strictPort: true,
-    allowedHosts: ['dev.loxep.com'],
+    allowedHosts: ['dev.loxep.com']
   },
   plugins: [
     tsconfigPaths(),
