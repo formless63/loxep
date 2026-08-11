@@ -657,6 +657,17 @@ Each item is a genuinely unresolved decision with a recommendation, not a placeh
 
 8. **Buyer data retention before Phase 6.** Phase 3 normalizes only `buyer_external_id` and an optional display name, leaving names, emails, and addresses in retained provider payloads. Is that the right line for support workflows — and does it imply a retention policy on `provider_objects` for order payloads? *Recommendation: hold the line on columns, and treat provenance retention as a separate policy decision.* Order payloads contain personal data that marketplace observation payloads do not, so "no automatic retention deletion by default" may need revisiting for this object class specifically. Flagging rather than deciding: this is a policy question, not a schema one.
 
+### Provider reality findings (WooCommerce, live-verified)
+
+The Woo adapter was implemented against a live production store before this design's review; its findings bear directly on the open questions above:
+
+- WooCommerce exposes **no order-level subtotal** — the draft's `subtotal_amount not null` must be derived (exact scaled-integer summation of line subtotals) and should be marked as derived or made nullable.
+- **Woo `fee_lines` are buyer-facing surcharges inside `orders.total`, not platform fees charged to the seller** — WooCommerce core reports no seller-side fees at all (gateway charges live outside the API). The `order_fees` concept needs a per-provider semantic decision: inverted-sign rows, a separate buyer-charge concept, or absence for Woo.
+- Woo's single status lifecycle maps lossily onto the draft's three: `partially_fulfilled` is unreachable, `refunded` erases prior fulfillment knowledge (a fulfillment-state `unknown` member is a candidate addition), and `partially_refunded` must be derived from the refunds array.
+- `source_account_key` is confirmed cheaply computable for Woo (`woocommerce:<normalizedSiteUrl>`) — supporting the detect-don't-constrain recommendation.
+- Payload traps recorded in the adapter: `number` is a string, `line_items[].price` is the lone float money field, `*_gmt` timestamps carry no zone designator (must append `Z`), and plugin-injected top-level keys mean mapping must be key-driven.
+- Order payloads carry substantial buyer PII (addresses, email, phone, IP, UA) — open question 8's provenance-retention concern is confirmed real; the adapter ships a `redactWooOrderFact` helper pending the policy decision.
+
 ## Contradictions and tensions found in existing documentation
 
 Recorded here for a human to resolve; this document does not attempt to fix them.
