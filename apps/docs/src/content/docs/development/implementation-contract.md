@@ -246,7 +246,7 @@ Loxep domain services
 
 Retain enough provider evidence for replay/debugging without writing full heavyweight JSON snapshots every minute when a narrow observation row already captures the useful state.
 
-Use maintained provider libraries where they fit, behind Loxep-owned adapters. The initial eBay direction is `ebay-api`, not provider types leaking through the application.
+Use maintained provider libraries where they fit, behind Loxep-owned adapters. The initial eBay direction is `ebay-api`, not provider types leaking through the application. This boundary is implemented in `packages/integrations/ebay` (`@loxep/integration-ebay`), with `ebay-api` v10 as the pinned client behind the adapter (Buy Browse item snapshots, observation mapping, error taxonomy, per-connection rate budget).
 
 ## Background work
 
