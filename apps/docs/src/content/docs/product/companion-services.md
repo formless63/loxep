@@ -194,11 +194,12 @@ These recommendations should eventually have copyable templates and compatibilit
 
 A broader opportunity is to make external operational dependencies visible inside Loxep without trying to manage every application.
 
-A generic integration-health model can eventually track:
+A generic integration-health model can eventually track health per **subject**, where a subject is whatever kind of record actually owns the integration — a provider connection, a notification endpoint, a storage backend, or an external resource. Not every health subject is a `connection`; an ntfy endpoint or S3 backend is configured through its own record with an application secret rather than a provider-connection lifecycle.
 
 ```text
 integration_health
-  connection_id
+  subject_type          e.g. connection | notification_endpoint | storage_backend | external_resource
+  subject_id
   checked_at
   status
   last_success_at

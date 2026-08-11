@@ -298,7 +298,7 @@ Media owns binary identity/storage. The Documents domain owns document meaning/e
 - PostgreSQL + TimescaleDB from the initial deployment.
 - Marketplace/listing observations as hypertables from the beginning.
 - Preserve useful raw observation resolution.
-- Initial 7-day chunks with current Hypercore/columnstore direction for older observations and no automatic deletion by default.
+- Initial 7-day chunks with current Timescale columnstore direction for older observations and no automatic deletion by default.
 - Marketplace price/availability history.
 - Seller/search/listing metrics.
 - Continuous aggregates when measured query/volume needs justify them.

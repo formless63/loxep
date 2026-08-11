@@ -71,7 +71,7 @@ Initial physical policy:
 - partition column `observed_at`;
 - 7-day chunks as a starting point;
 - recent chunks remain rowstore;
-- use current Hypercore/columnstore features for older observations;
+- use current Timescale columnstore features for older observations;
 - initial columnstore policy target around 30 days;
 - segment primarily by `marketplace_item_id` and order by `observed_at DESC` where supported;
 - no automatic retention/deletion policy by default.

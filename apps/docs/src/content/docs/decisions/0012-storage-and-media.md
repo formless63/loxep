@@ -2,7 +2,7 @@
 title: "ADR-0012: Media and Object Storage"
 ---
 
-**Status:** Accepted; self-hosted provider recommendation amended by ADR-0014.
+**Status:** Accepted; self-hosted provider recommendation amended by ADR-0014; logical media model superseded by the `storage_backends` record design in the foundation schema draft.
 
 ## Context
 
@@ -50,10 +50,15 @@ This should become an administrative application workflow, not merely documentat
 
 ## Logical media model
 
+> **Superseded:** this ADR's original sketch stored a bare `storage_backend text` driver name on each media object. The accepted foundation model instead represents each configured storage destination as a **`storage_backends` record** (driver family, config, secret reference), with `media_objects.storage_backend_id` as a foreign key and `unique(storage_backend_id, storage_key)`. This is what allows one installation to hold several configured destinations and migrate between them without changing media identity. The [Foundation Schema Draft](../architecture/foundation-schema/) is authoritative for the physical shape.
+
 ```text
+storage_backends
+  id, name, driver, enabled, is_default, config, secret reference, ...
+
 media_objects
   id                  uuid
-  storage_backend     text
+  storage_backend_id  uuid references storage_backends(id)
   storage_key         text
   original_filename   text nullable
   mime_type           text nullable
@@ -66,7 +71,7 @@ media_objects
 media_links
   media_object_id     uuid
   resource_type       text
-  resource_id         uuid/text
+  resource_id         text
   purpose             text
   sort_order          integer nullable
   created_at           timestamptz

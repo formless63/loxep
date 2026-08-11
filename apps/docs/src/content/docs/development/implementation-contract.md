@@ -214,7 +214,7 @@ Initial physical direction:
 - time column: `observed_at`;
 - 7-day chunks as a starting point;
 - recent rowstore data;
-- current Timescale Hypercore/columnstore features for older observations;
+- current Timescale columnstore features for older observations;
 - initial columnstore policy around 30 days;
 - no automatic deletion/retention by default.
 
