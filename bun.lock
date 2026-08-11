@@ -257,6 +257,22 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/inventory": {
+      "name": "@loxep/inventory",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/commerce": "workspace:*",
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/pg": "8.21.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/jobs": {
       "name": "@loxep/jobs",
       "version": "0.0.0",
@@ -758,6 +774,8 @@
     "@loxep/integration-medusa": ["@loxep/integration-medusa@workspace:packages/integrations/medusa"],
 
     "@loxep/integration-woo": ["@loxep/integration-woo@workspace:packages/integrations/woo"],
+
+    "@loxep/inventory": ["@loxep/inventory@workspace:packages/inventory"],
 
     "@loxep/jobs": ["@loxep/jobs@workspace:packages/jobs"],
 
