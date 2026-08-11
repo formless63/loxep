@@ -339,6 +339,7 @@ Logical columns:
 ```text
 marketplace_item_id   uuid not null
 observed_at           timestamptz not null
+observation_batch_id  uuid not null
 connection_id         uuid null
 source                text not null
 currency              char(3) null
@@ -360,8 +361,20 @@ Physical policy:
 - Timescale hypertable partitioned by `observed_at`;
 - initial chunk interval 7 days;
 - index optimized for `(marketplace_item_id, observed_at desc)`;
-- current Hypercore/columnstore policy after roughly 30 days initially;
+- current columnstore policy after roughly 30 days initially;
 - no automatic retention deletion by default.
+
+### Retry identity
+
+Observation writes must be idempotent under at-least-once job execution. `observation_batch_id` is generated **once when a provider fetch/poll result is obtained** and retained across processing retries; `observed_at` is likewise fixed at that moment rather than regenerated on retry. One watchlist response uses one batch ID across its many items.
+
+Uniqueness:
+
+```text
+unique(observation_batch_id, marketplace_item_id, observed_at)
+```
+
+This includes the partition column as Timescale requires for hypertable unique indexes, while providing genuine retry identity: a retried handler re-inserting the same batch conflicts instead of duplicating, and two connections legitimately observing the same item at the same moment remain distinct batches. `connection_id` stays provenance, not part of uniqueness.
 
 Successful unchanged observations are retained because they establish time bounds for state changes.
 
