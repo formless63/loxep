@@ -16,10 +16,31 @@ export interface EmbeddedWorker {
   stop: () => Promise<void>;
 }
 
+/**
+ * What the composition root (`@loxep/app`) hands back: the task registry to
+ * run, optionally the cron schedules that go with it, and an optional
+ * teardown for anything the composition owns (e.g. its database pool).
+ *
+ * Typed structurally off `@loxep/jobs`'s own options so this package still
+ * takes no runtime dependency on the job system.
+ */
+export interface WorkerRegistryComposition {
+  registry: NonNullable<StartWorkerRuntimeOptions['registry']>;
+  cronItems?: StartWorkerRuntimeOptions['cronItems'];
+  close?: () => Promise<void>;
+}
+
 export interface StartEmbeddedWorkerOptions {
   logger: StartWorkerRuntimeOptions['logger'];
   databaseUrl: string;
   concurrency?: number;
+  /**
+   * Compose the task registry to run. Called lazily INSIDE the worker start
+   * so that only worker-capable modes ever load the composition root and its
+   * provider integrations; omitting it keeps `@loxep/jobs`' own defaults
+   * (heartbeat only), which is exactly the pre-Phase-1 behaviour.
+   */
+  buildRegistry?: () => Promise<WorkerRegistryComposition>;
 }
 
 /**
@@ -33,20 +54,27 @@ export interface StartEmbeddedWorkerOptions {
  *    itself has crashed.
  */
 export async function startEmbeddedWorker(options: StartEmbeddedWorkerOptions): Promise<EmbeddedWorker> {
-  const { logger, databaseUrl, concurrency } = options;
+  const { logger, databaseUrl, concurrency, buildRegistry } = options;
 
   let runtime: WorkerRuntime;
+  let composition: WorkerRegistryComposition | undefined;
   try {
+    // Composition first: a registry that cannot be built is a startup
+    // failure, not a half-started worker running the wrong task list.
+    composition = buildRegistry === undefined ? undefined : await buildRegistry();
     const { startWorkerRuntime } = await import('@loxep/jobs');
     runtime = await startWorkerRuntime({
       databaseUrl,
       logger,
       ...(concurrency !== undefined ? { concurrency } : {}),
+      ...(composition !== undefined ? { registry: composition.registry } : {}),
+      ...(composition?.cronItems !== undefined ? { cronItems: composition.cronItems } : {}),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     logger.error({ err: detail }, 'worker runtime failed to start');
     setComponentStatus('worker', { ok: false, detail: `worker runtime failed to start: ${detail}` });
+    await composition?.close?.().catch(() => undefined);
     return { stop: () => Promise.resolve() };
   }
 
@@ -74,8 +102,18 @@ export async function startEmbeddedWorker(options: StartEmbeddedWorkerOptions): 
     }
   });
 
-  logger.info('worker runtime started (Graphile Worker embedded, ADR-0018 one-process contract)');
+  logger.info(
+    { tasks: [...(composition?.registry.keys() ?? ['(jobs defaults)'])] },
+    'worker runtime started (Graphile Worker embedded, ADR-0018 one-process contract)',
+  );
+  const owned = composition;
   return {
-    stop: () => runtime.stop(),
+    stop: async () => {
+      try {
+        await runtime.stop();
+      } finally {
+        await owned?.close?.();
+      }
+    },
   };
 }
