@@ -28,3 +28,4 @@ dist/
 .dolt/
 *.db
 .beads-credential-key
+compose.override.yml

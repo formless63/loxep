@@ -4,27 +4,26 @@
 # Build from the repository root:  docker build -f docker/Dockerfile .
 
 # ---------------------------------------------------------------------------
+# Manifests stage: structurally collect EVERY workspace manifest + lockfile so
+# the install layers can never drift when a new package is added. The stage
+# re-runs on any context change, but its output only contains manifests, so
+# downstream install layers stay cached until a manifest actually changes.
+# ---------------------------------------------------------------------------
+FROM oven/bun:1.3.14 AS manifests
+WORKDIR /src
+COPY . .
+RUN mkdir -p /manifests \
+ && find . -name node_modules -prune -o \( -name package.json -o -name bun.lock \) -print \
+    | tar cf - -T - | tar xf - -C /manifests
+
+# ---------------------------------------------------------------------------
 # Build stage: full workspace install + apps/web production build (Vite+Nitro)
 # ---------------------------------------------------------------------------
 FROM oven/bun:1.3.14 AS build
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source edits.
-# NOTE: every workspace package.json must be listed here (both stages) or the
-# frozen-lockfile install fails from a fresh clone. Update when adding workspaces.
-COPY package.json bun.lock ./
-COPY apps/web/package.json apps/web/package.json
-COPY apps/docs/package.json apps/docs/package.json
-COPY packages/config/package.json packages/config/package.json
-COPY packages/db/package.json packages/db/package.json
-COPY packages/domain/package.json packages/domain/package.json
-COPY packages/jobs/package.json packages/jobs/package.json
-COPY packages/observability/package.json packages/observability/package.json
-COPY packages/runtime/package.json packages/runtime/package.json
-COPY packages/auth/package.json packages/auth/package.json
-COPY packages/market/package.json packages/market/package.json
-COPY packages/notifications/package.json packages/notifications/package.json
-COPY packages/storage/package.json packages/storage/package.json
+COPY --from=manifests /manifests ./
 RUN bun install --frozen-lockfile
 
 COPY . .
@@ -43,19 +42,7 @@ RUN bun run build
 FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 
-COPY package.json bun.lock ./
-COPY apps/web/package.json apps/web/package.json
-COPY apps/docs/package.json apps/docs/package.json
-COPY packages/config/package.json packages/config/package.json
-COPY packages/db/package.json packages/db/package.json
-COPY packages/domain/package.json packages/domain/package.json
-COPY packages/jobs/package.json packages/jobs/package.json
-COPY packages/observability/package.json packages/observability/package.json
-COPY packages/runtime/package.json packages/runtime/package.json
-COPY packages/auth/package.json packages/auth/package.json
-COPY packages/market/package.json packages/market/package.json
-COPY packages/notifications/package.json packages/notifications/package.json
-COPY packages/storage/package.json packages/storage/package.json
+COPY --from=manifests /manifests ./
 RUN bun install --frozen-lockfile --production --linker=hoisted
 
 # ---------------------------------------------------------------------------
