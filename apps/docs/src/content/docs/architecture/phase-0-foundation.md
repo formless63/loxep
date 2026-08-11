@@ -67,6 +67,8 @@ Major future areas must be peer workspace roots such as `/market`, `/commerce`, 
 
 Implemented: the first such peer is the `/settings/*` workspace — wired through the shared workspace configuration (sidebar + Cmd+K) and session-guarded like `/dashboard/*` — surfacing readiness/health detail, economic entities, connections (credential metadata only), storage backends (write-only S3 credential entry), users/roles via the Better Auth admin API, and registered/raw application settings; reads are member-accessible while mutations and user listing enforce the deployment `admin` role server-side (ADR-0017).
 
+Phase 1 (loxep-62y.4) adds the second peer, `/market/*` — monitor-target management (`/market/monitors`, create/edit/enable/disable, admin-only mutations over `@loxep/market`'s `createMonitorService`), watched items joined with their latest observation (`/market/items`, filterable by monitor), an item detail page (`/market/items/$itemId`) with a Recharts price-history line and an availability/quantity timeline built on `@loxep/market/metrics.ts`'s `priceHistory`/`availabilityHistory`/`restockSellout`/`itemActivitySummary`, and an event-history list surfacing `market_events` deltas and the `rule_id` badge; `/market/overview` rolls up active-monitor/watched-item/24h-event counts and recent events. Reads stay member-accessible and monitor mutations enforce the `admin` role, same split as `/settings/*`.
+
 Do not aggressively remove useful donor tooling merely to minimize dependencies. Recharts, DnD, and Zustand all have credible Loxep uses. Zustand remains constrained to genuine UI/editing state; PostgreSQL/Query/Router/Form retain their natural state ownership.
 
 ### Configuration and setup
