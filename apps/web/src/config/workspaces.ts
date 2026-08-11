@@ -1,8 +1,9 @@
 import type { NavGroup } from '@/types';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
+import { settingsNavGroups } from '@/config/navigation/settings';
 import { starterNavGroups } from '@/config/navigation/starter';
 
-export type WorkspaceId = 'dashboard' | 'starter';
+export type WorkspaceId = 'dashboard' | 'settings' | 'starter';
 
 export type Workspace = {
   id: WorkspaceId;
@@ -21,6 +22,14 @@ export const workspaces: Workspace[] = [
     root: '/dashboard',
     defaultPath: '/dashboard/overview',
     navGroups: dashboardNavGroups
+  },
+  {
+    id: 'settings',
+    label: 'Settings',
+    description: 'Administration & diagnostics',
+    root: '/settings',
+    defaultPath: '/settings/overview',
+    navGroups: settingsNavGroups
   },
   {
     id: 'starter',

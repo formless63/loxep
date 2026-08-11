@@ -8,10 +8,11 @@ A workspace is **not** a database schema, microservice, tenancy boundary, permis
 
 ## Current shell
 
-The repository already has the first two workspace roots:
+The repository already has the first workspace roots:
 
 ```text
 /dashboard/*    real Loxep dashboard workspace
+/settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
 ```
 
