@@ -15,10 +15,19 @@ import { closeDb, createDb } from "@loxep/db";
 import { parseKeyring } from "@loxep/config";
 import type { BootstrapConfig } from "@loxep/config";
 import type { JobsLogger } from "@loxep/jobs";
-import { EbayAdapterError } from "@loxep/integration-ebay";
+import {
+  EbayAdapterError,
+  hasUnknownSellerWarning,
+  mapSearchSummary,
+} from "@loxep/integration-ebay";
 import type {
   EbayAdapter,
+  EbayListingSummary,
+  EbaySearchPage,
+  EbaySearchWarning,
   EbayUserAdapter,
+  fetchAllSellerListings,
+  searchAllListings,
 } from "@loxep/integration-ebay";
 import type { EbayConnectionAdapter } from "../src/index.ts";
 
@@ -211,6 +220,48 @@ export function watchlistItemPayload(input: {
   };
 }
 
+/**
+ * One Browse `item_summary/search` `ItemSummary` payload, shaped exactly like
+ * the provider's — the fake search backend runs it through the REAL
+ * `mapSearchSummary`, so normalization is never faked.
+ */
+export function browseSummaryPayload(input: {
+  itemId: string;
+  title?: string;
+  price?: string;
+  currency?: string;
+  seller?: string;
+  itemWebUrl?: string;
+  itemCreationDate?: Date;
+  itemEndDate?: Date;
+  categoryId?: string;
+}): Record<string, unknown> {
+  return {
+    itemId: input.itemId,
+    title: input.title ?? `Listing ${input.itemId}`,
+    itemWebUrl: input.itemWebUrl ?? `https://www.ebay.com/itm/${input.itemId}`,
+    listingMarketplaceId: "EBAY_US",
+    leafCategoryIds: [input.categoryId ?? "9355"],
+    conditionId: "1000",
+    condition: "New",
+    buyingOptions: ["FIXED_PRICE"],
+    seller: {
+      username: input.seller ?? "fake-seller",
+      feedbackScore: 42,
+      feedbackPercentage: "99.7",
+    },
+    ...(input.price !== undefined
+      ? { price: { value: input.price, currency: input.currency ?? "USD" } }
+      : {}),
+    ...(input.itemCreationDate !== undefined
+      ? { itemCreationDate: input.itemCreationDate.toISOString() }
+      : {}),
+    ...(input.itemEndDate !== undefined
+      ? { itemEndDate: input.itemEndDate.toISOString() }
+      : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Fake adapter
 // ---------------------------------------------------------------------------
@@ -220,6 +271,14 @@ export interface FakeEbayState {
   items: Map<string, Record<string, unknown>>;
   /** Raw Trading watch-list `Item` payloads. */
   watchlist: Record<string, unknown>[];
+  /** Raw Browse `ItemSummary` payloads a search returns. */
+  searchSummaries: Record<string, unknown>[];
+  /** Seller username → the raw `ItemSummary` payloads that seller has. */
+  sellerSummaries: Map<string, Record<string, unknown>[]>;
+  /** Warnings eBay attaches to every search page (12002/12008 cases). */
+  searchWarnings: EbaySearchWarning[];
+  /** Warnings eBay attaches to every seller page (the 12003 refusal case). */
+  sellerWarnings: EbaySearchWarning[];
   /** When set, every provider call throws it (connection-failure path). */
   failWith: EbayAdapterError | null;
   /** Whether the connection has a stored user token. */
@@ -234,12 +293,135 @@ export function fakeEbayState(
   return {
     items: new Map(),
     watchlist: [],
+    searchSummaries: [],
+    sellerSummaries: new Map(),
+    searchWarnings: [],
+    sellerWarnings: [],
     failWith: null,
     consented: true,
     calls: [],
     ...overrides,
   };
 }
+
+/**
+ * Fake application adapter → its state. The discovery functions receive only
+ * `adapter.application`, so this is how a canned page finds its connection —
+ * the same trick the integration boundary uses for its own internals handle.
+ */
+const stateByApplicationAdapter = new WeakMap<object, FakeEbayState>();
+
+/** Page size the fake backend emits, so paging/accumulation is exercised. */
+export const FAKE_DISCOVERY_PAGE_SIZE = 2;
+
+function fakeStateFor(adapter: object): FakeEbayState {
+  const state = stateByApplicationAdapter.get(adapter);
+  if (state === undefined) {
+    throw new Error("fake discovery backend: adapter has no registered state");
+  }
+  return state;
+}
+
+function pageOf(
+  raws: readonly Record<string, unknown>[],
+  offset: number,
+  limit: number,
+  warnings: EbaySearchWarning[],
+): EbaySearchPage {
+  const slice = raws.slice(offset, offset + limit);
+  const summaries = slice.map((raw) =>
+    mapSearchSummary(raw, { fallbackMarketplace: "EBAY_US" }),
+  );
+  const next = offset + slice.length;
+  return {
+    summaries,
+    total: raws.length,
+    offset,
+    limit,
+    cursor: next < raws.length ? String(next) : null,
+    warnings,
+    fetchedAt: new Date(),
+  };
+}
+
+function collect(
+  raws: readonly Record<string, unknown>[],
+  maxItems: number,
+  warnings: EbaySearchWarning[],
+  onPage?: (page: EbaySearchPage) => void,
+): {
+  summaries: EbayListingSummary[];
+  pages: number;
+  total: number | null;
+  warnings: EbaySearchWarning[];
+} {
+  const summaries: EbayListingSummary[] = [];
+  const seenWarnings: EbaySearchWarning[] = [];
+  let offset = 0;
+  let pages = 0;
+  for (;;) {
+    const page = pageOf(
+      raws,
+      offset,
+      Math.min(FAKE_DISCOVERY_PAGE_SIZE, maxItems - summaries.length),
+      warnings,
+    );
+    pages += 1;
+    onPage?.(page);
+    summaries.push(...page.summaries);
+    seenWarnings.push(...page.warnings);
+    if (page.cursor === null || summaries.length >= maxItems) break;
+    offset = Number(page.cursor);
+  }
+  return {
+    summaries: summaries.slice(0, maxItems),
+    pages,
+    total: raws.length,
+    warnings: seenWarnings,
+  };
+}
+
+/**
+ * The `discovery` seam of {@link createEbayPollExecutor}, backed by
+ * {@link FakeEbayState}. Normalization (`mapSearchSummary`) and the seller
+ * refusal rule (`hasUnknownSellerWarning`) are the REAL ones — only the HTTP
+ * call is canned.
+ */
+export const fakeDiscoveryBackend: {
+  searchAllListings: typeof searchAllListings;
+  fetchAllSellerListings: typeof fetchAllSellerListings;
+} = {
+  searchAllListings: async (adapter, input) => {
+    const state = fakeStateFor(adapter);
+    state.calls.push(`search:${input.query ?? input.categoryId ?? ""}`);
+    if (state.failWith !== null) throw state.failWith;
+    return collect(
+      state.searchSummaries,
+      input.maxItems,
+      state.searchWarnings,
+      input.onPage,
+    );
+  },
+  fetchAllSellerListings: async (adapter, input) => {
+    const state = fakeStateFor(adapter);
+    state.calls.push(`seller:${input.sellerUsername}`);
+    if (state.failWith !== null) throw state.failWith;
+    const raws = state.sellerSummaries.get(input.sellerUsername) ?? [];
+    return collect(raws, input.maxItems, state.sellerWarnings, (page) => {
+      // The real refusal: eBay DROPS an unrecognized seller filter and
+      // returns the anchor's whole result set, so the page is refused rather
+      // than ingested (see `sellers.ts`).
+      if (hasUnknownSellerWarning(page.warnings)) {
+        throw new EbayAdapterError(
+          "invalid_request",
+          "eBay does not recognize this seller username; it ignored the seller " +
+            "filter and returned unrelated listings",
+          { sellerUsername: input.sellerUsername, warningId: 12003 },
+        );
+      }
+    });
+  },
+};
 
 /**
  * A {@link EbayConnectionAdapter} whose provider clients are fakes. The
@@ -270,6 +452,8 @@ export function fakeConnectionAdapter(
       getItem(legacyItemId),
     browseSearch: async () => ({ total: 0, itemSummaries: [] }),
   } as unknown as EbayAdapter;
+  // Lets {@link fakeDiscoveryBackend} find this connection's canned pages.
+  stateByApplicationAdapter.set(application, state);
 
   const user = {
     environment: "sandbox" as const,
