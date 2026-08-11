@@ -6,7 +6,9 @@ This document is the physical schema design for [Phase 4 — Inventory, acquisit
 
 It **extends** the foundation and the Phase 3 design. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table, and nothing here alters a table Phase 3 has already designed — every Phase 3 reference is an outbound foreign key added by Phase 4.
 
-Design work only. No migration, Drizzle schema, or inventory service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
+**Implementation status: this design is now implemented, PROVISIONALLY.** Migration `0005_inventory_acquisition_and_shipments.sql`, `packages/db/src/schema/inventory.ts`, and `packages/inventory` exist. They were built under an explicit owner directive to resolve every [open question](#open-questions) below per that question's own documented recommendation and mark the result PROVISIONAL for review — not because the questions were answered. See [Provisional implementation decisions](#provisional-implementation-decisions) for what shipped, what diverged from the draft below, and why. The sections between here and there describe the design as drafted; where implementation diverged, the divergence is recorded in that section rather than silently edited into the draft.
+
+The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or inventory service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
 **Phase 4's migration cannot run before Phase 3's.** `inventory_allocations`, `inventory_movements`, `shipments`, and `shipment_items` all carry foreign keys into `order_lines`, `order_fulfillments`, and `order_fees`. This is a hard ordering dependency, not a preference — see [Migration plan sketch](#migration-plan-sketch).
 
@@ -918,9 +920,93 @@ Not indexed on purpose: `inventory_items.condition_code` and `status` (low cardi
 
 `index(path text_pattern_ops)` is the one non-obvious entry: `LIKE 'HOME/GARAGE/%'` will not use a default B-tree index under a non-C collation, and subtree queries are the main reason `path` exists. Verify the operator class against current PostgreSQL behavior at implementation time.
 
+## Provisional implementation decisions
+
+Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight. Reversing any of them is a normal change, not an emergency — that is the point of writing them down before the review.
+
+### What shipped
+
+```text
+migration      packages/db/migrations/0005_inventory_acquisition_and_shipments.sql
+               packages/db/migrations/0004_link_table_constraints.sql  (loxep-dyx)
+schema         packages/db/src/schema/inventory.ts       (9 tables, 0 altered)
+services       packages/inventory/src/                   (@loxep/inventory)
+  decimal.ts          exact decimal strings + the largest-remainder distribution
+  attribution.ts      the acquisition and item precedence ladders
+  codes.ts            ACQ-2026-0184 / ITM-8F2K4 label generation
+  locations.ts        the location tree, path cache, cycle check, reconciliation
+  acquisitions.ts     lots, costs, and the cost allocation engine
+  items.ts            stock rows, condition/grading, location + entity transfers,
+                      and the audited per-item basis correction
+  movements.ts        the append-only ledger; SINGLE WRITER of quantity_on_hand
+  allocations.ts      reserve / release / deplete-on-fulfillment
+  shipments.ts        shipments, contents, cost adjustments, the fee-link report
+  profitability.ts    realized contribution and the operational read models
+  opportunity-links.ts  the acquisition ↔ market-event linkage
+tests          packages/inventory/test/                  (125 tests, real PostgreSQL)
+```
+
+### The ten open questions, as implemented
+
+1. **No per-SKU costing policy column exists anywhere.** Not on `catalog_items`, not in an Inventory-owned side table. The costing method is still determined by what an allocation identifies. Adding `catalog_items.costing_method` later remains an additive Phase 3 amendment for whoever owns that document.
+
+2. **Append-only is a real database trigger.** Migration 0005 creates `loxep_inventory_movements_append_only()` and a `BEFORE UPDATE OR DELETE ... FOR EACH ROW` trigger that raises with the correction path (`record a reversal movement instead`) in the message and the drop-repair-recreate rule in the `HINT`. `inventory_movements` has no `updated_at` column, and its absence is asserted by a test. The design's own instruction — "write the append-only test first" — was followed: an attempted `UPDATE` and an attempted `DELETE` are the first two tests in `packages/inventory/test/schema.test.ts`.
+
+3. **`quantity_on_hand` is cached, with one writer and a reconciliation function.** The writer is `recordMovement` in `movements.ts`; nothing else in Loxep writes that column or inserts into `inventory_movements`.
+
+   **Divergence from the draft, in the safe direction:** the cache is **recomputed from the ledger** inside the movement's transaction rather than incremented by a delta. The design says "maintained as a cache in the same transaction as every movement" without saying how, and at Phase 4 volumes (a handful of movements per item, on an index-only range scan) the recompute costs the same and cannot drift from its own arithmetic under partial failure or reordering. `reconcileQuantityOnHand` still exists and still earns its place, because the recompute only guarantees consistency for movements written *through* the writer — a row inserted by a migration or a `psql` session still leaves the cache stale, which is exactly the drift it is designed to find. It is **read-only by default**: `apply: true` is opt-in, because a silently repaired cache hides the write path that broke it, and finding drift in normal operation is the design's stated trigger to revisit caching at all.
+
+4. **One `location_id` on the item; a partial move splits the row.** `moveToLocation` writes a `transfer_out`/`transfer_in` pair sharing a `transfer_group_id`. A whole-item move points both halves at the same row (net zero on-hand, `location_id` updated); a partial move creates a new row with `origin_item_id` set and divides the basis pro rata. No `inventory_item_locations` table.
+
+5. **Basis freezes at the first `depletion_sale`.** `cost_basis_locked_at` is set by the movement writer, `coalesce`d so it never re-freezes. `allocateCosts` redistributes only the unlocked remainder, computing the pool as `lot pool − sum(locked items' basis net of their own item-scoped costs)`. **A negative pool is refused with the numbers in the message, never clamped.** A `manual` run that names a locked item is refused outright rather than silently skipped, because the operator explicitly asked for that row.
+
+   The design's escape hatch — "an explicit, audited basis correction on the individual item" — shipped as `ItemsService.correctCostBasis`. It is the ONLY path that rewrites a frozen basis, it **requires a non-empty `reason`**, and it writes an `audit_events` row carrying the before/after basis and that reason. An unexplained correction to a figure a closed sale has already reported is indistinguishable from a bug, so the service refuses to make one.
+
+6. **`shipments` is authoritative for postage; `order_fees` remains the evidence.** `shipments.order_fee_id` links them, `CHECK`-tied to `cost_source = 'fee_derived'` so the guard cannot be half-recorded. The profitability read model excludes any `order_fees` row a shipment references, at both order and line scope. `ShipmentsService.unlinkedShippingLabelFees()` is the reconciliation report the design asked for: every `shipping_label_charge` seller fee with no shipment pointing at it — each one a silent double-count waiting to happen.
+
+7. **Pro rata by `line_total`, largest remainder, computed in the read model and never stored.** One `distributeByWeights` function serves both the lot cost engine and the read model, so "the shares sum to the original exactly" is one implementation and one set of tests. A zero-weight line receives no share and the shortfall stays with the paying lines. Negative weights are rejected rather than clamped inside the distribution; callers clamp explicitly where a negative `line_total` is possible.
+
+   **One step the design left to implementation, and how it was taken:** the draft's formula assumes the dominant one-item-one-line case ("order revenue = `order_lines.line_total`, for the line this unit was depleted against"). Where SEVERAL items deplete one line, the implementation splits that line's revenue, refunds, and fee shares across those items **pro rata by depleted quantity**, again with largest-remainder rounding. Quantity is the only basis available at that grain, and the alternative — giving each item the whole line total — would report the same revenue two or three times. This is PROVISIONAL and is the item in this section most worth a reviewer's attention.
+
+8. **No FX anywhere.** An item whose cost currency differs from its order's currency is returned with `contributionComputable: false` and a null contribution, with both currencies and both figures visible, and is counted in `excludedForeignCurrencyItemCount` on the order row. `allocateCosts` allocates only costs in the acquisition's currency and reports `foreignCurrencyCostCount` for the rest — the `@loxep/commerce` `foreignCurrencyFeeCount` pattern, applied to costs.
+
+9. **Consignment is ordinary stock with zero basis, excluded by an explicit predicate.** The read models test `acquisitions.source_kind = 'consignment_intake'`, never a zero amount. Such rows are still **returned** with `consignment: true` and counted in `excludedConsignmentItemCount`; they are excluded from totals, not hidden. No `ownership` column was added.
+
+10. **Non-capitalized acquisition costs are kept.** `capitalize = false` rows stay attached, are excluded from landed cost, and are reported separately as `nonCapitalizedAmount` on both `landedCost()` and the acquisition ROI read model — so the "total spend versus landed cost" labelling hazard the design names is at least visible in the data shape rather than left to UI discipline alone.
+
+### Divergences from the draft
+
+Beyond the two called out above (the cache recompute in question 3, and the multi-item revenue split in question 7):
+
+- **`shipment_items`' unique is declared `NULLS NOT DISTINCT`.** The draft wrote a plain `unique(shipment_id, inventory_item_id, order_line_id)`, but both references are nullable, so under PostgreSQL's default null handling that constraint would silently permit the same `(shipment, item, no line)` row twice — the duplicate it exists to prevent. The draft's "same item twice under different lines" case is unaffected, because those rows differ in `order_line_id`.
+- **`cost_allocation_basis = 'equal'` weights by `quantity`, not by row count.** A row holding 100 phone cases takes 100 units of a lot's cost and a row holding one lamp takes one. "Equal per unit" is the only reading of `equal` that survives a table whose rows carry a quantity; the alternative would give a case of 100 the same basis as a single lamp.
+- **`cost_allocation_basis = 'manual'` sets `acquisition_cost_amount` equal to the entered landed cost.** The operator typed one number, and Phase 4 does not guess a goods/ancillary split it was not given. The other bases distribute the goods pool and the ancillary pool separately with the same weights, so `acquisition_cost_amount` stays a meaningful subset of `landed_cost_amount`.
+- **`transferEntity` requires an explicit `basisTreatment`** (`carryover` or `fair_market_value`, the latter with a required amount) and has **no default**. Whether a transferred item's basis carries over or is restated is a tax question the design flags as needing a human decision; a default here would be that decision, made silently. The sending row relinquishes the basis it *carried* even when the receiving row's basis is restated, so a step-up or step-down cannot strand basis on a row that holds no stock.
+- **Depletion never raises on a missing allocation, and reservation does reject over-allocation.** The asymmetry is deliberate and matches the design's reasoning: a channel that says it shipped has shipped, while a reservation is ours to refuse. `reserve({ allowOverAllocation: true })` exists for the operator who can see the stock on the shelf, and is off by default.
+- **`shipments` lives in `@loxep/inventory`**, resolving the design's open package question ([tension 4](#contradictions-and-tensions-found-in-existing-documentation)) provisionally in favour of one package. Splitting a four-table shipping domain out of the package that owns the items it ships would create a circular dependency for a boundary nothing enforces yet; extracting `@loxep/shipping` later is a file move. The two domains remain distinct in the documentation and in the module layout.
+- **Item `status` is maintained conservatively by the movement writer.** It moves an item among `available | partially_depleted | depleted`, never touches `written_off` or `archived`, and preserves `listed` / `reserved` while stock remains. `depleted_at` is set at zero and **cleared** when a `return_in` brings stock back, because a restocked unit is not depleted and a stale timestamp would make every aging report lie about it.
+- **`inventory_locations` cycle prevention is service-level**, as recommended, with the ancestor walk in `setParent` and a `reconcilePaths` integrity function that recomputes `path` and `depth` from the tree via a recursive CTE and reports every row that disagreed.
+
+### Verified at implementation time
+
+The design's pre-implementation checklist asked for several capabilities to be re-verified rather than assumed. Against drizzle-kit 0.31.10 and `timescale/timescaledb:2.29.1-pg18`, all of the following generated correctly from the Drizzle schema, so **nothing was weakened and only the trigger needed hand-written SQL**: `UNIQUE ... NULLS NOT DISTINCT` (`inventory_locations`, `shipment_items`), partial unique indexes with `IN` predicates (`inventory_allocations`), `num_nonnulls` `CHECK`s (`shipment_items`, `acquisition_opportunity_links`), and the `text_pattern_ops` operator class on the location `path` index.
+
+Several foreign keys and constraints are **named explicitly** because their derived names would exceed PostgreSQL's 63-byte identifier limit and be silently truncated — every FK on `acquisition_opportunity_links`, the allocation/fulfillment/self references on `inventory_movements`, and the self reference on `inventory_locations`. This is the same trap `order_fulfillment_lines` hit in Phase 3.
+
+### What a reviewer should push back on first
+
+In rough order of how expensive each is to reverse after data exists:
+
+1. **The multi-item-per-line revenue split** (question 7's implementation step). It is a basis invented during implementation, and it decides what a per-item margin means whenever a line covers more than one unit.
+2. **`equal` weighting by quantity.** Defensible, but it is a reading of one word, and a lot allocated the other way cannot be re-derived without re-running the engine.
+3. **`manual` basis setting `acquisition_cost_amount = landed_cost_amount`.** It loses the goods/ancillary distinction for exactly the lots an operator cared enough about to hand-cost.
+4. **The cache recompute rather than an increment.** Cheap to reverse today; the reason to look now is whether the reconciliation job's read-only default is the right operational posture.
+5. **`shipments` in `@loxep/inventory`.** A package boundary, so the cost is a file move plus an import churn — but it is the kind of thing that gets harder every month.
+6. **`NULLS NOT DISTINCT` on `shipment_items`.** Tightening a constraint is easy before data exists and awkward after.
+
 ## Open questions
 
-Each item is a genuinely unresolved decision with a recommendation, not a placeholder.
+Each item is a genuinely unresolved decision with a recommendation, not a placeholder. **All ten are now implemented per their recommendation and marked PROVISIONAL** — see [Provisional implementation decisions](#provisional-implementation-decisions). They are retained verbatim below because the recommendation is not the same thing as the answer, and the review needs the original reasoning.
 
 1. **Where does a per-SKU costing policy live, if one is ever needed?** Phase 4 determines the costing method from what an allocation identifies and stores no policy anywhere. A commodity SKU that must always deplete FIFO has no declarative home. *Recommendation: ship with no policy column, and if a real need appears add `catalog_items.costing_method` as an additive Phase 3 amendment rather than an Inventory-owned side table.* The reason to prefer the catalog column is that costing is a property of the goods, not of the stock rows; the reason to defer it is that adding a column to a table Phase 3 designed but has not yet migrated requires a decision by whoever owns that document, and this one should not make it unilaterally.
 
@@ -961,6 +1047,8 @@ Recorded here for a human to resolve; this document does not attempt to fix them
 7. **The opportunity-to-outcome *study* is not scheduled anywhere.** Roadmap Phase 4 says "begin connecting market opportunities to historical realized resale outcomes" and the domain map lists "Correlation of acquisition opportunities with actual resale performance" under Market Intelligence DESIGN-FOR. Phase 4 delivers the linkage table and the realized-contribution read model — the raw material — but the correlation analysis itself has no phase. That is probably correct, and it should be said, so nobody builds an analytics subsystem under a bullet that only asked for a foreign key.
 
 ## Before implementing this schema
+
+Retained as the original pre-implementation checklist. Items 1, 5, 6, 7, 8, 9, and 10 were satisfied during the provisional implementation; item 2 was answered provisionally (`shipments` lives in `@loxep/inventory`); items 3 and 4 — human confirmation of specific identification and the basis-freeze rule, and the carried-over-versus-fair-market-value decision — are **still outstanding**, and item 4 is the reason `transferEntity` refuses to default.
 
 1. re-read the applied Phase 3 migration rather than the Phase 3 design before writing any foreign key here; implementation has already diverged from the draft in at least one way that changes a Phase 4 read model (`order_fees.fee_direction`), and column names must come from the migration, not the document;
 2. resolve the shipping-ownership package question (tension 4 above) before writing code — it determines whether `shipments` lives in `@loxep/inventory` or a new `@loxep/shipping`, and it has the same "decide before implementation" character as [Phase 3's open question 6](../commerce-schema-design/#open-questions) about scheduling ownership;

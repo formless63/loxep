@@ -19,3 +19,4 @@ export * from "./resources.ts";
 export * from "./notifications.ts";
 export * from "./audit.ts";
 export * from "./commerce.ts";
+export * from "./inventory.ts";

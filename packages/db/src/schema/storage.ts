@@ -73,22 +73,71 @@ export const mediaObjects = pgTable(
 );
 
 /**
- * Media attachment links. Deliberately no universal uniqueness rule: actual
- * attachment semantics decide uniqueness per resource type
- * (foundation-schema.md).
+ * Media attachment links: one stored object attached to one Loxep row for one
+ * purpose.
+ *
+ * ## The key, and why this one (loxep-dyx)
+ *
+ * `unique(media_object_id, resource_type, resource_id, purpose)`.
+ *
+ * The foundation draft asked for "uniqueness based on actual attachment
+ * semantics rather than one universal relationship rule". The semantics that
+ * actually hold across every resource type are:
+ *
+ * ```text
+ * one object may attach to many resources    a receipt photo covers a lot AND
+ *                                            each item unpacked from it
+ * one resource may hold many objects         an inventory item has twelve
+ *                                            condition photos
+ * one object, one resource, one purpose      is ONE fact, and asserting it
+ *                                            twice adds nothing
+ * ```
+ *
+ * So the key is the full natural tuple, and `sort_order` is deliberately NOT
+ * in it: sort order is presentation, and putting it in the key would let the
+ * same photo attach to the same item twice by being dragged to a different
+ * position — which is the duplicate this constraint exists to prevent.
+ * `purpose` IS in the key, because the same photo legitimately serves as both
+ * `gallery` and `condition_evidence` for one item, and those are two facts.
+ *
+ * The bug this closes (loxep-dyx): with no unique constraint there was no
+ * `ON CONFLICT` target, so an at-least-once worker that attaches media twice
+ * silently doubled the row and every gallery rendered the same photo twice.
+ *
+ * No surrogate `uuid` primary key: the natural key is complete, and a
+ * synthetic id on a junction row would exist only to be ignored. Deletion is
+ * by the natural key, which is what an "unlink this photo from this item"
+ * action already has in hand.
+ *
+ * Indexes: the unique index serves object → resources on its leading column,
+ * and `(resource_type, resource_id)` serves resource → objects, which is the
+ * hot direction (every item, acquisition, and shipment detail view). A third
+ * index on `media_object_id` alone would only duplicate the unique's prefix.
  */
-export const mediaLinks = pgTable("media_links", {
-  mediaObjectId: uuid("media_object_id")
-    .notNull()
-    .references(() => mediaObjects.id),
-  resourceType: text("resource_type").notNull(),
-  resourceId: text("resource_id").notNull(),
-  purpose: text("purpose").notNull(),
-  sortOrder: integer("sort_order"),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const mediaLinks = pgTable(
+  "media_links",
+  {
+    mediaObjectId: uuid("media_object_id")
+      .notNull()
+      .references(() => mediaObjects.id),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    purpose: text("purpose").notNull(),
+    sortOrder: integer("sort_order"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("media_links_object_resource_purpose_uq").on(
+      table.mediaObjectId,
+      table.resourceType,
+      table.resourceId,
+      table.purpose,
+    ),
+    index("media_links_resource_idx").on(table.resourceType, table.resourceId),
+  ],
+);
 
 export const storageMigrations = pgTable("storage_migrations", {
   id: uuid("id").primaryKey().defaultRandom(),

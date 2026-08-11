@@ -107,19 +107,21 @@ The physical schema for this phase — orders, lines, fees, refunds, fulfillment
 
 Goal: follow physical goods from acquisition through sale.
 
-- Acquisitions and inventory movements.
-- Cost basis.
-- Inventory locations.
-- Economic-entity ownership/context for stock and acquisition workflows where needed.
-- Purchasing/vendors/receiving foundation where acquisition workflows need them.
-- Order allocations/depletion.
-- Shipments and tracking.
-- Actual outbound shipping costs.
-- Marketplace/payment fees.
-- Per-item/order realized profitability.
-- Begin connecting market opportunities to historical realized resale outcomes.
+- Acquisitions and inventory movements. *(implemented provisionally: `acquisitions`, `acquisition_costs`, and the append-only `inventory_movements` ledger.)*
+- Cost basis. *(implemented provisionally: specific identification, with the item row as the cost layer and basis frozen at first depletion.)*
+- Inventory locations. *(implemented provisionally: a location tree with a cached `path`, not a WMS.)*
+- Economic-entity ownership/context for stock and acquisition workflows where needed. *(implemented provisionally: stored attribution on both `acquisitions` and `inventory_items`, immutable on items — a change of owner is a paired transfer, never an `UPDATE`.)*
+- Purchasing/vendors/receiving foundation where acquisition workflows need them. *(**not built**, deliberately: acquisitions carry a denormalized `vendor_name` only. Vendor records, purchase orders, AP, and receiving-against-a-PO are explicit non-goals — see [contradiction 2](../../architecture/inventory-schema-design/#contradictions-and-tensions-found-in-existing-documentation) in the Phase 4 design.)*
+- Order allocations/depletion. *(implemented provisionally: `inventory_allocations` against Phase 3 `order_lines`, depletion on fulfillment, idempotent under re-ingestion.)*
+- Shipments and tracking. *(implemented provisionally: `shipments` and `shipment_items`, referencing `order_fulfillments` rather than replacing them.)*
+- Actual outbound shipping costs. *(implemented provisionally, including carrier post-audit `adjustment_amount`.)*
+- Marketplace/payment fees. *(**narrowed**: Phase 3 already owns order-attached fees and Phase 5 owns payout/processor-level ones, so what remained here is reconciling shipping-label fees against actual postage — implemented as `shipments.order_fee_id` plus an unlinked-fee report. See [contradiction 1](../../architecture/inventory-schema-design/#contradictions-and-tensions-found-in-existing-documentation) in the Phase 4 design.)*
+- Per-item/order realized profitability. *(implemented provisionally as read models in `@loxep/inventory`; the figure is labelled "contribution after goods, fees, and shipping", never "profit".)*
+- Begin connecting market opportunities to historical realized resale outcomes. *(implemented provisionally: the `acquisition_opportunity_links` table and the realized-contribution read model — the raw material. The correlation study itself is deliberately unscheduled.)*
 
-The physical schema for this phase — acquisitions and lot costs, inventory items and locations, append-only movements, allocation and depletion against Phase 3 order lines, outbound shipments, and the opportunity-to-outcome link — is designed in [Inventory & Acquisition Schema Design (Phase 4)](../../architecture/inventory-schema-design/).
+The physical schema for this phase — acquisitions and lot costs, inventory items and locations, append-only movements, allocation and depletion against Phase 3 order lines, outbound shipments, and the opportunity-to-outcome link — is designed in [Inventory & Acquisition Schema Design (Phase 4)](../../architecture/inventory-schema-design/), and is now implemented **provisionally**: every open question in that design was resolved per its own documented recommendation under an owner directive, pending review. What shipped and what diverged is recorded in that document's [Provisional implementation decisions](../../architecture/inventory-schema-design/#provisional-implementation-decisions).
+
+Inventory **valuation** is not in this phase and is not the same thing as cost basis. Phase 4 stores what was paid for a specific unit — a historical fact; forming a judgement about what stock is worth now requires a reporting date, a policy, and a book to post the adjustment to, all of which are Phase 5.
 
 ## Phase 5 — Financial foundation
 
@@ -137,6 +139,8 @@ Goal: create trustworthy financial facts without making the ledger the only repr
 - Declarative posting-rule model.
 - Core financial statements/reports.
 - Sales-tax fact model and marketplace-facilitator handling.
+- Inventory valuation, revaluation, and COGS posting, plus the aging/turnover/carrying-cost reporting derived from Phase 4's cost basis. Phase 4 stores what was paid; forming a judgement about what stock is worth requires a reporting date, a policy, and a book to post to.
+- The expense model that consumes Phase 4's non-capitalized `acquisition_costs` rows.
 
 Do not assume one economic entity equals one accounting book. An LLC and several assumed-name operations may intentionally share one chart of accounts/ledger while remaining separately attributable operationally.
 

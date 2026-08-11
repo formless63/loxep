@@ -13,9 +13,10 @@ import {
 
 /**
  * 0000 foundation, 0001 observations hypertable, 0002 opportunity rules,
- * 0003 commerce orders and catalog.
+ * 0003 commerce orders and catalog, 0004 link-table constraints,
+ * 0005 inventory, acquisition, and shipments.
  */
-const MIGRATION_FILE_COUNT = 4;
+const MIGRATION_FILE_COUNT = 6;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
