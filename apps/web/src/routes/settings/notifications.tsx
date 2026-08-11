@@ -14,7 +14,7 @@ function SettingsNotifications() {
   return (
     <SettingsPage
       title='Notifications'
-      description='ntfy endpoints and rules that route detected market events — event detection and delivery stay separate concepts.'
+      description='Delivery endpoints and the rules that route detected events to them — detection and delivery stay separate concepts.'
     >
       <div className='flex flex-col gap-8'>
         <section className='flex flex-col gap-3'>

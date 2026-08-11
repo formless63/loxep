@@ -1,59 +1,54 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ebayKeysetStatusQuery } from '@/features/settings/api/queries';
 import EbayKeysetDialog from '@/features/settings/components/ebay-keyset-dialog';
+import { IntegrationCard } from '@/features/settings/components/integration-card';
+import {
+  getIntegrationService,
+  type IntegrationStatusInput
+} from '@/features/settings/integrations-catalog';
 
 /**
- * Admin-only card for the ONE global eBay application keyset (`storeEbayKeyset` /
- * `EBAY_KEYSET_SECRET_KEY` in `@/server/ebay-oauth`) — every eBay connection shares
- * it, so it lives above the connections table rather than inside any one
- * connection's row. Only a configured-status badge is shown; the keyset
- * values themselves are write-only and never returned by any server function.
+ * The eBay catalog card, admin-only, hosting the ONE global eBay application
+ * keyset (`storeEbayKeyset` / `EBAY_KEYSET_SECRET_KEY` in
+ * `@/server/ebay-oauth`). Every eBay account shares it, which is why it is
+ * set up here on the integrations catalog rather than against any one
+ * account on the connections page. Only a configured-status badge is shown;
+ * the keyset values themselves are write-only and never returned by any
+ * server function.
  */
-export default function EbayIntegrationCard() {
+export default function EbayIntegrationCard({
+  statusInput
+}: {
+  /** Catalog inputs from the page; the keyset half is fetched here. */
+  statusInput: Omit<IntegrationStatusInput, 'ebayKeyset'>;
+}) {
   const { data, isPending } = useQuery(ebayKeysetStatusQuery);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const service = getIntegrationService('ebay');
+  const status = service.status({ ...statusInput, ebayKeyset: data ?? null });
 
   return (
-    <Card>
-      <CardHeader className='flex flex-row items-start justify-between gap-4'>
-        <div>
-          <CardTitle className='text-base'>eBay integration</CardTitle>
-          <CardDescription>
-            The application keyset behind every eBay connection&apos;s OAuth consent flow.
-          </CardDescription>
-        </div>
+    <IntegrationCard
+      name={service.name}
+      description={service.description}
+      status={status}
+      isPending={isPending}
+      action={
         <Button size='sm' variant='outline' onClick={() => setDialogOpen(true)}>
-          {data?.configured ? 'Rotate keyset' : 'Configure keyset'}
+          {data?.configured ? 'Rotate keyset' : 'Set up keyset'}
         </Button>
-      </CardHeader>
-      <CardContent>
-        {isPending ? (
-          <Skeleton className='h-6 w-64' />
-        ) : (
-          <div className='flex flex-wrap items-center gap-2 text-sm'>
-            <Badge variant={data?.configured ? 'secondary' : 'destructive'}>
-              {data?.configured ? 'Configured' : 'Not configured'}
-            </Badge>
-            {data?.configured && (
-              <>
-                <Badge variant='outline'>{data.environment}</Badge>
-                <Badge variant='outline'>source: {data.source}</Badge>
-                {!data.ruNameConfigured && (
-                  <Badge variant='destructive'>
-                    RuName missing — &quot;Connect eBay account&quot; will fail
-                  </Badge>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </CardContent>
+      }
+    >
+      {data?.configured === true && (
+        <p className='text-muted-foreground text-sm'>
+          {data.ruNameConfigured
+            ? 'Add eBay accounts from the connections page.'
+            : 'Add the redirect URL name from your eBay developer keyset before connecting an account.'}
+        </p>
+      )}
       {dialogOpen && <EbayKeysetDialog open={dialogOpen} onOpenChange={setDialogOpen} />}
-    </Card>
+    </IntegrationCard>
   );
 }

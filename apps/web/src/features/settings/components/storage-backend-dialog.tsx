@@ -142,7 +142,7 @@ export default function StorageBackendDialog({
           <DialogTitle>Register storage backend</DialogTitle>
           <DialogDescription>
             Storage destinations are configured resources behind one driver abstraction — local
-            filesystem or any S3-compatible endpoint (ADR-0012, ADR-0014).
+            filesystem or any S3-compatible endpoint.
           </DialogDescription>
         </DialogHeader>
         <form

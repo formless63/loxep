@@ -243,6 +243,89 @@ export const createConnection = createServerFn({ method: 'POST' })
     return { id: created.id };
   });
 
+/**
+ * Guided store-connection input. Each variant is one catalog service's form
+ * (`@/features/settings/integrations-catalog`): the browser never sends a
+ * provider, a kind, or a raw config object — those are derived here from the
+ * `service` discriminator, so a store connection cannot be created
+ * half-shaped.
+ *
+ * Secret fields are write-only: they travel to the server once, are stored
+ * through the encrypted connection-credentials service (ADR-0019), and are
+ * never echoed back by any read surface.
+ */
+const createStoreConnectionInput = z.discriminatedUnion('service', [
+  z.strictObject({
+    service: z.literal('woocommerce'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    consumerKey: z.string().trim().min(1),
+    consumerSecret: z.string().trim().min(1)
+  }),
+  z.strictObject({
+    service: z.literal('medusa'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    apiToken: z.string().trim().min(1)
+  })
+]);
+
+/**
+ * Create a store connection plus its credential in one guided step.
+ *
+ * WHERE EACH HALF LANDS — the split the integration packages document
+ * (`packages/app/src/woo.ts`, `packages/integrations/medusa/src/connection.ts`):
+ * the base URL is non-secret and goes into `connections.config.<service>.baseUrl`
+ * so it stays readable without a decryption round-trip, while the key pair /
+ * API token is an atomic encrypted bundle on the connection.
+ *
+ * The credential type is the registered bundle purpose (`woo_credentials`,
+ * `medusa_credentials`) because that is what the domain service accepts and
+ * what the worker-side readers ask for — see `WOO_CREDENTIAL_TYPE` in
+ * `packages/app/src/woo.ts`.
+ */
+export const createStoreConnection = createServerFn({ method: 'POST' })
+  .inputValidator(createStoreConnectionInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { connections } = getAdminServices();
+    const baseUrl = data.baseUrl.replace(/\/+$/, '');
+    const created = await connections.createConnection(
+      {
+        provider: data.service,
+        kind: 'store_account',
+        name: data.name,
+        config: data.service === 'woocommerce' ? { woo: { baseUrl } } : { medusa: { baseUrl } },
+        createdByUserId: session.user.id
+      },
+      { actorUserId: session.user.id }
+    );
+    if (data.service === 'woocommerce') {
+      await connections.setConnectionCredential(
+        created.id,
+        'woo_credentials',
+        { consumerKey: data.consumerKey, consumerSecret: data.consumerSecret },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      await connections.setConnectionCredential(
+        created.id,
+        'medusa_credentials',
+        { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    }
+    if (data.economicEntityId !== null) {
+      await connections.attributeConnection(created.id, data.economicEntityId, {
+        actorUserId: session.user.id
+      });
+    }
+    return { id: created.id };
+  });
+
 export const setConnectionStatus = createServerFn({ method: 'POST' })
   .inputValidator(z.strictObject({ id: z.uuid(), status: z.enum(['active', 'disabled']) }))
   .handler(async ({ data }): Promise<{ id: string }> => {

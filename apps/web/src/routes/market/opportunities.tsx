@@ -10,7 +10,7 @@ function MarketOpportunities() {
   return (
     <MarketPage
       title='Opportunities'
-      description='Events stamped by an opportunity rule (loxep-7dp.5) — declarative conditions over derived market events, scored and ranked.'
+      description='Events stamped by an opportunity rule — declarative conditions over derived market events, scored and ranked.'
     >
       <OpportunitiesTable />
     </MarketPage>

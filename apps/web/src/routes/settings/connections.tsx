@@ -48,7 +48,7 @@ function SettingsConnections() {
   return (
     <SettingsPage
       title='Connections'
-      description='Configured relationships to external accounts, stores, and services.'
+      description='The accounts, stores, and services this installation is connected to, grouped by service.'
     >
       <ConnectionsTable isAdmin={isAdmin} />
     </SettingsPage>

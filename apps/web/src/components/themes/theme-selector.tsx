@@ -34,7 +34,24 @@ export function ThemeSelector() {
           <SelectValue placeholder='Select a theme' />
           <Kbd>T T</Kbd>
         </SelectTrigger>
-        <SelectContent align='end'>
+        {/*
+          `position='popper'` on purpose. The shared default is Radix's
+          `item-aligned` mode, which opens the list anchored so the SELECTED
+          item sits over the trigger — with a long theme list under a trigger
+          near the top of the viewport, every theme above the selected one
+          ends up scrolled out of sight, and Radix hides the viewport
+          scrollbar, so nothing hints they exist. Popper mode opens the list
+          below the trigger from the top instead; the height is bounded to the
+          available space, the viewport height override defeats the shared
+          popper class that would otherwise pin it to the trigger's height,
+          and a thin scrollbar is restored so it reads as scrollable.
+        */}
+        <SelectContent
+          align='end'
+          position='popper'
+          sideOffset={4}
+          className='max-h-[min(20rem,var(--radix-select-content-available-height))] [&_[data-radix-select-viewport]]:h-auto [&_[data-radix-select-viewport]]:max-h-[min(19rem,var(--radix-select-content-available-height))] [&_[data-radix-select-viewport]]:overflow-y-auto [&_[data-radix-select-viewport]]:[scrollbar-width:thin]'
+        >
           {THEMES.length > 0 && (
             <>
               <SelectGroup>

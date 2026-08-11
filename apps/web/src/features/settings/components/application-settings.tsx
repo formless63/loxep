@@ -14,10 +14,16 @@ import {
 } from '@/components/ui/table';
 import { applicationSettingsQuery } from '@/features/settings/api/queries';
 
+/**
+ * Serialized setting value for display. Long values are clipped by the cell
+ * (`truncate`) rather than here, so the full serialization stays available as
+ * the cell's `title` — table cells are `whitespace-nowrap`, and an unclipped
+ * value in a width-constrained cell overflows on top of its neighbours.
+ */
 function formatValue(value: unknown): string {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) return '—';
-  return serialized.length > 120 ? `${serialized.slice(0, 120)}…` : serialized;
+  return serialized;
 }
 
 /**
@@ -57,9 +63,9 @@ export default function ApplicationSettings() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Value</TableHead>
+                  <TableHead className='min-w-48'>Key</TableHead>
+                  <TableHead className='min-w-64'>Description</TableHead>
+                  <TableHead className='min-w-40'>Value</TableHead>
                   <TableHead>Source</TableHead>
                   <TableHead>Updated</TableHead>
                 </TableRow>
@@ -67,11 +73,18 @@ export default function ApplicationSettings() {
               <TableBody>
                 {registered.map((entry) => (
                   <TableRow key={entry.key}>
-                    <TableCell className='font-mono text-xs'>{entry.key}</TableCell>
-                    <TableCell className='text-muted-foreground max-w-md'>
+                    <TableCell className='max-w-64 font-mono text-xs break-all whitespace-normal'>
+                      {entry.key}
+                    </TableCell>
+                    <TableCell className='text-muted-foreground max-w-md whitespace-normal'>
                       {entry.description}
                     </TableCell>
-                    <TableCell className='font-mono text-xs'>{formatValue(entry.value)}</TableCell>
+                    <TableCell
+                      className='max-w-xs truncate font-mono text-xs'
+                      title={formatValue(entry.value)}
+                    >
+                      {formatValue(entry.value)}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={entry.isSet ? 'secondary' : 'outline'}>
                         {entry.isSet ? 'stored' : 'default'}
@@ -114,9 +127,14 @@ export default function ApplicationSettings() {
               <TableBody>
                 {raw.map((row) => (
                   <TableRow key={row.key}>
-                    <TableCell className='font-mono text-xs'>{row.key}</TableCell>
+                    <TableCell className='max-w-64 font-mono text-xs break-all whitespace-normal'>
+                      {row.key}
+                    </TableCell>
                     <TableCell className='text-muted-foreground'>{row.schemaVersion}</TableCell>
-                    <TableCell className='text-muted-foreground'>
+                    <TableCell
+                      className='text-muted-foreground max-w-48 truncate'
+                      title={row.updatedByUserId ?? 'system'}
+                    >
                       {row.updatedByUserId ?? 'system'}
                     </TableCell>
                     <TableCell className='text-muted-foreground'>

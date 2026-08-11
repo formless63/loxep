@@ -30,6 +30,14 @@ export const settingsNavGroups: NavGroup[] = [
         items: []
       },
       {
+        title: 'Integrations',
+        url: '/settings/integrations',
+        icon: 'integrations',
+        isActive: false,
+        shortcut: ['g', 'i'],
+        items: []
+      },
+      {
         title: 'Connections',
         url: '/settings/connections',
         icon: 'share',

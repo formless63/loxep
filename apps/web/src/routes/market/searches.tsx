@@ -10,7 +10,7 @@ function MarketSearches() {
   return (
     <MarketPage
       title='Search & seller monitors'
-      description='Discovery monitors (loxep-7dp) — persistent eBay searches and seller watches, the items they have discovered, and recent new-listing activity.'
+      description='Persistent eBay searches and seller watches, the items they have discovered, and recent new-listing activity.'
     >
       <SearchDashboard />
     </MarketPage>
