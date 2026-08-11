@@ -60,7 +60,7 @@ The exact future product workspace split is documented separately in [Workspaces
 
 Goal: Loxep replaces manual checking and creates immediate daily value.
 
-- Create/manage an eBay connection in-app through supported authentication.
+- Create/manage an eBay connection in-app through supported authentication — implemented: `/settings/connections` is provider-aware for `ebay` (environment/keyset admin form, "Connect eBay account" full-page-navigation consent flow per the CSRF cookie design, credential-status display, and a "Validate" action running a cheap authenticated call reported through the integration's error taxonomy).
 - Optionally attribute the connection to an economic entity where the account clearly belongs to one.
 - Import/synchronize watchlist membership — implemented, pending live consent: the `ebay_watchlist` poll executor syncs membership, links `monitor_items`, deactivates absent members, and observes members inside one batch; the Trading watchlist call needs a real user token, so only the mocked path is proven end to end.
 - Monitor watched listings around a configurable 60-second baseline within API constraints — implemented: cadence is the operator's `interval_seconds` adjusted by the adaptive policy and clamped by the per-connection rate-budget interval floor the executor injects. A registered application setting for the installation-wide default interval is still open (loxep-62y.2.3).
@@ -82,7 +82,7 @@ Goal: move from watchlist alerts to a personal market dataset.
 - Adaptive scheduling/backoff.
 - Historical price and stock charts.
 - Restock and sellout metrics.
-- Seller/search dashboards.
+- Seller/search dashboards — implemented: `/market/searches` (per-monitor discovered-item counts and recent new-listing events for `ebay_search`/`ebay_seller` monitors) and `/market/opportunities` (recent rule-stamped events with score/rule/link-out), plus two `/market/overview` cards (new listings 24h, top opportunity). The monitor create/edit dialog and constants now cover all four `MonitorTargetType` values.
 - Opportunity rules and scoring.
 - Timescale continuous aggregates where justified by measured volume and real queries.
 
@@ -157,6 +157,8 @@ Goal: support non-e-commerce business activity coherently.
 - Invoice Ninja integration as an initial delivery/payment surface where useful.
 - Quotes/invoices/AR model where owning those capabilities provides value.
 - Project and subscription profitability.
+
+The physical schema for this phase — counterparties and their contacts, channels, sites, identifiers, and per-entity roles, projects with time entries and rate resolution, materials consumed on jobs, service plans and subscriptions with generated service periods, the minimal owned invoice and receivable model that round-trips with Invoice Ninja, and the profitability read models — is designed in [Counterparty, Project, Service, and Billing Schema Design (Phase 6)](../../architecture/services-billing-schema-design/).
 
 ## Cross-cutting companion integrations
 

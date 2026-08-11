@@ -54,6 +54,7 @@ export default defineConfig({
             { label: 'Commerce Schema Design (Phase 3)', slug: 'architecture/commerce-schema-design' },
             { label: 'Inventory & Acquisition Schema Design (Phase 4)', slug: 'architecture/inventory-schema-design' },
             { label: 'Financial Foundation Schema Design (Phase 5)', slug: 'architecture/financial-schema-design' },
+            { label: 'Counterparty, Project, Service & Billing Schema Design (Phase 6)', slug: 'architecture/services-billing-schema-design' },
           ],
         },
         {
