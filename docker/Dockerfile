@@ -10,6 +10,8 @@ FROM oven/bun:1.3.14 AS build
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source edits.
+# NOTE: every workspace package.json must be listed here (both stages) or the
+# frozen-lockfile install fails from a fresh clone. Update when adding workspaces.
 COPY package.json bun.lock ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/docs/package.json apps/docs/package.json
@@ -19,6 +21,10 @@ COPY packages/domain/package.json packages/domain/package.json
 COPY packages/jobs/package.json packages/jobs/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/runtime/package.json packages/runtime/package.json
+COPY packages/auth/package.json packages/auth/package.json
+COPY packages/market/package.json packages/market/package.json
+COPY packages/notifications/package.json packages/notifications/package.json
+COPY packages/storage/package.json packages/storage/package.json
 RUN bun install --frozen-lockfile
 
 COPY . .
@@ -46,6 +52,10 @@ COPY packages/domain/package.json packages/domain/package.json
 COPY packages/jobs/package.json packages/jobs/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/runtime/package.json packages/runtime/package.json
+COPY packages/auth/package.json packages/auth/package.json
+COPY packages/market/package.json packages/market/package.json
+COPY packages/notifications/package.json packages/notifications/package.json
+COPY packages/storage/package.json packages/storage/package.json
 RUN bun install --frozen-lockfile --production --linker=hoisted
 
 # ---------------------------------------------------------------------------

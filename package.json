@@ -17,7 +17,7 @@
     "migrate": "node bin/loxep.ts migrate",
     "start": "node bin/loxep.ts start",
     "typecheck": "./node_modules/.bin/tsc -p tsconfig.json && bun --cwd apps/web typecheck && bun --cwd packages/config typecheck && bun --cwd packages/observability typecheck && bun --cwd packages/db typecheck && bun --cwd packages/domain typecheck && bun --cwd packages/jobs typecheck && bun --cwd packages/runtime typecheck",
-    "test:packages": "bun --cwd packages/config test && bun --cwd packages/observability test && bun --cwd packages/db test && bun --cwd packages/domain test && bun --cwd packages/jobs test"
+    "test:packages": "bun --cwd packages/config test && bun --cwd packages/observability test && bun --cwd packages/db test && bun --cwd packages/domain test && bun --cwd packages/jobs test && bun --cwd packages/auth test && bun --cwd packages/storage test && bun --cwd packages/market test && bun --cwd packages/notifications test"
   },
   "packageManager": "bun@1.3.14",
   "dependencies": {
