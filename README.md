@@ -39,6 +39,22 @@ postgres-timescale
 
 The same Loxep image supports `LOXEP_MODE=all|web|worker`, so workers can later scale independently without requiring a different application architecture. RustFS can be added as an optional separate service/profile when shared object storage is desired.
 
+## Run with Docker
+
+The default deployment is the repo-root Compose stack: Loxep (`LOXEP_MODE=all`) plus PostgreSQL/TimescaleDB, with a one-shot migration step — application startup never migrates the schema.
+
+```bash
+cp .env.example .env
+# Generate real secrets (see .env.example comments):
+head -c 32 /dev/urandom | base64    # -> keyring key inside LOXEP_KEYRING
+head -c 32 /dev/urandom | base64    # -> LOXEP_AUTH_SECRET
+docker compose up -d
+```
+
+Loxep is then available at `http://localhost:3020` (readiness: `/health/ready`). Add the optional S3-compatible object-storage companion with `docker compose --profile rustfs up -d`. For scale-out, the same image runs `LOXEP_MODE=web` and `LOXEP_MODE=worker` replicas against the shared PostgreSQL, so background processing can scale independently of web traffic without any architectural change.
+
+Note: the bundled database image is TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
+
 ## Documentation
 
 Public project documentation: **https://formless63.github.io/loxep/**
