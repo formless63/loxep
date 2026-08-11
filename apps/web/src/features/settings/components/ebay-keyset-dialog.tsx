@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,16 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
 import { storeEbayKeyset } from '@/server/ebay-oauth';
-import { ebayKeysetStatusQuery } from '@/features/settings/api/queries';
+import { ebayCallbackUrlQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
+import {
+  CopyableValue,
+  GuidanceCallout,
+  GuidanceLink,
+  GuidanceNote,
+  GuidanceStep,
+  GuidanceSteps,
+  SetupGuidance
+} from '@/features/settings/components/setup-guidance';
 
 const environmentOptions = [
   { value: 'sandbox', label: 'Sandbox' },
@@ -28,6 +37,83 @@ const keysetFormSchema = z.object({
 });
 
 type KeysetFormValues = z.infer<typeof keysetFormSchema>;
+
+const EBAY_KEYSETS_URL = 'https://developer.ebay.com/my/keys';
+
+/**
+ * The eBay developer-portal path that produces everything this form asks
+ * for. The callback URL is read from the running installation rather than
+ * written out as an example, because the value eBay must be given is a
+ * property of THIS deployment — see `fetchEbayCallbackUrl`.
+ */
+function KeysetSetupGuidance() {
+  const { data } = useQuery(ebayCallbackUrlQuery);
+  const callbackUrl = data?.callbackUrl ?? null;
+  const callbackPath = data?.callbackPath ?? '/api/integrations/ebay/callback';
+
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Sign in to your eBay developer account and open{' '}
+          <GuidanceLink href={EBAY_KEYSETS_URL}>Application Keysets</GuidanceLink>.
+        </GuidanceStep>
+        <GuidanceStep>
+          Pick the keyset for the environment you want. <strong>Sandbox</strong> is eBay&apos;s
+          isolated test site — its own listings, its own logins, no real money.{' '}
+          <strong>Production</strong> is the live eBay site — real listings, real accounts, real
+          rate limits.
+          <GuidanceNote>
+            Copy that keyset&apos;s App ID, Cert ID, and Dev ID into the fields below, and set
+            Environment to match. A sandbox keyset never authenticates against production, or the
+            reverse.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          On the same keyset choose <strong>User Tokens</strong>, then{' '}
+          <strong>Add eBay Redirect URL</strong>.
+        </GuidanceStep>
+        <GuidanceStep>
+          Put this installation&apos;s callback URL in <strong>Your auth accepted URL</strong>:
+          <div className='mt-2'>
+            <CopyableValue value={callbackUrl} />
+          </div>
+          {callbackUrl === null ? (
+            <GuidanceNote>
+              This installation has no public origin configured, so the full URL cannot be shown.
+              The path is <code className='font-mono'>{callbackPath}</code> — prefix it with the
+              address people reach Loxep on.
+            </GuidanceNote>
+          ) : (
+            <GuidanceNote>
+              eBay also asks for a display title, an auth declined URL, and a privacy policy URL on
+              the same form. The same callback URL works as the declined URL — Loxep handles a
+              declined consent as well as an accepted one.
+            </GuidanceNote>
+          )}
+        </GuidanceStep>
+        <GuidanceStep>
+          Select <strong>OAuth</strong> — not Auth&apos;n&apos;Auth — and save.
+        </GuidanceStep>
+        <GuidanceStep>
+          Copy the <strong>RuName</strong> eBay generates (it calls it the &quot;redirect URL
+          name&quot;) into the RuName field below.
+          <GuidanceNote>
+            eBay sends the RuName itself as the redirect target and resolves it to the accepted URL
+            above, so the two always have to describe the same installation. If Loxep later moves to
+            a different address, update the accepted URL in the portal as well.
+          </GuidanceNote>
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          The keyset is shared by every eBay account connected here, and every value is write-only:
+          it is stored encrypted and never shown again. Saving again replaces the whole keyset.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
 
 /**
  * Admin-only eBay application-keyset form (loxep-62y.5). Every field is
@@ -89,12 +175,12 @@ export default function EbayKeysetDialog({
         <DialogHeader>
           <DialogTitle>Configure eBay keyset</DialogTitle>
           <DialogDescription>
-            The eBay developer-portal application keyset — one keyset, shared by every eBay
-            connection. Add a redirect URL to the keyset in the eBay developer portal with
-            /api/integrations/ebay/callback as its auth-accepted URL, then store the generated
-            RuName here to enable the &quot;Connect eBay account&quot; consent flow.
+            The application keyset from your eBay developer account — one keyset for the whole
+            installation, shared by every eBay connection. The RuName is what enables the consent
+            screen, so add it here once the redirect URL is registered with eBay.
           </DialogDescription>
         </DialogHeader>
+        <KeysetSetupGuidance />
         <form
           className='space-y-6'
           onSubmit={(e) => {

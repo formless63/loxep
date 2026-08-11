@@ -88,6 +88,21 @@ export interface EbayKeysetStatus {
   ruNameConfigured: boolean;
 }
 
+/**
+ * What this installation's operator must paste into the eBay redirect URL's
+ * "auth accepted URL" field. Both values are ordinary public facts — the
+ * origin is the address the browser already reached — so nothing here is
+ * gated beyond an authenticated session.
+ */
+export interface EbayCallbackUrlInfo {
+  /** `LOXEP_PUBLIC_ORIGIN`, trailing slash removed; `null` if unset. */
+  publicOrigin: string | null;
+  /** `<publicOrigin>${EBAY_CALLBACK_PATH}`; `null` when the origin is unset. */
+  callbackUrl: string | null;
+  /** The path half, always known — usable as a fallback in the UI. */
+  callbackPath: string;
+}
+
 const keysetInput = z.strictObject({
   appId: z.string().trim().min(1),
   certId: z.string().trim().min(1),
@@ -141,6 +156,32 @@ export const fetchEbayKeysetStatus = createServerFn({ method: 'GET' }).handler(
       source: resolved.source,
       environment: resolved.keyset.environment,
       ruNameConfigured: resolved.keyset.ruName !== undefined && resolved.keyset.ruName !== ''
+    };
+  }
+);
+
+/**
+ * The exact callback URL this installation answers on, built from bootstrap
+ * configuration (`LOXEP_PUBLIC_ORIGIN`, ADR-0016) plus
+ * {@link EBAY_CALLBACK_PATH}.
+ *
+ * The keyset setup guidance shows this verbatim with a copy button, because
+ * the value an operator must register in eBay's developer portal is a
+ * property of THIS deployment — a documented example URL would be wrong for
+ * every installation but one. Read through `getAdminServices()` so the
+ * already-loaded bootstrap config is reused rather than re-parsed.
+ */
+export const fetchEbayCallbackUrl = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<EbayCallbackUrlInfo> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const configured = getAdminServices().config.publicOrigin;
+    const publicOrigin =
+      configured === undefined || configured === '' ? null : configured.replace(/\/+$/, '');
+    return {
+      publicOrigin,
+      callbackUrl: publicOrigin === null ? null : `${publicOrigin}${EBAY_CALLBACK_PATH}`,
+      callbackPath: EBAY_CALLBACK_PATH
     };
   }
 );

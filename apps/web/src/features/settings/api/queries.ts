@@ -12,7 +12,7 @@ import {
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
-import { fetchEbayKeysetStatus } from '@/server/ebay-oauth';
+import { fetchEbayCallbackUrl, fetchEbayKeysetStatus } from '@/server/ebay-oauth';
 
 export const healthReportQuery = queryOptions({
   queryKey: ['settings', 'health'],
@@ -33,6 +33,17 @@ export const connectionsQuery = queryOptions({
 export const ebayKeysetStatusQuery = queryOptions({
   queryKey: ['settings', 'ebay-keyset-status'],
   queryFn: () => fetchEbayKeysetStatus()
+});
+
+/**
+ * This installation's eBay callback URL — a deployment fact, not a secret,
+ * shown in the keyset setup guidance so it can be copied into eBay's
+ * "auth accepted URL" field. It only changes when the deployment moves.
+ */
+export const ebayCallbackUrlQuery = queryOptions({
+  queryKey: ['settings', 'ebay-callback-url'],
+  queryFn: () => fetchEbayCallbackUrl(),
+  staleTime: Infinity
 });
 
 export const storageBackendsQuery = queryOptions({
