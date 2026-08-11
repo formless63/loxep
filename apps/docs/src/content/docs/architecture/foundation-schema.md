@@ -502,9 +502,30 @@ resource_id           text not null
 purpose               text not null
 sort_order            integer null
 created_at            timestamptz not null
+unique(media_object_id, resource_type, resource_id, purpose)
+index(resource_type, resource_id)
 ```
 
-Suggested uniqueness should be based on actual attachment semantics rather than enforcing one universal relationship rule.
+Uniqueness is based on actual attachment semantics rather than one universal relationship rule. The semantics that hold across every resource type are:
+
+```text
+one object attaches to many resources    a receipt photo covers a lot AND each
+                                         item unpacked from it
+one resource holds many objects          twelve condition photos on one item
+one (object, resource, purpose) triple   is ONE fact, and asserting it twice
+                                         adds no information
+```
+
+So the key is the full natural tuple.
+
+- **`purpose` is in the key.** The same photo legitimately serves as both `gallery` and `condition_evidence` for one item; those are two facts, not a duplicate.
+- **`sort_order` is deliberately not in the key.** Sort order is presentation, and including it would let the same photo attach to the same item twice by being dragged to a different position — precisely the duplicate the constraint exists to prevent.
+- Every keyed column is `not null`, so the natural key is total. Unlike [`channel_listings`](../commerce-schema-design/#catalog-and-channel-listings) this needs no `NULLS NOT DISTINCT`.
+- **No surrogate `uuid` primary key.** The natural key is complete and stable, and a synthetic id on a pure junction row would exist only to be ignored; deletion is already by natural key.
+
+Both directions are indexed: the unique index serves object → resources on its leading column, and `(resource_type, resource_id)` serves resource → objects, which is the hot direction (every item, acquisition, and shipment detail view). A third index on `media_object_id` alone would only duplicate the unique's prefix, so there is not one.
+
+This constraint arrived in migration `0004_link_table_constraints.sql`, not in `0000`. The original tables shipped with no primary key, no unique constraint, and no index, which left an at-least-once worker with no `ON CONFLICT` target — the defect tracked as `loxep-dyx`.
 
 ## Storage migration state
 
@@ -565,9 +586,17 @@ resource_type         text not null
 resource_id           text not null
 purpose               text not null
 created_at             timestamptz not null
+unique(external_resource_id, resource_type, resource_id, purpose)
+index(resource_type, resource_id)
 ```
 
 This supports relationships to knowledge documents, tasks/projects, GitHub issues, billing records, and future companion systems without provider-specific columns in every domain table.
+
+Uniqueness follows the same attachment-semantics reasoning as [`media_links`](#media_links), and for the same reason: an attachment is the statement "this external object is linked to that Loxep row for this reason", and asserting it twice adds no information. `purpose` is in the key because the same tracker ticket can legitimately be both the `spec` and the `discussion` for one acquisition. All four columns are `not null`, so the natural key is total and no surrogate primary key is added.
+
+Both directions are indexed: the unique index's leading column serves resource → Loxep, and `(resource_type, resource_id)` serves Loxep → resource.
+
+Added in migration `0004_link_table_constraints.sql` (`loxep-dyx`): without a unique constraint there was no `ON CONFLICT` target, so a retried integration job double-linked silently.
 
 ## Notifications
 

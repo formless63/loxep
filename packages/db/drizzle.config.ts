@@ -28,5 +28,6 @@ export default defineConfig({
     "./src/schema/notifications.ts",
     "./src/schema/audit.ts",
     "./src/schema/commerce.ts",
+    "./src/schema/inventory.ts",
   ],
 });

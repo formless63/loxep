@@ -29,6 +29,20 @@
       "when": 1786428901389,
       "tag": "0003_commerce_orders_and_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786432915432,
+      "tag": "0004_link_table_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786433178161,
+      "tag": "0005_inventory_acquisition_and_shipments",
+      "breakpoints": true
     }
   ]
 }

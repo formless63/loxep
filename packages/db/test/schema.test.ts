@@ -138,6 +138,71 @@ describe("foundation schema", () => {
     expect(entitySurvivor).toBeDefined();
   });
 
+  it("gives the link tables a unique key an at-least-once writer can conflict on (loxep-dyx)", async () => {
+    // 0000 created media_links and resource_links with no PK, no unique, and no
+    // index, so a retried attachment job silently double-linked. 0004 added the
+    // natural key; this asserts both halves of the fix.
+    const backend = await handle.pool.query<{ id: string }>(
+      `insert into storage_backends (name, driver) values ('local', 'local')
+       returning id`,
+    );
+    const media = await handle.pool.query<{ id: string }>(
+      `insert into media_objects (storage_backend_id, storage_key, size_bytes, sha256)
+       values ($1, 'lot.jpg', 10, 'deadbeef') returning id`,
+      [backend.rows[0]?.id],
+    );
+    const mediaId = media.rows[0]?.id;
+
+    await handle.pool.query(
+      `insert into media_links (media_object_id, resource_type, resource_id, purpose)
+       values ($1, 'acquisition', 'acq-1', 'receipt')`,
+      [mediaId],
+    );
+    await expect(
+      handle.pool.query(
+        `insert into media_links (media_object_id, resource_type, resource_id, purpose)
+         values ($1, 'acquisition', 'acq-1', 'receipt')`,
+        [mediaId],
+      ),
+    ).rejects.toThrow(/media_links_object_resource_purpose_uq/);
+
+    const retried = await handle.pool.query(
+      `insert into media_links (media_object_id, resource_type, resource_id, purpose)
+       values ($1, 'acquisition', 'acq-1', 'receipt')
+       on conflict (media_object_id, resource_type, resource_id, purpose)
+       do nothing`,
+      [mediaId],
+    );
+    expect(retried.rowCount).toBe(0);
+
+    const resource = await handle.pool.query<{ id: string }>(
+      `insert into external_resources (provider, external_type, url)
+       values ('vikunja', 'task', 'https://example.invalid/1') returning id`,
+    );
+    await handle.pool.query(
+      `insert into resource_links (external_resource_id, resource_type, resource_id, purpose)
+       values ($1, 'acquisition', 'acq-1', 'spec')`,
+      [resource.rows[0]?.id],
+    );
+    await expect(
+      handle.pool.query(
+        `insert into resource_links (external_resource_id, resource_type, resource_id, purpose)
+         values ($1, 'acquisition', 'acq-1', 'spec')`,
+        [resource.rows[0]?.id],
+      ),
+    ).rejects.toThrow(/resource_links_resource_purpose_uq/);
+  });
+
+  it("installs the inventory_movements append-only trigger", async () => {
+    const triggers = await handle.pool.query<{ tgname: string }>(
+      `select tgname from pg_trigger
+        where tgrelid = 'inventory_movements'::regclass and not tgisinternal`,
+    );
+    expect(triggers.rows.map((row) => row.tgname)).toContain(
+      "inventory_movements_append_only",
+    );
+  });
+
   it("defines no PostgreSQL enum types for loxep tables", async () => {
     const enums = await handle.pool.query<{ count: string }>(
       `select count(*)::text as count
