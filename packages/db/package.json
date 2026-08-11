@@ -1,0 +1,30 @@
+{
+  "name": "@loxep/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts",
+    "./migrate": "./src/migrate.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate",
+    "generate:auth": "better-auth generate --config src/auth.ts --output src/schema/auth.ts --yes"
+  },
+  "dependencies": {
+    "better-auth": "1.6.26",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@better-auth/cli": "1.4.21",
+    "@types/node": "24.13.3",
+    "@types/pg": "8.21.0",
+    "drizzle-kit": "0.31.10",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
