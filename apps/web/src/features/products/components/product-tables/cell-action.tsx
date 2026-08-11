@@ -54,9 +54,7 @@ export function CellAction({ data }: CellActionProps) {
           <DropdownMenuGroup>
             <DropdownMenuLabel>Actions</DropdownMenuLabel>
           </DropdownMenuGroup>
-          <DropdownMenuItem
-            onClick={() => router.navigate({ to: `/starter/product/${data.id}` })}
-          >
+          <DropdownMenuItem onClick={() => router.navigate({ to: `/starter/product/${data.id}` })}>
             <Icons.edit className='mr-2 h-4 w-4' /> Update
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setOpen(true)}>

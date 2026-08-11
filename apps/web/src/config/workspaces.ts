@@ -35,8 +35,7 @@ export const workspaces: Workspace[] = [
 export function getWorkspaceForPath(pathname: string): Workspace {
   return (
     workspaces.find(
-      (workspace) =>
-        pathname === workspace.root || pathname.startsWith(`${workspace.root}/`)
+      (workspace) => pathname === workspace.root || pathname.startsWith(`${workspace.root}/`)
     ) ?? workspaces[0]
   );
 }
