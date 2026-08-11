@@ -29,5 +29,7 @@ export default defineConfig({
     "./src/schema/audit.ts",
     "./src/schema/commerce.ts",
     "./src/schema/inventory.ts",
+    "./src/schema/expenses.ts",
+    "./src/schema/counterparties.ts",
   ],
 });

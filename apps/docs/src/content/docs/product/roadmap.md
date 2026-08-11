@@ -127,8 +127,8 @@ Inventory **valuation** is not in this phase and is not the same thing as cost b
 
 Goal: create trustworthy financial facts without making the ledger the only representation of operational reality.
 
-- Expenses and flexible cost attribution.
-- Receipt/document attachments through the media layer.
+- Expenses and flexible cost attribution. *(implemented provisionally: `expenses` plus `expense_allocations`, with entity attribution on the expense and orthogonal allocation targets — entity, acquisition, catalog item, channel — for the targets that exist today. Over-allocation is refused; under-allocation is a draft and a named report.)*
+- Receipt/document attachments through the media layer. *(implemented provisionally: `media_links` rows with `resource_type = 'expense'`, no new table, idempotent under the natural key migration 0004 added.)*
 - Payouts and clearing-account model.
 - Bank transaction ingestion/import path.
 - Reconciliation foundation.
@@ -146,12 +146,14 @@ Do not assume one economic entity equals one accounting book. An LLC and several
 
 The physical schema for this phase — books and the effective-dated book-to-entity link, the per-book chart of accounts and dimensions, fiscal periods and closing semantics, the double-entry journal, declarative posting rules, payouts and clearing accounts, expenses, bank ingestion and reconciliation, sales-tax facts, and the statement read models — is designed in [Financial Foundation Schema Design (Phase 5)](../../architecture/financial-schema-design/).
 
+**One milestone of that design is implemented provisionally — expenses and receipts, two of its twenty-two tables.** Everything else in the list above is still design only, because all three of that document's OWNER-REVIEW-CRITICAL open questions (book granularity and link semantics, posting-rule mutability and the re-post policy, and functional currency) are unresolved, and each is unrecoverable after a single entry posts. There is deliberately **no ledger yet**: an expense's link to a future journal entry is a documented source-fact identity (`('expense', expenses.id)`), not a column, so nothing had to be guessed. What shipped and what diverged is recorded in that document's [Provisional implementation decisions (partial)](../../architecture/financial-schema-design/#provisional-implementation-decisions-partial).
+
 ## Phase 6 — Customers, projects, services, and billing
 
 Goal: support non-e-commerce business activity coherently.
 
-- Customer/organization/counterparty model distinct from installation-owned economic entities.
-- Projects/jobs/sites.
+- Customer/organization/counterparty model distinct from installation-owned economic entities. *(implemented provisionally: `counterparties`, `counterparty_contacts`, `contact_channels`, and `counterparty_entity_roles`. The distinction is physical, not a comment — no `economic_entity_id` on a counterparty, no `counterparty_id` on an economic entity, a `CHECK` that refuses a tax identifier on a person, and roles as the single one-directional meeting point. Customer and vendor are relationship rows scoped to one of our entities, never flags on the party. Merge is a survivor pointer with one resolver; dedupe is exact-normalized and never automatic.)*
+- Projects/jobs/sites. *(**not built**: deferred pending the domain-package rule review and the own-versus-integrate invoicing question. `counterparty_sites` is deferred with them, since projects and invoices are its only consumers.)*
 - Time and billable work.
 - Materials and expenses attributed to jobs.
 - Service plans and subscriptions.
@@ -163,6 +165,8 @@ Goal: support non-e-commerce business activity coherently.
 - Project and subscription profitability.
 
 The physical schema for this phase — counterparties and their contacts, channels, sites, identifiers, and per-entity roles, projects with time entries and rate resolution, materials consumed on jobs, service plans and subscriptions with generated service periods, the minimal owned invoice and receivable model that round-trips with Invoice Ninja, and the profitability read models — is designed in [Counterparty, Project, Service, and Billing Schema Design (Phase 6)](../../architecture/services-billing-schema-design/).
+
+**One milestone of that design is implemented provisionally — the counterparty core, four of its nineteen tables.** That milestone was separable exactly as the design predicted, depending on nothing beyond the foundation. Everything else is still design only, and the reason is the first OWNER-REVIEW-CRITICAL open question: where the own-versus-integrate line for invoicing falls decides whether most of the remaining tables should exist at all. **No table owned by an earlier phase was altered** — `orders` gains no `counterparty_id`, and `expenses` still carries a denormalized `payee_name` even though counterparties now exist in the same migration. What shipped and what diverged is recorded in that document's [Provisional implementation decisions (partial)](../../architecture/services-billing-schema-design/#provisional-implementation-decisions-partial).
 
 ## Cross-cutting companion integrations
 

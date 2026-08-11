@@ -20,3 +20,5 @@ export * from "./notifications.ts";
 export * from "./audit.ts";
 export * from "./commerce.ts";
 export * from "./inventory.ts";
+export * from "./expenses.ts";
+export * from "./counterparties.ts";

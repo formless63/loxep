@@ -203,6 +203,78 @@ describe("foundation schema", () => {
     );
   });
 
+  it("creates the migration 0006 tables and no more of Phase 5 or Phase 6", async () => {
+    // Migration 0006 is two PARTIAL slices: expenses out of Phase 5 (2 of 22
+    // tables) and counterparties out of Phase 6 (4 of 19). The absent tables
+    // are absent because their designs' OWNER-REVIEW-CRITICAL open questions
+    // are unresolved, so their names are asserted here — an accidental
+    // `accounting_books` would mean the book-cardinality decision was made by
+    // an implementer rather than by the owner.
+    const result = await handle.pool.query<{ table_name: string }>(
+      `select table_name from information_schema.tables
+        where table_schema = 'public'`,
+    );
+    const tables = new Set(result.rows.map((row) => row.table_name));
+    for (const shipped of [
+      "expenses",
+      "expense_allocations",
+      "counterparties",
+      "counterparty_contacts",
+      "contact_channels",
+      "counterparty_entity_roles",
+    ]) {
+      expect(tables).toContain(shipped);
+    }
+    for (const deferred of [
+      "accounting_books",
+      "book_entity_links",
+      "ledger_accounts",
+      "accounting_dimensions",
+      "fiscal_periods",
+      "journal_entries",
+      "journal_lines",
+      "posting_rules",
+      "journal_entry_source_links",
+      "financial_accounts",
+      "payouts",
+      "bank_transactions",
+      "reconciliation_matches",
+      "sales_tax_facts",
+      "counterparty_sites",
+      "counterparty_identifiers",
+      "projects",
+      "time_entries",
+      "billing_rates",
+      "service_plans",
+      "subscriptions",
+      "service_periods",
+      "invoices",
+      "invoice_lines",
+      "invoice_payments",
+    ]) {
+      expect(tables).not.toContain(deferred);
+    }
+  });
+
+  it("keeps the counterparty/economic-entity boundary physical (ADR-0017)", async () => {
+    // The single most-repeated prohibition in the documentation, asserted at
+    // the foundation level rather than only inside @loxep/counterparties.
+    const result = await handle.pool.query<{
+      table_name: string;
+      column_name: string;
+    }>(
+      `select table_name, column_name from information_schema.columns
+        where table_name in ('counterparties', 'economic_entities')`,
+    );
+    const columns = result.rows.map(
+      (row) => `${row.table_name}.${row.column_name}`,
+    );
+    expect(columns).not.toContain("counterparties.economic_entity_id");
+    expect(columns).not.toContain("economic_entities.counterparty_id");
+    // The one declared, auditable crossing.
+    expect(columns).toContain("counterparties.mirrors_economic_entity_id");
+  });
+
   it("defines no PostgreSQL enum types for loxep tables", async () => {
     const enums = await handle.pool.query<{ count: string }>(
       `select count(*)::text as count
