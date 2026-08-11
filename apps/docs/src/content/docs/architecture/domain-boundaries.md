@@ -47,7 +47,13 @@ The rules that keep this from becoming a shared dumping ground:
 - transient per-type state lives under a **namespaced `config` key** owned by the registering domain (`adaptive` for the scheduler, `commerceSync` for Commerce's order cursor). No domain reads or writes another's namespace;
 - the **executor** for a target type belongs to the domain that registered it, wired in the composition root — never in the scheduling package.
 
-Phase 3 registers `woo_orders` (Commerce order polling) this way.
+Phase 3 registers `woo_orders` (Commerce order polling) this way, and it is the worked example of all three rules:
+
+- **target type + config schema:** `woo_orders` joins `MONITOR_TARGET_TYPES` and `monitorTargetConfigSchemas` in `@loxep/market`; no column is added to `monitor_targets`. Because the scheduler must not depend on a domain that registers against it, the Zod shape is *re-declared structurally* there rather than imported from `@loxep/commerce`, which keeps the authoritative copy — the same treatment the eBay search-filter shape already gets, guarded by a test that round-trips one config through both.
+- **namespaced state:** the incremental order cursor lives under `config.commerceSync` (watermark, last sync time, last order count, page overrides). The scheduler writes only `config.adaptive`; Commerce writes only `config.commerceSync`; neither reads the other's.
+- **executor in the composition root:** `@loxep/app` builds one poll executor per registering domain and routes by `target_type` — `ebay_*` to the eBay executor, `woo_orders` to a branch that calls `@loxep/commerce`'s sync service. `market.poll-target` still sees one executor, `@loxep/market` still contains no commerce code, and `@loxep/commerce` still contains no scheduling code.
+
+The payoff is that a `woo_orders` row is claimed, backed off, and adaptively re-cadenced by the same machinery as an `ebay_item` row, and Commerce ships no cron entry and no second scheduler.
 
 ## Economic entities
 

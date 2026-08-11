@@ -29,7 +29,8 @@ import type {
   fetchAllSellerListings,
   searchAllListings,
 } from "@loxep/integration-ebay";
-import type { EbayConnectionAdapter } from "../src/index.ts";
+import { createRateBudget as createWooRateBudget, createWooAdapter } from "@loxep/integration-woo";
+import type { EbayConnectionAdapter, WooConnectionAdapter } from "../src/index.ts";
 
 const DEFAULT_TEST_DATABASE_URL =
   "postgres://postgres:loxep-dev@localhost:5433/loxep_test";
@@ -259,6 +260,158 @@ export function browseSummaryPayload(input: {
     ...(input.itemEndDate !== undefined
       ? { itemEndDate: input.itemEndDate.toISOString() }
       : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Fake WooCommerce store
+// ---------------------------------------------------------------------------
+
+/** Store root the fake serves. Never resolved — `fetchImpl` is stubbed. */
+export const FAKE_WOO_BASE_URL = "https://shop.example.test";
+
+/**
+ * A raw WooCommerce order payload with the live store's quirks reproduced:
+ * `number` is a STRING, `line_items[].price` is a JSON FLOAT while its
+ * siblings are strings, and `*_gmt` timestamps carry no zone designator.
+ *
+ * A local copy of the fixture in `packages/commerce/test/fixtures.ts` rather
+ * than an import: a package's test directory is not part of its published
+ * surface, and reaching across `../../commerce/test/` would make this suite
+ * break on a refactor it cannot see. No fixture carries real personal data.
+ */
+export function wooOrderPayload(input: {
+  id: number;
+  status?: string;
+  total?: string;
+  dateModifiedGmt: string;
+  dateCreatedGmt?: string;
+}): Record<string, unknown> {
+  return {
+    id: input.id,
+    number: String(input.id),
+    status: input.status ?? "completed",
+    currency: "USD",
+    total: input.total ?? "59.00",
+    total_tax: "4.00",
+    shipping_total: "5.00",
+    discount_total: "0.00",
+    date_created_gmt: input.dateCreatedGmt ?? "2026-08-01T12:00:00",
+    date_modified_gmt: input.dateModifiedGmt,
+    date_paid_gmt: "2026-08-01T12:01:00",
+    date_completed_gmt: "2026-08-01T12:04:00",
+    customer_id: 9,
+    shipping: { country: "US", state: "NY", city: "Somewhere" },
+    line_items: [
+      {
+        id: 41,
+        name: "Alpha widget",
+        product_id: 700,
+        variation_id: 0,
+        quantity: 2,
+        sku: "SKU-ALPHA",
+        price: 25,
+        subtotal: "50.00",
+        subtotal_tax: "4.00",
+        total: "50.00",
+        total_tax: "4.00",
+      },
+    ],
+    fee_lines: [],
+    refunds: [],
+  };
+}
+
+export interface FakeWooState {
+  /** Every order the store has, newest `date_modified_gmt` last. */
+  orders: Array<Record<string, unknown>>;
+  /** HTTP status every request answers with; 200 serves `orders`. */
+  status: number;
+  /** `modified_after` values the store was asked for, in call order. */
+  modifiedAfter: Array<string | null>;
+  /** Requests that reached the stub. */
+  requests: number;
+}
+
+export function fakeWooState(
+  overrides: Partial<FakeWooState> = {},
+): FakeWooState {
+  return {
+    orders: [],
+    status: 200,
+    modifiedAfter: [],
+    requests: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * A {@link WooConnectionAdapter} backed by the REAL `createWooAdapter` with a
+ * stubbed `fetchImpl`. Only the network is faked: Basic-auth header
+ * construction, query building, the `X-WP-Total*` pagination contract, and
+ * `mapWooOrder`'s payload quirks are all in the path under test — the same
+ * discipline `packages/commerce/test/sync.test.ts` uses.
+ *
+ * The stub honours `modified_after` (WordPress's date query is EXCLUSIVE) and
+ * `per_page`/`page`, so the cursor's behaviour across polls is real.
+ */
+export function fakeWooConnectionAdapter(
+  connectionId: string,
+  state: FakeWooState,
+  options: { minIntervalSeconds?: number } = {},
+): WooConnectionAdapter {
+  const adapter = createWooAdapter({
+    baseUrl: FAKE_WOO_BASE_URL,
+    consumerKey: "ck_fake",
+    consumerSecret: "cs_fake",
+    // Generous: the stub fetch is instant, so the limiter is the only thing
+    // that could slow the suite down.
+    rateBudget: createWooRateBudget({ capacity: 100, refillPerSecond: 1000 }),
+    fetchImpl: async (input: string) => {
+      state.requests += 1;
+      const url = new URL(input);
+      if (state.status !== 200) {
+        return new Response(
+          JSON.stringify({
+            code: "woocommerce_rest_cannot_view",
+            message: "Sorry, you cannot list resources.",
+            data: { status: state.status },
+          }),
+          {
+            status: state.status,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      const after = url.searchParams.get("modified_after");
+      state.modifiedAfter.push(after);
+      const matching = state.orders.filter((order) => {
+        if (after === null) return true;
+        const modified = `${String(order["date_modified_gmt"])}Z`;
+        // WordPress's `modified_after` is EXCLUSIVE.
+        return Date.parse(modified) > Date.parse(after);
+      });
+      const perPage = Number(url.searchParams.get("per_page") ?? "20");
+      const page = Number(url.searchParams.get("page") ?? "1");
+      const slice = matching.slice((page - 1) * perPage, page * perPage);
+      const totalPages = Math.max(1, Math.ceil(matching.length / perPage));
+      return new Response(JSON.stringify(slice), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-wp-total": String(matching.length),
+          "x-wp-totalpages": String(totalPages),
+        },
+      });
+    },
+  });
+
+  return {
+    connectionId,
+    baseUrl: adapter.baseUrl,
+    sourceAccountKey: adapter.sourceAccountKey,
+    adapter,
+    minIntervalSeconds: options.minIntervalSeconds ?? 300,
   };
 }
 

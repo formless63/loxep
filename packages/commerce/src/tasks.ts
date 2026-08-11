@@ -14,15 +14,21 @@
  * store. That is the whole rate-protection story at the queue level; the
  * adapter's per-connection token bucket handles the rest.
  *
- * ## Failure semantics
+ * ## This task is the ON-DEMAND path, not the scheduled one
  *
- * A sync failure is a JOB failure here, not silently swallowed domain state —
- * unlike `market.poll-target`, this task is not (yet) the terminal step of a
- * dispatcher that owns retry cadence through `backoff_until`. Once the
- * app-side executor routes `woo_orders` monitor targets into this service (see
- * the registration bead), the failure path should move to
- * `recordPollFailure`, and the retry budget here should drop to 1 for the
- * same reason `market.poll-target` uses 1.
+ * Scheduled syncs do NOT run through this task. `@loxep/app` routes the
+ * registered `woo_orders` monitor target into {@link WooOrderSyncService}
+ * directly from `market.poll-target`, so the dispatcher, the adaptive
+ * cadence, and `backoff_until` own scheduled cadence exactly as they do for
+ * every other target type (loxep-xh9.7.2).
+ *
+ * What remains here is the on-demand entry point: a backfill, a "sync now"
+ * action, a script. That is why its failure semantics differ from
+ * `market.poll-target`'s and stay as they are — this task is not the terminal
+ * step of a dispatcher that owns retry cadence, so a failure IS a job failure
+ * with a small Graphile retry budget. Moving it to `recordPollFailure` would
+ * make a manual backfill silently push out the schedule of the target it
+ * shares a connection with.
  *
  * ## Registration seam
  *

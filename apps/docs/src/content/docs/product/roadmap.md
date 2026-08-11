@@ -91,7 +91,7 @@ Goal: move from watchlist alerts to a personal market dataset.
 Goal: connect market intelligence to actual selling outcomes while preserving explicit economic ownership.
 
 - normalize eBay sales/orders and related fee/fulfillment facts;
-- add WooCommerce connection and order ingestion;
+- add WooCommerce connection and order ingestion — implemented PROVISIONALLY, pending the [Commerce Schema Design](../../architecture/commerce-schema-design/#provisional-implementation-decisions) review: a `woo_orders` monitor target registered against the shared scheduling model is claimed by the existing dispatcher, and the worker's poll executor runs the incremental `modified_after` sync into orders, lines, fees, refunds, fulfillments, and retained provider payloads. A store's connection keeps its URL as non-secret `connections.config` and its REST key pair as an encrypted `woo_credentials` bundle. Exercised against a live production store with read-only credentials;
 - add Medusa connection and order ingestion;
 - establish internal catalog/SKU and channel-listing relationships;
 - attribute owned commerce activity to the appropriate economic entity rather than inferring ownership from the user/workspace/connection alone;

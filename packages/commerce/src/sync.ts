@@ -17,34 +17,34 @@
  * the "Scheduling is shared foundation infrastructure" paragraph there, also
  * marked PROVISIONAL.
  *
- * ### Why the target row is written with direct SQL
+ * ### Why the target row is still written with direct SQL
  *
- * `@loxep/market`'s `createMonitorService` validates `target_type` against a
- * closed `z.enum(MONITOR_TARGET_TYPES)` and looks the config schema up in a
- * closed `monitorTargetConfigSchemas` record. **It exposes no registration
- * seam** — there is no `registerTargetType()` — so a `woo_orders` row cannot
- * be created through it without editing `packages/market`, which was outside
- * this change's write fence.
+ * `woo_orders` IS now registered in `@loxep/market` (loxep-xh9.7.2):
+ * `MONITOR_TARGET_TYPES` includes it, `monitorTargetConfigSchemas.woo_orders`
+ * carries a structural re-declaration of {@link wooOrdersTargetConfigSchema},
+ * and `@loxep/app` routes the type to this package's sync service. CRUD
+ * through `createMonitorService` therefore works for these rows.
  *
- * The least-invasive working path, and the one taken here:
+ * {@link ensureWooOrderSyncTarget} nevertheless keeps its direct insert, and
+ * that is a boundary decision rather than leftover scaffolding:
+ * **@loxep/commerce deliberately does not depend on @loxep/market.** Commerce
+ * and Market Intelligence are distinct ownership boundaries, and the
+ * registration model exists precisely so a domain can use the shared
+ * scheduling mechanism without taking a dependency on the package that
+ * implements it. Reaching for `createMonitorService` here would invert that.
+ * The insert writes exactly the columns the service would, validated against
+ * this package's own schema, so the two paths produce identical rows.
  *
- * 1. `@loxep/commerce` owns {@link wooOrdersTargetConfigSchema} and validates
- *    the config itself, so the config contract exists and is tested today;
- * 2. the target row is written through {@link ensureWooOrderSyncTarget}'s
- *    direct SQL, which needs no market dependency at all (and @loxep/commerce
- *    deliberately does not depend on @loxep/market — Commerce and Market
- *    Intelligence are distinct ownership boundaries);
- * 3. a follow-up bead adds the one-line registration to
- *    `MONITOR_TARGET_TYPES` / `monitorTargetConfigSchemas` plus the
- *    app-side executor route, after which CRUD through the monitor service
- *    starts working for these rows with no change here.
+ * The two config schemas are duplicated by design, guarded by a drift test in
+ * `packages/app` (`commerce-sync.test.ts`) that round-trips a config through
+ * both. They differ in one intentional way: this one is a `looseObject`
+ * because it must pass the scheduler's `adaptive` namespace through without
+ * knowing its shape, while market's is strict and names `adaptive` itself.
  *
- * Everything else about the row already works untouched, because the
+ * Everything else about the row already worked untouched, because the
  * scheduling primitives are type-agnostic: `claimDueTargets`,
  * `recordPollSuccess`, and `recordPollFailure` all operate on any
- * `monitor_targets` row regardless of `target_type`. A `woo_orders` row is
- * therefore already claimable by the existing dispatcher the moment the
- * app-side executor knows what to do with it.
+ * `monitor_targets` row regardless of `target_type`.
  *
  * ## Watermark discipline
  *
@@ -91,8 +91,10 @@ export const DEFAULT_SYNC_MAX_PAGES = 10;
 /* ----------------------------------------------------------- config schema */
 
 /**
- * The `woo_orders` target-type config contract, owned here until
- * `packages/market` registers it (see the module doc).
+ * The `woo_orders` target-type config contract. This package's schema is the
+ * AUTHORITY for its own service; `@loxep/market` carries a structural
+ * re-declaration so the monitor service can validate a config it is asked to
+ * store (see the module doc for the drift guard).
  *
  * `adaptive` is passed through untouched: that namespace belongs to the
  * scheduler, and re-declaring its shape here would create a second source of

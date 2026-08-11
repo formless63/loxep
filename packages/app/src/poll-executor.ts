@@ -186,6 +186,31 @@ import {
 import type { AppServices } from "./services.ts";
 import { intLiteral, uuidLiteral } from "./sql.ts";
 
+/**
+ * Route one claimed target to the executor that owns its target type.
+ *
+ * `market.poll-target` takes exactly ONE {@link PollExecutor}, and Phase 3
+ * added a target type this file does not serve: `woo_orders` belongs to
+ * Commerce (see `commerce.ts`). Rather than teach the eBay executor about a
+ * domain it has no business knowing, the composition root builds one executor
+ * per registering domain and joins them here.
+ *
+ * That is the mechanical form of Domain Boundaries' rule that a target type's
+ * executor belongs to its registering domain and is wired in the composition
+ * root. A target type with no route falls through to `fallback` — the eBay
+ * executor, which already raises {@link AppConfigurationError} for anything
+ * it does not recognize, so an unregistered type still fails the poll with a
+ * clear message and a backoff rather than silently succeeding.
+ */
+export function createRoutedPollExecutor(options: {
+  routes: Readonly<Record<string, PollExecutor>>;
+  fallback: PollExecutor;
+}): PollExecutor {
+  const { routes, fallback } = options;
+  return (target, context) =>
+    (routes[target.targetType] ?? fallback)(target, context);
+}
+
 /** `marketplace_item_observations.source` written by each poll kind. */
 export const ITEM_OBSERVATION_SOURCE = "ebay:browse";
 export const WATCHLIST_OBSERVATION_SOURCE = "ebay:watchlist";

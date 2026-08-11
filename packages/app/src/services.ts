@@ -2,13 +2,19 @@
  * `buildAppServices` — the composition root's service graph.
  *
  * One database handle, one keyring, the ADR-0016/ADR-0019 domain services,
- * the resolved application settings reader, and the connection-scoped eBay
- * adapter factory. Nothing here is a singleton by module side effect: the
- * caller owns the lifetime and closes the handle when the process shuts down.
+ * the resolved application settings reader, and the connection-scoped
+ * provider adapter factories (eBay and WooCommerce). Nothing here is a
+ * singleton by module side effect: the caller owns the lifetime and closes
+ * the handle when the process shuts down.
  *
- * The settings reader is wired INTO the adapter factory (`resolveRateBudget`)
- * rather than read once at construction, so `integration.ebay.rate_budget`
- * stays operator-editable at runtime — see `settings.ts` and `ebay.ts`.
+ * The settings reader is wired INTO both adapter factories
+ * (`resolveRateBudget`) rather than read once at construction, so
+ * `integration.ebay.rate_budget` and `integration.woo.rate_budget` stay
+ * operator-editable at runtime — see `settings.ts`, `ebay.ts`, and `woo.ts`.
+ * The two factories are separate objects on purpose: they resolve different
+ * credentials, keep separate per-connection token buckets, and derive
+ * different interval floors (30 s politeness for a marketplace API, 300 s for
+ * somebody's self-hosted WordPress store).
  *
  * This package is what turns the Phase 1 parts into a running pipeline;
  * `apps/web` never imports it (the web mode must not pull graphile-worker or
@@ -33,6 +39,8 @@ import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
 import { createMonitorSettingsReader } from "./settings.ts";
 import type { MonitorSettingsReader } from "./settings.ts";
+import { createWooAdapterFactory } from "./woo.ts";
+import type { WooAdapterFactory } from "./woo.ts";
 
 export interface BuildAppServicesOptions {
   config: BootstrapConfig;
@@ -46,6 +54,14 @@ export interface BuildAppServicesOptions {
    * wall-clock time waiting on refills.
    */
   ebayRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection WooCommerce token bucket. Production reads
+   * the registered `integration.woo.rate_budget` setting (falling back to the
+   * documented defaults in `woo.ts`); an explicit value here WINS, which is
+   * how tests get a wide-open budget without spending wall-clock time waiting
+   * on refills.
+   */
+  wooRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -80,6 +96,12 @@ export interface AppServices {
    * `adapter.minIntervalSeconds`, which follows the stored setting.
    */
   ebayIntervalFloorSeconds: number;
+  /** Connection-scoped WooCommerce adapter (store URL + key pair + budget). */
+  getWooAdapterForConnection: WooAdapterFactory;
+  /** Drop a cached Woo adapter (after an `auth`-class provider failure). */
+  invalidateWooAdapter: (connectionId: string) => void;
+  /** The Woo interval floor implied by the DEFAULT/overridden budget. */
+  wooIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -121,6 +143,16 @@ export function buildAppServices(
       (await monitorSettings.read()).ebayRateBudget,
   });
 
+  const woo = createWooAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.wooRateBudget !== undefined
+      ? { rateBudget: options.wooRateBudget }
+      : {}),
+    resolveRateBudget: async () => (await monitorSettings.read()).wooRateBudget,
+  });
+
   let closed = false;
   return {
     config,
@@ -134,6 +166,9 @@ export function buildAppServices(
     getEbayAdapterForConnection: ebay.getAdapterForConnection,
     invalidateEbayAdapter: ebay.invalidate,
     ebayIntervalFloorSeconds: ebay.intervalFloorSeconds,
+    getWooAdapterForConnection: woo.getAdapterForConnection,
+    invalidateWooAdapter: woo.invalidate,
+    wooIntervalFloorSeconds: woo.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;
