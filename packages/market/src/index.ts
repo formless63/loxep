@@ -131,6 +131,29 @@ export type {
 } from "./opportunities.ts";
 
 export {
+  DEFAULT_HISTORY_BUCKET_SECONDS,
+  availabilityHistory,
+  computePriceChangePercent,
+  deriveRestockSelloutIntervals,
+  itemActivitySummary,
+  priceHistory,
+  restockSellout,
+} from "./metrics.ts";
+export type {
+  AvailabilityHistoryBucket,
+  AvailabilityHistoryOptions,
+  ItemActivitySummary,
+  ItemActivitySummaryOptions,
+  PriceHistoryBucket,
+  PriceHistoryOptions,
+  RestockSelloutEvent,
+  RestockSelloutInterval,
+  RestockSelloutOptions,
+  RestockSelloutResult,
+  StockState,
+} from "./metrics.ts";
+
+export {
   DISPATCH_TASK_NAME,
   POLL_TARGET_TASK_NAME,
   createMarketTasks,
