@@ -1,6 +1,6 @@
 /**
- * @loxep/domain — settings, secrets, credentials, and audit domain services
- * (ADR-0016, ADR-0019, ADR-0020).
+ * @loxep/domain — settings, secrets, credentials, audit, economic-entity,
+ * and connection domain services (ADR-0016, ADR-0017, ADR-0019, ADR-0020).
  */
 
 export {
@@ -12,6 +12,11 @@ export {
   UnknownPurposeError,
   SecretNotFoundError,
   SecretsServiceError,
+  DomainValidationError,
+  EntityNotFoundError,
+  EntityHierarchyError,
+  EntityInactiveError,
+  ConnectionNotFoundError,
 } from "./errors.ts";
 
 export { REDACTED, redactJson } from "./redact.ts";
@@ -67,3 +72,20 @@ export type {
   CredentialMetadata,
   CredentialWriteResult,
 } from "./connection-credentials.ts";
+
+export { createEconomicEntitiesService } from "./economic-entities.ts";
+export type {
+  EconomicEntitiesService,
+  EconomicEntity,
+  EconomicEntityListEntry,
+  EconomicEntityTreeNode,
+  EntityMutationOptions,
+} from "./economic-entities.ts";
+
+export { CONNECTION_STATUSES, createConnectionsService } from "./connections.ts";
+export type {
+  Connection,
+  ConnectionMutationOptions,
+  ConnectionStatus,
+  ConnectionsService,
+} from "./connections.ts";
