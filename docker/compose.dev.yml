@@ -13,21 +13,21 @@
 #   capabilities (ADR-0002).
 # - Host port 5433 is used to avoid colliding with other PostgreSQL instances
 #   on developer machines.
-# - postgres:18-based images keep PGDATA under /var/lib/postgresql (not
-#   /var/lib/postgresql/data), so the named volume mounts there.
+# - timescaledb-ha images keep PGDATA under /home/postgres/pgdata/data, so
+#   the named volume mounts at /home/postgres/pgdata.
 
 name: ${LOXEP_DEV_PROJECT:-loxep-dev}
 
 services:
   loxep-dev-db:
     container_name: ${LOXEP_DEV_DB_NAME:-loxep-dev-db}
-    image: timescale/timescaledb:2.29.1-pg18
+    image: timescale/timescaledb-ha:pg18.4-ts2.29.1-all
     ports:
       - "${LOXEP_DEV_DB_PORT:-5433}:5432"
     environment:
       POSTGRES_PASSWORD: ${LOXEP_DEV_DB_PASSWORD:-loxep-dev}
     volumes:
-      - loxep-dev-db-data:/var/lib/postgresql
+      - loxep-dev-db-data-ha:/home/postgres/pgdata
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 2s
@@ -35,4 +35,4 @@ services:
       retries: 30
 
 volumes:
-  loxep-dev-db-data:
+  loxep-dev-db-data-ha:

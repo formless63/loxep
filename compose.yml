@@ -19,13 +19,13 @@ services:
     # TimescaleDB Community image (TSL-licensed features included) is
     # deliberate: the observation hypertable's columnstore policy requires
     # Community capabilities (ADR-0002). Not exposed to the host by default.
-    image: timescale/timescaledb:2.29.1-pg18
+    image: timescale/timescaledb-ha:pg18.4-ts2.29.1-all
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: loxep
     volumes:
-      # postgres:18-based images keep PGDATA under /var/lib/postgresql.
-      - postgres-data:/var/lib/postgresql
+      # timescaledb-ha images keep PGDATA under /home/postgres/pgdata/data.
+      - postgres-data-ha:/home/postgres/pgdata
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d loxep"]
       interval: 2s
@@ -96,6 +96,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres-data:
+  postgres-data-ha:
   media-data:
   rustfs-data:

@@ -26,6 +26,12 @@ These are starting policies, not frozen tuning values. Exact Timescale APIs/synt
 
 Graphile Worker shares the PostgreSQL deployment.
 
+### Supported image
+
+The supported development/deployment image is **`timescale/timescaledb-ha`** (currently `pg18.4-ts2.29.1-all`): Timescale's recommended production image, which additionally ships PostGIS, pgvector/pgvectorscale, and the TimescaleDB Toolkit. Adopting it early keeps those capabilities available without a later image migration, at the cost of a larger image.
+
+Discipline: bundled extensions are **not** enabled speculatively. `CREATE EXTENSION` happens in a reviewed migration only when a concrete feature earns it — candidates already visible in the roadmap include PostGIS for inventory locations/sites and pgvector for counterparty dedupe or listing matching. The `-ha` image keeps PGDATA under `/home/postgres/pgdata/data`, which the Compose volumes account for.
+
 ### Licensing
 
 TimescaleDB ships in two editions: Apache-2.0 licensed core, and the Community edition whose additional features — including the columnstore/compression capabilities this decision relies on — are governed by the Timescale License (TSL). The TSL permits self-hosted/internal use and distribution as part of a value-added product under its stated conditions, while restricting offering TimescaleDB itself as a database service.
