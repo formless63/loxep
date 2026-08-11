@@ -5,6 +5,7 @@
     "": {
       "name": "loxep",
       "dependencies": {
+        "@loxep/app": "workspace:*",
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",
         "@loxep/domain": "workspace:*",
@@ -155,6 +156,23 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/commerce": {
+      "name": "@loxep/commerce",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
+        "@loxep/integration-woo": "workspace:*",
+        "@loxep/jobs": "workspace:*",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/pg": "8.21.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/config": {
       "name": "@loxep/config",
       "version": "0.0.0",
@@ -210,6 +228,18 @@
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",
         "@loxep/domain": "workspace:*",
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/integrations/medusa": {
+      "name": "@loxep/integration-medusa",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
         "@types/node": "24.13.3",
         "typescript": "5.9.3",
         "vitest": "4.1.10",
@@ -713,6 +743,8 @@
 
     "@loxep/auth": ["@loxep/auth@workspace:packages/auth"],
 
+    "@loxep/commerce": ["@loxep/commerce@workspace:packages/commerce"],
+
     "@loxep/config": ["@loxep/config@workspace:packages/config"],
 
     "@loxep/db": ["@loxep/db@workspace:packages/db"],
@@ -722,6 +754,8 @@
     "@loxep/domain": ["@loxep/domain@workspace:packages/domain"],
 
     "@loxep/integration-ebay": ["@loxep/integration-ebay@workspace:packages/integrations/ebay"],
+
+    "@loxep/integration-medusa": ["@loxep/integration-medusa@workspace:packages/integrations/medusa"],
 
     "@loxep/integration-woo": ["@loxep/integration-woo@workspace:packages/integrations/woo"],
 

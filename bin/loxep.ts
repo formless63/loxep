@@ -197,7 +197,23 @@ async function commandStart(modeOverride?: LoxepMode): Promise<void> {
 
   let worker: EmbeddedWorker | undefined;
   if (config.mode === 'all' || config.mode === 'worker') {
-    worker = await startEmbeddedWorker({ logger, databaseUrl: config.databaseUrl });
+    worker = await startEmbeddedWorker({
+      logger,
+      databaseUrl: config.databaseUrl,
+      // The composition root is loaded ONLY by worker-capable modes; the
+      // import lives inside the callback so `LOXEP_MODE=web` never pulls in
+      // graphile-worker or the provider integrations.
+      //
+      // WIRING CAVEAT: the repo-root package.json does not declare
+      // `@loxep/app`, so it is reached through a workspace-relative
+      // specifier — the same pattern `apps/web/src/server/ebay-oauth.ts`
+      // uses for `@loxep/integration-ebay`. Replacing this with the package
+      // name once the dependency is declared is a one-line change.
+      buildRegistry: async () => {
+        const { buildWorkerRegistry } = await import('@loxep/app');
+        return buildWorkerRegistry({ config, logger });
+      },
+    });
   }
   if (config.mode === 'all' || config.mode === 'web') {
     await startWebRuntime(config, logger);

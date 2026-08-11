@@ -62,13 +62,13 @@ Goal: Loxep replaces manual checking and creates immediate daily value.
 
 - Create/manage an eBay connection in-app through supported authentication.
 - Optionally attribute the connection to an economic entity where the account clearly belongs to one.
-- Import/synchronize watchlist membership.
-- Monitor watched listings around a configurable 60-second baseline within API constraints.
-- Monitor explicit item IDs.
-- Store listing observations in TimescaleDB.
-- Detect price, availability, quantity, and listing-state changes.
+- Import/synchronize watchlist membership — implemented, pending live consent: the `ebay_watchlist` poll executor syncs membership, links `monitor_items`, deactivates absent members, and observes members inside one batch; the Trading watchlist call needs a real user token, so only the mocked path is proven end to end.
+- Monitor watched listings around a configurable 60-second baseline within API constraints — implemented: cadence is the operator's `interval_seconds` adjusted by the adaptive policy and clamped by the per-connection rate-budget interval floor the executor injects. A registered application setting for the installation-wide default interval is still open (loxep-62y.2.3).
+- Monitor explicit item IDs — implemented and exercised against the live eBay sandbox (application-token Browse path).
+- Store listing observations in TimescaleDB — implemented: one observation batch per poll, minted once at fetch time and retry-safe.
+- Detect price, availability, quantity, and listing-state changes — implemented: derived per poll from the previous observation and bridged into opportunity-rule attribution and notification delivery.
 - Configure ntfy in-app.
-- Deliver useful notifications with direct listing links.
+- Deliver useful notifications with direct listing links — implemented: the worker's delivery pipeline renders per-event-type messages with the canonical listing URL.
 - Market workspace UI for connections/monitors, watched items, current state, event history, and price/availability history where available.
 - Dashboard/Settings surfaces for runtime, job, storage, and integration health.
 
@@ -76,9 +76,9 @@ Goal: Loxep replaces manual checking and creates immediate daily value.
 
 Goal: move from watchlist alerts to a personal market dataset.
 
-- Persistent eBay search rules.
-- New-listing detection.
-- Seller monitoring.
+- Persistent eBay search rules — implemented, pending executor wiring: the `ebay_search` target type, its validated config, and the Browse search adapter exist; the poll executor branch that runs them does not yet.
+- New-listing detection — implemented, pending executor wiring: the discovery diff and the `new_listing` event (one per item, on first global discovery) exist and are tested; nothing calls them from a poll yet.
+- Seller monitoring — implemented, pending executor wiring: the `ebay_seller` target type and seller enumeration via the Browse `sellers` filter exist; the poll executor branch does not yet.
 - Adaptive scheduling/backoff.
 - Historical price and stock charts.
 - Restock and sellout metrics.
