@@ -21,12 +21,15 @@ import { createDb, type DbHandle } from '@loxep/db';
 import {
   createConnectionsService,
   createEconomicEntitiesService,
+  createSecretsService,
   createSettingsService,
   type ConnectionsService,
   type EconomicEntitiesService,
+  type SecretsService,
   type SettingsService
 } from '@loxep/domain';
 import type { StorageBackendsService } from '@loxep/storage';
+import type { NotificationService } from '@loxep/notifications';
 import { AuthorizationError, requireRole } from '@loxep/auth';
 import { getRequestHeaders, setResponseStatus } from '@tanstack/react-start/server';
 import { getAuth } from '@/server/auth';
@@ -37,7 +40,11 @@ interface AdminRegistry {
   entities: EconomicEntitiesService;
   connections: ConnectionsService;
   settings: SettingsService;
+  /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
+  secrets: SecretsService;
   storageBackendsPromise?: Promise<StorageBackendsService>;
+  notificationsModulePromise?: Promise<typeof import('@loxep/notifications')>;
+  notificationsServicePromise?: Promise<NotificationService>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -66,7 +73,8 @@ function buildRegistry(): AdminRegistry {
     handle,
     entities: createEconomicEntitiesService({ db: handle.db }),
     connections: createConnectionsService({ db: handle.db, keyring: config.keyring }),
-    settings: createSettingsService({ db: handle.db })
+    settings: createSettingsService({ db: handle.db }),
+    secrets: createSecretsService({ db: handle.db, keyring: config.keyring })
   };
 }
 
@@ -97,6 +105,38 @@ export function getStorageBackendsService(): Promise<StorageBackendsService> {
     });
   })();
   return registry.storageBackendsPromise;
+}
+
+/**
+ * Dynamically-loaded `@loxep/notifications` module, cached on the registry.
+ *
+ * `@loxep/notifications`'s index re-exports the delivery pipeline, which
+ * reaches `graphile-worker` (via `@loxep/jobs`) the same way `@loxep/storage`
+ * does — the `getStorageBackendsService` doc above explains why that chain
+ * cannot be statically bundled into the SSR server-function graph. The
+ * `@vite-ignore` variable specifier keeps it out of the bundle so Node
+ * resolves it from real node_modules.
+ */
+export function getNotificationsModule(): Promise<typeof import('@loxep/notifications')> {
+  const registry = getAdminServices();
+  registry.notificationsModulePromise ??= (async () => {
+    const specifier = '@loxep/notifications';
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/notifications');
+  })();
+  return registry.notificationsModulePromise;
+}
+
+/** Notification endpoints/rules service, loaded through the module above. */
+export function getNotificationsService(): Promise<NotificationService> {
+  const registry = getAdminServices();
+  registry.notificationsServicePromise ??= (async () => {
+    const notifications = await getNotificationsModule();
+    return notifications.createNotificationService({
+      db: registry.handle.db,
+      secrets: registry.secrets
+    });
+  })();
+  return registry.notificationsServicePromise;
 }
 
 /** Current request's Better Auth session, or `null` when unauthenticated. */
