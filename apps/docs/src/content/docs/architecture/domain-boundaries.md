@@ -33,6 +33,22 @@ Bootstrap environment/mounted-secret configuration remains outside this domain w
 
 Shared foundation must not become a dumping ground for unrelated business logic.
 
+### Scheduling is shared foundation infrastructure
+
+**PROVISIONAL — implemented ahead of review; see [Commerce Schema Design](../commerce-schema-design/#provisional-implementation-decisions).**
+
+The polling/due-work scheduling model (`monitor_targets` and its `interval_seconds`, `next_poll_at`, `priority`, `backoff_until`, `consecutive_errors`, and namespaced `config` state) is **shared foundation infrastructure that any domain may register a target type against**, not a Market Intelligence-owned table. Market Intelligence owns the `ebay_*` target types and everything they observe; it does not own the mechanism. The claim/backoff/adaptive-cadence primitives are deliberately target-type-agnostic and operate on any row.
+
+This resolves the tension between this document's earlier placement of monitor targets under Market Intelligence and the [Foundational Data Model](../foundational-data-model/)'s presentation of scheduling as the general due-work mechanism. The alternative — a second scheduling table per domain — would duplicate claim semantics, adaptive cadence, and rate-budget handling for no gain, and is rejected.
+
+The rules that keep this from becoming a shared dumping ground:
+
+- a domain registers a **target type** and a Zod schema for that type's `config`; it does not add columns to `monitor_targets`;
+- transient per-type state lives under a **namespaced `config` key** owned by the registering domain (`adaptive` for the scheduler, `commerceSync` for Commerce's order cursor). No domain reads or writes another's namespace;
+- the **executor** for a target type belongs to the domain that registered it, wired in the composition root — never in the scheduling package.
+
+Phase 3 registers `woo_orders` (Commerce order polling) this way.
+
 ## Economic entities
 
 The foundation owns the minimal identity of people, businesses, and operating identities whose activity Loxep represents.

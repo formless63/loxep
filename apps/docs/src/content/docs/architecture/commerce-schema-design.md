@@ -6,7 +6,7 @@ This document is the physical schema design for [Phase 3 — Commerce ingestion]
 
 It **extends** the foundation. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table.
 
-Design work only. No migration, Drizzle schema, or ingestion code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
+**Implementation status: this design is now implemented, PROVISIONALLY.** Migration `0003_commerce_orders_and_catalog.sql`, `packages/db/src/schema/commerce.ts`, and `packages/commerce` exist. They were built under an explicit owner directive to resolve every [open question](#open-questions) below per that question's own documented recommendation and mark the result PROVISIONAL for review — not because the questions were answered. See [Provisional implementation decisions](#provisional-implementation-decisions) for what shipped, what diverged from the draft below, and why. The sections between here and there describe the design as drafted; where implementation diverged, the divergence is recorded in that section rather than silently edited into the draft.
 
 ## Scope
 
@@ -637,9 +637,77 @@ Not indexed on purpose: `orders.status`, `payment_status`, `fulfillment_status` 
 
 Bulk backfill: the first historical import may insert tens of thousands of rows. At that scale index maintenance is not a real cost, so no split-and-rebuild dance is warranted; step 9 above stays optional. If a provider backfill ever exceeds ~10⁵ rows, create the reporting-only indexes after the backfill in a follow-up migration.
 
+## Provisional implementation decisions
+
+Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight. Reversing any of them is a normal change, not an emergency — that is the point of writing them down before the review.
+
+### What shipped
+
+```text
+migration      packages/db/migrations/0003_commerce_orders_and_catalog.sql
+schema         packages/db/src/schema/commerce.ts        (10 tables, 0 altered)
+services       packages/commerce/src/                    (@loxep/commerce)
+  orders.ts      idempotent ingestion, attribution, duplicate detection
+  woo.ts         WooOrderFact -> the provider-neutral CommerceOrderFact
+  catalog.ts     catalog items, channel listings, link suggestions
+  reports.ts     currency-grouped order summary, entity attribution report
+  sync.ts        incremental sync + monitor_targets cursor
+  tasks.ts       commerce.sync-woo-orders
+```
+
+### The eight open questions, as implemented
+
+1. **Per-line versus per-order fee attribution — no allocation at ingest.** Fees are written at exactly the granularity the provider reports (`fee_scope` + nullable `order_line_id`), never synthesized or spread across lines. Allocation stays a Phase 4 reporting concern that can share a basis with COGS.
+
+   **Divergence from the draft, forced by the WooCommerce findings:** `order_fees` gains a column the draft does not have — `fee_direction text not null check (fee_direction in ('seller_charge','buyer_surcharge'))`. The draft's `order_fees` means "an amount the platform charges the SELLER", but a Woo `fee_line` is a surcharge the merchant adds to the BUYER's cart, already inside `orders.total`, and Woo core reports no seller-side fees at all. The three candidate resolutions were: invert the sign (silently corrupts every fee report), drop the rows (loses a real fact), or make the semantic explicit. The third shipped. Woo `fee_lines` ingest as `buyer_surcharge`; `orders.fee_amount` remains a seller-side magnitude and is therefore `0` for Woo; every profitability figure subtracts only `seller_charge`.
+
+2. **Cross-connection duplicate orders — detect, do not constrain.** `orders.source_account_key` is an ordinary fact, the detection index `(provider, source_account_key, external_order_id)` is deliberately **non-unique**, and `duplicate_of_order_id` links the later row to the canonical one. Ingestion marks duplicates automatically (canonical = earliest `first_ingested_at` that is not itself a duplicate); pass `markDuplicates: false` to record the fact without acting on it. Every read model excludes marked rows. No evidence is ever deleted.
+
+3. **Partial fulfillment — kept as designed, plus `unknown`.** `order_fulfillments` with `order_fulfillment_lines` per-line quantities. The `fulfillment_status` union gains a fifth member, `unknown`, because Woo's `refunded` status REPLACES the previous status and a fully refunded order no longer says whether it shipped — reporting that as `unfulfilled` asserts a fact nobody observed. Unrecognized plugin statuses map to `unknown` for the same reason. A Woo `completed` order yields one synthesized fulfillment covering every line, with no carrier and no tracking; any other status yields none.
+
+4. **Multi-currency — no FX, at all.** No `base_currency_amount`, no stored rate, no reporting currency. Every read model groups by currency and never sums across them. A fee or refund settled in a different currency than its order is excluded from that order's currency group and counted in `foreignCurrencyFeeCount` / `foreignCurrencyRefundCount`, so the omission is visible rather than silent.
+
+5. **Order status history — deferred.** No `order_status_events` table. Current-state columns only; transitions are reconstructable from `order_source_links` plus retained snapshots. The revisit trigger stands: if reconstruction proves lossy in practice, the table earns its place.
+
+6. **Sync scheduling — `monitor_targets`, target type `woo_orders`.** No second scheduler and no `commerce_sync_cursors` table. The cursor lives under the namespaced `config.commerceSync` key, exactly as the scheduler's own `config.adaptive` state does. The ownership question is answered in documentation: [Domain Boundaries](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) now describes the scheduling model as shared foundation infrastructure domains register target types against — also marked PROVISIONAL.
+
+   Two implementation notes a reviewer needs:
+
+   - the target type is **`woo_orders`**, not the draft's `woocommerce_orders`, per the implementing directive. `orders.provider` remains `woocommerce`; only the scheduling target type is abbreviated. Renaming later is a data update on one column of a handful of rows;
+   - `@loxep/market`'s `createMonitorService` validates `target_type` against a closed enum and looks the config schema up in a closed record. **It exposes no registration seam.** `@loxep/commerce` therefore owns the `woo_orders` config schema itself and writes the target row with a direct insert, taking no dependency on `@loxep/market` (Commerce and Market Intelligence are distinct ownership boundaries). Everything else already works untouched, because `claimDueTargets` / `recordPollSuccess` / `recordPollFailure` are target-type-agnostic. A filed follow-up adds the one-line registration plus the app-side executor route.
+
+7. **Catalog SKU uniqueness — installation-wide.** `unique(sku)`, not `(economic_entity_id, sku)`. Widening later is additive.
+
+8. **Buyer data — columns hold an identifier and a channel handle, nothing else.** `buyer_external_id` plus an optional `buyer_display_name`, where "display name" means a channel-native handle (an eBay username), **not** a legal name from a billing address. The Woo translator therefore leaves it null: Woo exposes no handle, and copying a customer's real name into a domain column would defeat the line this question draws. The full payload stays in `provider_objects`.
+
+   **Retention remains an unresolved POLICY question and no retention logic was built.** Order payloads contain personal data that marketplace observation payloads do not, and whether "no automatic retention deletion by default" should hold for this object class specifically is still open. Ingestion retains one `provider_objects` row per distinct payload hash per order — an unchanged re-sync reuses the existing row rather than storing a second copy — which bounds growth but is not a retention policy.
+
+### Also implemented from the WooCommerce reality findings
+
+- **`subtotal_amount` stays `not null` and is DERIVED**, not nullable. WooCommerce reports no order-level subtotal; the adapter computes the exact scaled-integer sum of `line_items[].subtotal`, and the derivation is documented on `WooOrderTotals.subtotal`, on the `orders` table, and here. Nullable was rejected because every reader would then re-derive the same sum. Verified live: on a ten-order slice, `subtotal + shipping + tax` reconciled to `total` exactly.
+- **`*_gmt` Z-suffix handling stays the adapter's job** (`isoFromWooGmt`), already shipped in Phase 3's WooCommerce child issue. Nothing downstream re-parses provider timestamps.
+- **`line_items[].price` is the payload's only float money field.** Where the adapter cannot represent it exactly it returns null, and the translator falls back to the exact quotient of line subtotal by quantity, then to that quotient rounded to `numeric(20,6)`. That rounded value is the only rounded number anywhere in the pipeline and nothing is derived from it — every order and line total comes from the provider.
+
+### Other divergences from the draft
+
+- `order_fulfillments.status` gets its own documented union (`pending | shipped | delivered | cancelled | unknown`); the draft named the column without listing values.
+- `fee_type` gains a `buyer_surcharge` member, pairing with `fee_direction`.
+- The Woo `refunded`/unrecognized-status re-mapping to `unknown` lives in `@loxep/commerce`'s translator rather than in the adapter's `WOO_STATUS_MAP`, only because `packages/integrations/woo` was outside the implementing change's write fence. Its correct long-term home is the adapter; a follow-up moves it.
+- Profitability read models expose both `feeAmount` (the provider's own seller-fee rollup on `orders`) and `sellerChargeFeeAmount` (the sum of `seller_charge` fee rows in the order's currency). The draft's contribution formula uses the rollup; a persistent gap between the two is a reconciliation finding, which is exactly the treatment the draft prescribes for provider-reported rollups.
+
+### What a reviewer should push back on first
+
+In rough order of how expensive each is to reverse after data exists:
+
+1. **`fee_direction`** — a new column and a new semantic, invented during implementation rather than during design. If buyer surcharges should instead be absent for Woo, or modelled as a separate concept entirely, that decision is cheapest now.
+2. **Automatic duplicate marking.** Detection is uncontroversial; automatically writing `duplicate_of_order_id` at ingest is a judgement call about how much an adapter-computed `source_account_key` is trusted.
+3. **`fulfillment_status = 'unknown'`** — widening a union is easy; narrowing it after rows carry the value is not.
+4. **Synthesizing a fulfillment for a Woo `completed` order.** It is a faithful reading of "what the channel said", but it is a reading.
+5. **The `woo_orders` target type name** and the scheduling-ownership documentation edit.
+
 ## Open questions
 
-Each item is a genuinely unresolved decision with a recommendation, not a placeholder.
+Each item is a genuinely unresolved decision with a recommendation, not a placeholder. **All eight are now implemented per their recommendation and marked PROVISIONAL** — see [Provisional implementation decisions](#provisional-implementation-decisions). They are retained verbatim below because the recommendation is not the same thing as the answer, and the review needs the original reasoning.
 
 1. **Per-line versus per-order fee attribution.** Providers report some fees per order and some per line, and profitability by SKU wants all of them per line. Should ingestion allocate order-level fees down to lines? *Recommendation: no.* Store fees exactly at the granularity reported (`fee_scope` + nullable `order_line_id`) and treat allocation as a derived reporting concern introduced in Phase 4 alongside cost basis, where it can use the same allocation basis as COGS. Allocating at ingest bakes a reversible choice into a source-fact table.
 
@@ -681,6 +749,8 @@ Recorded here for a human to resolve; this document does not attempt to fix them
 4. **Catalog appears in three places with three groupings.** Domain Boundaries defines a distinct "Catalog and Listings" domain; the roadmap folds catalog/SKU work into Phase 3 commerce ingestion; Workspaces lists catalog/SKUs under the Commerce workspace. These are consistent under the "workspace UX is not domain ownership" rule, but nothing says so at the point of confusion. A one-line note in the roadmap's Phase 3 section would prevent an implementer from merging the two domains into one package.
 
 ## Before implementing this schema
+
+Retained as the original pre-implementation checklist. Items 1, 3, 5, 6, and 7 were satisfied during the provisional implementation; item 2 (human confirmation of attribution precedence and immutability) and item 4 for eBay/Medusa are still outstanding, and item 8 is what the [provisional decisions](#provisional-implementation-decisions) section discharges.
 
 1. resolve open question 6 (sync scheduling ownership) — it determines package boundaries, not just table shapes;
 2. confirm the attribution precedence and its immutability rule with a human; it is the hardest thing to change after data exists;
