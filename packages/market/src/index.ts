@@ -11,11 +11,13 @@ export {
 } from "./errors.ts";
 
 export {
+  COMMERCE_SYNC_CONFIG_KEY,
   MAX_BACKOFF_SECONDS,
   MONITOR_TARGET_TYPES,
   backoffSeconds,
   claimDueTargets,
   collectAdaptiveSignals,
+  commerceSyncStateSchema,
   createMonitorService,
   ebaySearchFiltersSchema,
   monitorTargetConfigSchemas,
@@ -25,6 +27,7 @@ export {
 export type {
   AdaptiveSignals,
   ClaimedTarget,
+  CommerceSyncState,
   CreateMonitorTargetInput,
   EbaySearchFiltersConfig,
   MonitorService,
