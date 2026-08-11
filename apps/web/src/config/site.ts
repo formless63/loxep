@@ -6,32 +6,27 @@
  * It is used to build absolute URLs for og:image / twitter:image and the sitemap.
  */
 export const siteConfig = {
-  name: 'TanStack Start Dashboard',
+  name: 'Loxep',
   // Canonical production URL — change this to your deployed domain.
-  url: 'https://tanstack-start-dashboard.kiranism.dev',
+  url: 'https://loxep.com',
   description:
-    'Free, open-source (MIT) admin dashboard starter built with TanStack Start, shadcn/ui on Base UI primitives, Tailwind CSS v4, and TypeScript. Production-ready features: type-safe file-based routing, React Query data tables, TanStack Form + Zod, charts, a Kanban board, a chat UI, and a notification center.',
+    'Loxep is an open-source, self-hosted platform for marketplace intelligence, multichannel commerce operations, services, inventory, billing, and financial visibility.',
   // Path (relative to the site root) of the Open Graph / Twitter share image.
-  ogImage: '/tanstack-dashboard.png',
+  ogImage: '/favicon.svg',
   keywords: [
-    'TanStack Start',
-    'TanStack Router',
-    'TanStack Query',
-    'admin dashboard',
-    'dashboard template',
-    'React admin dashboard',
-    'shadcn/ui',
-    'Base UI',
-    'Tailwind CSS',
-    'React',
-    'TypeScript',
-    'admin panel',
-    'starter template',
-    'SaaS boilerplate'
+    'Loxep',
+    'marketplace intelligence',
+    'commerce operations',
+    'self-hosted',
+    'open source',
+    'eBay monitoring',
+    'listing observation',
+    'inventory',
+    'multichannel commerce'
   ],
   links: {
-    github: 'https://github.com/Kiranism/tanstack-start-dashboard',
-    demo: 'https://dub.sh/tanstack-start-dashboard'
+    github: 'https://github.com/formless63/loxep',
+    docs: 'https://formless63.github.io/loxep/'
   }
 } as const;
 

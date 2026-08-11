@@ -9,10 +9,10 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 export const Route = createFileRoute('/dashboard')({
   head: () => ({
     meta: [
-      { title: 'TanStack Dashboard Starter' },
+      { title: 'Loxep' },
       {
         name: 'description',
-        content: 'Dashboard with TanStack Start and Shadcn'
+        content: 'Loxep workspace — marketplace intelligence and commerce operations'
       },
       { name: 'robots', content: 'noindex, nofollow' }
     ]
