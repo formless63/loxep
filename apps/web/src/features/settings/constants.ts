@@ -58,7 +58,8 @@ const MARKET_EVENT_TYPE_LABELS = {
   restocked: 'Restocked',
   sold_out: 'Sold out',
   quantity_changed: 'Quantity changed',
-  listing_ended: 'Listing ended'
+  listing_ended: 'Listing ended',
+  new_listing: 'New listing'
 } satisfies Record<MarketEventType, string>;
 
 export const MARKET_EVENT_TYPE_VALUES = Object.keys(
