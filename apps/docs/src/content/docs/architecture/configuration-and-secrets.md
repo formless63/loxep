@@ -189,11 +189,11 @@ connection
 ├── external account identity
 ├── non-secret provider configuration
 ├── health / sync state
-├── authorized Loxep users
+├── optional economic-entity attribution
 └── encrypted credential versions
 ```
 
-Multiple connections for the same provider are normal. Application users, provider accounts, and future legal/economic entity ownership must remain separate concepts.
+Multiple connections for the same provider are normal. Application users, provider accounts, and economic entities remain separate concepts. Per ADR-0017 there is no per-connection user authorization: all installation members have ordinary product access, and `created_by_user_id` is provenance, not ownership.
 
 ## Decision rule
 

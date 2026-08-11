@@ -680,13 +680,13 @@ If Loxep detects multiple application hosts with a `local` media backend that is
 Immediately before generating the actual Drizzle schema/migrations:
 
 1. verify current viable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, Bun, and other foundational packages;
-2. verify current Timescale hypertable/Hypercore migration syntax;
+2. verify current Timescale hypertable/columnstore migration syntax (the removed Hypercore TAM APIs must not be used);
 3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin/member roles;
 4. verify the exact first-admin bootstrap/recovery implementation against the current Better Auth API;
 5. implement ADR-0017's installation-wide access model without a speculative `connection_users` ACL table;
 6. keep `economic_entities` independent of future accounting books and counterparties;
 7. select the exact maintained decimal library after current verification;
 8. verify the current RustFS release and S3 behavior used by the development/CI conformance target;
-9. implement storage conformance tests shared by `local` and generic `s3` drivers;
+9. implement storage conformance tests shared by `local` and generic `s3` drivers — the S3 tests take only a generic endpoint configuration and must not know they are testing RustFS, which is simply the official CI target (ADR-0014);
 10. implement settings/secret validation and redacted audit behavior before provider credentials are used;
 11. use the Kiranism donor/reference workspace for UI patterns without copying its demo backend architecture into Loxep.

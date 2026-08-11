@@ -24,6 +24,7 @@ The project previously identified Garage as the preferred S3-compatible companio
 6. Loxep must not persist RustFS-specific URLs or identifiers as domain identity. Media records reference a storage backend and opaque object key; the S3 endpoint/bucket are deployment configuration.
 7. Migration from local storage to any S3-compatible backend is a supported, resumable application workflow with copy, checksum/size verification, metadata cutover, retry, and optional delayed source cleanup.
 8. If an installation enables remote/multiple web or worker hosts while still using local storage, Loxep should surface a health/configuration warning because local files are not shared between hosts.
+9. The storage conformance suite tests **generic S3 endpoint configuration only** — the tests must not know which S3 implementation they are exercising. RustFS (current release verified upstream) is the official CI target those tests are pointed at. If RustFS ever proves problematic in CI, the same unchanged suite is pointed at another S3-compatible implementation; no fallback implementation is selected in advance, and MinIO is deliberately not introduced.
 
 ## Why RustFS is not embedded in the Loxep container
 

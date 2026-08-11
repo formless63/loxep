@@ -31,7 +31,7 @@ member
 
 using its current supported admin/access-control capabilities.
 
-Loxep owns resource/business authorization, such as whether a particular user may `owner`, `manage`, or `view` a specific external connection.
+> **Superseded (ADR-0017):** an earlier draft of this decision anticipated Loxep-owned per-connection resource permissions (`owner`/`manage`/`view`). ADR-0017 removes that direction for the foundation: initial access is installation-wide `admin`/`member` with **no** per-connection, per-workspace, or per-economic-entity ACLs, and no `connection_users` table. If fine-grained resource authorization is ever added, it will be a Loxep-owned concern layered on top of Better Auth — but it is not part of the accepted initial model.
 
 Do not create a parallel global Loxep role system merely to duplicate Better Auth, and do not force domain-resource permissions into Better Auth metadata.
 

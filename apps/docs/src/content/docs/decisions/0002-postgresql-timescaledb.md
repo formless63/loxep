@@ -18,13 +18,19 @@ For observation storage, the current initial direction is:
 
 - seven-day chunks as a starting point;
 - recent data in rowstore;
-- current Timescale Hypercore/columnstore capabilities for older data, initially around a 30-day policy boundary;
+- current Timescale columnstore capabilities for older data, initially around a 30-day policy boundary;
 - no automatic deletion/retention policy by default;
 - continuous aggregates added only when real query patterns justify them.
 
-These are starting policies, not frozen tuning values. Exact Timescale APIs/syntax and recommended physical settings must be verified against the current supported release immediately before implementation.
+These are starting policies, not frozen tuning values. Exact Timescale APIs/syntax and recommended physical settings must be verified against the current supported release immediately before implementation. In particular, the experimental "Hypercore" table access method was deprecated and then removed in newer TimescaleDB releases while columnstore functionality remains; implementations must use the current columnstore syntax and must not resurrect the removed TAM terminology or APIs from older examples.
 
 Graphile Worker shares the PostgreSQL deployment.
+
+### Licensing
+
+TimescaleDB ships in two editions: Apache-2.0 licensed core, and the Community edition whose additional features — including the columnstore/compression capabilities this decision relies on — are governed by the Timescale License (TSL). The TSL permits self-hosted/internal use and distribution as part of a value-added product under its stated conditions, while restricting offering TimescaleDB itself as a database service.
+
+Consequences for Loxep: the Loxep application remains MIT, but the recommended full TimescaleDB Community deployment contains separately licensed TSL components. Deployment/backup documentation and the recommended Compose stack must state this rather than claiming everything deployed is MIT/Apache. Verify current edition/feature licensing against upstream when pinning the database image.
 
 ## Consequences
 
