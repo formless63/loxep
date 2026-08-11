@@ -13,7 +13,20 @@
     "format": "bun --cwd apps/web format",
     "format:check": "bun --cwd apps/web format:check",
     "docs:dev": "bun --cwd apps/docs dev",
-    "docs:build": "bun --cwd apps/docs build"
+    "docs:build": "bun --cwd apps/docs build",
+    "migrate": "node bin/loxep.ts migrate",
+    "start": "node bin/loxep.ts start",
+    "typecheck": "bun --cwd apps/web typecheck && bun --cwd packages/config typecheck && bun --cwd packages/observability typecheck && bun --cwd packages/db typecheck && bun --cwd packages/runtime typecheck"
   },
-  "packageManager": "bun@1.3.14"
+  "packageManager": "bun@1.3.14",
+  "dependencies": {
+    "@loxep/config": "workspace:*",
+    "@loxep/db": "workspace:*",
+    "@loxep/observability": "workspace:*",
+    "@loxep/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  }
 }

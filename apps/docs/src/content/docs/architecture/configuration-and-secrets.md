@@ -28,6 +28,34 @@ Typical examples:
 
 Bootstrap secret inputs should support mounted-file/Docker-secret style delivery where practical. Secret values must never be committed to repository configuration.
 
+#### Bootstrap environment reference
+
+The canonical bootstrap variables, validated by `@loxep/config` (`loadBootstrapConfig`):
+
+```text
+LOXEP_MODE                       optional (default: all) — all | web | worker
+LOXEP_DATABASE_URL[_FILE]        required in every mode — postgres:// / postgresql:// URL
+LOXEP_PUBLIC_ORIGIN              required in web/all — canonical http(s) origin
+LOXEP_PORT                       optional (default: 3020)
+LOXEP_AUTH_SECRET[_FILE]         required in web/all — Better Auth secret, min 32 chars
+LOXEP_KEYRING[_FILE]             required in every mode — ADR-0019 keyring JSON document
+LOXEP_OIDC_ISSUER                OIDC group — issuer URL
+LOXEP_OIDC_CLIENT_ID             OIDC group
+LOXEP_OIDC_CLIENT_SECRET[_FILE]  OIDC group
+LOXEP_SMTP_URL[_FILE]            SMTP group — smtp:// or smtps:// URL
+LOXEP_SMTP_FROM                  SMTP group — sender email address
+LOXEP_BOOTSTRAP_ADMIN_EMAIL      optional — first-admin bootstrap identity
+LOXEP_MEDIA_ROOT                 optional (default: ./data/media) — local storage root
+LOXEP_LOG_LEVEL                  optional (default: info) — fatal|error|warn|info|debug|trace
+```
+
+Conventions enforced by the loader:
+
+- any variable marked `[_FILE]` may instead be supplied as `<VAR>_FILE` pointing at a mounted secret file (trailing newline trimmed); setting both the variable and its `_FILE` variant is an error;
+- the OIDC and SMTP groups are each all-or-none;
+- when the mode serves web (`web`/`all`), at least one complete login group (OIDC and/or SMTP) must be configured;
+- validation failures are reported as one aggregate error naming every offending variable, never echoing secret values.
+
 ### 2. Application/runtime settings
 
 Settings that can be loaded after the database is available should generally be stored in PostgreSQL and managed through Loxep's UI/API.

@@ -219,9 +219,11 @@ This can later represent Outline/AFFiNE documents, Vikunja tasks/projects, GitHu
 - Structured logging with Pino.
 - Request/job correlation IDs.
 - Provider/account context in logs without leaking secrets/tokens.
-- Liveness (process/event loop) and readiness (mode-required dependencies) probes per ADR-0018; degraded conditions such as worker backlog surface as observable health detail, not automatic unreadiness.
+- Liveness (process/event loop) and readiness (mode-required dependencies) probes per ADR-0018; degraded conditions such as worker backlog surface as observable health detail, not automatic unreadiness. Concrete contract: `/health/live` (200 when the process functions), `/health/ready` (200/503 gating), `/health` (always-200 observable detail) — served by the web runtime in `web`/`all` modes and by a health-only listener on `LOXEP_PORT` in `worker` mode.
 - Database/job/storage/integration health visibility.
 - OpenTelemetry deferred until a concrete collector/use case exists.
+
+Implemented conventions (`@loxep/observability`): `createLogger` (Pino) applies mandatory redaction with censor `[REDACTED]` for the secret keys `password`, `secret`, `token`, `accessToken`, `refreshToken`, `clientSecret`, `authorization`, `cookie`, `ciphertext`, `nonce`, `authTag`, `apiKey`, `apiSecret`, `privateKey` at up to four nesting levels (Pino redact wildcards match one segment each, traversing objects and array indices), plus explicit `headers.authorization`/`headers.cookie`/`headers["set-cookie"]` paths — deeper structures are not covered, so never log raw provider payloads or credential envelopes wholesale. Correlation uses `AsyncLocalStorage`: `runWithLogContext` scopes `correlationId`/`requestId`/`jobId` (correlationId auto-generated when absent, inherited by nested scopes) and a Pino `mixin` stamps the active context onto every line. Errors log under the `err` key (standard Pino serializer); `serializeError` produces `{ message, name, stack, code? }` for non-log transports. `pretty: true` (pino-pretty transport) is development-only.
 
 ### Testing
 
