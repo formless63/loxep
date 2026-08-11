@@ -171,14 +171,16 @@ A monitor is **user/configuration intent** to observe something. A marketplace i
 
 Controls watchlist/item/search/seller monitoring and data-driven scheduling. `next_poll_at` is authoritative for due-work discovery; Graphile Worker dispatches due monitors rather than creating thousands of permanent cron definitions.
 
-Initial target types:
+Target types:
 
 ```text
 ebay_watchlist
 ebay_item
+ebay_search
+ebay_seller
 ```
 
-Search and seller monitor types follow without changing the scheduling model.
+The Phase 2 discovery types changed no schema and no scheduling rule: `target_type` is plain text, and search and seller monitors are claimed, backed off, and adapted by exactly the same machinery as the Phase 1 types — only their executor differs. An `ebay_search` config carries a query and/or category, an optional small typed filter set (price band and currency, buying options, condition groups/ids, sellers, a listed-after bound), and `maxItems`; an `ebay_seller` config carries one seller username plus optional narrowing and `maxItems`. `maxItems` is the cost knob, because a discovery poll pages the provider and each page spends the connection's rate budget. Provider filter grammar never appears in a config — the integration package owns the encoding. Discovery links each result into `monitor_items` as usual, and a `new_listing` event fires **once per marketplace item, on its first global discovery**, attributed to whichever monitor got there first: `market_events` are facts about the item, not about the monitor, so an item matched by several overlapping rules produces one event rather than one alert per rule. A monitor's own first sighting of an already-known item is recorded as a link, not as news.
 
 ### Adaptive cadence
 
@@ -252,7 +254,10 @@ restocked
 sold_out
 quantity_changed
 listing_ended
+new_listing
 ```
+
+All but `new_listing` are comparisons of two observations of one item. `new_listing` is the one discovery event: it has no previous observation, so `from_observed_at` is NULL and the item's first-discovery instant fills the deduplication key's timestamp slot.
 
 Domain-level deduplication prevents worker retries from producing duplicate user-visible events/notifications.
 

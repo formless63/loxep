@@ -18,6 +18,7 @@
  */
 import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
+import { adapterInternals } from "../src/adapter.ts";
 import {
   EBAY_BASE_SCOPE,
   EBAY_ERROR_KINDS,
@@ -26,11 +27,15 @@ import {
   buildConsentUrl,
   createEbayAdapter,
   createRateBudget,
+  fetchAllSellerListings,
   fetchItemSnapshot,
+  fetchSellerListings,
   fetchWatchlist,
+  hasUnknownSellerWarning,
   loadSandboxCredentialsFromEnvFile,
   loadSandboxUserTokenFromFile,
   refreshTokenBundleIfNeeded,
+  searchListings,
   snapshotToObservation,
   verifyConsentState,
 } from "../src/index.ts";
@@ -141,6 +146,238 @@ describeLive("eBay sandbox (live)", () => {
       }) + inspect(adapterError, { depth: 12 });
     assertNoCredentialMaterial(serialized);
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// Search rules and seller enumeration (loxep-7dp.1/.2), application token.
+//
+// Sandbox inventory is sparse and changes, so these assert CALL-PATH HEALTH
+// and PROVIDER GRAMMAR rather than content. The load-bearing trick: eBay does
+// not reject an unknown `filter` field — it returns HTTP 200 with a 12002
+// warning and silently ignores it. So "eBay reported no warnings" is the real
+// proof that Loxep's encoded filter grammar is the grammar eBay implements,
+// and the control test below proves the warning channel actually fires.
+// ---------------------------------------------------------------------------
+
+const FILTER_IGNORED_WARNING = 12002;
+const SORT_IGNORED_WARNING = 12008;
+
+describeLive("eBay sandbox search (live)", () => {
+  it("runs a search rule and maps whatever the sandbox has", async () => {
+    const adapter = makeAdapter();
+    const result = await searchListings(adapter, {
+      query: "iphone",
+      limit: 5,
+      sort: "newlyListed",
+    });
+
+    // Call-path health holds even when inventory is empty.
+    expect(Array.isArray(result.summaries)).toBe(true);
+    expect(result.fetchedAt).toBeInstanceOf(Date);
+    expect(result.total === null || result.total >= 0).toBe(true);
+    expect(result.warnings).toEqual([]);
+    expect(adapter.stats().rateBudget.acquired).toBe(1);
+
+    for (const summary of result.summaries) {
+      expect(summary.externalItemId).toMatch(/^v1\|/);
+      expect(typeof summary.marketplace).toBe("string");
+      if (summary.price !== null) {
+        expect(summary.price).toMatch(/^-?\d+(\.\d+)?$/);
+        expect(summary.currency).toMatch(/^[A-Z]{3}$/);
+      }
+      expect(summary.raw).toBeTypeOf("object");
+    }
+
+    if (result.cursor !== null) {
+      const second = await searchListings(adapter, {
+        query: "iphone",
+        limit: 5,
+        sort: "newlyListed",
+        cursor: result.cursor,
+      });
+      expect(second.offset).toBe(Number(result.cursor));
+    }
+  }, 90_000);
+
+  it("sends filter grammar eBay accepts (no ignored-filter warnings)", async () => {
+    const adapter = makeAdapter();
+    const result = await searchListings(adapter, {
+      query: "iphone",
+      limit: 3,
+      filters: {
+        priceMin: "1.00",
+        priceMax: "5000.00",
+        priceCurrency: "USD",
+        buyingOptions: ["FIXED_PRICE"],
+        conditions: ["NEW", "USED"],
+        conditionIds: ["1000", "3000"],
+        listedAfter: new Date("2020-01-01T00:00:00.000Z"),
+      },
+    });
+    expect(
+      result.warnings.map((warning) => warning.errorId),
+    ).not.toContain(FILTER_IGNORED_WARNING);
+  }, 90_000);
+
+  it("control: eBay reports an unknown filter/sort as a warning, not an error", async () => {
+    // If this ever starts throwing instead of warning, the assertion style of
+    // the test above has to change — so the control is part of the contract.
+    const adapter = makeAdapter();
+    const internals = adapterInternals(adapter);
+    const response = (await internals.call("live-control", async () =>
+      internals.client.buy.browse.search({
+        q: "iphone",
+        limit: "2",
+        filter: "loxepNotARealFilter:{x}",
+        sort: "loxepNotARealSort",
+      } as never),
+    )) as Record<string, unknown>;
+    const warnings = (response["warnings"] as { errorId?: number }[]) ?? [];
+    const ids = warnings.map((warning) => warning.errorId);
+    expect(ids).toContain(FILTER_IGNORED_WARNING);
+    expect(ids).toContain(SORT_IGNORED_WARNING);
+  }, 90_000);
+
+  it("refuses a filter-only search locally, matching eBay's errorId 12001", async () => {
+    const adapter = makeAdapter();
+    const local = await searchListings(adapter, {
+      filters: { sellers: ["anyone"] },
+    }).catch((e: unknown) => e);
+    expect(local).toBeInstanceOf(EbayAdapterError);
+    expect((local as EbayAdapterError).kind).toBe("invalid_request");
+    // No budget spent: the guard fired before the network.
+    expect(adapter.stats().rateBudget.acquired).toBe(0);
+
+    // And the provider really does reject it, which is why the guard exists.
+    const internals = adapterInternals(adapter);
+    const remote = await internals
+      .call("live-control", async () =>
+        internals.client.buy.browse.search({
+          limit: "2",
+          filter: "sellers:{anyone}",
+        } as never),
+      )
+      .catch((e: unknown) => e);
+    expect(remote).toBeInstanceOf(EbayAdapterError);
+    expect((remote as EbayAdapterError).detail["providerErrorCode"]).toBe(12001);
+  }, 90_000);
+});
+
+/**
+ * Sandbox item SUMMARIES omit `seller.username`, so a real seller has to come
+ * from a full `getItem`. Sandbox inventory churns and the search index lags
+ * it, so a freshly returned id can already be gone — try several and report
+ * null rather than failing on someone else's housekeeping.
+ */
+async function resolveSandboxSeller(
+  adapter: ReturnType<typeof makeAdapter>,
+): Promise<{ seller: string; category: string | null } | null> {
+  const seed = await searchListings(adapter, { query: "iphone", limit: 5 });
+  for (const summary of seed.summaries) {
+    const snapshot = await fetchItemSnapshot(adapter, {
+      itemId: summary.externalItemId,
+    }).catch(() => null);
+    if (snapshot?.sellerExternalId != null) {
+      return {
+        seller: snapshot.sellerExternalId,
+        category: snapshot.categoryExternalId,
+      };
+    }
+  }
+  return null;
+}
+
+describeLive("eBay sandbox seller enumeration (live)", () => {
+  it("enumerates a real sandbox seller through the `sellers` filter", async () => {
+    const adapter = makeAdapter();
+
+    const resolved = await resolveSandboxSeller(adapter);
+    if (resolved === null) {
+      // Sparse/stale sandbox: prove the call path instead of the content.
+      const local = await fetchSellerListings(adapter, {
+        sellerUsername: "  ",
+      }).catch((e: unknown) => e);
+      expect(local).toBeInstanceOf(EbayAdapterError);
+      return;
+    }
+    const { seller, category } = resolved;
+
+    // Whole-catalogue enumeration through the undocumented root anchor.
+    const wholeCatalogue = await fetchSellerListings(adapter, {
+      sellerUsername: seller,
+      limit: 5,
+    });
+    expect(hasUnknownSellerWarning(wholeCatalogue.warnings)).toBe(false);
+    expect(wholeCatalogue.warnings.map((w) => w.errorId)).not.toContain(
+      FILTER_IGNORED_WARNING,
+    );
+    for (const summary of wholeCatalogue.summaries) {
+      expect(summary.externalItemId).toMatch(/^v1\|/);
+    }
+
+    // Same anchor with and without the seller filter: the filter must NARROW,
+    // which is what proves eBay applied it rather than silently dropping it.
+    if (category !== null) {
+      const anchored = await searchListings(adapter, {
+        categoryId: category,
+        limit: 1,
+      });
+      const filtered = await fetchSellerListings(adapter, {
+        sellerUsername: seller,
+        categoryId: category,
+        limit: 1,
+      });
+      if (anchored.total !== null && filtered.total !== null) {
+        expect(filtered.total).toBeLessThanOrEqual(anchored.total);
+      }
+      // The seller's whole catalogue is at least what it has in one category.
+      if (wholeCatalogue.total !== null && filtered.total !== null) {
+        expect(wholeCatalogue.total).toBeGreaterThanOrEqual(filtered.total);
+      }
+    }
+  }, 120_000);
+
+  it("refuses an unknown seller under either anchor", async () => {
+    const adapter = makeAdapter();
+    // Under the root anchor eBay itself rejects it (errorId 12001, because
+    // dropping the bogus filter leaves no valid criteria)...
+    const rootAnchored = await fetchSellerListings(adapter, {
+      sellerUsername: "loxep_no_such_seller_zzz",
+      limit: 3,
+    }).catch((e: unknown) => e);
+    expect(rootAnchored).toBeInstanceOf(EbayAdapterError);
+    expect((rootAnchored as EbayAdapterError).kind).toBe("invalid_request");
+
+    // ...and under a real category anchor eBay returns 200 with warning
+    // 12003 and the WHOLE category, which the adapter must refuse rather than
+    // report as this seller's listings.
+    const categoryAnchored = await fetchSellerListings(adapter, {
+      sellerUsername: "loxep_no_such_seller_zzz",
+      categoryId: "9355",
+      limit: 3,
+    }).catch((e: unknown) => e);
+    expect(categoryAnchored).toBeInstanceOf(EbayAdapterError);
+    expect((categoryAnchored as EbayAdapterError).detail["sellerUsername"]).toBe(
+      "loxep_no_such_seller_zzz",
+    );
+  }, 90_000);
+
+  it("pages a seller no further than maxItems", async () => {
+    const adapter = makeAdapter();
+    const resolved = await resolveSandboxSeller(adapter);
+    if (resolved === null) return; // sparse/stale sandbox
+
+    const before = adapter.stats().rateBudget.acquired;
+    const result = await fetchAllSellerListings(adapter, {
+      sellerUsername: resolved.seller,
+      maxItems: 3,
+      limit: 2,
+    });
+    expect(result.summaries.length).toBeLessThanOrEqual(3);
+    expect(result.pages).toBeGreaterThanOrEqual(1);
+    // maxItems really is the cost knob: one budget acquisition per page.
+    expect(adapter.stats().rateBudget.acquired - before).toBe(result.pages);
+  }, 120_000);
 });
 
 // ---------------------------------------------------------------------------

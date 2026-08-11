@@ -112,6 +112,41 @@ export {
 export type { EbayItemSnapshot, EbayMoney } from "./snapshot.ts";
 
 export {
+  EBAY_BUYING_OPTIONS,
+  EBAY_CONDITION_GROUPS,
+  EBAY_SEARCH_SORTS,
+  MAX_SEARCH_LIMIT,
+  MAX_SEARCH_OFFSET,
+  MAX_SELLERS_PER_FILTER,
+  encodeEbaySearchFilters,
+  mapSearchSummary,
+  nextCursorFrom,
+  searchAllListings,
+  searchListings,
+} from "./search.ts";
+export type {
+  EbayBuyingOption,
+  EbayConditionGroup,
+  EbayListingSummary,
+  EbaySearchFilters,
+  EbaySearchPage,
+  EbaySearchSort,
+  EbaySearchWarning,
+  SearchListingsInput,
+} from "./search.ts";
+
+export {
+  DEFAULT_SELLER_SORT,
+  EBAY_ROOT_CATEGORY_ID,
+  SELLER_FILTER_FIELD,
+  UNKNOWN_SELLER_WARNING_ID,
+  fetchAllSellerListings,
+  fetchSellerListings,
+  hasUnknownSellerWarning,
+} from "./sellers.ts";
+export type { FetchSellerListingsInput } from "./sellers.ts";
+
+export {
   OBSERVATION_HASH_FIELDS,
   observationStateHash,
   snapshotToObservation,
