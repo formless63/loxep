@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -13,8 +13,16 @@ import { FieldGroup } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
 import { createConnection, createStoreConnection, type EntityDto } from '@/server/admin-functions';
 import { startEbayConsent } from '@/server/ebay-oauth';
-import { connectionsQuery } from '@/features/settings/api/queries';
+import { connectionsQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
+import {
+  GuidanceCallout,
+  GuidanceLink,
+  GuidanceNote,
+  GuidanceStep,
+  GuidanceSteps,
+  SetupGuidance
+} from '@/features/settings/components/setup-guidance';
 import type { IntegrationService } from '@/features/settings/integrations-catalog';
 
 /**
@@ -25,6 +33,12 @@ import type { IntegrationService } from '@/features/settings/integrations-catalo
  * come from the catalog entry and are never typed, and there is no raw JSON
  * config box anywhere in this path. Secret fields are write-only: they are
  * submitted once, stored encrypted server-side, and never read back.
+ *
+ * Every form also carries the provider's own credential-acquisition path
+ * inline (`@/features/settings/components/setup-guidance`), because a form
+ * that only labels its fields sends the operator out of the app to find out
+ * what to type. The eBay form has no credentials to explain — its consent
+ * hand-off is what needs teaching, in particular the sandbox-test-user rule.
  */
 export default function ConnectionAddDialog({
   service,
@@ -100,6 +114,66 @@ const ebayAccountSchema = z.object({
   economicEntityId: z.string()
 });
 
+const EBAY_SANDBOX_USER_DOCS_URL =
+  'https://developer.ebay.com/api-docs/static/gs_create-a-test-sandbox-user.html';
+
+/**
+ * Consent-step guidance. Nothing is copied from a portal here, so this
+ * explains the hand-off instead — and, when the installation's keyset is a
+ * sandbox one, the fact that stops most first attempts: eBay's sandbox
+ * sign-in only accepts sandbox test users.
+ */
+function EbayConsentGuidance() {
+  const { data } = useQuery(ebayKeysetStatusQuery);
+  const environment = data?.environment ?? null;
+
+  return (
+    <SetupGuidance title='What happens next'>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Loxep records the account, then sends this tab to eBay&apos;s consent screen.
+        </GuidanceStep>
+        <GuidanceStep>
+          Sign in there as the eBay account you want Loxep to watch, and accept the requested
+          access.
+        </GuidanceStep>
+        <GuidanceStep>
+          eBay returns you here. The account shows as connected once the token is stored; declining
+          leaves the record in place, unconnected, so you can retry.
+        </GuidanceStep>
+      </GuidanceSteps>
+      {environment === 'sandbox' && (
+        <GuidanceCallout>
+          <p>
+            This installation&apos;s keyset is a <strong>sandbox</strong> keyset, so the consent
+            screen is eBay&apos;s sandbox sign-in. Only a <strong>sandbox test user</strong> can
+            sign in there — a real eBay account cannot, however valid it is.
+          </p>
+          <p>
+            Register one in the eBay developer portal under <strong>User Access Tokens</strong> →{' '}
+            <strong>Register a new Sandbox user</strong>; sandbox usernames are always prefixed{' '}
+            <code className='font-mono'>TESTUSER_</code>.{' '}
+            <GuidanceLink href={EBAY_SANDBOX_USER_DOCS_URL}>eBay&apos;s instructions</GuidanceLink>
+          </p>
+        </GuidanceCallout>
+      )}
+      {environment === 'production' && (
+        <GuidanceCallout>
+          <p>
+            This installation&apos;s keyset is a <strong>production</strong> keyset, so the consent
+            screen is the live eBay sign-in — use the real eBay account whose activity you want
+            Loxep to observe.
+          </p>
+        </GuidanceCallout>
+      )}
+      <GuidanceNote>
+        Loxep only ever reads from eBay. Consent can be withdrawn from eBay&apos;s own account
+        settings, and removing the connection here deletes the stored token.
+      </GuidanceNote>
+    </SetupGuidance>
+  );
+}
+
 /**
  * eBay: the connection row is created first, then the browser is sent to
  * eBay's consent screen through a full top-level navigation — the CSRF nonce
@@ -154,6 +228,7 @@ function EbayAccountForm({
         form.handleSubmit();
       }}
     >
+      <EbayConsentGuidance />
       <FieldGroup>
         <form.AppField
           name='name'
@@ -178,10 +253,6 @@ function EbayAccountForm({
           )}
         />
       </FieldGroup>
-      <p className='text-muted-foreground text-sm'>
-        Continuing opens eBay&apos;s consent screen in this tab. eBay sends you back here once you
-        accept or decline.
-      </p>
       <FormActions
         onCancel={() => onDone(false)}
         submitLabel='Continue to eBay'
@@ -198,6 +269,53 @@ const wooAccountSchema = z.object({
   consumerSecret: z.string().trim().min(1, 'Consumer secret is required'),
   economicEntityId: z.string()
 });
+
+const WOO_REST_API_DOCS_URL = 'https://woocommerce.com/document/woocommerce-rest-api/';
+
+/** The WooCommerce admin path that issues a REST API key pair. */
+function WooSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Sign in to the store&apos;s WordPress admin as a user with the shop-manager or
+          administrator role.
+        </GuidanceStep>
+        <GuidanceStep>
+          Go to <strong>WooCommerce</strong> → <strong>Settings</strong> → <strong>Advanced</strong>{' '}
+          → <strong>REST API</strong>, then choose <strong>Add key</strong>.
+        </GuidanceStep>
+        <GuidanceStep>
+          Give it a description you will recognise later, pick the user the key acts as, and set
+          Permissions to <strong>Read</strong>.
+          <GuidanceNote>
+            Loxep never writes to a store, so a read/write key buys nothing and risks the catalogue.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Choose <strong>Generate API key</strong> and copy the consumer key (
+          <code className='font-mono'>ck_…</code>) and consumer secret (
+          <code className='font-mono'>cs_…</code>) into the fields below.
+        </GuidanceStep>
+        <GuidanceStep>
+          The store URL is the site root —{' '}
+          <code className='font-mono'>https://store.example.com</code> — not the{' '}
+          <code className='font-mono'>/wp-json/</code> REST path.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          WooCommerce shows the key pair once. If you leave that screen without copying both halves,
+          revoke the key and generate a new one.
+        </p>
+        <p>
+          The REST API needs pretty permalinks enabled and the store served over HTTPS.{' '}
+          <GuidanceLink href={WOO_REST_API_DOCS_URL}>WooCommerce&apos;s documentation</GuidanceLink>
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
 
 function WooAccountForm({
   entities,
@@ -250,6 +368,7 @@ function WooAccountForm({
         form.handleSubmit();
       }}
     >
+      <WooSetupGuidance />
       <FieldGroup>
         <form.AppField
           name='name'
@@ -281,7 +400,7 @@ function WooAccountForm({
               required
               autoComplete='off'
               placeholder='ck_…'
-              description='Create a read-only REST API key in WooCommerce under Settings → Advanced → REST API.'
+              description='From the read-only REST API key generated in the store admin.'
             />
           )}
         />
@@ -325,6 +444,45 @@ const medusaAccountSchema = z.object({
   apiToken: z.string().trim().min(1, 'API key is required'),
   economicEntityId: z.string()
 });
+
+const MEDUSA_SECRET_KEY_DOCS_URL =
+  'https://docs.medusajs.com/user-guide/settings/developer/secret-api-keys';
+
+/** Where a Medusa v2 admin dashboard issues a secret API key. */
+function MedusaSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Sign in to the backend&apos;s Medusa Admin dashboard as an admin user.
+        </GuidanceStep>
+        <GuidanceStep>
+          Open <strong>Settings</strong> → <strong>Secret API Keys</strong>, then{' '}
+          <strong>Create</strong>.
+          <GuidanceNote>
+            Older dashboards group the same screen under Settings → Developer → API key management.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Copy the generated key into the field below.{' '}
+          <GuidanceLink href={MEDUSA_SECRET_KEY_DOCS_URL}>Medusa&apos;s documentation</GuidanceLink>
+        </GuidanceStep>
+        <GuidanceStep>
+          The backend URL is the server root —{' '}
+          <code className='font-mono'>https://commerce.example.com</code> — not the{' '}
+          <code className='font-mono'>/admin</code> API path.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Medusa shows a secret key once, when it is created. Medusa also does not scope secret keys
+          read-only, so treat the key as full admin access to that backend — Loxep itself only ever
+          reads.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
 
 function MedusaAccountForm({
   entities,
@@ -375,6 +533,7 @@ function MedusaAccountForm({
         form.handleSubmit();
       }}
     >
+      <MedusaSetupGuidance />
       <FieldGroup>
         <form.AppField
           name='name'
@@ -407,7 +566,7 @@ function MedusaAccountForm({
               type='password'
               autoComplete='new-password'
               placeholder='sk_…'
-              description='Create one in the Medusa dashboard under Settings → Developer → Secret API keys. Write-only: stored encrypted, never displayed again.'
+              description='From Settings → Secret API Keys in the Medusa dashboard. Write-only: stored encrypted, never displayed again.'
             />
           )}
         />

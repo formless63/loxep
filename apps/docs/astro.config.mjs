@@ -32,6 +32,15 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Guides',
+          items: [
+            { label: 'Overview', slug: 'guides' },
+            { label: 'Connecting eBay', slug: 'guides/connecting-ebay' },
+            { label: 'Connecting WooCommerce', slug: 'guides/connecting-woocommerce' },
+            { label: 'Connecting Medusa', slug: 'guides/connecting-medusa' },
+          ],
+        },
+        {
           label: 'Product',
           items: [
             { label: 'Master Domain Map', slug: 'product/master-domain-map' },
