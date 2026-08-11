@@ -13,6 +13,7 @@ export * from "./provenance.ts";
 export * from "./monitoring.ts";
 export * from "./observations.ts";
 export * from "./events.ts";
+export * from "./opportunities.ts";
 export * from "./storage.ts";
 export * from "./resources.ts";
 export * from "./notifications.ts";

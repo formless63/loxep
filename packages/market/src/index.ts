@@ -101,6 +101,36 @@ export type {
 } from "./events.ts";
 
 export {
+  OPPORTUNITY_PAYLOAD_KEY,
+  SCORE_SCALE,
+  createOpportunityRulesService,
+  evaluateRule,
+  evaluateRulesForEvent,
+  listEnabledRulesForEvaluation,
+  opportunityConditionsSchema,
+  opportunityRuleSnapshot,
+  scoreWeightSchema,
+} from "./opportunities.ts";
+export type {
+  CreateOpportunityRuleInput,
+  EvaluableMarketEvent,
+  EvaluateRulesForEventOptions,
+  EvaluateRulesForEventResult,
+  OpportunityConditions,
+  OpportunityConditionsInput,
+  OpportunityContext,
+  OpportunityEvaluation,
+  OpportunityEventContext,
+  OpportunityMatch,
+  OpportunityRuleDefinition,
+  OpportunityRuleMutation,
+  OpportunityRuleRow,
+  OpportunityRuleSnapshot,
+  OpportunityRulesService,
+  UpdateOpportunityRuleInput,
+} from "./opportunities.ts";
+
+export {
   DISPATCH_TASK_NAME,
   POLL_TARGET_TASK_NAME,
   createMarketTasks,
