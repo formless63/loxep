@@ -30,6 +30,7 @@ import {
 } from '@loxep/domain';
 import type { StorageBackendsService } from '@loxep/storage';
 import type { NotificationService } from '@loxep/notifications';
+import type { MonitorService } from '@loxep/market';
 import { AuthorizationError, requireRole } from '@loxep/auth';
 import { getRequestHeaders, setResponseStatus } from '@tanstack/react-start/server';
 import { getAuth } from '@/server/auth';
@@ -45,6 +46,8 @@ interface AdminRegistry {
   storageBackendsPromise?: Promise<StorageBackendsService>;
   notificationsModulePromise?: Promise<typeof import('@loxep/notifications')>;
   notificationsServicePromise?: Promise<NotificationService>;
+  marketModulePromise?: Promise<typeof import('@loxep/market')>;
+  monitorServicePromise?: Promise<MonitorService>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -137,6 +140,34 @@ export function getNotificationsService(): Promise<NotificationService> {
     });
   })();
   return registry.notificationsServicePromise;
+}
+
+/**
+ * Dynamically-loaded `@loxep/market` module, cached on the registry.
+ *
+ * `@loxep/market`'s index re-exports `tasks.ts`, which reaches
+ * `graphile-worker` (via `@loxep/jobs`) the same way `@loxep/storage` and
+ * `@loxep/notifications` do — see `getStorageBackendsService`'s doc above.
+ * The `@vite-ignore` variable specifier keeps it out of the SSR bundle so
+ * Node resolves it from real node_modules.
+ */
+export function getMarketModule(): Promise<typeof import('@loxep/market')> {
+  const registry = getAdminServices();
+  registry.marketModulePromise ??= (async () => {
+    const specifier = '@loxep/market';
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/market');
+  })();
+  return registry.marketModulePromise;
+}
+
+/** Monitor-target scheduling service (`/market/monitors`), loaded through the module above. */
+export function getMonitorService(): Promise<MonitorService> {
+  const registry = getAdminServices();
+  registry.monitorServicePromise ??= (async () => {
+    const market = await getMarketModule();
+    return market.createMonitorService({ db: registry.handle.db });
+  })();
+  return registry.monitorServicePromise;
 }
 
 /** Current request's Better Auth session, or `null` when unauthenticated. */

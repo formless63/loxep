@@ -1,9 +1,10 @@
 import type { NavGroup } from '@/types';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
+import { marketNavGroups } from '@/config/navigation/market';
 import { settingsNavGroups } from '@/config/navigation/settings';
 import { starterNavGroups } from '@/config/navigation/starter';
 
-export type WorkspaceId = 'dashboard' | 'settings' | 'starter';
+export type WorkspaceId = 'dashboard' | 'market' | 'settings' | 'starter';
 
 export type Workspace = {
   id: WorkspaceId;
@@ -22,6 +23,14 @@ export const workspaces: Workspace[] = [
     root: '/dashboard',
     defaultPath: '/dashboard/overview',
     navGroups: dashboardNavGroups
+  },
+  {
+    id: 'market',
+    label: 'Market',
+    description: 'Monitors, watched items, and market events',
+    root: '/market',
+    defaultPath: '/market/overview',
+    navGroups: marketNavGroups
   },
   {
     id: 'settings',

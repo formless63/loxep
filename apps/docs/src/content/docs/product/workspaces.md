@@ -12,6 +12,7 @@ The repository already has the first workspace roots:
 
 ```text
 /dashboard/*    real Loxep dashboard workspace
+/market/*       market workspace — monitors, watched items, market events
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
 ```
