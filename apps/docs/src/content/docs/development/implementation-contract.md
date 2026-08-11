@@ -46,13 +46,14 @@ The sidebar and Cmd+K command palette derive navigation from the active workspac
 
 Loxep is a **modular monolith**, not a microservice system.
 
-Default deployment:
+Default deployment is strictly two services:
 
 ```text
 loxep                LOXEP_MODE=all; web + worker capability
 postgres-timescale   PostgreSQL + TimescaleDB
-rustfs               optional S3-compatible companion
 ```
+
+RustFS is an **optional** S3-compatible companion added as a separate service/profile when shared object storage is wanted; it is never part of the default two-service stack.
 
 The same Loxep image must support:
 
@@ -63,6 +64,13 @@ LOXEP_MODE=worker
 ```
 
 Do not introduce Redis, Kafka, BullMQ, pg-boss, or another queue/cache merely because workers exist. Graphile Worker and PostgreSQL are the accepted durable-job foundation.
+
+### Runtime processes, migrations, and health (ADR-0018)
+
+- Every mode is **one Node.js process**; `all` embeds Graphile Worker in-process. No in-container process supervisor or sibling processes.
+- Schema migration is an explicit invocation of the same image (conceptually `loxep migrate`), protected by a PostgreSQL advisory lock. Normal startup never mutates schema; it fails readiness with a clear diagnostic when the database is behind.
+- The default Compose stack runs a one-shot migration step before the application service.
+- Liveness = process/event loop functioning. Readiness = the mode's required dependencies usable (`web`: DB + web init; `worker`: DB + worker init; `all`: both). Worker backlog and similar degraded conditions are observable health information, not automatic unreadiness.
 
 ## Runtime and package tooling
 

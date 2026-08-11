@@ -2,7 +2,7 @@
 title: "ADR-0013: Worker Runtime and Deployment Topology"
 ---
 
-**Status:** Accepted
+**Status:** Accepted; in-container process model, migration ownership, and health semantics defined by ADR-0018.
 
 ## Context
 

@@ -78,7 +78,7 @@ Secret inputs used at bootstrap should support mounted-file/Docker-secret style 
 ### Database
 
 - PostgreSQL + TimescaleDB supported development/deployment image.
-- Drizzle migration workflow.
+- Drizzle migration workflow, applied through the explicit migration command with advisory-lock protection; application startup never mutates schema (ADR-0018).
 - UUID and timestamp conventions established.
 - Timescale extension enabled by migration/bootstrap.
 - Initial tables limited to foundation/auth/economic-entities/connections/settings/events/monitoring/media/external-resource links needed for early vertical slices.
@@ -104,7 +104,7 @@ See ADR-0017.
 
 ### Jobs
 
-- Graphile Worker starts as part of the default Loxep runtime and independently under `LOXEP_MODE=worker`.
+- Graphile Worker runs embedded in the single Loxep process under `LOXEP_MODE=all` and independently under `LOXEP_MODE=worker` (ADR-0018).
 - Typed task-name/payload conventions.
 - Job-key/idempotency conventions.
 - Retry/backoff policy documented.
@@ -212,7 +212,7 @@ This can later represent Outline/AFFiNE documents, Vikunja tasks/projects, GitHu
 - Structured logging with Pino.
 - Request/job correlation IDs.
 - Provider/account context in logs without leaking secrets/tokens.
-- `/health` and readiness behavior.
+- Liveness (process/event loop) and readiness (mode-required dependencies) probes per ADR-0018; degraded conditions such as worker backlog surface as observable health detail, not automatic unreadiness.
 - Database/job/storage/integration health visibility.
 - OpenTelemetry deferred until a concrete collector/use case exists.
 
@@ -277,7 +277,7 @@ Phase 0 is complete when a fresh clone can:
 
 1. install dependencies with Bun from the repository lockfile;
 2. start the supported Compose development stack;
-3. migrate PostgreSQL/TimescaleDB from zero;
+3. migrate PostgreSQL/TimescaleDB from zero through the explicit migration command (never as a side effect of application startup);
 4. start Loxep in default `all` mode;
 5. start the same image successfully in separate `web` and `worker` modes;
 6. authenticate through at least one supported login path and enforce `admin`/`member` deployment roles;
