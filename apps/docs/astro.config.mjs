@@ -51,6 +51,7 @@ export default defineConfig({
             { label: 'Foundational Data Model', slug: 'architecture/foundational-data-model' },
             { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
             { label: 'Foundation Schema', slug: 'architecture/foundation-schema' },
+            { label: 'Commerce Schema Design (Phase 3)', slug: 'architecture/commerce-schema-design' },
           ],
         },
         {
