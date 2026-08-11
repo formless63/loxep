@@ -45,6 +45,13 @@ CI actions should use explicit verified release versions rather than obsolete ex
 
 Container images used in reference/production Compose should also use deliberate reproducible versioning once an image is part of Loxep's tested stack. Do not confuse a convenient exploratory `latest` run with a reproducible supported deployment.
 
+## Current intentional exceptions
+
+Documented deviations from "newest stable, no prereleases" (reviewed whenever the surrounding stack moves):
+
+- **`nitro` 3.x beta** in `apps/web`: the current TanStack Start Vite integration is built against the Nitro v3 line, which upstream currently ships as beta releases. It is pinned to an exact verified beta build and re-verified together with the TanStack Start/Router set rather than independently upgraded. Revisit whenever TanStack Start or Nitro publishes a stable pairing.
+- **Deliberate-major queue**: upstream majors that exist but require real migration work (not drive-by bumps) are tracked as explicit issues rather than adopted silently or ignored silently. Renovate surfaces them; adoption happens through reviewed migrations with green builds.
+
 ## Automated updates
 
 Loxep intends to use Renovate for dependency maintenance because it supports Bun manifests/lockfiles as well as GitHub Actions and container references.
