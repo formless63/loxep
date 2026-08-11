@@ -63,6 +63,7 @@ export const MARKET_EVENT_TYPES = [
   "sold_out",
   "quantity_changed",
   "listing_ended",
+  "new_listing",
 ] as const;
 
 export type NotificationEndpointRow =
