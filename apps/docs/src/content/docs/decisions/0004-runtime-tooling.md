@@ -1,8 +1,6 @@
 ---
-title: "ADR-0004: Runtime and Tooling"
+title: "ADR-0004: Node.js runtime with Bun workspace/tooling"
 ---
-
-# ADR-0004: Node.js runtime with Bun workspace/tooling
 
 **Status:** Accepted
 

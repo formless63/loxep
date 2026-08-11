@@ -1,8 +1,6 @@
 ---
-title: "ADR-0009: Integration Boundaries"
+title: "ADR-0009: Provider adapters, maintained clients, and retained source facts"
 ---
-
-# ADR-0009: Provider adapters, maintained clients, and retained source facts
 
 **Status:** Accepted
 

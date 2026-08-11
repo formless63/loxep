@@ -1,8 +1,6 @@
 ---
-title: "ADR-0002: PostgreSQL and TimescaleDB"
+title: "ADR-0002: PostgreSQL with TimescaleDB from the initial deployment"
 ---
-
-# ADR-0002: PostgreSQL with TimescaleDB from the initial deployment
 
 **Status:** Accepted; physical observation policy refined by later foundational decisions.
 

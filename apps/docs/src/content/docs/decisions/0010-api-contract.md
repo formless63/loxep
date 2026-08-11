@@ -1,8 +1,6 @@
 ---
-title: "ADR-0010: API Contract"
+title: "ADR-0010: Framework-native internal calls plus versioned HTTP/OpenAPI integration API"
 ---
-
-# ADR-0010: Framework-native internal calls plus versioned HTTP/OpenAPI integration API
 
 **Status:** Accepted
 

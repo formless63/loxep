@@ -1,5 +1,5 @@
 ---
-title: ADR-0015 — Dashboard Starter and UI Foundation
+title: "ADR-0015: Dashboard Starter and UI Foundation"
 ---
 
 ## Status

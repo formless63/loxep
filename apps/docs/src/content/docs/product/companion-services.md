@@ -2,8 +2,6 @@
 title: Companion Services and Recommended Stack
 ---
 
-# Companion Services and Recommended Stack
-
 Loxep is intended to become a broad business-operations platform, but it should not delay useful capability by rebuilding mature specialist software prematurely.
 
 The project distinguishes three relationships with external tools:
@@ -220,7 +218,7 @@ Examples:
 
 This turns the integrations page into a practical operational dashboard while keeping specialist applications independently deployable.
 
-# Guiding rule
+## Guiding rule
 
 **Integrate mature specialist capability before rebuilding it, but keep Loxep's own domain model authoritative where the data is central to its long-term purpose.**
 

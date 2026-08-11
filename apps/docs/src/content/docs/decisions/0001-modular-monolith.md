@@ -1,8 +1,6 @@
 ---
-title: "ADR-0001: Modular Monolith"
+title: "ADR-0001: Modular monolith with separable web and worker runtimes"
 ---
-
-# ADR-0001: Modular monolith with separable web and worker runtimes
 
 **Status:** Accepted; deployment topology clarified by ADR-0013.
 

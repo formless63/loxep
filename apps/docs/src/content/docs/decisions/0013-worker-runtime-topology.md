@@ -1,8 +1,6 @@
 ---
-title: ADR-0013 — Worker Runtime and Deployment Topology
+title: "ADR-0013: Worker Runtime and Deployment Topology"
 ---
-
-# ADR-0013 — Worker Runtime and Deployment Topology
 
 **Status:** Accepted
 

@@ -1,8 +1,6 @@
 ---
-title: "ADR-0005: TanStack Start"
+title: "ADR-0005: TanStack Start for the application UI"
 ---
-
-# ADR-0005: TanStack Start for the application UI
 
 **Status:** Accepted with maturity caveat
 

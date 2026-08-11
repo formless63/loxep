@@ -1,5 +1,5 @@
 ---
-title: ADR-0017 — Economic Entities, Accounting Books, and Initial Access
+title: "ADR-0017: Economic Entities, Accounting Books, and Initial Access"
 ---
 
 ## Status

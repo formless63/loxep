@@ -1,8 +1,6 @@
 ---
-title: ADR-0014 — RustFS as Initial Object Storage Companion
+title: "ADR-0014: RustFS as Initial Object Storage Companion"
 ---
-
-# ADR-0014 — RustFS as Initial Object Storage Companion
 
 ## Status
 

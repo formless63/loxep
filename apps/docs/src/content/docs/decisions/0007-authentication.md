@@ -1,8 +1,6 @@
 ---
-title: "ADR-0007: Authentication"
+title: "ADR-0007: Better Auth with OIDC and magic links"
 ---
-
-# ADR-0007: Better Auth with OIDC and magic links
 
 **Status:** Accepted; authorization boundary clarified by later foundational decisions.
 

@@ -1,8 +1,6 @@
 ---
-title: "ADR-0003: Graphile Worker"
+title: "ADR-0003: Graphile Worker for durable background work"
 ---
-
-# ADR-0003: Graphile Worker for durable background work
 
 **Status:** Accepted; deployment topology clarified by ADR-0013.
 

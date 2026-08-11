@@ -1,8 +1,6 @@
 ---
-title: ADR-0012 — Media and Object Storage
+title: "ADR-0012: Media and Object Storage"
 ---
-
-# ADR-0012 — Media and Object Storage
 
 **Status:** Accepted; self-hosted provider recommendation amended by ADR-0014.
 

@@ -1,8 +1,6 @@
 ---
-title: "ADR-0006: Drizzle and SQL"
+title: "ADR-0006: Drizzle with first-class SQL"
 ---
-
-# ADR-0006: Drizzle with first-class SQL
 
 **Status:** Accepted
 

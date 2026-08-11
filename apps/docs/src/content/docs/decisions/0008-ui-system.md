@@ -1,8 +1,6 @@
 ---
-title: "ADR-0008: UI System"
+title: "ADR-0008: shadcn/ui with owned component source"
 ---
-
-# ADR-0008: shadcn/ui with owned component source
 
 **Status:** Accepted; expanded by ADR-0015.
 
