@@ -57,13 +57,13 @@ Already established direction:
 - `/starter/*` preserved as reference/demo material;
 - `/dashboard/*` reserved for Loxep's actual dashboard workspace.
 
-Major future areas must be peer workspace roots such as `/market`, `/commerce`, or `/inventory`, not children of one giant `/dashboard/*` tree. See [Workspaces & Navigation](../product/workspaces/).
+Major future areas must be peer workspace roots such as `/market`, `/commerce`, or `/inventory`, not children of one giant `/dashboard/*` tree. See [Workspaces & Navigation](../../product/workspaces/).
 
 Do not aggressively remove useful donor tooling merely to minimize dependencies. Recharts, DnD, and Zustand all have credible Loxep uses. Zustand remains constrained to genuine UI/editing state; PostgreSQL/Query/Router/Form retain their natural state ownership.
 
 ### Configuration and setup
 
-Follow [Configuration & Secrets](./configuration-and-secrets/) and ADR-0016.
+Follow [Configuration & Secrets](../configuration-and-secrets/) and ADR-0016.
 
 Phase 0 must establish two layers:
 

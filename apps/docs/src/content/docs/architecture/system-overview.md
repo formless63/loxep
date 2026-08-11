@@ -2,7 +2,7 @@
 title: System Overview
 ---
 
-This is the current directional architecture for the first implementation. ADRs remain authoritative where a later decision supersedes older prose, and the [Implementation Contract](../development/implementation-contract/) collects the constraints most likely to matter during coding work.
+This is the current directional architecture for the first implementation. ADRs remain authoritative where a later decision supersedes older prose, and the [Implementation Contract](../../development/implementation-contract/) collects the constraints most likely to matter during coding work.
 
 ## Operational flow
 
@@ -145,7 +145,7 @@ Current route roots:
 
 The shared shell owns the workspace switcher, sidebar frame, header, command palette, theme controls, and account controls. The active workspace supplies its navigation tree. Sidebar navigation and Cmd+K therefore follow the same active-workspace configuration.
 
-Future major product surfaces are peer route roots such as `/market`, `/commerce`, `/inventory`, `/projects`, `/finance`, and `/settings`. Workspaces are UX/navigation boundaries, **not** backend/domain ownership, permission, economic-entity, or accounting-book boundaries. See [Workspaces & Navigation](../product/workspaces/).
+Future major product surfaces are peer route roots such as `/market`, `/commerce`, `/inventory`, `/projects`, `/finance`, and `/settings`. Workspaces are UX/navigation boundaries, **not** backend/domain ownership, permission, economic-entity, or accounting-book boundaries. See [Workspaces & Navigation](../../product/workspaces/).
 
 ## Authentication and authorization
 
@@ -183,7 +183,7 @@ Bootstrap configuration contains only facts needed before the application can re
 
 Normal application/provider configuration is stored in PostgreSQL and managed in-app. Runtime secrets such as eBay credentials, ntfy tokens, S3 keys, and future integration credentials are encrypted in PostgreSQL by Loxep's credential/secret service. The root encryption key remains external.
 
-See [Configuration & Secrets](./configuration-and-secrets/) and ADR-0016.
+See [Configuration & Secrets](../configuration-and-secrets/) and ADR-0016.
 
 ## UI foundation and state ownership
 
