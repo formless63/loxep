@@ -119,6 +119,8 @@ Goal: follow physical goods from acquisition through sale.
 - Per-item/order realized profitability.
 - Begin connecting market opportunities to historical realized resale outcomes.
 
+The physical schema for this phase — acquisitions and lot costs, inventory items and locations, append-only movements, allocation and depletion against Phase 3 order lines, outbound shipments, and the opportunity-to-outcome link — is designed in [Inventory & Acquisition Schema Design (Phase 4)](../../architecture/inventory-schema-design/).
+
 ## Phase 5 — Financial foundation
 
 Goal: create trustworthy financial facts without making the ledger the only representation of operational reality.
