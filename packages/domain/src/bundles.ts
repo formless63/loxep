@@ -24,6 +24,43 @@ export const secretBundleSchemas = {
     accessToken: z.string().min(1),
     refreshToken: z.string().min(1).optional(),
   }),
+  /**
+   * eBay application keyset (ADR-0009): the developer-portal credentials one
+   * Loxep installation uses to run the eBay OAuth consent flow and to sign
+   * every provider call. Stored as the application secret
+   * `integration.ebay.keyset`.
+   *
+   * `environment` and `ruName` are not themselves confidential, but they are
+   * part of the atomic bundle on purpose: a sandbox keyset used against
+   * production (or a RuName belonging to a different keyset) fails in ways
+   * that look like credential corruption, and ADR-0019 bundles exist exactly
+   * so a credential cannot be half-configured.
+   */
+  ebay_keyset: z.strictObject({
+    appId: z.string().min(1),
+    certId: z.string().min(1),
+    devId: z.string().min(1),
+    /** eBay "Redirect URL name"; required before user consent can run. */
+    ruName: z.string().min(1).optional(),
+    environment: z.enum(["sandbox", "production"]),
+  }),
+  /**
+   * WooCommerce REST API key pair (ADR-0009): the consumer key and secret a
+   * store issues for one integration. Sent as HTTP Basic Auth over HTTPS.
+   *
+   * The store URL is deliberately NOT part of this bundle, unlike
+   * `ebay_keyset`'s `environment`/`ruName`. A base URL is non-secret
+   * connection configuration that must stay readable without a decryption
+   * round-trip (to render the connection, to run a health check, and to
+   * compute the commerce design's `source_account_key`), and it carries none
+   * of the half-configuration hazard that justifies bundling: a WooCommerce
+   * key pair is issued by exactly one store, and pointing it at the wrong URL
+   * fails as a clean HTTP 401 rather than as apparent credential corruption.
+   */
+  woo_credentials: z.strictObject({
+    consumerKey: z.string().min(1),
+    consumerSecret: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

@@ -84,7 +84,8 @@
     "vaul": "1.1.2",
     "vite-tsconfig-paths": "5.1.4",
     "zod": "4.4.3",
-    "zustand": "5.0.14"
+    "zustand": "5.0.14",
+    "@loxep/integration-ebay": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",

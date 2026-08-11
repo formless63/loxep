@@ -101,6 +101,29 @@ describe("createEbayAdapter", () => {
       "marketplaceId",
       "mintApplicationToken",
       "stats",
+      "withUserToken",
+    ]);
+  });
+
+  it("keeps the user-context adapter free of provider client internals too", () => {
+    const adapter = createEbayAdapter({ ...FAKE });
+    const userAdapter = adapter.withUserToken({
+      accessToken: "FAKE-ACCESS",
+      refreshToken: "FAKE-REFRESH",
+      accessTokenExpiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      refreshTokenExpiresAt: null,
+      scopes: ["https://api.ebay.com/oauth/api_scope"],
+    });
+    expect(Object.keys(userAdapter).sort()).toEqual([
+      "browseGetItem",
+      "browseGetItemByLegacyId",
+      "browseSearch",
+      "currentTokenBundle",
+      "environment",
+      "marketplaceId",
+      "refreshUserToken",
+      "stats",
+      "tradingCall",
     ]);
   });
 });

@@ -154,7 +154,7 @@ application_secret_versions
 
 Secrets separate a stable logical record (what consumers reference) from immutable ciphertext versions, with `current_version` as the explicit active pointer. Plaintext payloads are typed bundles validated per purpose — an S3 credential atomically carries its access key ID and secret access key — and ciphertext is bound to its record/version/key context through AES-256-GCM additional authenticated data. See ADR-0019.
 
-This model is implemented by the `@loxep/domain` service layer: settings are declared through a typed Zod registry that validates writes before persistence and rejects unregistered keys; secret and connection-credential payloads are purpose-typed bundles (`s3_credentials`, `token`, `smtp_password`, `oauth_tokens`) validated before encryption; every ciphertext carries the ADR-0019 context AAD so records cannot be swapped between rows; reads decrypt the current version only; and all writes append redacted audit events that record metadata and version numbers, never values.
+This model is implemented by the `@loxep/domain` service layer: settings are declared through a typed Zod registry that validates writes before persistence and rejects unregistered keys; secret and connection-credential payloads are purpose-typed bundles (`s3_credentials`, `token`, `smtp_password`, `oauth_tokens`, `ebay_keyset`) validated before encryption; every ciphertext carries the ADR-0019 context AAD so records cannot be swapped between rows; reads decrypt the current version only; and all writes append redacted audit events that record metadata and version numbers, never values.
 
 Feature-specific relational configuration remains preferable when it is queried or constrained like normal domain data. For example:
 
@@ -204,6 +204,8 @@ Storage illustrates the boundary well:
 - S3 endpoint, region/bucket, addressing options, and migration state can live in PostgreSQL;
 - S3 access/secret keys are encrypted runtime secrets;
 - changing storage backends uses the supported storage-migration workflow instead of hand-editing object references.
+
+Other encrypted runtime secrets follow the same shape. The provider application keyset an installation registers once — for eBay, the developer-portal app ID/cert ID/dev ID plus its RuName and target environment — is a single typed bundle stored under a stable key by convention `integration.<provider>.keyset` (`integration.ebay.keyset`, purpose `ebay_keyset`); per-connection user tokens obtained through that keyset live separately in `connection_credentials`.
 
 RustFS remains only the initial recommended self-hosted S3 companion. Loxep stores generic S3 semantics rather than RustFS-specific configuration throughout the domain model.
 
