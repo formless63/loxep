@@ -18,7 +18,11 @@
  *     works against a real listing, with real money decimal strings and a
  *     real `raw_state_hash`;
  *  4. the poll reports adaptive facts bounded below by the connection's
- *     rate-budget interval floor.
+ *     rate-budget interval floor;
+ *  5. an `ebay_search` monitor runs the SAME way (loxep-7dp.7): a real Browse
+ *     search through the worker, normalized summaries linked into
+ *     `monitor_items`, observed inside one batch, and `new_listing` derived
+ *     for first-discoveries — the discovery mirror of leg 3.
  *
  * ## What this tier deliberately does NOT prove
  *
@@ -260,5 +264,92 @@ describeLive("live eBay sandbox pipeline (app token only)", () => {
     expect(connection.status).toBe("active");
     expect(connection.lastSuccessAt).not.toBeNull();
     assertNoCredentialMaterial(inspect({ item, observation, connection }));
+  });
+
+  it("runs a real sandbox SEARCH monitor through the worker into observations", async () => {
+    const target = await monitors.createTarget({
+      targetType: "ebay_search",
+      name: "live sandbox search",
+      connectionId,
+      intervalSeconds: 300,
+      // Small on purpose: every page of a discovery poll spends one
+      // rate-budget token, and one page is enough to prove the path.
+      config: { query: "iphone", maxItems: 4 },
+      nextPollAt: new Date(Date.now() - 1000),
+    });
+
+    const after = await pollOnce(target.id);
+    expect(after.consecutiveErrors).toBe(0);
+    expect(after.nextPollAt!.getTime()).toBeGreaterThan(Date.now());
+
+    const links = await handle.db.query.monitorItems.findMany({
+      where: (table, { eq }) => eq(table.monitorTargetId, target.id),
+    });
+    if (links.length === 0) {
+      // Sparse sandbox inventory is normal; the poll itself still succeeded.
+      // eslint-disable-next-line no-console
+      console.info(
+        "[live-sandbox] search returned no listings; skipping the discovery assertions",
+      );
+      return;
+    }
+    expect(links.every((link) => link.active)).toBe(true);
+
+    const observations =
+      await handle.db.query.marketplaceItemObservations.findMany({
+        where: (table, { inArray }) =>
+          inArray(
+            table.marketplaceItemId,
+            links.map((link) => link.marketplaceItemId),
+          ),
+      });
+    expect(observations.length).toBeGreaterThan(0);
+    const batchIds = new Set(
+      observations.map((observation) => observation.observationBatchId),
+    );
+    // One poll, one batch identity, minted once at fetch time.
+    expect(batchIds.size).toBe(1);
+    for (const observation of observations) {
+      expect(observation.source).toBe("ebay:search");
+      expect(observation.connectionId).toBe(connectionId);
+      // A search summary reports no quantity/availability — NULL, never 0.
+      expect(observation.quantityAvailable).toBeNull();
+      expect(observation.availability).toBeNull();
+      if (observation.price !== null) {
+        expect(observation.price).toMatch(/^-?\d+(\.\d+)?$/u);
+      }
+    }
+
+    // Every first-discovery produced exactly one `new_listing`, and nothing
+    // in the persisted rows carries keyset material.
+    const events = await handle.db.query.marketEvents.findMany({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.eventType, "new_listing"),
+          inArray(
+            table.marketplaceItemId,
+            links.map((link) => link.marketplaceItemId),
+          ),
+        ),
+    });
+    const perItem = new Map<string, number>();
+    for (const event of events) {
+      perItem.set(
+        event.marketplaceItemId,
+        (perItem.get(event.marketplaceItemId) ?? 0) + 1,
+      );
+    }
+    expect([...perItem.values()].every((count) => count === 1)).toBe(true);
+    expect(events.every((event) => event.monitorTargetId === target.id)).toBe(
+      true,
+    );
+
+    const adaptive = (after.config as Record<string, unknown>)["adaptive"] as
+      | Record<string, unknown>
+      | undefined;
+    expect(Number(adaptive!["lastComputedInterval"])).toBeGreaterThanOrEqual(
+      EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+    );
+    assertNoCredentialMaterial(inspect({ links, observations, events }));
   });
 });

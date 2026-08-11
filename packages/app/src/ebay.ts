@@ -53,6 +53,14 @@
  * `recordPollSuccess` as `bounds.minSeconds`, which @loxep/market applies
  * LAST — a rate budget is a safety constraint, not a preference.
  *
+ * The capacity/refill pair is OPERATOR-CONFIGURABLE through the registered
+ * application setting `integration.ebay.rate_budget` (loxep-62y.2.3): the
+ * factory takes a `resolveRateBudget` callback, consults it on every adapter
+ * lookup, and rebuilds the connection's bucket — and with it the derived
+ * floor — as soon as the stored value changes. An explicit `rateBudget`
+ * option still wins, so tests and deliberately tight deployments are not at
+ * the mercy of stored state.
+ *
  * ## Token lifecycle
  *
  * The stored `oauth_tokens` credential is read, run through
@@ -172,14 +180,31 @@ const defaultAdapterConstructor: EbayAdapterConstructor = ({
     ...(logger !== undefined ? { logger } : {}),
   });
 
+/** Token-bucket parameters: burst size and sustained calls per second. */
+export interface EbayRateBudgetConfig {
+  capacity: number;
+  refillPerSecond: number;
+}
+
 export interface CreateEbayAdapterFactoryOptions {
   db: LoxepDb;
   secrets: SecretsService;
   connections: ConnectionsService;
   connectionCredentials: ConnectionCredentialsService;
   logger?: JobsLogger;
-  /** Override the token-bucket defaults (tests, tight deployments). */
-  rateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the token-bucket defaults (tests, tight deployments). An
+   * explicit value WINS over {@link resolveRateBudget}: a caller that names a
+   * budget means it, and a test must not depend on stored settings.
+   */
+  rateBudget?: EbayRateBudgetConfig;
+  /**
+   * Read the budget from the registered application setting
+   * (`integration.ebay.rate_budget`) at adapter-build time. Consulted only
+   * when `rateBudget` is absent; a failure falls back to the documented
+   * defaults rather than taking the pipeline down.
+   */
+  resolveRateBudget?: () => Promise<EbayRateBudgetConfig>;
   /**
    * Provider-client constructor seam. Defaults to `createEbayAdapter`; tests
    * inject a client whose OAuth exchange is stubbed so the refresh-and-
@@ -228,6 +253,8 @@ interface CacheEntry {
   adapter: EbayConnectionAdapter;
   /** Epoch ms the cached user token stops being usable; Infinity when none. */
   expiresAtMs: number;
+  /** The budget the entry was built with; a change forces a rebuild. */
+  budgetConfig: EbayRateBudgetConfig;
 }
 
 /** Non-secret consent facts stored on `connections.config.ebayOAuth`. */
@@ -269,6 +296,12 @@ function readRefreshTokenExpiresAt(
  * {@link ADAPTER_CACHE_SKEW_SECONDS} of expiry, which forces a rebuild
  * through the refresh-and-persist path. {@link invalidate} drops an entry
  * immediately (used after an `auth`-class provider failure).
+ *
+ * A cached entry is ALSO discarded when the resolved rate budget no longer
+ * matches the one it was built with. Without that, an operator tightening
+ * `integration.ebay.rate_budget` would wait for a token expiry — or, on a
+ * connection with no user consent at all, forever — before the new limit and
+ * its derived interval floor took effect.
  */
 export function createEbayAdapterFactory(
   options: CreateEbayAdapterFactoryOptions,
@@ -280,30 +313,74 @@ export function createEbayAdapterFactory(
 } {
   const { secrets, connections, connectionCredentials, logger } = options;
   const constructAdapter = options.createAdapter ?? defaultAdapterConstructor;
-  const budgetConfig = options.rateBudget ?? {
+  const staticBudgetConfig = options.rateBudget ?? {
     capacity: EBAY_RATE_BUDGET_CAPACITY,
     refillPerSecond: EBAY_RATE_BUDGET_REFILL_PER_SECOND,
   };
-  const intervalFloorSeconds = rateBudgetIntervalFloorSeconds(budgetConfig);
+  /**
+   * The floor implied by the CONFIGURED-AT-CONSTRUCTION budget. When the
+   * setting-backed resolver is in use the authoritative floor is the one on
+   * each built adapter (`minIntervalSeconds`), which is recomputed whenever
+   * the stored budget changes; this value stays the static view for
+   * diagnostics and for callers that never build an adapter.
+   */
+  const intervalFloorSeconds = rateBudgetIntervalFloorSeconds(
+    staticBudgetConfig,
+  );
 
   // Budgets outlive adapters on purpose: rebuilding an adapter after a token
-  // refresh must not hand the connection a fresh full bucket.
-  const budgets = new Map<string, RateBudget>();
+  // refresh must not hand the connection a fresh full bucket. The parameters
+  // are remembered alongside, so a settings change replaces the bucket
+  // instead of leaving the connection on the old limit forever.
+  const budgets = new Map<
+    string,
+    { budget: RateBudget; config: EbayRateBudgetConfig }
+  >();
   const cache = new Map<string, CacheEntry>();
   // One in-flight build per connection: concurrent polls of the same
   // connection must not each run the refresh/persist path.
   const inFlight = new Map<string, Promise<EbayConnectionAdapter>>();
 
-  function budgetFor(connectionId: string): RateBudget {
-    let budget = budgets.get(connectionId);
-    if (budget === undefined) {
-      budget = createRateBudget({
-        capacity: budgetConfig.capacity,
-        refillPerSecond: budgetConfig.refillPerSecond,
-        ...(logger !== undefined ? { logger } : {}),
-      });
-      budgets.set(connectionId, budget);
+  /** The budget parameters this build must use (setting, or the default). */
+  async function resolveBudgetConfig(): Promise<EbayRateBudgetConfig> {
+    if (options.rateBudget !== undefined || options.resolveRateBudget === undefined) {
+      return staticBudgetConfig;
     }
+    try {
+      return await options.resolveRateBudget();
+    } catch (error) {
+      logger?.error(
+        { err: error instanceof Error ? error.message : String(error) },
+        "failed to read the eBay rate-budget setting; using the documented defaults",
+      );
+      return staticBudgetConfig;
+    }
+  }
+
+  function budgetFor(
+    connectionId: string,
+    config: EbayRateBudgetConfig,
+  ): RateBudget {
+    const existing = budgets.get(connectionId);
+    if (
+      existing !== undefined &&
+      existing.config.capacity === config.capacity &&
+      existing.config.refillPerSecond === config.refillPerSecond
+    ) {
+      return existing.budget;
+    }
+    if (existing !== undefined) {
+      logger?.info(
+        { connectionId, ...config },
+        "eBay rate budget reconfigured; replacing the connection's token bucket",
+      );
+    }
+    const budget = createRateBudget({
+      capacity: config.capacity,
+      refillPerSecond: config.refillPerSecond,
+      ...(logger !== undefined ? { logger } : {}),
+    });
+    budgets.set(connectionId, { budget, config });
     return budget;
   }
 
@@ -347,7 +424,10 @@ export function createEbayAdapterFactory(
     });
   }
 
-  async function build(connectionId: string): Promise<EbayConnectionAdapter> {
+  async function build(
+    connectionId: string,
+    budgetConfig: EbayRateBudgetConfig,
+  ): Promise<EbayConnectionAdapter> {
     const connection = await connections.getConnection(connectionId);
     if (connection.provider !== EBAY_CONNECTION_PROVIDER) {
       throw new EbayKeysetMissingError(
@@ -361,7 +441,8 @@ export function createEbayAdapterFactory(
       );
     }
     const { keyset, source } = resolved;
-    const budget = budgetFor(connectionId);
+    const budget = budgetFor(connectionId, budgetConfig);
+    const minIntervalSeconds = rateBudgetIntervalFloorSeconds(budgetConfig);
     const application = constructAdapter({
       keyset,
       rateBudget: budget,
@@ -436,7 +517,7 @@ export function createEbayAdapterFactory(
       keysetSource: source,
       application,
       user,
-      minIntervalSeconds: intervalFloorSeconds,
+      minIntervalSeconds,
       requireUser: () => {
         if (user === null) {
           throw new EbayKeysetMissingError(
@@ -446,24 +527,27 @@ export function createEbayAdapterFactory(
         return user;
       },
     };
-    cache.set(connectionId, { adapter, expiresAtMs });
+    cache.set(connectionId, { adapter, expiresAtMs, budgetConfig });
     return adapter;
   }
 
   async function getAdapterForConnection(
     connectionId: string,
   ): Promise<EbayConnectionAdapter> {
+    const budgetConfig = await resolveBudgetConfig();
     const cached = cache.get(connectionId);
     if (
       cached !== undefined &&
-      Date.now() < cached.expiresAtMs - ADAPTER_CACHE_SKEW_SECONDS * 1000
+      Date.now() < cached.expiresAtMs - ADAPTER_CACHE_SKEW_SECONDS * 1000 &&
+      cached.budgetConfig.capacity === budgetConfig.capacity &&
+      cached.budgetConfig.refillPerSecond === budgetConfig.refillPerSecond
     ) {
       return cached.adapter;
     }
     cache.delete(connectionId);
     let pending = inFlight.get(connectionId);
     if (pending === undefined) {
-      pending = build(connectionId).finally(() => {
+      pending = build(connectionId, budgetConfig).finally(() => {
         inFlight.delete(connectionId);
       });
       inFlight.set(connectionId, pending);

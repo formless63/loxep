@@ -56,6 +56,7 @@ import { renderMarketEventMessage as renderEnrichedMarketEventMessage } from "@l
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import { createEbayPollExecutor } from "./poll-executor.ts";
+import type { CreateEbayPollExecutorOptions } from "./poll-executor.ts";
 import { createEbayTokenRefreshTasks } from "./refresh-tokens.ts";
 import type { AppCronItem } from "./refresh-tokens.ts";
 import { buildAppServices } from "./services.ts";
@@ -75,6 +76,11 @@ export interface BuildWorkerRegistryOptions {
   dispatchBatchLimit?: number;
   /** Per-connection eBay token bucket override (tests). */
   ebayRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Provider seam for the `ebay_search`/`ebay_seller` paging calls — see
+   * {@link CreateEbayPollExecutorOptions.discovery} for why it exists.
+   */
+  discovery?: CreateEbayPollExecutorOptions["discovery"];
 }
 
 export interface WorkerComposition {
@@ -149,6 +155,9 @@ export function buildWorkerRegistry(
     enqueueDeliveriesForEvent: delivery.enqueueDeliveriesForEvent,
     addJob: enqueue,
     listings,
+    ...(options.discovery !== undefined
+      ? { discovery: options.discovery }
+      : {}),
   });
   const market = createMarketTasks({
     db: services.db,

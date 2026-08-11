@@ -17,6 +17,16 @@ export { buildAppServices } from "./services.ts";
 export type { AppServices, BuildAppServicesOptions } from "./services.ts";
 
 export {
+  DEFAULT_SETTINGS_TTL_MS,
+  createMonitorSettingsReader,
+} from "./settings.ts";
+export type {
+  CreateMonitorSettingsReaderOptions,
+  MonitorSettingsReader,
+  ResolvedMonitorSettings,
+} from "./settings.ts";
+
+export {
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
   EBAY_BUDGET_TARGETS_PER_CONNECTION,
   EBAY_CONNECTION_CONFIG_KEY,
@@ -45,13 +55,22 @@ export {
 export type { ListingContext, ListingContextCache } from "./listing-context.ts";
 
 export {
+  DISCOVERY_DEFAULT_MAX_ITEMS,
+  IGNORED_FILTER_WARNING_ID,
+  IGNORED_SORT_WARNING_ID,
   ITEM_OBSERVATION_SOURCE,
-  WATCHLIST_MAX_ITEMS_PER_POLL,
   WATCHLIST_MAX_PAGES,
   WATCHLIST_OBSERVATION_SOURCE,
   createEbayPollExecutor,
 } from "./poll-executor.ts";
 export type { CreateEbayPollExecutorOptions } from "./poll-executor.ts";
+
+export {
+  SEARCH_OBSERVATION_SOURCE,
+  SELLER_OBSERVATION_SOURCE,
+  summaryToObservation,
+} from "./listing-summary.ts";
+export type { SummaryObservation } from "./listing-summary.ts";
 
 export {
   REFRESH_TOKENS_CRON_MATCH,
