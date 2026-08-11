@@ -37,3 +37,18 @@ export class SecretNotFoundError extends DomainError {}
 
 /** Misuse of the secrets/credentials service (purpose mismatch, etc.). */
 export class SecretsServiceError extends DomainError {}
+
+/** Entity/connection input failed its Zod schema (kind, status, config…). */
+export class DomainValidationError extends DomainError {}
+
+/** Referenced economic entity does not exist. */
+export class EntityNotFoundError extends DomainError {}
+
+/** Economic-entity parent relationship is invalid: self-parent, cycle, or depth cap. */
+export class EntityHierarchyError extends DomainError {}
+
+/** Operation requires an active economic entity but the entity is deactivated. */
+export class EntityInactiveError extends DomainError {}
+
+/** Referenced connection does not exist. */
+export class ConnectionNotFoundError extends DomainError {}

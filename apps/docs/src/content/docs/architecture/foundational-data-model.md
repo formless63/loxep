@@ -123,6 +123,8 @@ A connection represents one configured relationship to an external account/store
 
 A connection may carry nullable `economic_entity_id` when the account clearly represents one entity. The relationship is attribution/context, not authorization. Shared/infrastructural connections may remain unassigned.
 
+`@loxep/domain` implements this as the economic-entities and connections services: kinds and statuses are validated against the application-owned text unions, every mutation is audited, and entity attribution is enforced as context-only per ADR-0017.
+
 Not every external endpoint needs to become a `connection`. For example, a simple ntfy notification endpoint can remain a notification-owned configuration record with an application secret rather than pretending it has provider-account lifecycle semantics.
 
 ## Connection credentials and secrets
