@@ -132,6 +132,8 @@ Polling uses database-controlled scheduling. Do not create one recurring cron en
 
 At least one viable pre-login auth path must be available from bootstrap configuration. Do not build a permanent unauthenticated web backdoor for setup.
 
+Implemented conventions (`@loxep/auth`, Better Auth 1.6): `createAuth({ config, db })` explicitly constructs the runtime instance from bootstrap config (drizzle adapter over the checked-in auth schema, `secret`/`baseURL` from `LOXEP_AUTH_SECRET`/`LOXEP_PUBLIC_ORIGIN` — no `BETTER_AUTH_*` env anywhere, importing packages never constructs an instance); the plugin set is shared with CLI schema generation via `buildAuthPluginConfig()` (`@loxep/db`) so runtime and generated schema cannot drift; magic-link delivery goes through an injectable `sendMagicLinkEmail` (real nodemailer SMTP transport from `LOXEP_SMTP_*` by default); the bootstrap OIDC issuer registers as generic-OAuth provider id `oidc` via its discovery document (Pocket ID needs nothing provider-specific); roles are exactly `admin`/`member` with default `member`, guarded server-side by `requireRole(session, "admin")`; first-admin bootstrap and `loxep admin promote|list` recovery behave as described in [Configuration & Secrets](../configuration-and-secrets/#first-administrator-and-recovery).
+
 Fine-grained resource authorization is a later extension if real shared-install workflows require it. Do not prebuild a speculative permissions matrix.
 
 ### Application settings and runtime secrets
@@ -204,6 +206,8 @@ Not every polling response becomes a heavyweight domain event. Source retention 
 - multi-host Loxep deployments warn when unsafe node-local media is configured.
 
 Storage backend choice/configuration should be manageable in-app where possible; deployment filesystem mounts remain deployment topology.
+
+**Implemented** (`@loxep/storage`): the `local` and generic `s3` driver families exist behind one `StorageDriver` contract (`get` returns a stream; keys are validated uniformly — traversal/absolute keys are rejected by contract in every driver). The driver conformance suite is implementation-blind: one shared test set runs against both drivers with only endpoint configuration differing, and the S3 leg targets whatever generic endpoint `LOXEP_TEST_S3_*` points at (RustFS is the tested default, never an assumption). The AWS SDK client is configured for S3-compatible endpoints: path-style addressing and `requestChecksumCalculation`/`responseChecksumValidation` set to `WHEN_REQUIRED` by default, since the SDK's default CRC32 checksums are rejected by some non-AWS implementations. Storage migration follows copy → verify (size + sha256 re-hashed from a streamed destination read) → transactional metadata cutover → source retained, with per-object durable state and jobKey-deduped `storage.migrate-object` jobs making it resumable; source deletion happens only through the explicit `cleanupMigrationSources` call after completion. The multi-host local-media warning is not implemented yet — it needs a host registry and belongs to the diagnostics/health surface.
 
 ### External companion resources
 

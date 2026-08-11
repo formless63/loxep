@@ -4,6 +4,14 @@
  *
  *   loxep migrate               apply pending database migrations (advisory-locked)
  *   loxep start [--mode=MODE]   start the application; MODE overrides LOXEP_MODE
+ *   loxep admin promote --email=EMAIL   grant the admin role to an existing user
+ *   loxep admin list                    print id/email/role for every user
+ *
+ * `loxep admin` is the shell-level first-admin recovery path
+ * (configuration-and-secrets.md "First administrator and recovery"): a
+ * deployment owner with server access can promote or inspect users directly
+ * against the database, with no web backdoor. It loads worker-level
+ * configuration only, so recovery never requires web-serving env facts.
  *
  * Every mode is one Node.js process. `all` runs the web runtime with the
  * worker embedded in-process; `web` omits the worker; `worker` omits the web
@@ -115,6 +123,70 @@ async function startWebRuntime(config: BootstrapConfig, logger: Logger): Promise
   logger.info({ port: config.port }, 'web runtime started');
 }
 
+/**
+ * Shell-level admin recovery (`loxep admin promote|list`). Returns the
+ * process exit code: 0 success, 1 user not found, 2 usage/config error.
+ * Role updates write the Better Auth `user.role` column directly via
+ * `@loxep/db`; the running application observes the change on the user's
+ * next session read.
+ */
+async function commandAdmin(args: string[]): Promise<number> {
+  const usage = 'usage: loxep admin <promote --email=EMAIL | list>';
+  const [subcommand, ...rest] = args;
+  if (subcommand !== 'promote' && subcommand !== 'list') {
+    console.error(usage);
+    return 2;
+  }
+  let email: string | undefined;
+  for (const arg of rest) {
+    if (subcommand === 'promote' && arg.startsWith('--email=')) {
+      email = arg.slice('--email='.length);
+    } else {
+      console.error(`unknown argument "${arg}"\n${usage}`);
+      return 2;
+    }
+  }
+  if (subcommand === 'promote' && (email === undefined || email === '')) {
+    console.error(`loxep admin promote requires --email=EMAIL\n${usage}`);
+    return 2;
+  }
+
+  // Worker-level config: recovery needs database facts only, never
+  // web-serving configuration.
+  const config = loadConfigOrExit('worker');
+  const { createDb, closeDb } = await import('@loxep/db');
+  const handle = createDb(config.databaseUrl);
+  try {
+    if (subcommand === 'list') {
+      const result = await handle.pool.query<{ id: string; email: string; role: string | null }>(
+        'select id, email, role from "user" order by created_at asc',
+      );
+      if (result.rows.length === 0) {
+        console.log('loxep admin: no users exist yet');
+      }
+      for (const row of result.rows) {
+        console.log(`${row.id}\t${row.email}\t${row.role ?? 'member'}`);
+      }
+      return 0;
+    }
+    const updated = await handle.pool.query<{ id: string; email: string }>(
+      `update "user" set role = 'admin' where lower(email) = lower($1) returning id, email`,
+      [email],
+    );
+    const row = updated.rows[0];
+    if (!row) {
+      console.error(
+        `loxep admin promote: no user found with email "${email}" — users must sign in once before they can be promoted`,
+      );
+      return 1;
+    }
+    console.log(`loxep admin promote: granted role 'admin' to ${row.email} (user ${row.id})`);
+    return 0;
+  } finally {
+    await closeDb(handle);
+  }
+}
+
 async function commandStart(modeOverride?: LoxepMode): Promise<void> {
   const config = loadConfigOrExit(modeOverride);
   const logger = createLogger({ level: config.logLevel });
@@ -141,7 +213,11 @@ async function commandStart(modeOverride?: LoxepMode): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-const { command, mode } = parseArgs(process.argv.slice(2));
+const argv = process.argv.slice(2);
+if (argv[0] === 'admin') {
+  process.exit(await commandAdmin(argv.slice(1)));
+}
+const { command, mode } = parseArgs(argv);
 switch (command) {
   case 'migrate':
     await commandMigrate();
@@ -151,6 +227,8 @@ switch (command) {
     await commandStart(mode);
     break;
   default:
-    console.error('usage: loxep <migrate | start [--mode=all|web|worker]>');
+    console.error(
+      'usage: loxep <migrate | start [--mode=all|web|worker] | admin <promote --email=EMAIL | list>>',
+    );
     process.exit(command === 'help' ? 0 : 2);
 }

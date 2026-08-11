@@ -119,7 +119,7 @@ Recommended behavior:
 4. Shell-level recovery tooling may explicitly promote/recover an administrator for a deployment owner with server access.
 5. There is no permanent hidden web backdoor or default password.
 
-Exact Better Auth APIs must be verified against the current pinned version during implementation.
+Implemented behavior (`@loxep/auth`): a Better Auth `session.create` after-hook compares the signed-in user's email case-insensitively against `LOXEP_BOOTSTRAP_ADMIN_EMAIL`; on first match it grants `admin` and records `application_settings` key `auth.first_admin_bootstrap` (`{completedAt, userId, email}`) in one transaction. The recorded completion is authoritative — later sign-ins never re-grant, even after a deliberate demotion. Shell recovery: `loxep admin promote --email=<email>` sets an existing user's role to `admin` directly in the database (worker-level configuration only; refuses unknown emails), and `loxep admin list` prints each user's id/email/role.
 
 ## Database-backed settings model
 
