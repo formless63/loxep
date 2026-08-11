@@ -4,7 +4,7 @@ import { liveness } from '@loxep/runtime';
 export const Route = createFileRoute('/health/live')({
   server: {
     handlers: {
-      GET: () => Response.json(liveness()),
-    },
-  },
+      GET: () => Response.json(liveness())
+    }
+  }
 });

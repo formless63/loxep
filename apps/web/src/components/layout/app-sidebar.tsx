@@ -10,10 +10,22 @@ import {
 import { getWorkspaceForPath, workspaces } from '@/config/workspaces';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
+import { authClient } from '@/lib/auth-client';
 import { Link } from '@tanstack/react-router';
-import { useLocation, useRouter } from '@tanstack/react-router';
+import { useLocation, useRouteContext, useRouter } from '@tanstack/react-router';
 import * as React from 'react';
+import { toast } from 'sonner';
 import { Icons } from '../icons';
+
+async function handleSignOut() {
+  const { error } = await authClient.signOut();
+  if (error) {
+    toast.error(error.message || 'Sign out failed. Please try again.');
+    return;
+  }
+  // Full navigation so the server re-evaluates the session for every route.
+  window.location.assign('/auth/sign-in');
+}
 import {
   Sidebar,
   SidebarContent,
@@ -34,8 +46,12 @@ export default function AppSidebar() {
   const { pathname } = useLocation();
   const { isOpen } = useMediaQuery();
   const router = useRouter();
+  const { auth } = useRouteContext({ from: '__root__' });
   const activeWorkspace = getWorkspaceForPath(pathname);
   const filteredGroups = useFilteredNavGroups(activeWorkspace.navGroups);
+
+  const userName = auth?.user.name || auth?.user.email || 'User';
+  const userEmail = auth?.user.email ?? '';
 
   React.useEffect(() => {
     // Side effects based on sidebar state changes
@@ -159,8 +175,8 @@ export default function AppSidebar() {
                     <Icons.account className='size-4' />
                   </div>
                   <div className='grid flex-1 text-left text-sm leading-tight'>
-                    <span className='truncate font-medium'>User</span>
-                    <span className='text-muted-foreground truncate text-xs'>user@example.com</span>
+                    <span className='truncate font-medium'>{userName}</span>
+                    <span className='text-muted-foreground truncate text-xs'>{userEmail}</span>
                   </div>
                   <Icons.chevronsDown className='ml-auto size-4' />
                 </SidebarMenuButton>
@@ -187,7 +203,7 @@ export default function AppSidebar() {
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
+                <DropdownMenuItem onClick={handleSignOut}>
                   <Icons.logout className='mr-2 h-4 w-4' />
                   Sign out
                 </DropdownMenuItem>

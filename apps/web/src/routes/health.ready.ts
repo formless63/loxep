@@ -7,7 +7,7 @@ export const Route = createFileRoute('/health/ready')({
       GET: async () => {
         const report = await readiness();
         return Response.json(report, { status: readinessHttpStatus(report) });
-      },
-    },
-  },
+      }
+    }
+  }
 });
