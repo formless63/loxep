@@ -1,0 +1,24 @@
+{
+  "name": "@loxep/market",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@loxep/db": "workspace:*",
+    "@loxep/jobs": "workspace:*",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/pg": "8.21.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
