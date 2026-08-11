@@ -451,7 +451,7 @@ unique nulls not distinct
 
 `status`: `draft | active | ended | sold_out | unknown`.
 
-The unique constraint requires `NULLS NOT DISTINCT` (PostgreSQL 15+; the deployment target is `timescale/timescaledb:2.29.1-pg18`, so it is available). Without it, PostgreSQL treats each null `external_variation_id` as distinct and every re-sync of a non-variant listing inserts a duplicate. The portable fallback, if that clause is ever unavailable, is a unique expression index over `coalesce(external_variation_id, '')`. Verify the clause against current PostgreSQL behavior at implementation time.
+The unique constraint requires `NULLS NOT DISTINCT` (PostgreSQL 15+; the deployment target is `timescale/timescaledb-ha:pg18.4-ts2.29.1-all`, so it is available). Without it, PostgreSQL treats each null `external_variation_id` as distinct and every re-sync of a non-variant listing inserts a duplicate. The portable fallback, if that clause is ever unavailable, is a unique expression index over `coalesce(external_variation_id, '')`. Verify the clause against current PostgreSQL behavior at implementation time.
 
 `quantity_available` is `integer` here — matching `marketplace_item_observations.quantity_available`, because it mirrors the same provider-reported integer field.
 
