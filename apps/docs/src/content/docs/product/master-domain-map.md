@@ -4,7 +4,7 @@ title: Master Domain Map
 
 This document is intentionally broader than the implementation roadmap. It preserves the territory Loxep may need to cover before implementation choices accidentally close useful paths.
 
-It describes **product/domain capability**, not one giant screen hierarchy and not a promise to build everything. See [Workspaces & Navigation](./workspaces/) for the current UI map and [Domain Boundaries](../architecture/domain-boundaries/) for backend ownership.
+It describes **product/domain capability**, not one giant screen hierarchy and not a promise to build everything. See [Workspaces & Navigation](../workspaces/) for the current UI map and [Domain Boundaries](../../architecture/domain-boundaries/) for backend ownership.
 
 ## Scope labels
 
@@ -88,7 +88,7 @@ This UI grouping does **not** merge the underlying domains. For example, Finance
 
 Phase 0 does **not** implement per-connection/per-workspace/per-economic-entity ACLs. Fine-grained access can be added later when a concrete shared-install workflow requires it.
 
-Normal provider settings and credentials are configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before database-backed administration or login can work. See [Configuration & Secrets](../architecture/configuration-and-secrets/).
+Normal provider settings and credentials are configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before database-backed administration or login can work. See [Configuration & Secrets](../../architecture/configuration-and-secrets/).
 
 ### NEXT / DESIGN-FOR
 

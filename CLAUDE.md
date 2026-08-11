@@ -22,7 +22,7 @@ bun run lint              # oxlint (apps/web)
 bun run format            # oxfmt --write (apps/web)
 bun run format:check      # oxfmt --check
 bun run docs:dev          # Astro Starlight docs dev server
-bun run docs:build        # docs production build (no automated link check yet — a Phase 0 to-do)
+bun run docs:build        # docs production build; fails on broken internal links (starlight-links-validator + scripts/check-doc-links.mjs browser-semantics check)
 ```
 
 Inside `apps/web` there is also `lint:fix` (`oxlint --fix`) and `start` (`node .output/server/index.mjs`). There is no test suite yet; the contract's "Testing and quality gates" section describes what foundation work is expected to establish (real Postgres/Timescale integration tests — never SQLite substitutes — Graphile Worker tests, Playwright, storage conformance tests).

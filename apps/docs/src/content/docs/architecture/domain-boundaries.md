@@ -10,7 +10,7 @@ The application's top-level workspaces organize navigation and workflows. They d
 
 For example, the proposed Finance workspace may compose Billing, Payments, Banking, Accounting, Tax, and Reporting domains. Those domains keep distinct ownership even if the user experiences them in one navigation surface.
 
-See [Workspaces & Navigation](../product/workspaces/) for the UX map.
+See [Workspaces & Navigation](../../product/workspaces/) for the UX map.
 
 ## Shared foundation
 
@@ -29,7 +29,7 @@ The shared foundation owns infrastructural concepts rather than commercial busin
 
 Better Auth owns application authentication/session state and deployment-level `admin`/`member` roles. The initial access model is installation-wide for ordinary product data; Phase 0 does not create connection/entity/workspace ACL relations.
 
-Bootstrap environment/mounted-secret configuration remains outside this domain where it must exist before PostgreSQL-backed administration or login can work. Normal runtime/provider settings belong in PostgreSQL. See [Configuration & Secrets](./configuration-and-secrets/).
+Bootstrap environment/mounted-secret configuration remains outside this domain where it must exist before PostgreSQL-backed administration or login can work. Normal runtime/provider settings belong in PostgreSQL. See [Configuration & Secrets](../configuration-and-secrets/).
 
 Shared foundation must not become a dumping ground for unrelated business logic.
 

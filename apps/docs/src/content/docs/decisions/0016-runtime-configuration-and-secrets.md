@@ -48,4 +48,4 @@ Examples that should normally be in-app rather than Compose variables include eB
 - Phase 0 needs database-backed application settings/secret semantics in addition to connection credentials.
 - At least one explicit first-admin and shell-level recovery path must exist; there is no default password or unauthenticated web configuration backdoor.
 
-See [Configuration & Secrets](../architecture/configuration-and-secrets/) for the operational policy and examples.
+See [Configuration & Secrets](../../architecture/configuration-and-secrets/) for the operational policy and examples.

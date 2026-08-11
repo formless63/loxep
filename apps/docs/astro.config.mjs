@@ -1,11 +1,15 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightLinksValidator from 'starlight-links-validator';
 
 export default defineConfig({
   site: 'https://formless63.github.io',
   base: '/loxep',
   integrations: [
     starlight({
+      // Relative links are the project convention (portable across docs
+      // renderers); the validator checks that they resolve in the built site.
+      plugins: [starlightLinksValidator({ errorOnRelativeLinks: false })],
       title: 'Loxep',
       description: 'Self-hosted marketplace intelligence and business operations.',
       customCss: ['./src/styles/custom.css'],

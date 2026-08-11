@@ -34,7 +34,7 @@ Loxep's real dashboard occupies:
 
 The shared application shell is workspace-aware. The top of the sidebar switches between workspace roots, while sidebar navigation and Cmd+K derive from the active workspace's navigation configuration.
 
-Future major product areas are peers of `/dashboard`, not descendants of one giant dashboard route tree. See [Workspaces & Navigation](../product/workspaces/).
+Future major product areas are peers of `/dashboard`, not descendants of one giant dashboard route tree. See [Workspaces & Navigation](../../product/workspaces/).
 
 ## Preserve useful reference material
 
@@ -89,7 +89,7 @@ Zustand is not a second server-state store. TanStack Query owns server/cache sta
 
 Zustand may own immediate cross-component editing/workspace state such as dashboard layout editing, chart configuration, or complex UI selections. Durable preferences should normally be saved to PostgreSQL.
 
-See ADR-0011 and the [Implementation Contract](../development/implementation-contract/).
+See ADR-0011 and the [Implementation Contract](../../development/implementation-contract/).
 
 ## Version policy
 

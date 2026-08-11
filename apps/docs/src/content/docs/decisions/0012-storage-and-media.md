@@ -50,7 +50,7 @@ This should become an administrative application workflow, not merely documentat
 
 ## Logical media model
 
-> **Superseded:** this ADR's original sketch stored a bare `storage_backend text` driver name on each media object. The accepted foundation model instead represents each configured storage destination as a **`storage_backends` record** (driver family, config, secret reference), with `media_objects.storage_backend_id` as a foreign key and `unique(storage_backend_id, storage_key)`. This is what allows one installation to hold several configured destinations and migrate between them without changing media identity. The [Foundation Schema Draft](../architecture/foundation-schema/) is authoritative for the physical shape.
+> **Superseded:** this ADR's original sketch stored a bare `storage_backend text` driver name on each media object. The accepted foundation model instead represents each configured storage destination as a **`storage_backends` record** (driver family, config, secret reference), with `media_objects.storage_backend_id` as a foreign key and `unique(storage_backend_id, storage_key)`. This is what allows one installation to hold several configured destinations and migrate between them without changing media identity. The [Foundation Schema Draft](../../architecture/foundation-schema/) is authoritative for the physical shape.
 
 ```text
 storage_backends
