@@ -20,7 +20,7 @@ Already established:
 - minimal economic-entity model distinct from users, provider connections, workspaces, and future accounting books;
 - initial installation-wide `admin`/`member` access model with no speculative resource ACL layer.
 
-The Phase 0 implementation work is done — implemented, exit walkthrough pending: each item below exists in the codebase, but the formal [exit criteria](../../architecture/phase-0-foundation/#exit-criteria) fresh-clone walkthrough has not yet been performed, so Phase 0 is not declared complete. Implemented:
+**Phase 0 is complete.** The formal [exit criteria](../../architecture/phase-0-foundation/#exit-criteria) were validated by a fresh-clone walkthrough — see the [Phase 0 Exit Walkthrough](../../development/phase-0-exit-walkthrough/) record (16/17 on first pass; the one finding was fixed and re-verified at head). Implemented:
 
 - the PostgreSQL + TimescaleDB development/Compose environment;
 - Drizzle migrations and database conventions;
