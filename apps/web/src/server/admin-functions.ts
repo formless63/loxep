@@ -16,7 +16,11 @@ import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
-import { ECONOMIC_ENTITY_KIND_VALUES } from '@/features/settings/constants';
+import type { MarketEventType } from '@loxep/market';
+import {
+  ECONOMIC_ENTITY_KIND_VALUES,
+  MARKET_EVENT_TYPE_VALUES
+} from '@/features/settings/constants';
 
 /** JSON-serializable value — keeps server-fn return types serializable-typed. */
 export type JsonValue =
@@ -510,5 +514,314 @@ export const fetchApplicationSettings = createServerFn({ method: 'GET' }).handle
         updatedAt: iso(row.updatedAt)
       }))
     };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Notifications (loxep-62y.3) — ntfy endpoints, rules, delivery status
+// ---------------------------------------------------------------------------
+
+/** Non-secret ntfy endpoint config; the token is write-only (ADR-0019). */
+export interface NtfyEndpointConfigDto {
+  baseUrl: string;
+  topic: string;
+  priority?: 'min' | 'low' | 'default' | 'high' | 'urgent';
+}
+
+export interface NotificationEndpointDto {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  config: NtfyEndpointConfigDto;
+  /** Whether an encrypted token secret is attached — never the token itself. */
+  hasToken: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const fetchNotificationEndpoints = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<NotificationEndpointDto[]> => {
+    const { requireSession, getNotificationsService } = await import('@/server/admin');
+    await requireSession();
+    const notifications = await getNotificationsService();
+    const rows = await notifications.listEndpoints();
+    return rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      name: row.name,
+      enabled: row.enabled,
+      config: row.config as NtfyEndpointConfigDto,
+      hasToken: row.secretId !== null,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt)
+    }));
+  }
+);
+
+const ntfyEndpointConfigInput = z.strictObject({
+  baseUrl: z.url(),
+  topic: z
+    .string()
+    .trim()
+    .min(1)
+    .regex(/^[-_A-Za-z0-9]+$/, 'ntfy topics may contain only letters, digits, - and _'),
+  priority: z.enum(['min', 'low', 'default', 'high', 'urgent']).optional()
+});
+
+const createNotificationEndpointInput = z.strictObject({
+  name: z.string().trim().min(1),
+  config: ntfyEndpointConfigInput,
+  enabled: z.boolean(),
+  /** Write-only: sent once, stored through the encrypted secrets service. */
+  token: z.string().trim().min(1).optional()
+});
+
+export const createNotificationEndpoint = createServerFn({ method: 'POST' })
+  .inputValidator(createNotificationEndpointInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getNotificationsService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const notifications = await getNotificationsService();
+    const endpoint = await notifications.createEndpoint({
+      provider: 'ntfy',
+      name: data.name,
+      config: data.config,
+      enabled: data.enabled,
+      token: data.token,
+      createdByUserId: session.user.id
+    });
+    return { id: endpoint.id };
+  });
+
+const updateNotificationEndpointInput = z.strictObject({
+  id: z.uuid(),
+  name: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+  config: ntfyEndpointConfigInput.optional(),
+  /** Write-only rotation: omit to leave the current token untouched. */
+  token: z.string().trim().min(1).optional()
+});
+
+export const updateNotificationEndpoint = createServerFn({ method: 'POST' })
+  .inputValidator(updateNotificationEndpointInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getNotificationsService } = await import('@/server/admin');
+    await requireAdmin();
+    const { id, ...patch } = data;
+    const notifications = await getNotificationsService();
+    const endpoint = await notifications.updateEndpoint(id, patch);
+    return { id: endpoint.id };
+  });
+
+export const setNotificationEndpointEnabled = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid(), enabled: z.boolean() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getNotificationsService } = await import('@/server/admin');
+    await requireAdmin();
+    const notifications = await getNotificationsService();
+    const endpoint = await notifications.updateEndpoint(data.id, { enabled: data.enabled });
+    return { id: endpoint.id };
+  });
+
+export interface SendTestNotificationResultDto {
+  ok: boolean;
+  error: string | null;
+  providerMessageId: string | null;
+}
+
+/**
+ * Admin-only real POST through `createNtfyTransport` against the endpoint's
+ * configured ntfy server — a real server may not exist at that address, so
+ * transport failures are caught and reported as a clean `{ ok: false, error
+ * }` result rather than a thrown 500.
+ */
+export const sendTestNotification = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<SendTestNotificationResultDto> => {
+    const { requireAdmin, getNotificationsService, getNotificationsModule } =
+      await import('@/server/admin');
+    await requireAdmin();
+    const [notifications, notificationsModule] = await Promise.all([
+      getNotificationsService(),
+      getNotificationsModule()
+    ]);
+    const endpoint = await notifications.getEndpoint(data.id);
+    if (endpoint.provider !== 'ntfy') {
+      return {
+        ok: false,
+        error: `Test send is not supported for provider "${endpoint.provider}"`,
+        providerMessageId: null
+      };
+    }
+    try {
+      const token = await notifications.getEndpointToken(data.id);
+      const transport = notificationsModule.createNtfyTransport();
+      const result = await transport.send({
+        config: endpoint.config,
+        token,
+        message: {
+          title: 'Loxep test notification',
+          body: `Test notification for endpoint "${endpoint.name}" sent ${new Date().toISOString()}.`,
+          tags: ['test_tube']
+        }
+      });
+      return { ok: true, error: null, providerMessageId: result.providerMessageId };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Test notification failed',
+        providerMessageId: null
+      };
+    }
+  });
+
+export interface NotificationRuleDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  marketEventType: string | null;
+  monitorTargetId: string | null;
+  endpointId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const fetchNotificationRules = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<NotificationRuleDto[]> => {
+    const { requireSession, getNotificationsService } = await import('@/server/admin');
+    await requireSession();
+    const notifications = await getNotificationsService();
+    const rows = await notifications.listRules();
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      enabled: row.enabled,
+      marketEventType: row.marketEventType,
+      monitorTargetId: row.monitorTargetId,
+      endpointId: row.endpointId,
+      createdAt: iso(row.createdAt),
+      updatedAt: iso(row.updatedAt)
+    }));
+  }
+);
+
+const marketEventTypeSchema = z.enum(
+  MARKET_EVENT_TYPE_VALUES as [MarketEventType, ...MarketEventType[]]
+);
+
+const createNotificationRuleInput = z.strictObject({
+  name: z.string().trim().min(1),
+  endpointId: z.uuid(),
+  enabled: z.boolean(),
+  marketEventType: marketEventTypeSchema.nullable(),
+  monitorTargetId: z.uuid().nullable()
+});
+
+export const createNotificationRule = createServerFn({ method: 'POST' })
+  .inputValidator(createNotificationRuleInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getNotificationsService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const notifications = await getNotificationsService();
+    const rule = await notifications.createRule({
+      name: data.name,
+      endpointId: data.endpointId,
+      enabled: data.enabled,
+      marketEventType: data.marketEventType,
+      monitorTargetId: data.monitorTargetId,
+      createdByUserId: session.user.id
+    });
+    return { id: rule.id };
+  });
+
+const updateNotificationRuleInput = z.strictObject({
+  id: z.uuid(),
+  name: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+  marketEventType: marketEventTypeSchema.nullable().optional(),
+  monitorTargetId: z.uuid().nullable().optional()
+});
+
+export const updateNotificationRule = createServerFn({ method: 'POST' })
+  .inputValidator(updateNotificationRuleInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getNotificationsService } = await import('@/server/admin');
+    await requireAdmin();
+    const { id, ...patch } = data;
+    const notifications = await getNotificationsService();
+    const rule = await notifications.updateRule(id, patch);
+    return { id: rule.id };
+  });
+
+export interface MonitorTargetOptionDto {
+  id: string;
+  name: string;
+  targetType: string;
+}
+
+/** Lightweight monitor-target picker list for the rule dialog's filter. */
+export const fetchMonitorTargetOptions = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<MonitorTargetOptionDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getAdminServices().handle.db.query.monitorTargets.findMany({
+      columns: { id: true, name: true, targetType: true },
+      orderBy: (table, { asc }) => [asc(table.name)]
+    });
+    return rows;
+  }
+);
+
+export interface NotificationDeliveryDto {
+  id: string;
+  eventType: string;
+  endpointId: string;
+  endpointName: string;
+  status: string;
+  attemptCount: number;
+  lastError: string | null;
+  lastAttemptAt: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+}
+
+/** Recent delivery attempts (metadata only) — member-readable status surface. */
+export const fetchNotificationDeliveries = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<NotificationDeliveryDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const deliveries = await handle.db.query.notificationDeliveries.findMany({
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: 50
+    });
+    if (deliveries.length === 0) return [];
+    const endpointIds = [...new Set(deliveries.map((row) => row.endpointId))];
+    const eventIds = [...new Set(deliveries.map((row) => row.marketEventId))];
+    const [endpoints, events] = await Promise.all([
+      handle.db.query.notificationEndpoints.findMany({
+        where: (table, { inArray }) => inArray(table.id, endpointIds),
+        columns: { id: true, name: true }
+      }),
+      handle.db.query.marketEvents.findMany({
+        where: (table, { inArray }) => inArray(table.id, eventIds),
+        columns: { id: true, eventType: true }
+      })
+    ]);
+    const endpointNameById = new Map(endpoints.map((row) => [row.id, row.name]));
+    const eventTypeById = new Map(events.map((row) => [row.id, row.eventType]));
+    return deliveries.map((row) => ({
+      id: row.id,
+      eventType: eventTypeById.get(row.marketEventId) ?? 'unknown',
+      endpointId: row.endpointId,
+      endpointName: endpointNameById.get(row.endpointId) ?? 'unknown',
+      status: row.status,
+      attemptCount: row.attemptCount,
+      lastError: row.lastError,
+      lastAttemptAt: iso(row.lastAttemptAt),
+      deliveredAt: iso(row.deliveredAt),
+      createdAt: iso(row.createdAt)
+    }));
   }
 );

@@ -5,6 +5,10 @@ import {
   fetchEntities,
   fetchFirstAdminBootstrap,
   fetchHealthReport,
+  fetchMonitorTargetOptions,
+  fetchNotificationDeliveries,
+  fetchNotificationEndpoints,
+  fetchNotificationRules,
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
@@ -43,4 +47,25 @@ export const firstAdminBootstrapQuery = queryOptions({
 export const applicationSettingsQuery = queryOptions({
   queryKey: ['settings', 'application-settings'],
   queryFn: () => fetchApplicationSettings()
+});
+
+export const notificationEndpointsQuery = queryOptions({
+  queryKey: ['settings', 'notification-endpoints'],
+  queryFn: () => fetchNotificationEndpoints()
+});
+
+export const notificationRulesQuery = queryOptions({
+  queryKey: ['settings', 'notification-rules'],
+  queryFn: () => fetchNotificationRules()
+});
+
+export const monitorTargetOptionsQuery = queryOptions({
+  queryKey: ['settings', 'monitor-target-options'],
+  queryFn: () => fetchMonitorTargetOptions()
+});
+
+export const notificationDeliveriesQuery = queryOptions({
+  queryKey: ['settings', 'notification-deliveries'],
+  queryFn: () => fetchNotificationDeliveries(),
+  refetchInterval: 15_000
 });

@@ -53,6 +53,19 @@ export const settingsNavGroups: NavGroup[] = [
     ]
   },
   {
+    label: 'Notifications',
+    items: [
+      {
+        title: 'Notifications',
+        url: '/settings/notifications',
+        icon: 'notification',
+        isActive: false,
+        shortcut: ['g', 'n'],
+        items: []
+      }
+    ]
+  },
+  {
     label: 'Users',
     items: [
       {
