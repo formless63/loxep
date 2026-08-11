@@ -83,6 +83,12 @@ Loxep remains independent of donor architectural assumptions.
 
 Apache ECharts remains an approved addition for dense time-series/analytical interfaces when Recharts is not the right tool. It does not need to replace every ordinary Recharts visualization.
 
+## Current primitive/form-library reality
+
+The donor composition as integrated actually uses **Radix UI as the dominant primitive layer** (via the `radix-ui` umbrella package), with a small number of components on Base UI (`@base-ui/react`) and `@shadcn/react`. Donor form components likewise still use react-hook-form alongside Loxep's accepted TanStack Form.
+
+Standardization onto a single primitive/form layer is incremental and happens only where there is concrete benefit (e.g. when a component is rewritten for a real product surface). A mass migration is explicitly **not** Phase 0 work.
+
 ## State policy
 
 Zustand is not a second server-state store. TanStack Query owns server/cache state; Router owns URL state; TanStack Form owns form state; PostgreSQL owns durable product state and durable user preferences.
