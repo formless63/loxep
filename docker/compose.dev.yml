@@ -1,0 +1,38 @@
+# Development/test database for Loxep.
+#
+# This is NOT the production deployment stack (that arrives with the runtime
+# image work). It exists so integration tests and local development have a real
+# PostgreSQL + TimescaleDB to run against — never SQLite substitutes.
+#
+# Usage:
+#   docker compose -f docker/compose.dev.yml up -d --wait
+#
+# Notes:
+# - TimescaleDB Community image (TSL-licensed features included) is deliberate:
+#   the observation hypertable's columnstore policy requires Community
+#   capabilities (ADR-0002).
+# - Host port 5433 is used to avoid colliding with other PostgreSQL instances
+#   on developer machines.
+# - postgres:18-based images keep PGDATA under /var/lib/postgresql (not
+#   /var/lib/postgresql/data), so the named volume mounts there.
+
+name: loxep-dev
+
+services:
+  loxep-dev-db:
+    container_name: loxep-dev-db
+    image: timescale/timescaledb:2.29.1-pg18
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_PASSWORD: ${LOXEP_DEV_DB_PASSWORD:-loxep-dev}
+    volumes:
+      - loxep-dev-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  loxep-dev-db-data:

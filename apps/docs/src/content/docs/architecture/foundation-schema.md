@@ -33,6 +33,8 @@ Per ADR-0020, Better Auth's CLI generates its Drizzle schema, which is checked i
 
 User-reference columns in this draft (`created_by_user_id`, `updated_by_user_id`, `actor_user_id`) are refined at implementation time into one of two intentional forms: nullable foreign keys to the Better Auth user ID with `ON DELETE SET NULL` (the default for provenance), or documented non-FK historical identity references where the identifier itself must survive user deletion. Cascading deletion from auth tables into domain, audit, or business tables is prohibited.
 
+The implementation (`packages/db`) resolved this refinement: every `created_by_user_id`/`updated_by_user_id` column is a nullable `ON DELETE SET NULL` foreign key to the Better Auth user id — including the columns this draft sketched as `not null` on `connections`, `monitor_targets`, `storage_migrations`, `notification_endpoints`, and `notification_rules` — while `audit_events.actor_user_id` remains an intentional non-FK historical text reference.
+
 ## Application settings and runtime secrets
 
 Normal runtime configuration should be manageable inside Loxep rather than encoded as environment variables. See [Configuration & Secrets](../configuration-and-secrets/) and ADR-0016.
@@ -680,7 +682,7 @@ If Loxep detects multiple application hosts with a `local` media backend that is
 Immediately before generating the actual Drizzle schema/migrations:
 
 1. verify current viable versions of Drizzle ORM/Kit, Better Auth, Graphile Worker, PostgreSQL, TimescaleDB, TanStack Start, Bun, and other foundational packages;
-2. verify current Timescale hypertable/columnstore migration syntax (the removed Hypercore TAM APIs must not be used);
+2. verify current Timescale hypertable/columnstore migration syntax (the removed Hypercore TAM APIs must not be used) — done against TimescaleDB 2.29.1: the observation migration uses `CREATE TABLE ... WITH (tsdb.hypertable, tsdb.partition_column = 'observed_at', tsdb.chunk_interval = '7 days')`, `ALTER TABLE ... SET (timescaledb.enable_columnstore, timescaledb.segmentby = 'marketplace_item_id', timescaledb.orderby = 'observed_at DESC, observation_batch_id')`, and `CALL add_columnstore_policy('marketplace_item_observations', after => INTERVAL '30 days')`;
 3. verify Better Auth's current table/plugin requirements for OIDC, magic links, and admin/member roles;
 4. verify the exact first-admin bootstrap/recovery implementation against the current Better Auth API;
 5. implement ADR-0017's installation-wide access model without a speculative `connection_users` ACL table;
