@@ -29,11 +29,13 @@ jobs:
       - name: Format check
         run: bun run format:check
 
-      - name: Typecheck
-        run: bun --cwd apps/web typecheck
-
+      # Build must precede typecheck: routeTree.gen.ts is generated during the
+      # Vite build and is not committed.
       - name: Build
         run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
 
   docs:
     name: Documentation
