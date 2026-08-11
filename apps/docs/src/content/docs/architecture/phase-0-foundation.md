@@ -57,6 +57,8 @@ Already established direction:
 - `/starter/*` preserved as reference/demo material;
 - `/dashboard/*` reserved for Loxep's actual dashboard workspace.
 
+Implemented: the real sign-in surface lives at `/auth/sign-in` (magic-link email form plus "Continue with SSO" when the bootstrap OIDC path is configured), backed by the `/api/auth/*` catch-all over `@loxep/auth`'s `createAuth()`; the workspace routes (`/dashboard/*`, `/starter/*`) are session-guarded and redirect anonymous visitors to sign-in, with `{ user, roles }` exposed through router context and a working sign-out in the shell's account menu.
+
 Major future areas must be peer workspace roots such as `/market`, `/commerce`, or `/inventory`, not children of one giant `/dashboard/*` tree. See [Workspaces & Navigation](../../product/workspaces/).
 
 Do not aggressively remove useful donor tooling merely to minimize dependencies. Recharts, DnD, and Zustand all have credible Loxep uses. Zustand remains constrained to genuine UI/editing state; PostgreSQL/Query/Router/Form retain their natural state ownership.

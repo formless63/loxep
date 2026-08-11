@@ -16,6 +16,7 @@ import { ActiveThemeProvider } from '@/components/themes/active-theme';
 import ThemeProvider from '@/components/themes/theme-provider';
 import { DEFAULT_THEME, THEMES } from '@/components/themes/theme.config';
 import { seo } from '@/lib/seo';
+import { fetchSessionInfo, type SessionInfo } from '@/server/auth-functions';
 
 import appCss from '@/styles/globals.css?url';
 
@@ -37,6 +38,12 @@ const getActiveTheme = createServerFn({ method: 'GET' }).handler(async () => {
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
+  // Session context for every route: `{ user, roles }` or null when
+  // unauthenticated. Layout routes guard on `context.auth` (ADR-0007).
+  beforeLoad: async (): Promise<{ auth: SessionInfo | null }> => {
+    const auth = await fetchSessionInfo();
+    return { auth };
+  },
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
