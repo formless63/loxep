@@ -140,6 +140,8 @@ Goal: create trustworthy financial facts without making the ledger the only repr
 
 Do not assume one economic entity equals one accounting book. An LLC and several assumed-name operations may intentionally share one chart of accounts/ledger while remaining separately attributable operationally.
 
+The physical schema for this phase — books and the effective-dated book-to-entity link, the per-book chart of accounts and dimensions, fiscal periods and closing semantics, the double-entry journal, declarative posting rules, payouts and clearing accounts, expenses, bank ingestion and reconciliation, sales-tax facts, and the statement read models — is designed in [Financial Foundation Schema Design (Phase 5)](../../architecture/financial-schema-design/).
+
 ## Phase 6 — Customers, projects, services, and billing
 
 Goal: support non-e-commerce business activity coherently.
