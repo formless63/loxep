@@ -2,7 +2,7 @@
 title: "ADR-0007: Better Auth with OIDC and magic links"
 ---
 
-**Status:** Accepted; authorization boundary clarified by later foundational decisions.
+**Status:** Accepted; initial authorization model superseded by ADR-0017; schema ownership and user-reference policy defined by ADR-0020.
 
 ## Context
 

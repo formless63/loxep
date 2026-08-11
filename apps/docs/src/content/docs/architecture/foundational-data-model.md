@@ -55,7 +55,7 @@ Use text columns with application-owned TypeScript constants/unions. Add databas
 
 Better Auth owns application authentication identity, sessions, login-provider state, and deployment-level roles `admin` and `member`.
 
-Loxep does **not** duplicate Better Auth's user/session/account tables or create a parallel global `user_roles` table.
+Loxep does **not** duplicate Better Auth's user/session/account tables or create a parallel global `user_roles` table. Per ADR-0020, Better Auth's CLI generates those tables as checked-in Drizzle schema flowing through the normal reviewed migration workflow, and user-reference columns elsewhere are nullable `ON DELETE SET NULL` foreign keys or intentional non-FK historical references — never cascade-deleting history with an auth user.
 
 A small optional `user_profiles` relation may hold Loxep-specific presentation/profile data such as locale/time zone keyed by the Better Auth user ID.
 
