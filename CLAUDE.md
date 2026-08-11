@@ -18,6 +18,10 @@ Bun workspace (`bun@1.3.14`, pinned in package.json). Run from the repo root:
 bun install               # install all workspaces
 bun run dev               # apps/web dev server — port 3020, strictPort, host 0.0.0.0
 bun run build             # apps/web production build (Vite + Nitro → .output/)
+bun run migrate           # node bin/loxep.ts migrate — explicit, advisory-locked; startup never migrates (ADR-0018)
+bun run start             # node bin/loxep.ts start [--mode=all|web|worker] — built app via the runtime entrypoint
+bun run test:packages     # core package vitest suites (config/observability/db/domain/jobs)
+bun run typecheck         # aggregate tsc across the workspace
 bun run lint              # oxlint (apps/web)
 bun run format            # oxfmt --write (apps/web)
 bun run format:check      # oxfmt --check
@@ -25,7 +29,9 @@ bun run docs:dev          # Astro Starlight docs dev server
 bun run docs:build        # docs production build; fails on broken internal links (starlight-links-validator + scripts/check-doc-links.mjs browser-semantics check)
 ```
 
-Inside `apps/web` there is also `lint:fix` (`oxlint --fix`) and `start` (`node .output/server/index.mjs`). There is no test suite yet; the contract's "Testing and quality gates" section describes what foundation work is expected to establish (real Postgres/Timescale integration tests — never SQLite substitutes — Graphile Worker tests, Playwright, storage conformance tests).
+Inside `apps/web` there is also `lint:fix` (`oxlint --fix`), `start` (`node .output/server/index.mjs`), and `test:e2e` (`playwright test`). Runtime commands need `LOXEP_*` bootstrap env (see `apps/web/env.example.txt`; `node --env-file=apps/web/.env bin/loxep.ts …` works).
+
+Tests are real, not planned: ~330 vitest tests across the packages run against actual PostgreSQL/TimescaleDB (never SQLite substitutes) using scratch databases on the dev container (`docker compose -f docker/compose.dev.yml up -d --wait`, host port 5433). `bun run test:packages` covers the core packages; `auth`, `market`, `notifications`, and `storage` also have suites run per package (`bun --cwd packages/auth test`; storage's S3 leg needs `LOXEP_TEST_S3_*`). Playwright e2e specs live in `apps/web/e2e/` and run against a built app with an already-running harness (scratch DB + Mailpit) documented in `apps/web/e2e/harness.md`.
 
 ## Architecture
 

@@ -20,24 +20,24 @@ Already established:
 - minimal economic-entity model distinct from users, provider connections, workspaces, and future accounting books;
 - initial installation-wide `admin`/`member` access model with no speculative resource ACL layer.
 
-Remaining Phase 0 implementation work includes:
+The Phase 0 implementation work is done — implemented, exit walkthrough pending: each item below exists in the codebase, but the formal [exit criteria](../../architecture/phase-0-foundation/#exit-criteria) fresh-clone walkthrough has not yet been performed, so Phase 0 is not declared complete. Implemented:
 
-- establish the PostgreSQL + TimescaleDB development/Compose environment;
-- establish Drizzle migrations and database conventions;
-- implement Graphile Worker runtime and job conventions;
-- ship one Loxep image with `LOXEP_MODE=all|web|worker`, with `all` as the default deployment;
-- implement Better Auth with generic OIDC, magic links, no passwords, and deployment roles;
-- implement concrete first-admin bootstrap and shell-level recovery;
-- implement minimal `economic_entities` plus nullable connection attribution;
-- implement database-backed application settings plus application-encrypted runtime secrets;
-- implement the generic connection/credential model;
-- establish source-event/raw-provider-object conventions;
-- implement media metadata, storage-backend records, and the `local`/generic-`s3` abstraction;
-- prove resumable local-to-S3 migration with RustFS as the initial S3 conformance target;
-- establish generic external-resource links;
-- establish structured logging, health/readiness, redacted auditing, and tests;
-- establish generic Docker Compose deployment and optional companion profiles;
-- continuously validate both application and documentation builds, including internal docs links.
+- the PostgreSQL + TimescaleDB development/Compose environment;
+- Drizzle migrations and database conventions;
+- the Graphile Worker runtime and job conventions;
+- one Loxep image with `LOXEP_MODE=all|web|worker`, with `all` as the default deployment;
+- Better Auth with generic OIDC, magic links, no passwords, and deployment roles;
+- concrete first-admin bootstrap and shell-level recovery;
+- minimal `economic_entities` plus nullable connection attribution;
+- database-backed application settings plus application-encrypted runtime secrets;
+- the generic connection/credential model;
+- source-event/raw-provider-object conventions;
+- media metadata, storage-backend records, and the `local`/generic-`s3` abstraction;
+- resumable local-to-S3 migration with RustFS as the initial S3 conformance target;
+- generic external-resource links;
+- structured logging, health/readiness, redacted auditing, and tests (package vitest suites against real PostgreSQL/TimescaleDB plus Playwright critical-flow e2e coverage);
+- generic Docker Compose deployment and optional companion profiles;
+- continuous validation of both application and documentation builds, including internal docs links.
 
 Normal runtime/provider settings should be configured in-app and stored in PostgreSQL. Environment/mounted-secret configuration is reserved for bootstrap facts required before DB-backed administration or login is possible. See [Configuration & Secrets](../../architecture/configuration-and-secrets/).
 

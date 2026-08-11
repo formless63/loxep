@@ -11,7 +11,8 @@
     "lint:fix": "oxlint --fix",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -84,6 +85,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "@tanstack/react-query-devtools": "5.101.4",
     "@tanstack/react-router-devtools": "1.167.1",
     "@types/node": "24.13.3",
