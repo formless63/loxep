@@ -1,0 +1,30 @@
+# Build context filter for docker/Dockerfile (context = repository root).
+.git
+.github
+.beads
+.dolt
+
+# Installed/build artifacts — the build stage reinstalls and rebuilds.
+node_modules
+**/node_modules
+**/.output
+**/dist
+**/.astro
+
+# Docs content is not part of the application image; keep the workspace
+# manifest so `bun install --frozen-lockfile` still sees every workspace.
+apps/docs/src
+apps/docs/public
+
+# Local runtime state and secrets.
+data
+.env
+.env.*
+!.env.example
+
+# Misc
+.DS_Store
+*.md
+!README.md
+docker/compose.dev.yml
+compose.yml

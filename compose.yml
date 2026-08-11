@@ -1,0 +1,106 @@
+# Loxep default deployment stack (ADR-0013 / ADR-0018).
+#
+#   cp .env.example .env    # then fill in the required values
+#   docker compose up -d
+#
+# Services: loxep (LOXEP_MODE=all) + postgres (TimescaleDB), with a one-shot
+# `migrate` service that applies schema migrations before the app starts —
+# application startup itself never migrates (ADR-0018). The optional `rustfs`
+# profile adds a generic S3-compatible object-storage companion (ADR-0014):
+#   docker compose --profile rustfs up -d
+#
+# Scale-out later uses this same image with LOXEP_MODE=web / LOXEP_MODE=worker
+# replicas against the shared PostgreSQL (ADR-0013).
+
+name: loxep
+
+services:
+  postgres:
+    # TimescaleDB Community image (TSL-licensed features included) is
+    # deliberate: the observation hypertable's columnstore policy requires
+    # Community capabilities (ADR-0002). Not exposed to the host by default.
+    image: timescale/timescaledb:2.29.1-pg18
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: loxep
+    volumes:
+      # postgres:18-based images keep PGDATA under /var/lib/postgresql.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d loxep"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  # One-shot migration step: same image, explicit `migrate` command
+  # (ADR-0018 — schema mutation is an operator-visible deployment step).
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: loxep
+    command: ["migrate"]
+    env_file: .env
+    environment:
+      LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  loxep:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: loxep
+    env_file: .env
+    environment:
+      LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
+      LOXEP_MEDIA_ROOT: /data/media
+      # The Better Auth instance currently reads its secret/base URL from
+      # Better Auth's own env names rather than bootstrap config; mirror the
+      # LOXEP_* values until the auth epic wires them through explicitly.
+      BETTER_AUTH_SECRET: ${LOXEP_AUTH_SECRET}
+      BETTER_AUTH_URL: ${LOXEP_PUBLIC_ORIGIN}
+    ports:
+      - "3020:3020"
+    volumes:
+      - media-data:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(`http://127.0.0.1:$${process.env.LOXEP_PORT ?? 3020}/health/ready`).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+    restart: unless-stopped
+
+  # Optional generic S3-compatible object-storage companion (ADR-0014);
+  # Loxep talks plain S3 to it at http://rustfs:9000 and any compatible
+  # backend can substitute. Enable with: docker compose --profile rustfs up -d
+  rustfs:
+    profiles: ["rustfs"]
+    image: rustfs/rustfs:1.0.0-rc.1
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+    ports:
+      # Admin console only; the S3 API stays on the internal network.
+      - "9001:9001"
+    volumes:
+      - rustfs-data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  media-data:
+  rustfs-data:
