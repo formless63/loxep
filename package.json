@@ -16,14 +16,17 @@
     "docs:build": "bun --cwd apps/docs build",
     "migrate": "node bin/loxep.ts migrate",
     "start": "node bin/loxep.ts start",
-    "typecheck": "bun --cwd apps/web typecheck && bun --cwd packages/config typecheck && bun --cwd packages/observability typecheck && bun --cwd packages/db typecheck && bun --cwd packages/runtime typecheck"
+    "typecheck": "./node_modules/.bin/tsc -p tsconfig.json && bun --cwd apps/web typecheck && bun --cwd packages/config typecheck && bun --cwd packages/observability typecheck && bun --cwd packages/db typecheck && bun --cwd packages/domain typecheck && bun --cwd packages/jobs typecheck && bun --cwd packages/runtime typecheck",
+    "test:packages": "bun --cwd packages/config test && bun --cwd packages/observability test && bun --cwd packages/db test && bun --cwd packages/domain test && bun --cwd packages/jobs test"
   },
   "packageManager": "bun@1.3.14",
   "dependencies": {
     "@loxep/config": "workspace:*",
     "@loxep/db": "workspace:*",
     "@loxep/observability": "workspace:*",
-    "@loxep/runtime": "workspace:*"
+    "@loxep/runtime": "workspace:*",
+    "@loxep/jobs": "workspace:*",
+    "@loxep/domain": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
