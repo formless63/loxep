@@ -5,7 +5,8 @@
  * owns `src/schema/auth.ts`, and the explicit migration runner (ADR-0018).
  */
 export * as schema from "./schema/index.ts";
-export { auth } from "./auth.ts";
+export { auth, buildAuthPluginConfig } from "./auth.ts";
+export type { AuthPluginConfigInput, SendMagicLink } from "./auth.ts";
 export {
   MIGRATION_LOCK_KEY,
   MIGRATIONS_FOLDER,

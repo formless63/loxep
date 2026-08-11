@@ -58,11 +58,6 @@ services:
     environment:
       LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
       LOXEP_MEDIA_ROOT: /data/media
-      # The Better Auth instance currently reads its secret/base URL from
-      # Better Auth's own env names rather than bootstrap config; mirror the
-      # LOXEP_* values until the auth epic wires them through explicitly.
-      BETTER_AUTH_SECRET: ${LOXEP_AUTH_SECRET}
-      BETTER_AUTH_URL: ${LOXEP_PUBLIC_ORIGIN}
     ports:
       - "3020:3020"
     volumes:
