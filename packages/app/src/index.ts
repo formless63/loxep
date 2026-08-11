@@ -13,12 +13,38 @@
 
 export { AppConfigurationError, AppError, EbayKeysetMissingError } from "./errors.ts";
 
+export {
+  WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  WOO_ADAPTER_CACHE_TTL_MS,
+  WOO_CONNECTION_CONFIG_KEY,
+  WOO_CONNECTION_PROVIDER,
+  WOO_CREDENTIAL_TYPE,
+  WOO_PAGES_PER_SYNC,
+  WOO_RATE_BUDGET_CAPACITY,
+  WOO_RATE_BUDGET_REFILL_PER_SECOND,
+  WooCredentialsMissingError,
+  createWooAdapterFactory,
+  readWooBaseUrl,
+  wooRateBudgetIntervalFloorSeconds,
+} from "./woo.ts";
+export type {
+  CreateWooAdapterFactoryOptions,
+  WooAdapterConstructor,
+  WooAdapterFactory,
+  WooConnectionAdapter,
+  WooRateBudgetConfig,
+} from "./woo.ts";
+
+export { createWooOrderPollExecutor } from "./commerce.ts";
+export type { CreateWooOrderPollExecutorOptions } from "./commerce.ts";
+
 export { buildAppServices } from "./services.ts";
 export type { AppServices, BuildAppServicesOptions } from "./services.ts";
 
 export {
   DEFAULT_SETTINGS_TTL_MS,
   createMonitorSettingsReader,
+  wooRateBudgetSetting,
 } from "./settings.ts";
 export type {
   CreateMonitorSettingsReaderOptions,
@@ -62,6 +88,7 @@ export {
   WATCHLIST_MAX_PAGES,
   WATCHLIST_OBSERVATION_SOURCE,
   createEbayPollExecutor,
+  createRoutedPollExecutor,
 } from "./poll-executor.ts";
 export type { CreateEbayPollExecutorOptions } from "./poll-executor.ts";
 

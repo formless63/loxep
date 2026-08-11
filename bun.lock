@@ -123,10 +123,12 @@
       "name": "@loxep/app",
       "version": "0.0.0",
       "dependencies": {
+        "@loxep/commerce": "workspace:*",
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",
         "@loxep/domain": "workspace:*",
         "@loxep/integration-ebay": "workspace:*",
+        "@loxep/integration-woo": "workspace:*",
         "@loxep/jobs": "workspace:*",
         "@loxep/market": "workspace:*",
         "@loxep/notifications": "workspace:*",

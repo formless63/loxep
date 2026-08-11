@@ -81,12 +81,23 @@ import {
  * migration). `ebay_search`/`ebay_seller` are the Phase 2 discovery types —
  * they poll through the SAME claim/backoff/adaptive machinery as the Phase 1
  * types; only their executor differs.
+ *
+ * `woo_orders` is the Phase 3 COMMERCE type and the first entry here that
+ * @loxep/market does not own. Domain Boundaries' PROVISIONAL "Scheduling is
+ * shared foundation infrastructure" rule makes `monitor_targets` a shared
+ * mechanism any domain may register a target type against; Market
+ * Intelligence owns the `ebay_*` types and the mechanism's implementation,
+ * not the list. Nothing else about the row is special: its executor lives in
+ * @loxep/commerce (wired in @loxep/app), its cursor lives under the
+ * `commerceSync` namespace this package never reads, and claim/backoff/
+ * adaptive advancement treat it exactly like any other row.
  */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
   "ebay_item",
   "ebay_search",
   "ebay_seller",
+  "woo_orders",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
 
@@ -158,6 +169,53 @@ export const ebaySearchFiltersSchema = z.strictObject({
 export type EbaySearchFiltersConfig = z.infer<typeof ebaySearchFiltersSchema>;
 
 /**
+ * Namespaced `config` key @loxep/commerce owns on a `woo_orders` row. Declared
+ * here only so this package can name the key it must NOT interpret.
+ */
+export const COMMERCE_SYNC_CONFIG_KEY = "commerceSync";
+
+/**
+ * The stored form of @loxep/commerce's WooCommerce order-sync cursor.
+ *
+ * RE-DECLARED, NOT IMPORTED — the same discipline as
+ * {@link ebaySearchFiltersSchema}, for the same reason and with the same
+ * consequence. @loxep/market owns the scheduling mechanism and must not
+ * depend on a domain that registers against it (that direction would make
+ * every registering domain a dependency of the scheduler, which is exactly
+ * the coupling the registration rule exists to avoid). @loxep/commerce's
+ * `wooOrdersTargetConfigSchema` stays the AUTHORITY for its own service; this
+ * copy exists so the monitor service can validate a config it is asked to
+ * store.
+ *
+ * The duplication is deliberate and guarded: `packages/app`'s
+ * `commerce-sync.test.ts` asserts that a config @loxep/commerce writes is
+ * accepted here and vice versa, so a drift between the two shapes fails a
+ * test rather than a production write. The two differ in exactly one
+ * intentional way — Commerce's schema is a `looseObject` (it must pass this
+ * package's `adaptive` namespace through untouched without knowing its
+ * shape), while this one is strict and names `adaptive` explicitly, because
+ * here it IS known.
+ *
+ * Every field is optional: a freshly created target has no cursor yet, and a
+ * first sync with no stored watermark is a deliberate "read the newest slice"
+ * rather than an error.
+ */
+export const commerceSyncStateSchema = z.strictObject({
+  /** Watermark handed to WooCommerce's `modified_after` on the next poll. */
+  modifiedAfter: z.iso.datetime().optional(),
+  /** When the last successful sync finished. */
+  lastSyncedAt: z.iso.datetime().optional(),
+  /** Orders ingested by the last sync (diagnostic only). */
+  lastOrderCount: z.number().int().nonnegative().optional(),
+  /** Per-page size override for this connection. */
+  perPage: z.number().int().min(1).max(100).optional(),
+  /** Page budget override for this connection. */
+  maxPages: z.number().int().min(1).max(100).optional(),
+});
+
+export type CommerceSyncState = z.infer<typeof commerceSyncStateSchema>;
+
+/**
  * Per-target-type `config` validation. Provider adapters extend these
  * without changing the scheduling model — Phase 2's `ebay_search` and
  * `ebay_seller` add no columns and no tables.
@@ -216,6 +274,17 @@ export const monitorTargetConfigSchemas = {
     query: z.string().min(1).optional(),
     categoryId: z.string().min(1).optional(),
     maxItems: z.number().int().positive().max(1000).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One WooCommerce store's incremental ORDER SYNC (Phase 3, PROVISIONAL).
+   * Registered by Commerce, executed by Commerce; the store itself is
+   * identified by the target's connection, so — like `ebay_watchlist` — the
+   * config carries no identity of its own, only the sync cursor under the
+   * namespace Commerce owns.
+   */
+  woo_orders: z.strictObject({
+    [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
 } as const satisfies Record<MonitorTargetType, z.ZodType>;
