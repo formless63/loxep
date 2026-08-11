@@ -180,6 +180,28 @@ ebay_item
 
 Search and seller monitor types follow without changing the scheduling model.
 
+### Adaptive cadence
+
+`interval_seconds` is the **operator-set base cadence** and is never rewritten by the scheduler. Within that base, polling adapts to observed activity: when a poll outcome is recorded, a pure policy turns cheap signals — recent `market_events` for the target's items, observation `raw_state_hash` deltas, consecutive unchanged polls, and time to the soonest future `listing_ends_at` — into the interval used to advance `next_poll_at`. Claim semantics are untouched: adaptivity is computed at record time, and the claim's own flat advance remains the at-least-once safety net.
+
+Tiers multiply the base interval. The most aggressive tightening tier wins, and relaxation applies only when the recent window is completely quiet:
+
+```text
+auction_endgame           end < 5 min            base / 8
+auction_near_end          end < 30 min           base / 4
+auction_approaching_end   end < 6 h              base / 2
+activity_hot              >= 8 events + deltas   base / 4
+activity_warm             >= 3 events + deltas   base / 2
+steady                    otherwise              base
+idle_relaxed              6 unchanged polls      base * 2
+idle_long                 12 unchanged polls     base * 4
+idle_very_long            24 unchanged polls     base * 8
+```
+
+Two safety rules bound the result. Consecutive computations may not move the interval by more than 4× in either direction, so cadence walks between tiers instead of thrashing. The result is then clamped into `[min, max]` bounds supplied by the caller, where `min` carries the per-connection **rate budget** floor — the floor outranks every other rule, including a ceiling set below it.
+
+Adaptivity needs no schema change. Transient state lives in the existing `config` jsonb under the namespaced `adaptive` key (`unchangedStreak`, `lastComputedInterval`, `lastTier`, `updatedAt`), alongside an opt-out `enabled` flag that defaults to on and will later be superseded by a registered application setting. A target with `config.adaptive.enabled = false`, or a caller that reports no change information, keeps the flat `interval_seconds` cadence.
+
 ### `marketplace_items`
 
 One canonical record per provider/marketplace/external-item identity.

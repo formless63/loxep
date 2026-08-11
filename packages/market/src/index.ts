@@ -15,19 +15,56 @@ export {
   MONITOR_TARGET_TYPES,
   backoffSeconds,
   claimDueTargets,
+  collectAdaptiveSignals,
   createMonitorService,
   monitorTargetConfigSchemas,
   recordPollFailure,
   recordPollSuccess,
 } from "./monitors.ts";
 export type {
+  AdaptiveSignals,
   ClaimedTarget,
   CreateMonitorTargetInput,
   MonitorService,
   MonitorTargetRow,
   MonitorTargetType,
+  PollSuccessResult,
+  RecordPollSuccessOptions,
   UpdateMonitorTargetInput,
 } from "./monitors.ts";
+
+export {
+  ACTIVITY_HOT_COUNT,
+  ACTIVITY_WARM_COUNT,
+  ADAPTIVE_CONFIG_KEY,
+  ADAPTIVE_TIERS,
+  ADAPTIVE_TIER_FACTORS,
+  AUCTION_APPROACHING_END_SECONDS,
+  AUCTION_ENDGAME_SECONDS,
+  AUCTION_NEAR_END_SECONDS,
+  DEFAULT_ADAPTIVE_MAX_SECONDS,
+  DEFAULT_ADAPTIVE_MIN_SECONDS,
+  DEFAULT_ADAPTIVE_SIGNAL_WINDOW_SECONDS,
+  IDLE_STREAK_LONG,
+  IDLE_STREAK_RELAXED,
+  IDLE_STREAK_VERY_LONG,
+  MAX_STEP_FACTOR,
+  adaptiveConfigSchema,
+  adaptiveStatePatch,
+  computeAdaptiveInterval,
+  evaluateAdaptiveInterval,
+  nextUnchangedStreak,
+  readAdaptiveState,
+  selectAdaptiveTier,
+} from "./adaptive.ts";
+export type {
+  AdaptiveBounds,
+  AdaptiveConfig,
+  AdaptiveDecision,
+  AdaptiveIntervalInput,
+  AdaptiveState,
+  AdaptiveTier,
+} from "./adaptive.ts";
 
 export {
   latestObservations,
@@ -70,6 +107,7 @@ export {
   defaultPollExecutor,
 } from "./tasks.ts";
 export type {
+  AdaptivePollFacts,
   DispatchTask,
   MarketCronItem,
   MarketTasks,

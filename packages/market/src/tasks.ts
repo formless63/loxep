@@ -26,7 +26,11 @@ import {
   recordPollFailure,
   recordPollSuccess,
 } from "./monitors.ts";
-import type { ClaimedTarget, MonitorTargetRow } from "./monitors.ts";
+import type {
+  ClaimedTarget,
+  MonitorTargetRow,
+  RecordPollSuccessOptions,
+} from "./monitors.ts";
 
 export const DISPATCH_TASK_NAME = "market.dispatch-due-monitors";
 export const POLL_TARGET_TASK_NAME = "market.poll-target";
@@ -35,7 +39,20 @@ export const POLL_TARGET_TASK_NAME = "market.poll-target";
 export interface PollOutcome {
   /** How many observations the executor recorded (informational). */
   observations: number;
+  /**
+   * Optional adaptive-cadence facts. Supplying it (specifically `changed`)
+   * opts this poll into activity-adaptive `next_poll_at` advancement; omitting
+   * it keeps the flat `interval_seconds` cadence the claim already applied.
+   * A provider executor passes its per-connection rate-budget floor as
+   * `bounds.minSeconds`.
+   */
+  adaptive?: AdaptivePollFacts;
 }
+
+/** The adaptive inputs a poll executor may report (see `adaptive.ts`). */
+export type AdaptivePollFacts = Omit<RecordPollSuccessOptions, "at"> & {
+  changed: boolean;
+};
 
 /**
  * Injectable provider-poll boundary. Phase 1 provider adapters implement
@@ -124,9 +141,23 @@ export function createMarketTasks(options: {
       }
       try {
         const outcome = await pollExecutor(target, { logger });
-        await recordPollSuccess(db, target.id);
+        const recorded = await recordPollSuccess(
+          db,
+          target.id,
+          outcome.adaptive ?? {},
+        );
         logger.info(
-          { monitorTargetId: target.id, observations: outcome.observations },
+          {
+            monitorTargetId: target.id,
+            observations: outcome.observations,
+            ...(recorded.adaptive === null
+              ? {}
+              : {
+                  adaptiveTier: recorded.adaptive.tier,
+                  adaptiveIntervalSeconds: recorded.adaptive.intervalSeconds,
+                  nextPollAt: recorded.nextPollAt?.toISOString(),
+                }),
+          },
           "poll succeeded",
         );
       } catch (error) {
