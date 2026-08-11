@@ -308,6 +308,8 @@ An accounting book is an accounting interpretation/container, not the identity o
 
 ntfy is the first notification adapter, but event detection and notification delivery remain separate concepts. A detected `RESTOCKED` event should not be coupled directly to one notification transport.
 
+The ntfy adapter is implemented behind the transport-neutral `NotificationTransport` interface in `@loxep/notifications`; additional providers implement the same interface rather than extending ntfy-specific code paths.
+
 ## External API
 
 Framework-native server functions are appropriate inside the Loxep web application. They must not become the only integration boundary.

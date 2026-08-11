@@ -51,7 +51,12 @@
         "@fontsource/merriweather": "5.3.0",
         "@fontsource/space-mono": "5.3.0",
         "@hookform/resolvers": "5.7.1",
+        "@loxep/auth": "workspace:*",
+        "@loxep/config": "workspace:*",
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
         "@loxep/runtime": "workspace:*",
+        "@loxep/storage": "workspace:*",
         "@shadcn/react": "0.3.0",
         "@tabler/icons-react": "3.46.0",
         "@tailwindcss/vite": "4.3.3",
@@ -64,6 +69,7 @@
         "@tanstack/react-table": "8.21.3",
         "@tanstack/router-plugin": "1.168.29",
         "@tanstack/zod-adapter": "1.167.0",
+        "better-auth": "1.6.26",
         "class-variance-authority": "0.7.1",
         "clsx": "2.1.1",
         "cmdk": "1.1.1",
@@ -176,6 +182,37 @@
         "@loxep/db": "workspace:*",
         "@loxep/observability": "workspace:*",
         "graphile-worker": "0.17.3",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/pg": "8.21.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/market": {
+      "name": "@loxep/market",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/db": "workspace:*",
+        "@loxep/jobs": "workspace:*",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/pg": "8.21.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/notifications": {
+      "name": "@loxep/notifications",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
+        "@loxep/jobs": "workspace:*",
         "zod": "4.4.3",
       },
       "devDependencies": {
@@ -631,6 +668,10 @@
     "@loxep/domain": ["@loxep/domain@workspace:packages/domain"],
 
     "@loxep/jobs": ["@loxep/jobs@workspace:packages/jobs"],
+
+    "@loxep/market": ["@loxep/market@workspace:packages/market"],
+
+    "@loxep/notifications": ["@loxep/notifications@workspace:packages/notifications"],
 
     "@loxep/observability": ["@loxep/observability@workspace:packages/observability"],
 
