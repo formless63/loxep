@@ -27,6 +27,12 @@ The first schema physically covers only:
 
 Phase 0 does **not** create per-connection/per-entity ACL tables or placeholder full commerce/accounting/project tables.
 
+## Auth tables and user references
+
+Per ADR-0020, Better Auth's CLI generates its Drizzle schema, which is checked in and migrated through the same reviewed Drizzle workflow as every other table.
+
+User-reference columns in this draft (`created_by_user_id`, `updated_by_user_id`, `actor_user_id`) are refined at implementation time into one of two intentional forms: nullable foreign keys to the Better Auth user ID with `ON DELETE SET NULL` (the default for provenance), or documented non-FK historical identity references where the identifier itself must survive user deletion. Cascading deletion from auth tables into domain, audit, or business tables is prohibited.
+
 ## Application settings and runtime secrets
 
 Normal runtime configuration should be manageable inside Loxep rather than encoded as environment variables. See [Configuration & Secrets](../configuration-and-secrets/) and ADR-0016.
