@@ -27,6 +27,8 @@ The first schema physically covers only:
 
 Phase 0 does **not** create per-connection/per-entity ACL tables or placeholder full commerce/accounting/project tables.
 
+Phase 3 extends this foundation without altering any table above: see [Commerce Schema Design](../commerce-schema-design/) for the ten commerce/catalog tables (`orders`, `order_lines`, `order_fees`, `order_refunds`, `order_refund_lines`, `order_fulfillments`, `order_fulfillment_lines`, `order_source_links`, `catalog_items`, `channel_listings`), the new `monitor_targets` target type `woo_orders` that carries the order-sync cursor, and the provisional decisions those tables ship under.
+
 ## Auth tables and user references
 
 Per ADR-0020, Better Auth's CLI generates its Drizzle schema, which is checked in and migrated through the same reviewed Drizzle workflow as every other table.
@@ -288,7 +290,7 @@ ebay_watchlist
 ebay_item
 ```
 
-A later phase adds search/seller types without changing the scheduling model.
+A later phase adds search/seller types without changing the scheduling model. Phase 2 added `ebay_search` and `ebay_seller`; Phase 3 added `woo_orders`, whose namespaced `config.commerceSync` key holds the WooCommerce order-sync watermark — see [Scheduling is shared foundation infrastructure](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) for the ownership rule that permits it, and [Commerce Schema Design](../commerce-schema-design/#provisional-implementation-decisions) for its provisional status.
 
 ### `marketplace_items`
 
