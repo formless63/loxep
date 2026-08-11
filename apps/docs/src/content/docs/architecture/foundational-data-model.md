@@ -209,7 +209,9 @@ Successful polls are recorded even when values are unchanged because repeated eq
 
 Missing/unobservable data remains `NULL`; absence is not normalized to zero.
 
-Initial Timescale policy uses 7-day chunks, recent rowstore data, later Hypercore/columnstore conversion around 30 days, and no automatic retention deletion. These are starting values and current Timescale syntax must be verified before implementation.
+Observation writes are retry-safe: each provider fetch mints one `observation_batch_id` and fixes `observed_at` at that moment, both retained across processing retries, with hypertable uniqueness on `(observation_batch_id, marketplace_item_id, observed_at)`. See the foundation schema draft.
+
+Initial Timescale policy uses 7-day chunks, recent rowstore data, later columnstore conversion around 30 days, and no automatic retention deletion. These are starting values and current Timescale syntax must be verified before implementation.
 
 ## Detected market events
 
