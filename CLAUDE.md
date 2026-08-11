@@ -31,7 +31,7 @@ Inside `apps/web` there is also `lint:fix` (`oxlint --fix`) and `start` (`node .
 
 Modular monolith. One Loxep image runs as `LOXEP_MODE=all|web|worker`; default deployment is `loxep` + `postgres-timescale` (+ optional RustFS S3 companion). Do not add Redis/Kafka/BullMQ/pg-boss — Graphile Worker on PostgreSQL is the accepted job system, and polling uses DB-stored scheduling state with a small number of dispatcher jobs, never one cron entry per monitored item. Jobs are at-least-once; handlers must be idempotent.
 
-Accepted stack (do not relitigate): TanStack Start/Router/Query/Table/Form, React 19, Zod at validation boundaries, shadcn/ui + Base UI + Tailwind v4, Drizzle + first-class SQL on PostgreSQL + TimescaleDB, Better Auth (OIDC + magic links, no passwords initially, `admin`/`member` roles only), Node.js LTS runtime with Bun as package manager/tooling.
+Accepted stack (do not relitigate): TanStack Start/Router/Query/Table/Form, React 19, Zod at validation boundaries, shadcn/ui over Radix/Base UI primitives + Tailwind v4 (donor components are mostly Radix today; standardization is incremental, per ADR-0015), Drizzle + first-class SQL on PostgreSQL + TimescaleDB, Better Auth (OIDC + magic links, no passwords initially, `admin`/`member` roles only), Node.js LTS runtime with Bun as package manager/tooling.
 
 ### apps/web layout
 

@@ -14,7 +14,7 @@ Loxep has moved from architecture-only planning into foundation buildout. Curren
 - Kiranism's TanStack Start dashboard integrated as the initial UI/theme/reference donor;
 - `/dashboard/*` as the real Loxep dashboard workspace and `/starter/*` as preserved donor/reference routes;
 - workspace-aware sidebar switching and Cmd+K navigation, with future major product areas as peer route roots rather than children of `/dashboard`;
-- shadcn/ui + Base UI + Tailwind;
+- shadcn/ui over Radix/Base UI primitives + Tailwind (donor components are mostly Radix today; standardization is incremental, per ADR-0015);
 - Recharts, DnD, and narrowly-owned Zustand available for credible product/UI uses; ECharts when dense analytics justify it;
 - Node.js current supported LTS runtime and Bun workspaces/tooling;
 - PostgreSQL + TimescaleDB;

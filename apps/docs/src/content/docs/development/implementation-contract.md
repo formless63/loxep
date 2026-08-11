@@ -93,7 +93,7 @@ Accepted stack:
 - TanStack Table;
 - TanStack Form;
 - Zod at validation boundaries;
-- shadcn/ui + Base UI + Tailwind;
+- shadcn/ui over Radix/Base UI primitives + Tailwind (the donor composition is mostly Radix today; see [ADR-0015](../../decisions/0015-dashboard-starter-and-ui-foundation/) for the current reality and incremental standardization policy);
 - Lucide/icons already represented by the donor where appropriate.
 
 The Kiranism dashboard is a presentation donor, not the domain architecture.
