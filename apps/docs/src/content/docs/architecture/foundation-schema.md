@@ -411,6 +411,34 @@ quantity_changed
 listing_ended
 ```
 
+## Opportunity rules
+
+Phase 2 extension (`packages/db` migration `0002_opportunity_rules`). This is the table that finally uses the `market_events.rule_id` column the draft above left dangling: an event stamped with a `rule_id` is an event some rule turned into a scored opportunity.
+
+### `opportunity_rules`
+
+```text
+id                    uuid primary key
+name                  text not null
+enabled               boolean not null default true
+priority              integer not null default 0
+conditions            jsonb not null default '{}'
+score_weight          numeric(10,4) not null default 1.0000
+created_by_user_id    text null references user(id) on delete set null
+created_at            timestamptz not null
+updated_at            timestamptz not null
+```
+
+Indexes:
+
+```text
+index(enabled, priority) where enabled = true
+```
+
+`conditions` holds a small closed, declarative grammar (event-type filters, absolute/percentage price thresholds, quantity thresholds, listing-state predicates, and optional monitor/item scoping) validated by Zod in `@loxep/market`, not a general-purpose rule/workflow engine — that remains a stated non-goal. Rule states stay text; no PostgreSQL enums.
+
+`market_events.rule_id` deliberately remains a plain `uuid` with **no** foreign key: it is a historical attribution stamp in the same spirit as `audit_events.actor_user_id`, so deleting a rule can never block, cascade into, or rewrite recorded event history. Smaller `priority` evaluates first (the `monitor_targets`/Graphile Worker convention), and the first matching rule wins the stamp, written as `UPDATE ... WHERE rule_id IS NULL` so at-least-once replays never overwrite an earlier attribution. The rule's score is merged into `market_events.payload` under a namespaced `opportunity` key rather than replacing the derivation payload.
+
 ## Media and object storage
 
 Storage backends are configured resources rather than hardcoded driver names. This allows one installation to migrate between local storage and one or more S3-compatible destinations without changing media identity.

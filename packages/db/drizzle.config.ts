@@ -22,6 +22,7 @@ export default defineConfig({
     "./src/schema/provenance.ts",
     "./src/schema/monitoring.ts",
     "./src/schema/events.ts",
+    "./src/schema/opportunities.ts",
     "./src/schema/storage.ts",
     "./src/schema/resources.ts",
     "./src/schema/notifications.ts",

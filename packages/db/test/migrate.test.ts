@@ -11,7 +11,8 @@ import {
   silentLogger,
 } from "./helpers.ts";
 
-const MIGRATION_FILE_COUNT = 2;
+/** 0000 foundation, 0001 observations hypertable, 0002 opportunity rules. */
+const MIGRATION_FILE_COUNT = 3;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

@@ -254,6 +254,8 @@ listing_ended
 
 Domain-level deduplication prevents worker retries from producing duplicate user-visible events/notifications.
 
+Derived events are also scored against declarative opportunity rules: a rule is a small closed set of predicates (event type, price/quantity thresholds, listing-state predicates, monitor/item scope) evaluated purely against the event and the two observations it came from, never a general-purpose rule engine. The first (highest-priority) matching rule stamps `market_events.rule_id` — first-wins and never overwritten, so replays are safe — while its score merges into the event payload under a namespaced key and every match is handed back to the caller, which decides whether to bridge it into notification delivery.
+
 ## Media, storage backends, and migration
 
 Binary files are not stored as ordinary PostgreSQL blobs.
