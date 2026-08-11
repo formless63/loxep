@@ -16,14 +16,14 @@
 # - postgres:18-based images keep PGDATA under /var/lib/postgresql (not
 #   /var/lib/postgresql/data), so the named volume mounts there.
 
-name: loxep-dev
+name: ${LOXEP_DEV_PROJECT:-loxep-dev}
 
 services:
   loxep-dev-db:
-    container_name: loxep-dev-db
+    container_name: ${LOXEP_DEV_DB_NAME:-loxep-dev-db}
     image: timescale/timescaledb:2.29.1-pg18
     ports:
-      - "5433:5432"
+      - "${LOXEP_DEV_DB_PORT:-5433}:5432"
     environment:
       POSTGRES_PASSWORD: ${LOXEP_DEV_DB_PASSWORD:-loxep-dev}
     volumes:

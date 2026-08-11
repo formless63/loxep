@@ -59,6 +59,7 @@ export default defineConfig({
             { label: 'Implementation Contract', slug: 'development/implementation-contract' },
             { label: 'Dependency & Version Policy', slug: 'development/dependency-policy' },
             { label: 'Project Surfaces & Future Sites', slug: 'development/project-surfaces' },
+            { label: 'Phase 0 Exit Walkthrough', slug: 'development/phase-0-exit-walkthrough' },
           ],
         },
         {

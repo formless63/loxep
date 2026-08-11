@@ -39,7 +39,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: loxep
+    image: ${LOXEP_IMAGE:-loxep}
     command: ["migrate"]
     env_file: .env
     environment:
@@ -53,7 +53,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: loxep
+    image: ${LOXEP_IMAGE:-loxep}
     env_file: .env
     environment:
       LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
