@@ -43,6 +43,13 @@
       "when": 1786433178161,
       "tag": "0005_inventory_acquisition_and_shipments",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786436375222,
+      "tag": "0006_expenses_and_counterparties",
+      "breakpoints": true
     }
   ]
 }

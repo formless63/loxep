@@ -6,7 +6,9 @@ This document is the physical schema design for [Phase 5 — Financial foundatio
 
 It **extends** the foundation and both prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table, and nothing here alters a table Phase 3 or Phase 4 designed — every reference into an earlier phase is an outbound foreign key or an unenforced provenance stamp added by Phase 5.
 
-Design work only. No migration, Drizzle schema, or accounting service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
+**Implementation status: ONE MILESTONE of this design is implemented, PROVISIONALLY — expenses and receipts, and nothing else.** Migration `0006_expenses_and_counterparties.sql`, `packages/db/src/schema/expenses.ts`, and `packages/accounting` exist and create **two of this document's twenty-two tables**. The other twenty — books, the chart of accounts, dimensions, fiscal periods, the journal, posting rules, payouts, banking, reconciliation, and sales-tax facts — remain **design only**, because all three [OWNER-REVIEW-CRITICAL open questions](#open-questions) are unresolved and each is unrecoverable after a single entry posts. See [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial) for exactly what shipped, what diverged, and what is still on paper.
+
+The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or accounting service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
 **Phase 5's migration cannot run before Phase 3's and Phase 4's.** Posting rules consume `orders`, `order_fees`, `order_refunds`, `inventory_movements`, `acquisition_costs`, and `shipments`; the payout model reconciles against `order_fees`; the expense model attributes to `acquisitions`. Unlike Phase 4, most of that coupling is *not* expressed as foreign keys — see [Source-fact provenance](#source-fact-provenance-is-an-unenforced-stamp) for why the ledger deliberately refuses referential integrity into operational tables — but the semantics are unusable without the facts.
 
@@ -1313,9 +1315,88 @@ financial_accounts index(ledger_account_id) where not null
 
 Not indexed on purpose: `journal_entries.status` (low cardinality, always filtered with a date range), `journal_lines.currency` unpartialled (one value dominates), `ledger_accounts.system_key` (the partial unique already serves it), `expenses.payment_method`.
 
+## Provisional implementation decisions (partial)
+
+Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
+
+This section is **scoped to the expenses-and-receipts milestone**. It says nothing about the rest of Phase 5, because none of the rest of Phase 5 was built.
+
+### What shipped
+
+```text
+migration      packages/db/migrations/0006_expenses_and_counterparties.sql
+                 (shared with the Phase 6 counterparty milestone)
+schema         packages/db/src/schema/expenses.ts    (2 tables, 0 altered)
+services       packages/accounting/src/              (@loxep/accounting)
+  decimal.ts        exact decimal strings, scaled BigInt, no division
+  attribution.ts    the three-rung expense attribution ladder
+  codes.ts          EXP-2026-0231 reference-code generation
+  posting.ts        the posting SEAM — three constants, two functions, no rows
+  expenses.ts       create/update/submit/void, allocations, the invariant
+  receipts.ts       media_links attachment, idempotent, plus the missing report
+  reports.ts        by entity, by period, unallocated, posting backlog
+tests          packages/accounting/test/             (87 tests, real PostgreSQL)
+               packages/db/test/schema.test.ts       (deferred-table assertions)
+```
+
+### What is still design-only
+
+**Twenty of this document's twenty-two tables**, and every capability that depends on them:
+
+```text
+accounting_books, book_entity_links            OQ1 unresolved
+ledger_accounts, accounting_dimensions,
+  accounting_dimension_values, fiscal_periods  no book to hang them from
+journal_entries, journal_lines,
+  journal_line_dimensions                      OQ2 and OQ4 unresolved
+posting_rules, posting_rule_versions,
+  posting_rule_lines, journal_entry_source_links
+financial_accounts, payouts, payout_lines
+bank_statement_imports, bank_transactions,
+  reconciliation_matches
+sales_tax_facts
+```
+
+Consequently there is **no double entry, no chart of accounts, no period close, no trial balance, no statement, no posting rule, no COGS posting, no clearing account, no payout reconciliation, and no tax fact.** `packages/db/test/schema.test.ts` asserts each of those table names is absent, so an accidental `accounting_books` fails a test rather than quietly deciding OQ1.
+
+### The open questions this milestone touched, as implemented
+
+Only these. OQ1, OQ2, OQ3, OQ4, OQ5, OQ6, OQ7, OQ9, OQ10, OQ11, OQ12, and OQ13 are **untouched and still open** — nothing was built that could resolve them.
+
+- **OQ8 (unenforced source-fact references), partially.** The seam between an expense and a future journal entry is a **source-fact identity**, not a column: `('expense', expenses.id)`, exported as `EXPENSE_SOURCE_FACT_TYPE` / `expenseSourceFact()`. `expenses` gains no `journal_entry_id`, no `posting_key`, and no `posted_at`, and a test asserts their absence. This is the recommendation working in the direction it was argued for — because the link is an identity rather than a reference, the seam is *complete today* and the ledger, when it arrives, only has to read. `postingKeyFor()` is deliberately **not** implemented: the key embeds the rule version, and a helper that guessed a version would encode exactly the silent-swallow failure OQ2 warns about.
+- **OQ14 (which package owns this), against this document's own recommendation.** Phase 5 recommended expenses in `@loxep/domain`; they shipped in **`@loxep/accounting`**, per [Phase 6's proposed general rule](../services-billing-schema-design/#open-questions) under which expenses fail the inbound-edge test anywhere else. Both documents flag this as the reviewer's first test of that rule. It is a file move to reverse.
+
+### Divergences from the draft
+
+- **`expenses.status` defaults to `draft`, not `recorded`.** The shipped lifecycle locks a row at `recorded`, so a DDL default of `recorded` would drop an insert that omitted the column straight into the immutable state. `create()` still accepts `recorded` explicitly for the type-it-in-and-done case.
+- **Only `draft` is mutable, and there is no `reopen`.** The draft sketches the status column and says nothing about edits. The strict reading was chosen because loosening a lock later is a one-line change while tightening one after a year of silent post-hoc edits means auditing history to find out which numbers were ever true. A recorded expense is corrected by voiding it and recording the corrected fact — the same posture the ledger takes for a posted entry.
+- **Over-allocation is REFUSED; under-allocation is allowed.** The design says the sum equality is "a service rule and a reconciliation report, not a constraint". Implementation splits that into the half that is never legitimate and the half that is: a split must land inside the closed interval between zero and the expense's amount, taking the expense's sign as the direction. Under-allocation is a draft and appears in `unallocatedExpenses()`; over-allocation is arithmetic no later edit can make true. The guard runs on **both** sides — adding an allocation, and *reducing an expense's amount below what is already allocated*.
+- **`expense_allocations` gains a `num_nonnulls(...) >= 1` target CHECK the draft does not sketch.** An allocation must name at least one of entity, acquisition, catalog item, or channel. It is `>= 1` rather than `= 1` on purpose: these targets are orthogonal dimensions of one split, not alternative kinds of it, so "$40 of this fuel bill belongs to the LLC, against that auction lot" is one row naming two targets. What the check forbids is the row that names nothing.
+- **`expenses.acquisition_cost_id` and `expense_allocations.acquisition_id` are REAL foreign keys.** The draft left them as bare `uuid`s because Phase 4 had not migrated; it has (migration 0005), and the draft's own instruction was to make them real in that case. The no-copy rule is unchanged: `acquisition_costs.capitalize = false` rows are still not copied into `expenses`.
+- **Four sketched columns are omitted, not stubbed:** `expenses.accounting_book_id`, `expenses.financial_account_id`, `expense_allocations.ledger_account_id`, and `expense_allocations.dimension_value_id`. Each would point at a table that does not exist, which the design itself calls worse than no column. All four are additive.
+- **`entity_attribution_source` has three members, not Phase 4's five.** An expense has no connection and no parent lot to inherit from, so `connection_default` and `acquisition_default` would be `CHECK` members no code path could produce — worse than absent, because a reader would believe the path exists.
+- **A currency may not be changed while allocations exist.** Allocations carry no currency of their own and are denominated in the expense's, so the edit would silently redenominate every one of them. Clearing the allocations first is the documented path.
+- **Receipt attachment is idempotent in `@loxep/accounting`, not in `@loxep/storage`.** `MediaService.addLink` raises `23505` on the 0004 natural key; `ReceiptsService.attach` absorbs that one violation and returns the existing link, because jobs are at-least-once. Teaching the shared media service to swallow conflicts would change behaviour for every other consumer to fix a rule only this one has.
+- **`accounting.default_economic_entity` is named but NOT registered.** Registration is an edit to `@loxep/domain`'s shipped settings registry, which this slice does not own; the installation default is a parameter to `resolveExpenseAttribution` instead. The signature does not change when the key is registered.
+
+### Verified at implementation time
+
+Against drizzle-kit 0.31.10 and `timescale/timescaledb:2.29.1-pg18`, everything generated correctly from the Drizzle schema and **nothing needed hand-written SQL or was weakened**: `num_nonnulls` `CHECK`s, partial indexes with `<>` and `is not null` predicates, `DESC NULLS LAST` index ordering, and `date` columns in `{ mode: "string" }`.
+
+One implementation-level trap worth recording for the next phase: `db.execute(<string>)` returns rows under Drizzle's own type-parser overrides, and a `timestamptz` arrives as a **string**, not a `Date`. Row mappers built over `execute` must convert rather than cast — a cast compiles and then hands a string to a caller whose type says `Date`. `sql.ts` owns `toDate` / `toDateOrNull` / `toCalendarDate` for that reason.
+
+### What a reviewer should push back on first
+
+1. **The edit lock.** `draft`-only mutability is stricter than the draft says. It is cheap to loosen and expensive to add later, which is why it was chosen this way — but it is a product decision, not a schema one.
+2. **The `>= 1` target check on allocations.** It forbids a row nothing could read, and it is a constraint the draft did not sketch.
+3. **`@loxep/accounting` rather than `@loxep/domain`.** A package boundary, and the first live test of Phase 6's proposed domain-to-package rule.
+4. **`status` defaulting to `draft`.** Trivial to reverse before data exists, awkward after.
+
 ## Open questions
 
 Each item is a genuinely unresolved decision with a recommendation, not a placeholder. **The first three are OWNER-REVIEW-CRITICAL**: they are the accounting-shape decisions that are hardest to change once a single entry is posted, and each one silently invalidates historical data if it is reversed later.
+
+**Only OQ8 and OQ14 have been touched by implementation** (see [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial)); every other question below is untouched and fully open, because the milestone that shipped could not resolve it.
 
 1. **OWNER-REVIEW-CRITICAL — Book granularity and `book_entity_links` semantics.** How many books does a real installation have, and does the entity link *route* postings (scope of inclusion) or merely *describe* contents (reporting label)? *Recommendation: scope of inclusion, effective-dated, with `link_role in ('posting_primary','reporting_only')` and an exclusion constraint guaranteeing at most one primary book per entity per day; facts with no entity fall back to an installation default book, and facts with neither enter an unpostable backlog rather than being guessed into a book.* Routing has to live somewhere, and every other candidate location — a single default book, the posting rule, or the connection — either fails on the second book or re-introduces the mutable-configuration-rewrites-history defect Phase 3 explicitly rejected. The residual question the owner must answer is the practical one: is the intended installation one book containing the LLC and its DBAs plus a second book for personal activity, or one book for everything, or one per legal entity? The schema supports all three, but the *default* the product ships and the onboarding flow it builds should match reality, and getting it wrong means operators create the wrong number of books before there is any data to migrate.
 

@@ -161,7 +161,7 @@ Feature-specific relational configuration remains preferable when it is queried 
 - external account/store settings belong on `connections` and provider-owned related records;
 - their secret tokens belong in `connection_credentials`;
 - user dashboard layout/preferences can use a dedicated preference model once the shape is known;
-- monitor configuration belongs with monitoring targets rather than a global setting key.
+- monitor configuration belongs with monitoring targets rather than a global setting key — a monitor's query, filters, cadence, and cost bounds live on `monitor_targets`. The registered settings `monitors.defaults`, `monitors.observation_caps`, and `integration.ebay.rate_budget` are the installation-wide *defaults and safety limits* those per-target values are created from and clamped by, which is application-level configuration rather than a monitor's own state.
 
 `application_settings` is for genuinely application-level configuration, not an excuse to avoid schema design.
 

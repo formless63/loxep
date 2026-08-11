@@ -6,7 +6,11 @@ This document is the physical schema design for [Phase 6 — Customers, projects
 
 It **extends** the foundation and all three prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently.
 
-Design work only. No migration, Drizzle schema, or projects/billing service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
+**Implementation status: ONE MILESTONE of this design is implemented, PROVISIONALLY — the counterparty core, and nothing else.** Migration `0006_expenses_and_counterparties.sql`, `packages/db/src/schema/counterparties.ts`, and `packages/counterparties` exist and create **four of this document's nineteen tables**. Projects, time entries, billing rates, material uses, service plans, subscriptions, service periods, invoices, invoice lines, invoice sources, and payments remain **design only** — as do `counterparty_sites` and `counterparty_identifiers` — because the first [OWNER-REVIEW-CRITICAL open question](#open-questions) decides whether most of them should exist at all. **No table this document does not own was altered**: `orders` gains no `counterparty_id` in this slice. See [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial).
+
+This milestone was separable exactly as this document predicted: *"Migration A depends on nothing beyond the foundation and Phase 3, which means the counterparty milestone can ship even if Phases 4 and 5 slip."*
+
+The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or projects/billing service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
 **Phase 6's migration cannot run before Phase 4's and Phase 5's.** `project_material_uses` carries foreign keys into `inventory_items`, `inventory_allocations`, and `inventory_movements`; `invoice_payments` references `financial_accounts`; the AR posting path consumes Phase 5's `posting_rules` and `journal_entries`; and Phase 6 alters `expenses` and `expense_allocations`, which Phase 5 owns. There is an honesty problem here that Phases 4 and 5 did not have: **Phase 3 is implemented (provisionally), Phase 4 and Phase 5 are designs on paper.** This document can therefore state its Phase 3 references as facts against a migration and must state its Phase 4/Phase 5 references as requirements against documents. Every one of the latter must be re-verified against the applied migration before a single foreign key is written — see [Before implementing this schema](#before-implementing-this-schema).
 
@@ -1440,9 +1444,96 @@ expense_allocations    index(project_id) where not null         (added with the 
 
 Not indexed on purpose: `counterparties.kind` and `status` (two and three values, always filtered alongside something selective), `time_entries.billable` unpartialled, `invoice_lines.line_kind`, `service_periods.status` (the `billing_status` partial serves the queries that matter), `contact_channels.channel_kind`.
 
+## Provisional implementation decisions (partial)
+
+Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
+
+This section is **scoped to the counterparty milestone**. It says nothing about projects, services, or billing, because none of them was built.
+
+### What shipped
+
+```text
+migration      packages/db/migrations/0006_expenses_and_counterparties.sql
+                 (shared with the Phase 5 expenses milestone)
+schema         packages/db/src/schema/counterparties.ts   (4 tables, 0 altered)
+services       packages/counterparties/src/               (@loxep/counterparties)
+  normalize.ts       normalized_name and normalized_value; exact, never fuzzy
+  codes.ts           CP-2026-0117 reference-code generation
+  merge.ts           THE resolver, the picker predicate, merge/unmerge, reports
+  counterparties.ts  create/update, the boundary refusals, the declared mirror
+  contacts.ts        contacts and channels, primaries, opt-out
+  roles.ts           relationship rows, terms, the entity-scoped pickers
+  dedupe.ts          exact-normalized candidates by name and by channel
+tests          packages/counterparties/test/              (123 tests, real PostgreSQL)
+               packages/db/test/schema.test.ts            (boundary + deferred tables)
+```
+
+### What is still design-only
+
+**Fifteen of this document's nineteen tables**, plus every alteration it planned to other phases' tables:
+
+```text
+counterparty_sites          its only consumers are projects and invoices
+counterparty_identifiers    its purpose is backfilling orders.counterparty_id,
+                            which is an ALTER this slice does not make
+projects, time_entries, billing_rates, project_material_uses
+service_plans, subscriptions, subscription_items,
+  service_periods, service_period_charges
+invoices, invoice_lines, invoice_line_sources, invoice_payments
+
+ALTERs not made: orders.counterparty_id / .counterparty_match_source;
+  expenses.project_id / .payee_counterparty_id / .client_billable;
+  expense_allocations.project_id / .counterparty_id / .subscription_id;
+  posting_rules and reconciliation_matches CHECK widenings;
+  the resource_links unique + index
+```
+
+`packages/db/test/schema.test.ts` asserts each deferred table name is absent. Note in particular that **`expenses` and `counterparties` ship in the same migration and are still not linked**: `expenses.payee_name` remains denormalized text, because the column that names a payee belongs to a Phase 6 milestone with a matching table, and adding an unbackfillable FK just because both tables happen to exist would be the opposite of the discipline that kept them apart for three phases.
+
+The `resource_links` integrity gap recorded as [tension 1](#contradictions-and-tensions-found-in-existing-documentation) is **not** fixed here; migration 0004 already gave `media_links` and `resource_links` their natural keys and indexes, so what remains of that item is only the counterparty-specific link usage, which does not exist yet.
+
+### The open questions this milestone touched, as implemented
+
+Only OQ2, OQ3, OQ12, OQ13, and OQ14. **OQ1 and OQ4–OQ11 and OQ15 are untouched and still open** — every one of them is about invoicing, projects, rates, or service periods, none of which was built.
+
+- **OQ2 — the role model, implemented as recommended.** `counterparty_entity_roles(counterparty_id, economic_entity_id nullable, role, terms…)` with `unique nulls not distinct`, and **no role column on `counterparties` at all**. There is no `is_customer`/`is_vendor` pair, and `kind` has exactly two members. The nullable entity is the contestable half and it is nullable: a party may hold one installation-wide `customer` row, and the `NULLS NOT DISTINCT` unique is what stops it holding two. A test asserts that null case specifically, because without `NULLS NOT DISTINCT` the constraint would be silently inert for exactly the rows an early unattributed installation creates.
+- **OQ3 — merge, implemented as recommended, with one addition.** Survivor pointer, never a delete, never a foreign-key rewrite, one resolver, merged rows excluded from every picker, unmerge is a one-column update. See the divergence below for the addition.
+- **OQ12 — the declared mirror, implemented as recommended.** `counterparties.mirrors_economic_entity_id` exists, `declareMirror()` is the only API that relates the two concepts, it is audited as its own act, and `mirrors()` is the read model that makes intercompany revenue a query instead of a surprise.
+- **OQ13 — data minimization, held as recommended.** Nothing harvests names, emails, or addresses out of retained `provider_objects`; a marketplace buyer becomes a counterparty only when an operator says so. There is no automatic order-to-counterparty match, partly because that is the policy and partly because the identifier table it would need is deferred.
+- **OQ14 — the proposed domain-to-package rule, adopted for the two packages this slice creates.** `@loxep/counterparties` passes all three tests cleanly. Expenses landed in `@loxep/accounting` rather than `@loxep/domain`, which is the divergence from Phase 5's own recommendation that this document said would be the first thing to test the rule against.
+
+### Divergences from the draft
+
+- **Merge COMPRESSES pointers, and refuses two shapes the DDL would allow.** The draft states resolution as `coalesce(merged_into_counterparty_id, id)` — a single hop — and nothing in the DDL keeps the graph one level deep. `A → B` then `B → C` would leave `A` resolving to a row that is itself merged, and every read using the documented formula would silently under-count. Implementation keeps the formula true two ways: merging an already-merged row and merging *into* an already-merged row are both **refused** (which also makes a cycle unconstructible), and when a survivor is later merged on, the rows pointing at it are **re-pointed in the same transaction**. The honest cost: after `A → C` and `C → D`, row `A` stores `D` and no longer stores that it was once merged into `C`. The evidence is not lost — a `counterparty.merge_pointer_compressed` audit event carries the before and after pointer for every row moved — but it lives in the audit trail rather than in the column, and unmerging `C` therefore leaves `A` pointing at `D`.
+- **`counterparty_contacts` ships although it is not part of the counterparty "core" as scoped.** `contact_channels` is physically undefined without it: its `num_nonnulls(counterparty_id, counterparty_contact_id) = 1` discriminator and both of its uniques reference the contact. Dropping the contact column instead would have silently changed the draft's channel model.
+- **`counterparty_entity_roles` carries `billing_contact_id` but NOT `billing_site_id`.** `counterparty_sites` is deferred, and a column pointing at a table that does not exist is worse than no column — the rule Phase 5 states and this slice reuses. It is additive.
+- **The partial primary-channel unique uses a `coalesce()` expression index.** Drizzle's `uniqueIndex` has no `nullsNotDistinct()` (only the constraint form does) and this one must be partial, so it uses the portable fallback this document itself names for exactly this case. The `num_nonnulls = 1` check guarantees `coalesce(counterparty_id, counterparty_contact_id)` is a total key, so nothing is weakened. The non-partial value unique is a real `UNIQUE … NULLS NOT DISTINCT`.
+- **Five foreign keys are named explicitly.** Their derived names run 64–72 bytes and PostgreSQL silently truncates at 63: the `counterparties` self-reference and mirror, the `contact_channels` contact reference, and all three long references on `counterparty_entity_roles`. A test asserts no constraint or index name on the new tables exceeds the limit.
+- **`normalized_name` follows the LEGAL name when one exists**, falling back to the display name, and is recomputed on every write so it cannot drift from the name it is derived from.
+- **`grant()` is an upsert, not an insert.** Keyed on the same triple the unique governs, using `is not distinct from` so the installation-wide row is matched rather than duplicated. "Make them a customer of the LLC on net-30" is idempotent.
+- **`listForPicker()` is a separate function, not a flag on `list()`.** "Which rows may accumulate NEW references" is a different question from "which rows exist", and a boolean would let a caller get the wrong answer by omission. `list()` hides merged rows by default and returns them only when asked.
+- **A channel's VALUE never enters an audit snapshot.** An audit row is not the place to duplicate a contact's email address; the events record the channel id, kind, and primacy. A test asserts the address does not appear.
+- **Dedupe is exact-normalized only, and the gaps are tested.** No trigram, no edit distance, no phonetic key, no scoring — the same "ship the state, not the matcher" posture Phase 5 took for reconciliation, and for the same reason: this finder feeds an operation that is expensive to undo, and a candidate list that is right most of the time trains an operator to accept it without reading. Tests assert both what it catches (`The Acme Roofing Co., Inc.` groups with `acme roofing company incorporated`) and what it deliberately does not (`Acme Roofing` vs `Acme Roofing LLC`; any misspelling; a local phone number vs its E.164 form). Adding `pg_trgm` later needs no schema change and no change to the return shape; removing a fuzzy matcher after operators have merged on its suggestions is not symmetrical.
+
+### Verified at implementation time
+
+Against drizzle-kit 0.31.10 and `timescale/timescaledb:2.29.1-pg18`, everything generated correctly from the Drizzle schema and **nothing needed hand-written SQL or was weakened**: `UNIQUE … NULLS NOT DISTINCT` on both `contact_channels` and `counterparty_entity_roles`, `num_nonnulls` `CHECK`s, partial unique indexes with boolean predicates, a unique index over a `coalesce()` expression, and `date` columns in `{ mode: "string" }`. The `EXCLUDE USING gist` and `btree_gist` items on the pre-implementation checklist were not needed, because the constraint that requires them is on `service_periods`.
+
+### What a reviewer should push back on first
+
+In rough order of how expensive each is to reverse after data exists:
+
+1. **Merge compression.** The refusals are uncontroversial; re-pointing rows onto a new survivor moves evidence from a column into the audit trail. The alternative is a recursive resolver on every read path.
+2. **The nullable entity on a role.** Making it `not null` later means inventing an entity for every existing row.
+3. **The declared mirror.** A door in a wall ADR-0017 built deliberately. Dropping the column and declaring intercompany billing unsupported is a defensible answer that should be written down rather than assumed.
+4. **Exact-only dedupe.** Cheap to extend, and the gaps are real today.
+5. **Shipping `counterparty_contacts` while deferring `counterparty_sites`.** Both are "shallow" tables; only one was forced by a constraint.
+
 ## Open questions
 
 Each item is a genuinely unresolved decision with a recommendation, not a placeholder. **The first three are OWNER-REVIEW-CRITICAL**: they set the boundary of what Loxep owns and the shape of party identity, and each one is expensive or impossible to reverse after real customer and billing data exists.
+
+**OQ2, OQ3, OQ12, OQ13, and OQ14 have been implemented per their recommendation and marked PROVISIONAL** (see [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial)); every other question below is untouched and fully open. They are retained verbatim because the recommendation is not the same thing as the answer, and the review needs the original reasoning.
 
 1. **OWNER-REVIEW-CRITICAL — Where exactly is the own-versus-integrate line for invoicing?** *Recommendation: Loxep owns the source facts, the decision that a fact was billed and on which line, the seller entity, the counterparty, the amounts, and the AR source fact Phase 5 posts from — and owns nothing about rendering, delivery, reminders, portals, payment collection, or the customer-visible invoice number, which stay with Invoice Ninja and are linked through `external_resources`. Loxep owns no quotes table at all; a quote is `projects.estimate_amount` plus a link.* This is the minimum model that makes the unbilled-work queue computable and double-billing structurally impossible, which are the two capabilities no external system can provide because three of the four source tables exist only in Loxep. The owner must confirm two things. First, that shipping without native invoice PDFs and email is acceptable for the first release — because the alternative is a template engine, a deliverability problem, and a tax-display ruleset, none of which advance the analytical purpose. Second, that Invoice Ninja owning the customer-visible number is acceptable; if Loxep must issue gapless numbers itself, `numbering_source` flips to `loxep` and a counter row on a settings key is needed, which is a small change *now* and a renumbering exercise later. The residual risk of the recommendation is that [Master Domain Map section 8](../../product/master-domain-map/#8-billing-and-accounts-receivable) currently promises the whole AR feature set, and accepting this recommendation means editing that section rather than building it.
 
