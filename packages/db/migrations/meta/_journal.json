@@ -50,6 +50,13 @@
       "when": 1786436375222,
       "tag": "0006_expenses_and_counterparties",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786519941678,
+      "tag": "0007_order_payload_retention",
+      "breakpoints": true
     }
   ]
 }

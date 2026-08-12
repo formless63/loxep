@@ -320,9 +320,9 @@ describe("ebay_item poll executor", () => {
     // canonical listing URL from the listing-context bridge).
     const message = sent.at(-1)?.message;
     expect(message?.title).toBe("Price drop: Fake Widget");
-    // `from` is the stored `numeric(20,6)` string, `to` the fresh provider
-    // string — both verbatim decimals, never JS float math.
-    expect(message?.body).toContain("100.000000 USD → 80.00 USD");
+    // Amounts render through the notifications formatter (Intl fed from the
+    // decimal string, display-only) — no raw numeric(20,6) leaks into pushes.
+    expect(message?.body).toContain("$100.00 → $80.00");
     expect(message?.body).toContain("https://www.ebay.com/itm/110000000001");
     expect(message?.priority).toBe("high");
 

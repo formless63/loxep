@@ -69,6 +69,23 @@ export const providerObjects = pgTable(
     }),
     payload: jsonb("payload").notNull(),
     payloadHash: text("payload_hash").notNull(),
+    /**
+     * When the retention sweep replaced {@link payload} with its redacted
+     * form (ADR-0021); null means the payload is still the verbatim one the
+     * provider sent.
+     *
+     * `payload_hash` deliberately keeps identifying the ORIGINAL payload, so
+     * after redaction the stored payload no longer hashes to it. That is the
+     * point: ingestion dedups an unchanged re-sync by comparing the incoming
+     * hash to this row's, and rehashing the redacted payload would make every
+     * re-sync of an old order look like a change and store a fresh copy of
+     * the PII the sweep just removed.
+     *
+     * Only order-class object types are swept; every other class keeps
+     * foundational decision 7's retain-by-default stance and leaves this null
+     * forever.
+     */
+    redactedAt: timestamp("redacted_at", { withTimezone: true }),
   },
   (table) => [
     index("provider_objects_identity_fetched_at_idx").on(
@@ -78,5 +95,12 @@ export const providerObjects = pgTable(
       table.fetchedAt.desc(),
     ),
     index("provider_objects_payload_hash_idx").on(table.payloadHash),
+    // The retention sweep's exact predicate: order-class object types, oldest
+    // first, not yet redacted. Partial on `redacted_at is null` because the
+    // steady state is that almost every eligible row has already been swept —
+    // the index shrinks back toward empty as the sweep catches up.
+    index("provider_objects_redaction_sweep_idx")
+      .on(table.objectType, table.fetchedAt)
+      .where(sql`${table.redactedAt} is null`),
   ],
 );

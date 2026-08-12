@@ -44,6 +44,8 @@ export {
 } from "./commerce-ebay.ts";
 export type { CreateEbayOrderPollExecutorOptions } from "./commerce-ebay.ts";
 
+export { createOrderPayloadRedactors } from "./commerce-retention.ts";
+
 export { buildAppServices } from "./services.ts";
 export type { AppServices, BuildAppServicesOptions } from "./services.ts";
 
