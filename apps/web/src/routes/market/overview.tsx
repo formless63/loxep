@@ -1,10 +1,12 @@
 import * as React from 'react';
-import { createFileRoute, Link } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
+import type { ErrorComponentProps } from '@tanstack/react-router';
+import { useSuspenseQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { Area, AreaChart, XAxis } from 'recharts';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardAction,
@@ -28,7 +30,7 @@ import {
   EmptyTitle
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Icons } from '@/components/icons';
+import { Icons, type Icon } from '@/components/icons';
 import { MarketPage } from '@/features/market/components/market-page';
 import RecentEventsList from '@/features/market/components/recent-events-list';
 import { marketOverviewQuery } from '@/features/market/api/queries';
@@ -41,6 +43,10 @@ import type {
 } from '@/server/market-functions';
 
 export const Route = createFileRoute('/market/overview')({
+  loader: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData(marketOverviewQuery);
+  },
+  errorComponent: MarketOverviewError,
   component: MarketOverview
 });
 
@@ -69,17 +75,32 @@ function FocusableLink({
   );
 }
 
+/** A tinted chart-token circle for KPI tiles that have no real series to sparkline (Frontend Standards: no fabricated trend data). */
+function StatIcon({ icon: IconComponent, className }: { icon: Icon; className: string }) {
+  return (
+    <span
+      className={cn('flex size-9 shrink-0 items-center justify-center rounded-full', className)}
+    >
+      <IconComponent className='size-5' />
+    </span>
+  );
+}
+
 function StatCard({
   label,
   value,
   href,
   trend,
+  icon,
+  sparkline,
   footer
 }: {
   label: string;
   value: React.ReactNode;
   href?: RouteTarget;
   trend?: { direction: 'up' | 'down'; label: string };
+  icon?: { icon: Icon; className: string };
+  sparkline?: React.ReactNode;
   footer?: React.ReactNode;
 }) {
   const card = (
@@ -97,9 +118,15 @@ function StatCard({
             </Badge>
           </CardAction>
         )}
+        {icon && !trend && (
+          <CardAction>
+            <StatIcon icon={icon.icon} className={icon.className} />
+          </CardAction>
+        )}
       </CardHeader>
       {footer && (
-        <CardFooter className='flex-col items-start gap-1 text-sm'>
+        <CardFooter className='flex-col items-start gap-2 text-sm'>
+          {sparkline}
           <div className='text-muted-foreground'>{footer}</div>
         </CardFooter>
       )}
@@ -109,6 +136,39 @@ function StatCard({
   return href ? <FocusableLink to={href}>{card}</FocusableLink> : card;
 }
 
+/** Minimal hourly sparkline embedded in a KPI tile — no axis/tooltip, the number above already carries the value. */
+function TileSparkline({
+  data,
+  config,
+  gradientId
+}: {
+  data: MarketOverviewTrendBucketDto[];
+  config: ChartConfig;
+  gradientId: string;
+}) {
+  return (
+    <ChartContainer config={config} className='aspect-auto h-8 w-full'>
+      <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+        <defs>
+          <linearGradient id={gradientId} x1='0' y1='0' x2='0' y2='1'>
+            <stop offset='5%' stopColor='var(--color-count)' stopOpacity={0.4} />
+            <stop offset='95%' stopColor='var(--color-count)' stopOpacity={0.05} />
+          </linearGradient>
+        </defs>
+        <Area
+          dataKey='count'
+          type='monotone'
+          stroke='var(--color-count)'
+          fill={`url(#${gradientId})`}
+          strokeWidth={1.5}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ChartContainer>
+  );
+}
+
 /**
  * Highest-scoring rule-stamped event gets its own card shape: no fabricated
  * CardAction trend (there is no prior-period score to diff against), and an
@@ -116,6 +176,10 @@ function StatCard({
  * stamped a scored event yet. `EmptyContent`'s primary-action slot is
  * intentionally unused here: the whole tile is already a `<Link>`, and an
  * interactive element cannot nest inside an `<a>`.
+ *
+ * Its own band (paired with `EventsTrendCard`), not the KPI row — a
+ * title/score/item-name card is naturally taller than a numeric tile and
+ * previously stretched every sibling in the row to match it.
  */
 function TopOpportunityCard({ topOpportunity }: { topOpportunity: TopOpportunityDto | null }) {
   const card = topOpportunity ? (
@@ -164,8 +228,15 @@ const eventsTrendChartConfig = {
   }
 } satisfies ChartConfig;
 
+const newListingsTrendChartConfig = {
+  count: {
+    label: 'New listings',
+    color: 'var(--chart-2)'
+  }
+} satisfies ChartConfig;
+
 /** Compares the trailing vs. leading half of the 24h window — a real, derived signal, not a fabricated one. */
-function eventsTrendBadge(
+function trendBadge(
   trend: MarketOverviewTrendBucketDto[]
 ): { direction: 'up' | 'down'; label: string } | undefined {
   if (trend.length < 2) return undefined;
@@ -177,12 +248,12 @@ function eventsTrendBadge(
   return { direction: pct >= 0 ? 'up' : 'down', label: formatPercent(pct) };
 }
 
-/** Hourly event-count sparkline for the trailing 24h — the one chart on this page. */
+/** Hourly event-count chart for the trailing 24h. */
 function EventsTrendCard({ trend }: { trend: MarketOverviewTrendBucketDto[] }) {
   const hasData = trend.some((bucket) => bucket.count > 0);
 
   return (
-    <Card>
+    <Card className='h-full'>
       <CardHeader>
         <CardTitle className='text-base'>Event activity (24h)</CardTitle>
         <CardDescription>Hourly-bucketed derived market events, across every item.</CardDescription>
@@ -234,12 +305,15 @@ const NAV_CARD_HOVER = 'transition-colors hover:bg-accent/50';
 function OverviewSkeleton() {
   return (
     <div className='flex flex-col gap-4'>
-      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5'>
-        {Array.from({ length: 5 }, (_, index) => (
+      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+        {Array.from({ length: 4 }, (_, index) => (
           <Skeleton key={index} className='h-32 w-full' />
         ))}
       </div>
-      <Skeleton className='h-56 w-full' />
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+        <Skeleton className='h-40 w-full' />
+        <Skeleton className='h-40 w-full' />
+      </div>
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         {Array.from({ length: 4 }, (_, index) => (
           <Skeleton key={index} className='h-24 w-full' />
@@ -255,36 +329,55 @@ function OverviewContent({ data }: { data: MarketOverviewDto }) {
     <div className='flex flex-col gap-4'>
       <div
         className={cn(
-          'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5',
+          'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4',
           '[&_[data-slot=card]]:bg-gradient-to-t [&_[data-slot=card]]:from-primary/5 [&_[data-slot=card]]:to-card [&_[data-slot=card]]:shadow-xs dark:[&_[data-slot=card]]:bg-card'
         )}
       >
         <StatCard
           label='Active monitors'
           value={formatQuantity(data.activeMonitorCount)}
+          icon={{ icon: Icons.radar, className: 'bg-chart-3/15 text-chart-3' }}
           footer='Currently enabled monitor targets'
         />
         <StatCard
           label='Watched items'
           value={formatQuantity(data.watchedItemCount)}
+          icon={{ icon: Icons.eye, className: 'bg-chart-4/15 text-chart-4' }}
           footer='Marketplace items linked to your monitors'
         />
         <StatCard
           label='Events (last 24h)'
           value={formatQuantity(data.eventsLast24hCount)}
-          trend={eventsTrendBadge(data.eventsTrend)}
+          trend={trendBadge(data.eventsTrend)}
+          sparkline={
+            <TileSparkline
+              data={data.eventsTrend}
+              config={eventsTrendChartConfig}
+              gradientId='stat-events-sparkline'
+            />
+          }
           footer='Derived market events, across every item'
         />
         <StatCard
           label='New listings (24h)'
           value={formatQuantity(data.newListingCount24h)}
           href='/market/searches'
+          trend={trendBadge(data.newListingsTrend)}
+          sparkline={
+            <TileSparkline
+              data={data.newListingsTrend}
+              config={newListingsTrendChartConfig}
+              gradientId='stat-new-listings-sparkline'
+            />
+          }
           footer='From search & seller discovery monitors'
         />
-        <TopOpportunityCard topOpportunity={data.topOpportunity} />
       </div>
 
-      <EventsTrendCard trend={data.eventsTrend} />
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+        <TopOpportunityCard topOpportunity={data.topOpportunity} />
+        <EventsTrendCard trend={data.eventsTrend} />
+      </div>
 
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <FocusableLink to='/market/monitors'>
@@ -343,26 +436,48 @@ function OverviewContent({ data }: { data: MarketOverviewDto }) {
   );
 }
 
+/**
+ * Reads the suspense-cached query populated by the route `loader`'s
+ * `ensureQueryData` — see Frontend Standards, "Loading" for the pattern this
+ * route is the reference implementation of. `<Suspense>` in `MarketOverview`
+ * below is defence-in-depth for the (rare) case this mounts without the
+ * loader having run first, not the primary loading path.
+ */
+function OverviewData() {
+  const { data } = useSuspenseQuery(marketOverviewQuery);
+  return <OverviewContent data={data} />;
+}
+
 function MarketOverview() {
-  const { data, isPending, isError, error } = useQuery(marketOverviewQuery);
+  return (
+    <MarketPage
+      title='Market'
+      description='Monitor targets, watched items, and derived market events.'
+    >
+      <React.Suspense fallback={<OverviewSkeleton />}>
+        <OverviewData />
+      </React.Suspense>
+    </MarketPage>
+  );
+}
+
+function MarketOverviewError({ error }: ErrorComponentProps) {
+  const router = useRouter();
 
   return (
     <MarketPage
       title='Market'
       description='Monitor targets, watched items, and derived market events.'
     >
-      {isPending ? (
-        <OverviewSkeleton />
-      ) : isError || !data ? (
-        <Alert variant='destructive'>
-          <AlertTitle>Market overview unavailable</AlertTitle>
-          <AlertDescription>
-            {error instanceof Error ? error.message : 'Unknown error'}
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <OverviewContent data={data} />
-      )}
+      <Alert variant='destructive'>
+        <AlertTitle>Market overview unavailable</AlertTitle>
+        <AlertDescription className='flex flex-col items-start gap-2'>
+          <span>{error instanceof Error ? error.message : 'Unknown error'}</span>
+          <Button variant='outline' size='sm' onClick={() => void router.invalidate()}>
+            Retry
+          </Button>
+        </AlertDescription>
+      </Alert>
     </MarketPage>
   );
 }

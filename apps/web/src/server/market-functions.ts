@@ -286,13 +286,25 @@ export interface ConnectionOptionDto {
   status: string;
 }
 
-/** Lightweight eBay-connection picker list for the monitor dialog. */
+/**
+ * Lightweight eBay-connection picker list for the monitor dialog.
+ *
+ * Archived accounts are omitted (loxep-o7h): archiving is terminal
+ * retirement, so a new monitor must never be pointed at one. Existing
+ * targets keep their `connection_id` — the poll path skips them instead (see
+ * `createArchivedConnectionGate` in `@loxep/app`).
+ */
 export const fetchEbayConnectionOptions = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ConnectionOptionDto[]> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { isConnectionArchived }] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain')
+    ]);
     await requireSession();
     const rows = await getAdminServices().connections.listConnections({ provider: 'ebay' });
-    return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
+    return rows
+      .filter((row) => !isConnectionArchived(row.status))
+      .map((row) => ({ id: row.id, name: row.name, status: row.status }));
   }
 );
 
@@ -878,6 +890,37 @@ export interface MarketOverviewDto {
    * market-wide time-series read model.
    */
   eventsTrend: MarketOverviewTrendBucketDto[];
+  /**
+   * Hourly-bucketed count of `new_listing` events over the trailing 24h,
+   * derived in-process from `newListings24h` (already fetched for
+   * `newListingCount24h`, extended with `detectedAt`) — no extra query.
+   * Powers the "New listings (24h)" KPI tile sparkline.
+   */
+  newListingsTrend: MarketOverviewTrendBucketDto[];
+}
+
+const OVERVIEW_TREND_BUCKET_HOURS = 24;
+const OVERVIEW_TREND_BUCKET_MS = 60 * 60 * 1000;
+
+/** Hourly-bucketed count over a trailing window, in-process — shared by `eventsTrend` and `newListingsTrend`. */
+function bucketHourly(rows: { detectedAt: Date }[], since: Date): MarketOverviewTrendBucketDto[] {
+  const buckets: MarketOverviewTrendBucketDto[] = Array.from(
+    { length: OVERVIEW_TREND_BUCKET_HOURS },
+    (_, index) => ({
+      bucketStart: iso(new Date(since.getTime() + index * OVERVIEW_TREND_BUCKET_MS)),
+      count: 0
+    })
+  );
+  for (const row of rows) {
+    const offsetMs = row.detectedAt.getTime() - since.getTime();
+    const bucketIndex = Math.min(
+      OVERVIEW_TREND_BUCKET_HOURS - 1,
+      Math.max(0, Math.floor(offsetMs / OVERVIEW_TREND_BUCKET_MS))
+    );
+    const bucket = buckets[bucketIndex];
+    if (bucket) bucket.count += 1;
+  }
+  return buckets;
 }
 
 const RECENT_EVENTS_LIMIT = 10;
@@ -917,7 +960,7 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       handle.db.query.marketEvents.findMany({
         where: (table, { gt, and, eq }) =>
           and(gt(table.detectedAt, since), eq(table.eventType, 'new_listing')),
-        columns: { id: true }
+        columns: { id: true, detectedAt: true }
       }),
       handle.db.query.marketEvents.findMany({
         orderBy: (table, { desc }) => [desc(table.detectedAt)],
@@ -977,24 +1020,8 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       topOpportunity = { ...topOpportunity, itemTitle: item?.title ?? null };
     }
 
-    const EVENTS_TREND_BUCKET_HOURS = 24;
-    const EVENTS_TREND_BUCKET_MS = 60 * 60 * 1000;
-    const eventsTrend: MarketOverviewTrendBucketDto[] = Array.from(
-      { length: EVENTS_TREND_BUCKET_HOURS },
-      (_, index) => ({
-        bucketStart: iso(new Date(since.getTime() + index * EVENTS_TREND_BUCKET_MS)),
-        count: 0
-      })
-    );
-    for (const event of events24h) {
-      const offsetMs = event.detectedAt.getTime() - since.getTime();
-      const bucketIndex = Math.min(
-        EVENTS_TREND_BUCKET_HOURS - 1,
-        Math.max(0, Math.floor(offsetMs / EVENTS_TREND_BUCKET_MS))
-      );
-      const bucket = eventsTrend[bucketIndex];
-      if (bucket) bucket.count += 1;
-    }
+    const eventsTrend = bucketHourly(events24h, since);
+    const newListingsTrend = bucketHourly(newListings24h, since);
 
     return {
       activeMonitorCount: activeMonitors.length,
@@ -1003,6 +1030,7 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       newListingCount24h: newListings24h.length,
       topOpportunity,
       eventsTrend,
+      newListingsTrend,
       recentEvents: recentEvents.map((event) => ({
         id: event.id,
         eventType: event.eventType,

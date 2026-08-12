@@ -34,6 +34,7 @@ import {
   IconDotsVertical,
   IconEdit,
   IconExternalLink,
+  IconEye,
   IconEyeOff,
   IconFile,
   IconFileText,
@@ -65,6 +66,7 @@ import {
   IconPlugConnected,
   IconPlus,
   IconProps,
+  IconRadar,
   IconRosetteDiscountCheck,
   IconSearch,
   IconSelector,
@@ -200,8 +202,10 @@ export const Icons = {
   // Data / Charts
   trendingDown: IconTrendingDown,
   trendingUp: IconTrendingUp,
+  eye: IconEye,
   eyeOff: IconEyeOff,
   adjustments: IconAdjustmentsHorizontal,
+  radar: IconRadar,
 
   // Text formatting
   bold: IconBold,

@@ -34,7 +34,7 @@ export function MarketPage({
  * badge's one caller today (`monitors-table`) uses it for an
  * operator-toggled enabled/disabled state, an operator-caused condition, not
  * a genuine failure (Frontend Standards, "Status and health tone"). Every
- * tone is paired with an icon so meaning survives `mono`/`notebook`.
+ * tone is paired with an icon so meaning does not depend on hue alone.
  */
 export function StatusBadge({
   ok,
