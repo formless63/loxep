@@ -6,20 +6,26 @@
  * on purpose and its value must never be printed, logged, or embedded in
  * fixtures/errors; every error thrown here reports positions, not content.
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT. Unlike
- * `packages/integrations/woo/test/live-store.test.ts`, which runs against a
- * real production WooCommerce store, this package's live leg
- * (`test/live-store.test.ts`) has nothing to point at: the default file path
- * below is not expected to exist here, so `loadMedusaCredentialsFromEnvFile`
- * returns `null` and the live tests skip cleanly with a message naming the
- * expected file format. Live verification of this adapter against a real
- * Medusa v2 backend is tracked as a follow-up (see the module doc).
+ * Unlike `packages/integrations/woo/test/live-store.test.ts`, which points at
+ * a real production WooCommerce store, this package's live leg
+ * (`test/live-store.test.ts`) points at a THROWAWAY Medusa backend stood up
+ * for verification (loxep-xh9.4.1) — so the credential here guards nothing
+ * of value, and the discipline below is still observed as if it did.
+ * `loadMedusaCredentialsFromEnvFile` returns `null` when the file is absent
+ * (CI, a fresh clone), and the live tests skip cleanly.
  *
  * File format (KEY=VALUE lines, `#` comments and blank lines ignored,
  * optional single/double quotes around values):
  *
  *   MEDUSA_URL=https://commerce.example.com   (required, https)
  *   MEDUSA_RO_API_TOKEN=sk_...                (required; MEDUSA_API_TOKEN accepted)
+ *
+ * A local harness may add one more line, which this loader ignores and the
+ * live test reads for itself:
+ *
+ *   MEDUSA_CA_CERT_FILE=/path/to/cert.pem     (optional; trust anchor for a
+ *                                              self-signed TLS terminator in
+ *                                              front of a dev backend)
  *
  * The `_RO_` spelling is the convention for a READ-ONLY-INTENDED key,
  * matching `WOO_RO_CONSUMER_KEY`'s convention — Medusa's secret API keys are

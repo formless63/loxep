@@ -1,12 +1,17 @@
 /**
- * Fixture payloads constructed from the DOCUMENTED/SOURCE-VERIFIED Medusa v2
- * Admin API shapes (see `orders.ts`/`products.ts`/`money.ts` for the full
- * citation trail against `medusajs/medusa`'s `develop` branch, fetched
- * 2026-08-11). NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT, so
- * — unlike `packages/integrations/woo/test/fixtures.ts`, whose header can
- * say "confirmed against a live store" — every shape here is
- * source-verified, not live-observed. Field names and nesting follow the
- * TypeScript DTOs read directly from Medusa's repository.
+ * Fixture payloads for the Medusa v2 Admin API. Originally constructed from
+ * the source-verified DTOs (`medusajs/medusa`, `develop`, fetched
+ * 2026-08-11); the SHAPES were subsequently checked against a real Medusa
+ * 2.18.0 backend (loxep-xh9.4.1) and reconciled where they differed.
+ *
+ * The reconciliation worth knowing about: these fixtures always populated
+ * `payment_collections[].payments[]` with `amount`/`captured_at`, because the
+ * DTO says a payment has them. A live response only includes them if the
+ * request's `fields` list asks for the intermediate `payments` level — which
+ * the adapter's list did not, until loxep-xh9.4.1 fixed it. The fixtures were
+ * right about the entity and wrong about what arrives by default, which is
+ * precisely the class of error fixtures cannot catch. `test/live-store.test.ts`
+ * now guards it.
  *
  * ALL DATA HERE IS FAKE. No value in this file corresponds to any real
  * Medusa deployment.
@@ -34,6 +39,10 @@ export function capturedOrderFixture(
     created_at: "2026-07-01T13:15:00.000Z",
     updated_at: "2026-07-03T15:00:00.000Z",
     total: 48.15,
+    // Live-observed pairing: `total` is the CURRENT total and `original_total`
+    // the as-placed one. They match until a refund lands (see
+    // partiallyRefundedOrderFixture).
+    original_total: 48.15,
     subtotal: 45,
     tax_total: 3.2,
     discount_total: 5,
@@ -91,6 +100,7 @@ export function guestOrderFixture(
     id: "order_01FIXTURE0002",
     display_id: 1002,
     total: 19.99,
+    original_total: 19.99,
     subtotal: 19.99,
     tax_total: 0,
     discount_total: 0,
@@ -158,13 +168,25 @@ export function deliveredOrderFixture(
   });
 }
 
-/** A partially refunded order — one refund under one payment. */
+/**
+ * A partially refunded order — two refunds under one payment.
+ *
+ * `total` is 12.50 BELOW `original_total`, mirroring live Medusa 2.18.0
+ * behavior: issuing a refund lowers the order's `total` while
+ * `original_total` and `subtotal` stay put. Do not "fix" this to match
+ * `original_total` — a consumer that computes `total - refunded` from this
+ * payload is double-counting, which is exactly what this fixture exists to
+ * make visible.
+ */
 export function partiallyRefundedOrderFixture(
   overrides: FixtureOverrides = {},
 ): Record<string, unknown> {
   return capturedOrderFixture({
     id: "order_01FIXTURE0004",
     display_id: 1004,
+    total: 35.65,
+    original_total: 48.15,
+    payment_status: "partially_refunded",
     payment_collections: [
       {
         id: "pay_col_01FIXTURE0004",
@@ -225,6 +247,7 @@ export function jpyOrderFixture(
     display_id: 1007,
     currency_code: "jpy",
     total: 5000,
+    original_total: 5000,
     subtotal: 5000,
     tax_total: 0,
     discount_total: 0,

@@ -9,13 +9,28 @@
  * `@loxep/integration-core` would make every provider's error surface a
  * shared upgrade hazard.
  *
- * Medusa v2's Admin API error envelope, verified against the framework
- * source (no live Medusa instance exists here — see the module doc for the
- * fixtures-only caveat):
+ * Medusa v2's Admin API error envelope is **not uniform**. The three shapes
+ * below were observed live against Medusa 2.18.0 (loxep-xh9.4.1), and they
+ * are the reason this module classifies primarily by HTTP STATUS and treats
+ * `type`/`code` as optional wideners:
  *
- * ```json
- * {"type": "not_found", "message": "Order with id order_bogus was not found", "code": "not_found"}
+ * ```text
+ * 401 bad/absent secret key   {"message": "…"}                         ← no type, NO code
+ * 404 unknown order id        {"type":"not_found","message":"…"}       ← no code
+ * 500 bad `order=` sort key   {"code":"unknown_error","type":"unknown_error","message":"…"}
  * ```
+ *
+ * The 401 is the important one: it is emitted by the authenticate middleware
+ * BEFORE the `errorHandler` that builds `{code, type, message}`, so an auth
+ * failure carries a bare `message` and nothing else. Any consumer that
+ * branches on `detail.providerCode` for an auth error will find it absent —
+ * `detail.httpStatus` is the reliable signal. (The bearer-token rejection is
+ * a genuinely useful message, though: *"A secret API key was passed as a
+ * Bearer token. Secret API keys must be sent using HTTP Basic authentication
+ * instead (Authorization: Basic <secret-api-key>)."*)
+ *
+ * The framework-source reading that produced the original single-shape claim
+ * follows; it describes the `errorHandler` branch only:
  *
  * Source: `errorHandler()` in
  * https://github.com/medusajs/medusa/blob/develop/packages/core/framework/src/http/middlewares/error-handler.ts
@@ -40,9 +55,9 @@
  * separate branch that emits `{ message, type }` with no `code`, at whatever
  * HTTP status `http-errors` assigned.
  *
- * Classification here is primary-by-HTTP-STATUS (the reliably observed
- * signal for a boundary that has never been exercised live), with `type`
- * as a widener:
+ * Classification here is primary-by-HTTP-STATUS — a choice the live run
+ * vindicated, since `type` and `code` are both absent from the one error a
+ * connection surface cares most about (401) — with `type` as a widener:
  *
  * - `auth`                 — HTTP 401/403, or `type` in
  *                            {@link AUTH_ERROR_TYPES};

@@ -36,9 +36,16 @@
  * same fetch: `BaseOrder`/`BaseOrderLineItem` type every total as `number`,
  * not `BigNumberValue`).
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT — this is a
- * source-and-documentation-verified conclusion, not one confirmed against a
- * running backend. See the module doc's live-verification gap.
+ * **LIVE-CONFIRMED** against Medusa 2.18.0 on 2026-08-12 (loxep-xh9.4.1).
+ * A €10.00 variant priced at `10` produced, on a real Admin API order
+ * payload: `unit_price: 10`, `item.total: 10`, order `subtotal: 20`,
+ * `total: 20`, `shipping_total: 10`, refund `amount: 5`, and variant prices
+ * `[{currency_code:"eur",amount:10},{currency_code:"usd",amount:15}]` —
+ * every one a plain JSON `number` (`typeof === "number"`), every one in the
+ * MAJOR unit. Nothing came back as a minor-unit integer, a string, or an
+ * object. (Medusa's `summary` does additionally carry `raw_*` twins shaped
+ * `{value: "20", precision: 20}` — a string-valued decimal — but those live
+ * only under `summary`, never on the money fields this module converts.)
  *
  * ## The conversion, precisely
  *
