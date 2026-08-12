@@ -32,12 +32,14 @@ export type {
 export {
   defineSetting,
   createSettingsService,
+  findRegisteredSetting,
   registeredSettingKeys,
 } from "./settings.ts";
 export type {
   SettingDefinition,
   SettingListEntry,
   SettingsService,
+  SettingWriteOptions,
 } from "./settings.ts";
 
 // Importing this module is what REGISTERS Loxep's shipped settings; every

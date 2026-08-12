@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,8 +21,9 @@ import {
 import { applicationSettingsQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import type { RawSettingDto, RegisteredSettingDto } from '@/server/admin-functions';
-import { registeredColumns } from './registered-columns';
+import { getRegisteredColumns, registeredColumns } from './registered-columns';
 import { rawColumns } from './raw-columns';
+import SettingEditDialog from './edit-dialog';
 
 const REGISTERED_CLIENT_COLUMNS: ClientColumnSpec<RegisteredSettingDto>[] = [
   { id: 'key', accessor: (row) => row.key, filterVariant: 'text' }
@@ -36,10 +38,11 @@ const RAW_CLIENT_COLUMNS: ClientColumnSpec<RawSettingDto>[] = [
  * outside the registry (e.g. jobs' runtime.heartbeat) — keys and provenance
  * only, values deliberately uninterpreted.
  */
-export default function ApplicationSettings() {
+export default function ApplicationSettings({ isAdmin }: { isAdmin: boolean }) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
+  const [editing, setEditing] = React.useState<RegisteredSettingDto | null>(null);
 
   const { data, isPending, isError, error, refetch } = useQuery(applicationSettingsQuery);
 
@@ -86,7 +89,14 @@ export default function ApplicationSettings() {
               </EmptyHeader>
             </Empty>
           ) : (
-            <RegisteredTable data={registered} search={search} page={page} perPage={perPage} />
+            <RegisteredTable
+              data={registered}
+              search={search}
+              page={page}
+              perPage={perPage}
+              isAdmin={isAdmin}
+              onEdit={setEditing}
+            />
           )}
         </CardContent>
       </Card>
@@ -118,6 +128,19 @@ export default function ApplicationSettings() {
           )}
         </CardContent>
       </Card>
+
+      {editing !== null && (
+        // Keyed by setting: opening a different row remounts the form so its
+        // textarea starts from that setting's own stored value.
+        <SettingEditDialog
+          key={editing.key}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditing(null);
+          }}
+          setting={editing}
+        />
+      )}
     </div>
   );
 }
@@ -126,12 +149,16 @@ function RegisteredTable({
   data,
   search,
   page,
-  perPage
+  perPage,
+  isAdmin,
+  onEdit
 }: {
   data: RegisteredSettingDto[];
   search: Record<string, unknown>;
   page: number;
   perPage: number;
+  isAdmin: boolean;
+  onEdit: (setting: RegisteredSettingDto) => void;
 }) {
   const { rows, pageCount } = applyClientTableState(
     data,
@@ -142,7 +169,7 @@ function RegisteredTable({
   );
   const { table } = useDataTable({
     data: rows,
-    columns: registeredColumns,
+    columns: getRegisteredColumns(isAdmin, onEdit),
     pageCount,
     shallow: true,
     debounceMs: 500

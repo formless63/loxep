@@ -61,6 +61,23 @@ export function registeredSettingKeys(): string[] {
   return [...registry.keys()];
 }
 
+/**
+ * The registered definition for `key`, or `undefined` when nothing declared
+ * it.
+ *
+ * This is how a caller that only has a KEY — an operator editing
+ * `/settings/application`, an HTTP request body — reaches the definition that
+ * owns the schema. It deliberately returns the registry's own frozen object,
+ * because {@link SettingsService.set} identity-checks the definition it is
+ * handed: a caller cannot fabricate a definition for an unregistered key, and
+ * cannot swap a laxer schema in for a registered one.
+ */
+export function findRegisteredSetting(
+  key: string,
+): SettingDefinition<unknown> | undefined {
+  return registry.get(key);
+}
+
 function assertRegistered<T>(definition: SettingDefinition<T>): void {
   const registered = registry.get(definition.key);
   if (registered !== (definition as unknown)) {
@@ -82,13 +99,31 @@ export interface SettingListEntry {
   updatedAt: Date | null;
 }
 
+export interface SettingWriteOptions {
+  actorUserId?: string | null;
+  requestId?: string | null;
+}
+
 export interface SettingsService {
   get: <T>(definition: SettingDefinition<T>) => Promise<T>;
   set: <T>(
     definition: SettingDefinition<T>,
     value: T,
-    options: { actorUserId?: string | null; requestId?: string | null },
+    options: SettingWriteOptions,
   ) => Promise<T>;
+  /**
+   * Write a setting identified by KEY with a value of unknown shape — the
+   * operator-facing write path. The key must be registered
+   * ({@link SettingNotRegisteredError}) and the value must satisfy that
+   * definition's Zod schema ({@link SettingValidationError}); nothing else is
+   * writable through this service. Returns the setting's post-write listing
+   * entry, the same shape {@link SettingsService.list} produces.
+   */
+  setByKey: (
+    key: string,
+    value: unknown,
+    options: SettingWriteOptions,
+  ) => Promise<SettingListEntry>;
   list: () => Promise<SettingListEntry[]>;
 }
 
@@ -121,15 +156,39 @@ export function createSettingsService(options: {
     return parseStored(definition, row.value);
   }
 
-  async function set<T>(
+  /**
+   * Incoming (operator/caller-supplied) value, validated through the
+   * registered schema. Unlike {@link parseStored} this reports Zod's own
+   * MESSAGES rather than issue codes: the text is shown to whoever submitted
+   * the value, so "expected number, received string" beats `invalid_type`.
+   */
+  function parseIncoming<T>(
     definition: SettingDefinition<T>,
-    value: T,
-    setOptions: { actorUserId?: string | null; requestId?: string | null },
-  ): Promise<T> {
+    value: unknown,
+  ): T {
+    const result = definition.schema.safeParse(value);
+    if (!result.success) {
+      throw new SettingValidationError(
+        `value for setting "${definition.key}" failed validation (schema version ${definition.schemaVersion}): ${result.error.issues
+          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+          .join("; ")}`,
+      );
+    }
+    return result.data;
+  }
+
+  async function write<T>(
+    definition: SettingDefinition<T>,
+    value: unknown,
+    setOptions: SettingWriteOptions,
+  ): Promise<{ value: T; updatedAt: Date; actorUserId: string | null }> {
     assertRegistered(definition);
     // Validate through the registered Zod schema BEFORE any persistence.
-    const parsed = definition.schema.parse(value);
+    const parsed = parseIncoming(definition, value);
     const actorUserId = setOptions.actorUserId ?? null;
+    // Hoisted so the caller can report the row's stored `updated_at` without
+    // a follow-up read; the transaction body assigns it.
+    let writtenAt = new Date();
 
     await db.transaction(async (tx) => {
       const previous = await tx.query.applicationSettings.findFirst({
@@ -137,6 +196,7 @@ export function createSettingsService(options: {
       });
 
       const now = new Date();
+      writtenAt = now;
       await tx
         .insert(applicationSettings)
         .values({
@@ -172,7 +232,39 @@ export function createSettingsService(options: {
       });
     });
 
-    return parsed;
+    return { value: parsed, updatedAt: writtenAt, actorUserId };
+  }
+
+  async function set<T>(
+    definition: SettingDefinition<T>,
+    value: T,
+    setOptions: SettingWriteOptions,
+  ): Promise<T> {
+    const written = await write(definition, value, setOptions);
+    return written.value;
+  }
+
+  async function setByKey(
+    key: string,
+    value: unknown,
+    setOptions: SettingWriteOptions,
+  ): Promise<SettingListEntry> {
+    const definition = findRegisteredSetting(key);
+    if (definition === undefined) {
+      throw new SettingNotRegisteredError(
+        `setting "${key}" is not registered — only settings declared with defineSetting() can be written`,
+      );
+    }
+    const written = await write(definition, value, setOptions);
+    return {
+      key: definition.key,
+      description: definition.description,
+      schemaVersion: definition.schemaVersion,
+      isSet: true,
+      value: written.value,
+      updatedByUserId: written.actorUserId,
+      updatedAt: written.updatedAt,
+    };
   }
 
   async function list(): Promise<SettingListEntry[]> {
@@ -200,5 +292,5 @@ export function createSettingsService(options: {
     });
   }
 
-  return { get, set, list };
+  return { get, set, setByKey, list };
 }
