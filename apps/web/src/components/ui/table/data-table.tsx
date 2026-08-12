@@ -22,7 +22,11 @@ export function DataTable<TData>({ table, actionBar, children }: DataTableProps<
   return (
     <div className='flex flex-1 flex-col space-y-4'>
       {children}
-      <div className='relative flex flex-1'>
+      {/* The absolute/inset scroll trick needs an ancestor height chain; inside
+          an unsized container (e.g. CardContent) flex-1 computes to zero and the
+          rows become invisible. min-h guarantees a usable row area everywhere;
+          full-height page layouts already exceed it and are unaffected. */}
+      <div className='relative flex min-h-[320px] flex-1'>
         <div className='absolute inset-0 flex overflow-hidden rounded-lg border'>
           <ScrollArea className='h-full w-full'>
             <Table>

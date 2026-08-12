@@ -96,7 +96,9 @@ test('admin edits a registered application setting', async ({ page }) => {
   // field, and the dialog stays open.
   await valueField.fill('{"mode":"delete","afterDays":180}');
   await dialog.getByRole('button', { name: 'Save setting' }).click();
-  await expect(dialog.getByText(/mode/)).toBeVisible();
+  // The textarea's JSON also contains "mode" — assert on the server-rendered
+  // validation message, which the field value can never contain.
+  await expect(dialog.getByText(/Invalid/)).toBeVisible();
   await expect(dialog).toBeVisible();
 
   // A valid value saves, closes the dialog, and shows up in the table.
