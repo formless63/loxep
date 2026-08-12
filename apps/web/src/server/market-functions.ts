@@ -12,7 +12,7 @@
  * `@/server/admin`'s `getMarketModule`/`getMonitorService` (never a static
  * top-level import) because its index re-exports `tasks.ts`, which reaches
  * `graphile-worker` via `@loxep/jobs` — the same SSR-bundling hazard
- * documented on `getStorageBackendsService`.
+ * documented on `getNotificationsModule`.
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
@@ -293,6 +293,32 @@ export const fetchEbayConnectionOptions = createServerFn({ method: 'GET' }).hand
     await requireSession();
     const rows = await getAdminServices().connections.listConnections({ provider: 'ebay' });
     return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
+  }
+);
+
+export interface MonitorDefaultsDto {
+  intervalSeconds: number;
+}
+
+/**
+ * Installation-wide monitor cadence baseline (loxep-62y.2.7): the `monitors.
+ * defaults` setting the worker's poll executor already reads through
+ * `services.monitorSettings.read().defaultIntervalSeconds`
+ * (`@loxep/app/poll-executor.ts`) and `/settings` already lists. The monitor
+ * create dialog reads it here to seed `intervalSeconds` instead of a
+ * hardcoded fallback, so the same baseline reaches new targets everywhere.
+ * `monitorDefaultsSetting` is a value import from `@loxep/domain`, dynamic
+ * like every other server-package handle in this file (top-level imports
+ * here are type-only — see the file doc).
+ */
+export const fetchMonitorDefaults = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<MonitorDefaultsDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { monitorDefaultsSetting } = await import('@loxep/domain');
+    const { settings } = getAdminServices();
+    const defaults = await settings.get(monitorDefaultsSetting);
+    return { intervalSeconds: defaults.intervalSeconds };
   }
 );
 
@@ -823,6 +849,11 @@ export interface TopOpportunityDto {
   detectedAt: string;
 }
 
+export interface MarketOverviewTrendBucketDto {
+  bucketStart: string;
+  count: number;
+}
+
 export interface MarketOverviewDto {
   activeMonitorCount: number;
   watchedItemCount: number;
@@ -832,6 +863,13 @@ export interface MarketOverviewDto {
   /** Highest-scoring rule-stamped event among the most recent ones, if any. */
   topOpportunity: TopOpportunityDto | null;
   recentEvents: MarketEventSummaryDto[];
+  /**
+   * Hourly-bucketed count of all-item events over the trailing 24h, derived
+   * in-process from `events24h` (already fetched for `eventsLast24hCount`) —
+   * no extra query. Powers the overview sparkline/trend badge; not a general
+   * market-wide time-series read model.
+   */
+  eventsTrend: MarketOverviewTrendBucketDto[];
 }
 
 const RECENT_EVENTS_LIMIT = 10;
@@ -866,7 +904,7 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       handle.db.query.marketplaceItems.findMany({ columns: { id: true } }),
       handle.db.query.marketEvents.findMany({
         where: (table, { gt }) => gt(table.detectedAt, since),
-        columns: { id: true }
+        columns: { id: true, detectedAt: true }
       }),
       handle.db.query.marketEvents.findMany({
         where: (table, { gt, and, eq }) =>
@@ -931,12 +969,32 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       topOpportunity = { ...topOpportunity, itemTitle: item?.title ?? null };
     }
 
+    const EVENTS_TREND_BUCKET_HOURS = 24;
+    const EVENTS_TREND_BUCKET_MS = 60 * 60 * 1000;
+    const eventsTrend: MarketOverviewTrendBucketDto[] = Array.from(
+      { length: EVENTS_TREND_BUCKET_HOURS },
+      (_, index) => ({
+        bucketStart: iso(new Date(since.getTime() + index * EVENTS_TREND_BUCKET_MS)),
+        count: 0
+      })
+    );
+    for (const event of events24h) {
+      const offsetMs = event.detectedAt.getTime() - since.getTime();
+      const bucketIndex = Math.min(
+        EVENTS_TREND_BUCKET_HOURS - 1,
+        Math.max(0, Math.floor(offsetMs / EVENTS_TREND_BUCKET_MS))
+      );
+      const bucket = eventsTrend[bucketIndex];
+      if (bucket) bucket.count += 1;
+    }
+
     return {
       activeMonitorCount: activeMonitors.length,
       watchedItemCount: watchedItems.length,
       eventsLast24hCount: events24h.length,
       newListingCount24h: newListings24h.length,
       topOpportunity,
+      eventsTrend,
       recentEvents: recentEvents.map((event) => ({
         id: event.id,
         eventType: event.eventType,

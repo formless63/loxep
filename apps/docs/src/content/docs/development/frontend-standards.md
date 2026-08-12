@@ -77,13 +77,14 @@ Rules:
 - Columns live in a sibling `columns.tsx` as `ColumnDef<T>[]`. Reference: `src/features/products/components/product-tables/columns.tsx`.
 - Sortable columns use `<DataTableColumnHeader column={column} title='…' />`, never a raw string header.
 - Filterable columns declare `enableColumnFilter` plus `meta: { label, variant, options?, placeholder?, icon? }` — `DataTableToolbar` builds the filter UI from that metadata. Do not hand-roll a `<Select>` above the table.
-- Table state (page, page size, sort, filters) is **URL state**, owned by `useDataTable`. Never `useState` for pagination.
+- Table state (page, page size, sort, filters) is **URL state**, owned by `useDataTable`. Never `useState` for pagination. Caveat: `useDataTable`'s `page`/`perPage`/`sort` URL keys are global per route, not per table — when a route hosts two tables, only the primary one gets URL-synced state; the secondary uses local `useReactTable` state to avoid key collisions.
+- Client-side sorting/filtering is only honest over the full dataset. When the server function paginates with a fixed page size and accepts no sort/filter params, sortable/filterable columns act on the current page only — document that tradeoff at the call site, or extend the server function.
 - Row actions pin right: `initialState: { columnPinning: { right: ['actions'] } }`.
 - Loading is `<DataTableSkeleton columnCount={n} filterCount={n} />`, not a single grey block.
 - The wiring component is a thin container: query → `useDataTable` → `<DataTable table={table}><DataTableToolbar table={table} /></DataTable>`. Reference: `src/features/products/components/product-tables/index.tsx`.
 
 - Numeric columns are right-aligned and `tabular-nums`, so digits stop jittering across polls and decimal points line up.
-- Cells render **labels, not raw enum values**. Keep the map in the feature's `constants.ts` (`CONNECTION_STATUS_LABELS`, `STORAGE_DRIVER_LABELS`, …) and use it.
+- Cells render **labels, not raw enum values**. Keep the map in the feature's `constants.ts` (`CONNECTION_STATUS_LABELS`, `STORAGE_DRIVER_LABELS`, …) and use it. For union-typed states, make tone/icon maps exhaustive with `satisfies Record<State, …>`; for free-form-text domain states, use `Record<string, BadgeVariant>` plus an explicit fallback.
 - A failed query renders an error state. Destructuring only `{ data, isPending }` means a network failure silently renders "No results", which is a lie.
 
 Non-data uses of `<Table>` (a two-column key/value spec sheet, a static reference grid) are fine — the rule is about *data* the user will want to sort, filter, or page.
@@ -197,7 +198,7 @@ A stat tile is `Card` + `CardHeader` + `CardDescription` (label) + `CardTitle` (
 - one grid-level tint so the row of tiles reads as a group, e.g. the donor's `*:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card`;
 - a visible `focus-visible:ring` treatment when the card is a link.
 
-Reference: `src/features/overview/components/overview.tsx` (`/starter/overview`). The current `src/routes/market/overview.tsx` `StatCard` has none of the above and is the canonical "flat" surface.
+Reference: `src/features/overview/components/overview.tsx` (`/starter/overview`). `src/routes/market/overview.tsx` now follows this pattern on a real product surface (shared `StatCard`, trend badge fed by real data only, grid tint, visible focus rings).
 
 ### Status and health tone
 

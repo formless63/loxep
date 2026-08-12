@@ -40,7 +40,7 @@ export default function PriceHistoryChart({ marketplaceItemId }: { marketplaceIt
       </CardHeader>
       <CardContent>
         {isPending ? (
-          <Skeleton className='h-48 w-full' />
+          <Skeleton className='aspect-video w-full' />
         ) : points.length === 0 ? (
           <p className='text-muted-foreground text-sm'>No price observations yet.</p>
         ) : (

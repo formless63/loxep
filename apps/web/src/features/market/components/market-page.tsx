@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Icons } from '@/components/icons';
 
 /** Shared page frame for market surfaces: heading, blurb, optional actions. */
 export function MarketPage({
@@ -27,7 +28,14 @@ export function MarketPage({
   );
 }
 
-/** Boolean status pill used across the market tables. */
+/**
+ * Boolean status pill used across the market tables (loxep-foi.5). `ok` maps
+ * to `success` (healthy); `!ok` maps to `warning`, not `destructive` — this
+ * badge's one caller today (`monitors-table`) uses it for an
+ * operator-toggled enabled/disabled state, an operator-caused condition, not
+ * a genuine failure (Frontend Standards, "Status and health tone"). Every
+ * tone is paired with an icon so meaning survives `mono`/`notebook`.
+ */
 export function StatusBadge({
   ok,
   okLabel,
@@ -37,5 +45,11 @@ export function StatusBadge({
   okLabel: string;
   failLabel: string;
 }) {
-  return <Badge variant={ok ? 'secondary' : 'destructive'}>{ok ? okLabel : failLabel}</Badge>;
+  const Icon = ok ? Icons.circleCheck : Icons.alertCircle;
+  return (
+    <Badge variant={ok ? 'success' : 'warning'}>
+      <Icon />
+      {ok ? okLabel : failLabel}
+    </Badge>
+  );
 }

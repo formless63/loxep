@@ -69,7 +69,6 @@ export function BarGraph() {
             />
             <Bar
               dataKey='desktop'
-              color='var(--chart-1)'
               fill='var(--color-desktop)'
               shape={<CustomHatchedBar isHatched={false} />}
               radius={4}
@@ -136,7 +135,7 @@ const DottedBackgroundPattern = () => {
       height='10'
       patternUnits='userSpaceOnUse'
     >
-      <circle className='dark:text-muted/40 text-muted' cx='2' cy='2' r='1' fill='currentColor' />
+      <circle className='fill-muted dark:fill-muted/40' cx='2' cy='2' r='1' />
     </pattern>
   );
 };

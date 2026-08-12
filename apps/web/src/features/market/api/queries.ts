@@ -9,6 +9,7 @@ import {
   fetchMarketItem,
   fetchMarketItems,
   fetchMarketOverview,
+  fetchMonitorDefaults,
   fetchMonitors,
   fetchOpportunityEvents,
   fetchSearchDashboard
@@ -29,6 +30,12 @@ export const monitorsQuery = queryOptions({
 export const ebayConnectionOptionsQuery = queryOptions({
   queryKey: ['market', 'ebay-connection-options'],
   queryFn: () => fetchEbayConnectionOptions()
+});
+
+/** Installation-wide monitor cadence baseline (loxep-62y.2.7). */
+export const monitorDefaultsQuery = queryOptions({
+  queryKey: ['market', 'monitor-defaults'],
+  queryFn: () => fetchMonitorDefaults()
 });
 
 export const marketItemsQuery = (params: { page: number; monitorTargetId: string | null }) =>
