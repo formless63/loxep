@@ -29,6 +29,11 @@ export function IntegrationStatusBadges({ status }: { status: IntegrationStatus 
           {detail}
         </Badge>
       ))}
+      {status.warning && (
+        <ToneBadge tone='warning' title={status.warning.title}>
+          {status.warning.label}
+        </ToneBadge>
+      )}
     </div>
   );
 }
