@@ -72,9 +72,11 @@ export type {
 } from "./adaptive.ts";
 
 export {
+  WATCHED_ITEM_SORT_KEYS,
   deactivateAbsentMonitorItems,
   latestObservations,
   linkItemToMonitor,
+  listWatchedItemIds,
   marketplaceItemInputSchema,
   observationBatchSchema,
   observationItemSchema,
@@ -87,11 +89,15 @@ export type {
   ObservationBatchInput,
   ObservationItemInput,
   ObservationRow,
+  WatchedItemIdRow,
+  WatchedItemIdsOptions,
+  WatchedItemSortKey,
 } from "./observations.ts";
 
 export {
   AVAILABILITY_IN_STOCK,
   AVAILABILITY_OUT_OF_STOCK,
+  ITEM_EVENTS_SORT_KEYS,
   LISTING_STATE_ENDED,
   MARKET_EVENT_TYPES,
   NEW_LISTING_EVENT_TYPE,
@@ -99,9 +105,13 @@ export {
   compareObservations,
   deduplicationKeyFor,
   deriveMarketEvents,
+  listItemEventsPage,
 } from "./events.ts";
 export type {
   DetectedMarketEvent,
+  ItemEventsPageOptions,
+  ItemEventsPageResult,
+  ItemEventsSortKey,
   MarketEventRow,
   MarketEventType,
   ObservationSnapshot,
@@ -122,12 +132,14 @@ export type {
 } from "./discovery.ts";
 
 export {
+  OPPORTUNITY_EVENTS_SORT_KEYS,
   OPPORTUNITY_PAYLOAD_KEY,
   SCORE_SCALE,
   createOpportunityRulesService,
   evaluateRule,
   evaluateRulesForEvent,
   listEnabledRulesForEvaluation,
+  listOpportunityEventsPage,
   opportunityConditionsSchema,
   opportunityRuleSnapshot,
   scoreWeightSchema,
@@ -142,6 +154,10 @@ export type {
   OpportunityContext,
   OpportunityEvaluation,
   OpportunityEventContext,
+  OpportunityEventRow,
+  OpportunityEventsPageOptions,
+  OpportunityEventsPageResult,
+  OpportunityEventsSortKey,
   OpportunityMatch,
   OpportunityRuleDefinition,
   OpportunityRuleMutation,

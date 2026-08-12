@@ -19,7 +19,6 @@ import { useDataTable } from '@/hooks/use-data-table';
 import { formatTimestampPrecise } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import { itemEventsQuery } from '@/features/market/api/queries';
-import { applyClientSort } from '@/features/market/lib/apply-client-sort';
 import { marketEventTypeIcon, marketEventTypeTone } from '@/features/market/constants';
 import { marketEventTypeLabel } from '@/features/settings/constants';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
@@ -111,14 +110,22 @@ const columns: ColumnDef<MarketEventDto>[] = [
 
 const columnIds = columns.map((c) => c.id).filter(Boolean) as string[];
 
-/** Event history for one item: type, detected-at, payload deltas, rule badge (loxep-62y.4.3). */
+/**
+ * Event history for one item: type, detected-at, payload deltas, rule badge
+ * (loxep-62y.4.3). `detectedAt` is the only sortable column
+ * (`@loxep/market`'s `ITEM_EVENTS_SORT_KEYS`); `sort` is read from the URL
+ * here, before the query fires, so ordering is server-truthful over the
+ * full per-item event history (loxep-foi.7).
+ */
 export default function EventHistoryList({ marketplaceItemId }: { marketplaceItemId: string }) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const serverPage = Math.max(0, page - 1);
+  const [sort] = parseSortingState<MarketEventDto>(search.sort as string | undefined, columnIds);
+  const sortDir = sort?.id === 'detectedAt' ? (sort.desc ? 'desc' : 'asc') : undefined;
 
   const { data, isPending, isError, error, refetch } = useQuery(
-    itemEventsQuery(marketplaceItemId, serverPage)
+    itemEventsQuery(marketplaceItemId, serverPage, sortDir)
   );
 
   return (
@@ -157,17 +164,10 @@ export default function EventHistoryList({ marketplaceItemId }: { marketplaceIte
 }
 
 function EventHistoryDataTable({ data }: { data: MarketEventsPageDto }) {
-  const search = useSearch({ strict: false }) as Record<string, unknown>;
-  const sortStr = search.sort as string | undefined;
-  const sorting = parseSortingState<MarketEventDto>(sortStr, columnIds);
-  const sorted = applyClientSort(data.events, sorting, {
-    detectedAt: (row) => row.detectedAt
-  });
-
   const pageCount = Math.max(1, Math.ceil(data.total / data.pageSize));
 
   const { table } = useDataTable({
-    data: sorted,
+    data: data.events,
     columns,
     pageCount,
     shallow: true,

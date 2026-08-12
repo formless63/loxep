@@ -17,6 +17,7 @@ import {
   evaluateRule,
   evaluateRulesForEvent,
   listEnabledRulesForEvaluation,
+  listOpportunityEventsPage,
   opportunityConditionsSchema,
   recordObservationBatch,
   upsertMarketplaceItem,
@@ -858,5 +859,268 @@ describe("integration: deriveMarketEvents -> evaluateRulesForEvent", () => {
     });
     expect(survivingStamp?.ruleId).toBe(restockRule.rule.id);
     await expect(monitors.deleteTarget(target.id)).rejects.toThrow();
+  });
+});
+
+describe("listOpportunityEventsPage (loxep-foi.7)", () => {
+  async function seedItem(externalItemId: string) {
+    return upsertMarketplaceItem({
+      db: handle.db,
+      item: {
+        provider: "ebay",
+        marketplace: "EBAY_US",
+        externalItemId,
+        seenAt: t1,
+      },
+    });
+  }
+
+  /** Insert a rule-stamped `market_events` row directly, mirroring `stampEventWithRule`'s payload shape. */
+  async function seedOpportunityEvent(options: {
+    marketplaceItemId: string;
+    ruleId: string;
+    ruleName: string;
+    score: number;
+    detectedAt: Date;
+  }) {
+    const dedupe = `${options.marketplaceItemId}:price_dropped:${randomUUID()}`;
+    const inserted = await handle.db
+      .insert(marketEvents)
+      .values({
+        marketplaceItemId: options.marketplaceItemId,
+        eventType: "price_dropped",
+        detectedAt: options.detectedAt,
+        toObservedAt: options.detectedAt,
+        ruleId: options.ruleId,
+        payload: {
+          [OPPORTUNITY_PAYLOAD_KEY]: {
+            ruleId: options.ruleId,
+            ruleName: options.ruleName,
+            priority: 0,
+            score: options.score,
+            reasons: ["seeded"],
+            matchCount: 1,
+            evaluatedAt: options.detectedAt.toISOString(),
+          },
+        },
+        deduplicationKey: dedupe,
+      })
+      .returning();
+    const row = inserted[0];
+    if (row === undefined) throw new Error("seed opportunity event insert failed");
+    return row;
+  }
+
+  // Other describe blocks in this FILE (shared scratch DB) also stamp
+  // events, so assertions below always narrow the fetched superset down to
+  // `marketplaceItemId`s this describe block created, rather than relying on
+  // an exact global `total`.
+  function mineOf<TEvent extends { marketplaceItemId: string }>(
+    events: TEvent[],
+    itemIds: Set<string>,
+  ): TEvent[] {
+    return events.filter((event) => itemIds.has(event.marketplaceItemId));
+  }
+
+  it("filters to rule-stamped events (rule_id IS NOT NULL) and sorts by detectedAt DESC by default", async () => {
+    const service = createOpportunityRulesService({ db: handle.db });
+    const rule = await service.createRule({
+      name: "list-page-detected-at",
+      conditions: { eventTypes: ["price_dropped"] },
+    });
+    const item = await seedItem(`opp-page-detected-at-${randomUUID()}`);
+    const at = (offsetMinutes: number) => new Date(t1.getTime() + offsetMinutes * 60_000);
+
+    await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 1,
+      detectedAt: at(0),
+    });
+    await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 2,
+      detectedAt: at(1),
+    });
+    await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 3,
+      detectedAt: at(2),
+    });
+    // Never rule-stamped — must be excluded by `rule_id IS NOT NULL`.
+    await seedEvent({ marketplaceItemId: item.id, eventType: "price_dropped" });
+
+    const page = await listOpportunityEventsPage(handle.db, { page: 0, pageSize: 500 });
+    const mine = mineOf(page.events, new Set([item.id]));
+
+    expect(mine).toHaveLength(3);
+    expect(mine.every((event) => event.ruleId !== null)).toBe(true);
+    expect(mine.map((event) => event.detectedAt.getTime())).toEqual([
+      at(2).getTime(),
+      at(1).getTime(),
+      at(0).getTime(),
+    ]);
+    expect(page.total).toBeGreaterThanOrEqual(3);
+
+    await service.deleteRule(rule.rule.id);
+  });
+
+  it("sortBy 'score' orders by payload.opportunity.score, independent of detectedAt order", async () => {
+    const service = createOpportunityRulesService({ db: handle.db });
+    const rule = await service.createRule({
+      name: "list-page-score",
+      conditions: { eventTypes: ["price_dropped"] },
+    });
+    const item = await seedItem(`opp-page-score-${randomUUID()}`);
+    const at = (offsetMinutes: number) => new Date(t1.getTime() + offsetMinutes * 60_000);
+
+    // detectedAt ascends (low, mid, high) while score deliberately does NOT.
+    const low = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 1,
+      detectedAt: at(0),
+    });
+    const high = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 9,
+      detectedAt: at(1),
+    });
+    const mid = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 5,
+      detectedAt: at(2),
+    });
+
+    const page = await listOpportunityEventsPage(handle.db, {
+      page: 0,
+      pageSize: 500,
+      sortBy: "score",
+      sortDir: "desc",
+    });
+    const mine = mineOf(page.events, new Set([item.id]));
+    expect(mine.map((event) => event.id)).toEqual([high.id, mid.id, low.id]);
+
+    const ascending = await listOpportunityEventsPage(handle.db, {
+      page: 0,
+      pageSize: 500,
+      sortBy: "score",
+      sortDir: "asc",
+    });
+    const mineAscending = mineOf(ascending.events, new Set([item.id]));
+    expect(mineAscending.map((event) => event.id)).toEqual([low.id, mid.id, high.id]);
+
+    await service.deleteRule(rule.rule.id);
+  });
+
+  it("sortBy 'rule' uses the CURRENT rule name, falling back to the payload-frozen name for a since-deleted rule", async () => {
+    const service = createOpportunityRulesService({ db: handle.db });
+    // "Zebra" so it's created and named BEFORE being renamed below.
+    const live = await service.createRule({
+      name: "Zebra deal",
+      conditions: { eventTypes: ["price_dropped"] },
+    });
+    const item = await seedItem(`opp-page-rule-${randomUUID()}`);
+    const at = (offsetMinutes: number) => new Date(t1.getTime() + offsetMinutes * 60_000);
+
+    // Live rule: current name ("Apple deal", renamed after stamping) wins
+    // over whatever was frozen in the payload at stamp time.
+    await service.updateRule(live.rule.id, { name: "Apple deal" });
+    const liveEvent = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: live.rule.id,
+      ruleName: "Zebra deal", // frozen name at (simulated) stamp time — stale.
+      score: 1,
+      detectedAt: at(0),
+    });
+
+    // Deleted rule: ruleId points nowhere (rule_id is an attribution stamp,
+    // not an FK) — the frozen payload name is the only name left.
+    const deletedRuleId = randomUUID();
+    const deletedEvent = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: deletedRuleId,
+      ruleName: "Mango deal",
+      score: 1,
+      detectedAt: at(1),
+    });
+
+    const ascending = await listOpportunityEventsPage(handle.db, {
+      page: 0,
+      pageSize: 500,
+      sortBy: "rule",
+      sortDir: "asc",
+    });
+    const mine = mineOf(ascending.events, new Set([item.id]));
+    // "Apple deal" (current name) < "Mango deal" (frozen fallback).
+    expect(mine.map((event) => event.id)).toEqual([liveEvent.id, deletedEvent.id]);
+    expect(mine.find((event) => event.id === liveEvent.id)?.currentRuleName).toBe("Apple deal");
+    expect(mine.find((event) => event.id === deletedEvent.id)?.currentRuleName).toBeNull();
+
+    await service.deleteRule(live.rule.id);
+  });
+
+  it("detectedAtFrom/detectedAtTo apply a half-open [from, to) range", async () => {
+    const service = createOpportunityRulesService({ db: handle.db });
+    const rule = await service.createRule({
+      name: "list-page-range",
+      conditions: { eventTypes: ["price_dropped"] },
+    });
+    const item = await seedItem(`opp-page-range-${randomUUID()}`);
+    const at = (offsetMinutes: number) => new Date(t1.getTime() + offsetMinutes * 60_000);
+
+    const before = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 1,
+      detectedAt: at(0),
+    });
+    const within = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 1,
+      detectedAt: at(1),
+    });
+    const atUpperBound = await seedOpportunityEvent({
+      marketplaceItemId: item.id,
+      ruleId: rule.rule.id,
+      ruleName: rule.rule.name,
+      score: 1,
+      detectedAt: at(2),
+    });
+    void before;
+
+    const page = await listOpportunityEventsPage(handle.db, {
+      page: 0,
+      pageSize: 500,
+      detectedAtFrom: at(1),
+      detectedAtTo: at(2),
+    });
+    const mine = mineOf(page.events, new Set([item.id]));
+    // `from` is inclusive, `to` is exclusive: only `within` (at(1)) qualifies.
+    expect(mine.map((event) => event.id)).toEqual([within.id]);
+    expect(mine.map((event) => event.id)).not.toContain(atUpperBound.id);
+
+    await service.deleteRule(rule.rule.id);
+  });
+
+  it("returns an empty page (total 0) when nothing is rule-stamped in range", async () => {
+    const page = await listOpportunityEventsPage(handle.db, {
+      detectedAtFrom: new Date("1990-01-01T00:00:00.000Z"),
+      detectedAtTo: new Date("1990-01-02T00:00:00.000Z"),
+    });
+    expect(page).toEqual({ events: [], total: 0 });
   });
 });

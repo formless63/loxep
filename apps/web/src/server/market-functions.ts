@@ -387,10 +387,13 @@ function toObservationDto(
   };
 }
 
+/** Whitelisted sort keys for `fetchMarketItems` — mirrors `@loxep/market`'s `WATCHED_ITEM_SORT_KEYS`. */
 const fetchMarketItemsInput = z.strictObject({
   page: z.number().int().nonnegative().optional(),
   /** Restrict to items currently linked (actively discovered) by one monitor. */
-  monitorTargetId: z.uuid().nullable().optional()
+  monitorTargetId: z.uuid().nullable().optional(),
+  sortBy: z.enum(['lastObserved']).optional(),
+  sortDir: z.enum(['asc', 'desc']).optional()
 });
 
 export const fetchMarketItems = createServerFn({ method: 'GET' })
@@ -399,6 +402,7 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
     const { requireSession, getAdminServices, getMarketModule } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
+    const market = await getMarketModule();
     const page = data.page ?? 0;
     const pageSize = MARKET_ITEMS_PAGE_SIZE;
 
@@ -414,16 +418,16 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
       }
     }
 
-    // Two-pass read (ids, then page rows) — no aggregate/count helper is
-    // available through the relational query callback API; volumes here are
-    // Phase 1 scale (see `@loxep/market/metrics.ts`'s continuous-aggregate
+    // Ordering (and, when `monitorTargetId` narrows the set, filtering) live
+    // in `@loxep/market`'s `listWatchedItemIds` (loxep-foi.7) — this stays a
+    // two-pass read (ids, then page rows): no aggregate/count helper is
+    // available through the relational query callback API, and volumes here
+    // are Phase 1 scale (see `@loxep/market/metrics.ts`'s continuous-aggregate
     // trigger-criteria note for when this would need revisiting).
-    const idRows = await handle.db.query.marketplaceItems.findMany({
-      where: allowedIds
-        ? (table, { inArray }) => inArray(table.id, allowedIds as string[])
-        : undefined,
-      columns: { id: true },
-      orderBy: (table, { desc }) => [desc(table.lastSeenAt)]
+    const idRows = await market.listWatchedItemIds(handle.db, {
+      allowedItemIds: allowedIds,
+      ...(data.sortBy !== undefined ? { sortBy: data.sortBy } : {}),
+      ...(data.sortDir !== undefined ? { sortDir: data.sortDir } : {})
     });
     const total = idRows.length;
     const pageIds = idRows.slice(page * pageSize, (page + 1) * pageSize).map((row) => row.id);
@@ -431,7 +435,6 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
       return { items: [], total, page, pageSize };
     }
 
-    const market = await getMarketModule();
     const [pageItemRows, observationLists, linkRows] = await Promise.all([
       handle.db.query.marketplaceItems.findMany({
         where: (table, { inArray }) => inArray(table.id, pageIds)
@@ -715,21 +718,26 @@ export const fetchItemEvents = createServerFn({ method: 'GET' })
   .inputValidator(
     z.strictObject({
       marketplaceItemId: z.uuid(),
-      page: z.number().int().nonnegative().optional()
+      page: z.number().int().nonnegative().optional(),
+      /** Whitelisted against `@loxep/market`'s `ITEM_EVENTS_SORT_KEYS` — only `detectedAt` sorts today. */
+      sortBy: z.enum(['detectedAt']).optional(),
+      sortDir: z.enum(['asc', 'desc']).optional()
     })
   )
   .handler(async ({ data }): Promise<MarketEventsPageDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const { requireSession, getAdminServices, getMarketModule } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
+    const market = await getMarketModule();
     const page = data.page ?? 0;
     const pageSize = MARKET_EVENTS_PAGE_SIZE;
-    const allEvents = await handle.db.query.marketEvents.findMany({
-      where: (table, { eq }) => eq(table.marketplaceItemId, data.marketplaceItemId),
-      orderBy: (table, { desc }) => [desc(table.detectedAt)]
+    const { events: pageEvents, total } = await market.listItemEventsPage(handle.db, {
+      marketplaceItemId: data.marketplaceItemId,
+      page,
+      pageSize,
+      ...(data.sortBy !== undefined ? { sortBy: data.sortBy } : {}),
+      ...(data.sortDir !== undefined ? { sortDir: data.sortDir } : {})
     });
-    const total = allEvents.length;
-    const pageEvents = allEvents.slice(page * pageSize, (page + 1) * pageSize);
     if (pageEvents.length === 0) {
       return { events: [], total, page, pageSize };
     }
@@ -1189,43 +1197,57 @@ export interface OpportunityEventsPageDto {
 
 export const OPPORTUNITY_EVENTS_PAGE_SIZE = 25;
 
+/**
+ * `detectedAtFrom`/`detectedAtTo` are epoch-ms bounds of a half-open local-day
+ * range, computed client-side (`Date` day-boundary arithmetic, DST-safe)
+ * from the toolbar's single-date `detectedAt` filter — see
+ * `opportunities-table/index.tsx`. Both or neither: a lone bound can't
+ * express "this calendar day".
+ */
+const fetchOpportunityEventsInput = z
+  .strictObject({
+    page: z.number().int().nonnegative().optional(),
+    /** Whitelisted against `@loxep/market`'s `OPPORTUNITY_EVENTS_SORT_KEYS`. */
+    sortBy: z.enum(['detectedAt', 'score', 'rule']).optional(),
+    sortDir: z.enum(['asc', 'desc']).optional(),
+    detectedAtFrom: z.number().int().optional(),
+    detectedAtTo: z.number().int().optional()
+  })
+  .refine((data) => (data.detectedAtFrom === undefined) === (data.detectedAtTo === undefined), {
+    message: 'detectedAtFrom and detectedAtTo must be provided together',
+    path: ['detectedAtFrom']
+  });
+
 export const fetchOpportunityEvents = createServerFn({ method: 'GET' })
-  .inputValidator(z.strictObject({ page: z.number().int().nonnegative().optional() }))
+  .inputValidator(fetchOpportunityEventsInput)
   .handler(async ({ data }): Promise<OpportunityEventsPageDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const { requireSession, getAdminServices, getMarketModule } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
+    const market = await getMarketModule();
     const page = data.page ?? 0;
     const pageSize = OPPORTUNITY_EVENTS_PAGE_SIZE;
 
-    const allEvents = await handle.db.query.marketEvents.findMany({
-      where: (table, { isNotNull }) => isNotNull(table.ruleId),
-      orderBy: (table, { desc }) => [desc(table.detectedAt)]
+    const { events: pageEvents, total } = await market.listOpportunityEventsPage(handle.db, {
+      page,
+      pageSize,
+      ...(data.sortBy !== undefined ? { sortBy: data.sortBy } : {}),
+      ...(data.sortDir !== undefined ? { sortDir: data.sortDir } : {}),
+      ...(data.detectedAtFrom !== undefined
+        ? { detectedAtFrom: new Date(data.detectedAtFrom) }
+        : {}),
+      ...(data.detectedAtTo !== undefined ? { detectedAtTo: new Date(data.detectedAtTo) } : {})
     });
-    const total = allEvents.length;
-    const pageEvents = allEvents.slice(page * pageSize, (page + 1) * pageSize);
     if (pageEvents.length === 0) {
       return { events: [], total, page, pageSize };
     }
 
     const itemIds = [...new Set(pageEvents.map((event) => event.marketplaceItemId))];
-    const ruleIds = [
-      ...new Set(pageEvents.map((event) => event.ruleId).filter((id): id is string => id !== null))
-    ];
-    const [itemRows, ruleRows] = await Promise.all([
-      handle.db.query.marketplaceItems.findMany({
-        where: (table, { inArray }) => inArray(table.id, itemIds),
-        columns: { id: true, title: true, canonicalUrl: true }
-      }),
-      ruleIds.length > 0
-        ? handle.db.query.opportunityRules.findMany({
-            where: (table, { inArray }) => inArray(table.id, ruleIds),
-            columns: { id: true, name: true }
-          })
-        : Promise.resolve([])
-    ]);
+    const itemRows = await handle.db.query.marketplaceItems.findMany({
+      where: (table, { inArray }) => inArray(table.id, itemIds),
+      columns: { id: true, title: true, canonicalUrl: true }
+    });
     const itemById = new Map(itemRows.map((row) => [row.id, row]));
-    const ruleNameById = new Map(ruleRows.map((row) => [row.id, row.name]));
 
     return {
       events: pageEvents.map((event) => {
@@ -1241,8 +1263,7 @@ export const fetchOpportunityEvents = createServerFn({ method: 'GET' })
           ruleId,
           // Current rule name wins (renames stay reflected); falls back to the
           // name frozen in the payload at stamp time for a since-deleted rule.
-          ruleName:
-            (ruleId && ruleNameById.get(ruleId)) || (opportunity?.ruleName ?? 'unknown rule'),
+          ruleName: event.currentRuleName ?? opportunity?.ruleName ?? 'unknown rule',
           score: opportunity?.score ?? 0,
           reasons: opportunity?.reasons ?? []
         };

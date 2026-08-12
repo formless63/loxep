@@ -17,7 +17,7 @@ import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
 import { parseSortingState } from '@/lib/parsers';
 import { monitorsQuery } from '@/features/market/api/queries';
-import { applyClientSort } from '@/features/market/lib/apply-client-sort';
+import { sortRows } from '@/features/market/lib/sort-rows';
 import MonitorFormDialog from '@/features/market/components/monitor-form-dialog';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import type { MonitorDto } from '@/server/market-functions';
@@ -138,7 +138,7 @@ function MonitorsDataTable({
     : monitors;
 
   const sorting = parseSortingState<MonitorDto>(sortStr, COLUMN_IDS);
-  const sorted = applyClientSort(filtered, sorting, {
+  const sorted = sortRows(filtered, sorting, {
     name: (row) => row.name,
     intervalSeconds: (row) => row.intervalSeconds,
     nextPollAt: (row) => row.nextPollAt,

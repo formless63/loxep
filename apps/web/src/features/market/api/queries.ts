@@ -38,7 +38,15 @@ export const monitorDefaultsQuery = queryOptions({
   queryFn: () => fetchMonitorDefaults()
 });
 
-export const marketItemsQuery = (params: { page: number; monitorTargetId: string | null }) =>
+export interface MarketItemsQueryParams {
+  page: number;
+  monitorTargetId: string | null;
+  /** Whitelisted against `@loxep/market`'s `WATCHED_ITEM_SORT_KEYS` — only `lastObserved` sorts today. */
+  sortBy?: 'lastObserved';
+  sortDir?: 'asc' | 'desc';
+}
+
+export const marketItemsQuery = (params: MarketItemsQueryParams) =>
   queryOptions({
     queryKey: ['market', 'items', params],
     queryFn: () => fetchMarketItems({ data: params })
@@ -74,10 +82,21 @@ export const itemActivitySummaryQuery = (marketplaceItemId: string) =>
     queryFn: () => fetchItemActivitySummary({ data: { marketplaceItemId } })
   });
 
-export const itemEventsQuery = (marketplaceItemId: string, page: number) =>
+export const itemEventsQuery = (
+  marketplaceItemId: string,
+  page: number,
+  sortDir?: 'asc' | 'desc'
+) =>
   queryOptions({
-    queryKey: ['market', 'items', marketplaceItemId, 'events', page],
-    queryFn: () => fetchItemEvents({ data: { marketplaceItemId, page } })
+    queryKey: ['market', 'items', marketplaceItemId, 'events', page, sortDir ?? null],
+    queryFn: () =>
+      fetchItemEvents({
+        data: {
+          marketplaceItemId,
+          page,
+          ...(sortDir !== undefined ? { sortBy: 'detectedAt' as const, sortDir } : {})
+        }
+      })
   });
 
 export const searchDashboardQuery = queryOptions({
@@ -86,9 +105,19 @@ export const searchDashboardQuery = queryOptions({
   refetchInterval: 30_000
 });
 
-export const opportunityEventsQuery = (page: number) =>
+export interface OpportunityEventsQueryParams {
+  page: number;
+  /** Whitelisted against `@loxep/market`'s `OPPORTUNITY_EVENTS_SORT_KEYS`. */
+  sortBy?: 'detectedAt' | 'score' | 'rule';
+  sortDir?: 'asc' | 'desc';
+  /** Epoch-ms half-open local-day bounds; both or neither. */
+  detectedAtFrom?: number;
+  detectedAtTo?: number;
+}
+
+export const opportunityEventsQuery = (params: OpportunityEventsQueryParams) =>
   queryOptions({
-    queryKey: ['market', 'opportunities', page],
-    queryFn: () => fetchOpportunityEvents({ data: { page } }),
+    queryKey: ['market', 'opportunities', params],
+    queryFn: () => fetchOpportunityEvents({ data: params }),
     refetchInterval: 30_000
   });

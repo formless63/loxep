@@ -16,10 +16,42 @@ import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
 import { parseSortingState } from '@/lib/parsers';
 import { marketItemsQuery, monitorsQuery } from '@/features/market/api/queries';
-import { applyClientSort } from '@/features/market/lib/apply-client-sort';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import type { MarketItemDto, MarketItemsPageDto } from '@/server/market-functions';
 import { createColumns } from './columns';
+
+/**
+ * Column ids for parsing the URL `sort` param — fixed regardless of the
+ * "Monitors" facet's live `meta.options` (`createColumns`' only
+ * data-dependent bit), so this doesn't need `monitorOptions` to exist.
+ */
+const ITEM_COLUMN_IDS = [
+  'item',
+  'currentState',
+  'price',
+  'availability',
+  'quantity',
+  'listingState',
+  'lastObserved',
+  'monitorTargetId'
+];
+
+/**
+ * The one column `fetchMarketItems` accepts a sort for (`@loxep/market`'s
+ * `WATCHED_ITEM_SORT_KEYS`). Column ids are UI-level identifiers, not all of
+ * them literal `MarketItemDto` keys (`lastObserved` is accessor-derived from
+ * `latestObservation.observedAt`), so this parses against a loose `id:
+ * string` shape rather than `ExtendedColumnSort<MarketItemDto>` — the
+ * `ITEM_COLUMN_IDS` whitelist still enforces which ids are accepted.
+ */
+function marketItemsSortParams(sortStr: string | undefined) {
+  const [sort] = parseSortingState<Record<string, unknown>>(sortStr, ITEM_COLUMN_IDS);
+  if (sort?.id !== 'lastObserved') return {};
+  return {
+    sortBy: 'lastObserved' as const,
+    sortDir: sort.desc ? ('desc' as const) : ('asc' as const)
+  };
+}
 
 /**
  * Watched items joined with their latest observation (loxep-62y.4.2). The
@@ -27,7 +59,9 @@ import { createColumns } from './columns';
  * `<Select>` — but the actual restriction still happens server-side (a
  * single `monitorTargetId`, `fetchMarketItems`'s only filter param), read
  * straight off the URL rather than through TanStack's client-side filtering
- * (`useDataTable` always sets `manualFiltering: true`).
+ * (`useDataTable` always sets `manualFiltering: true`). Sorting is likewise
+ * server-truthful over the full dataset (loxep-foi.7) — `sort` is read here,
+ * before the query fires, and passed through to `fetchMarketItems`.
  */
 export default function ItemsTable() {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
@@ -35,10 +69,11 @@ export default function ItemsTable() {
   const serverPage = Math.max(0, page - 1);
   const monitorFilterValue = search.monitorTargetId;
   const monitorTargetId = typeof monitorFilterValue === 'string' ? monitorFilterValue : null;
+  const sortParams = marketItemsSortParams(search.sort as string | undefined);
 
   const { data: monitors } = useQuery(monitorsQuery);
   const { data, isPending, isError, error, refetch } = useQuery(
-    marketItemsQuery({ page: serverPage, monitorTargetId })
+    marketItemsQuery({ page: serverPage, monitorTargetId, ...sortParams })
   );
 
   const monitorOptions = React.useMemo(
@@ -88,22 +123,10 @@ function ItemsDataTable({
   data: MarketItemsPageDto;
   columns: ColumnDef<MarketItemDto>[];
 }) {
-  const search = useSearch({ strict: false }) as Record<string, unknown>;
-  const sortStr = search.sort as string | undefined;
-  const columnIds = React.useMemo(
-    () => columns.map((column) => column.id).filter(Boolean) as string[],
-    [columns]
-  );
-  const sorting = parseSortingState<MarketItemDto>(sortStr, columnIds);
-
-  const sorted = applyClientSort(data.items, sorting, {
-    lastObserved: (row) => row.latestObservation?.observedAt ?? null
-  });
-
   const pageCount = Math.max(1, Math.ceil(data.total / data.pageSize));
 
   const { table } = useDataTable({
-    data: sorted,
+    data: data.items,
     columns,
     pageCount,
     shallow: true,

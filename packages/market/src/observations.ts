@@ -29,6 +29,10 @@ import { z } from "zod";
 import { MarketNotFoundError, MarketValidationError } from "./errors.ts";
 import { textLiteral, timestamptzLiteral, uuidLiteral } from "./sql.ts";
 
+/** Sortable columns for {@link listWatchedItemIds} (loxep-foi.7). */
+export const WATCHED_ITEM_SORT_KEYS = ["lastObserved"] as const;
+export type WatchedItemSortKey = (typeof WATCHED_ITEM_SORT_KEYS)[number];
+
 const decimalString = z
   .string()
   .regex(/^-?\d+(\.\d+)?$/, "expected a decimal string");
@@ -129,6 +133,87 @@ export async function latestObservations(
     orderBy: (table, { desc }) => [desc(table.observedAt)],
     limit: n,
   });
+}
+
+export interface WatchedItemIdsOptions {
+  /**
+   * Restrict to items linked (currently discovered) by one monitor —
+   * `null`/omitted means no restriction. An empty array is the caller's
+   * signal that the restriction matched nothing; this function returns `[]`
+   * without querying.
+   */
+  allowedItemIds?: readonly string[] | null;
+  /** Omitted (or `undefined`) keeps the existing `last_seen_at DESC` order. */
+  sortBy?: WatchedItemSortKey;
+  /** Defaults to `"desc"`. */
+  sortDir?: "asc" | "desc";
+}
+
+const watchedItemIdsOptionsSchema = z.strictObject({
+  allowedItemIds: z.array(z.uuid()).nullable().optional(),
+  sortBy: z.enum(WATCHED_ITEM_SORT_KEYS).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+});
+
+export interface WatchedItemIdRow {
+  id: string;
+}
+
+/**
+ * Ordered `marketplace_items.id`s for the watched-items table (loxep-foi.7).
+ *
+ * Default order (`sortBy` omitted) is `last_seen_at DESC`, matching prior
+ * behavior. `sortBy: "lastObserved"` orders instead by each item's true
+ * latest OBSERVATION instant, read via a per-item lateral lookup against
+ * `marketplace_item_observations_item_observed_at_idx` (`(marketplace_item_id,
+ * observed_at DESC)`) — this is deliberately NOT the same as `last_seen_at`:
+ * watchlist membership sync (`poll-executor.ts`'s `syncMembership`) bumps
+ * `last_seen_at` for EVERY watchlist member on EVERY poll, even members the
+ * rate-limited poll didn't actually snapshot that cycle, so the two values
+ * can diverge. Items with no observation yet always sort last, in either
+ * direction (`NULLS LAST` is explicit for both, since PostgreSQL's default
+ * is `NULLS FIRST` for `DESC`).
+ */
+export async function listWatchedItemIds(
+  db: LoxepDb,
+  options: WatchedItemIdsOptions = {},
+): Promise<WatchedItemIdRow[]> {
+  const parsed = watchedItemIdsOptionsSchema.parse(options);
+  const allowedItemIds = parsed.allowedItemIds ?? null;
+  if (allowedItemIds !== null && allowedItemIds.length === 0) {
+    return [];
+  }
+
+  if (parsed.sortBy !== "lastObserved") {
+    return db.query.marketplaceItems.findMany({
+      where:
+        allowedItemIds !== null
+          ? (table, { inArray }) => inArray(table.id, allowedItemIds as string[])
+          : undefined,
+      columns: { id: true },
+      orderBy: (table, { desc }) => [desc(table.lastSeenAt)],
+    });
+  }
+
+  const dir = parsed.sortDir === "asc" ? "asc" : "desc";
+  const idsClause =
+    allowedItemIds !== null
+      ? `and mi.id = any(array[${allowedItemIds.map(uuidLiteral).join(", ")}]::uuid[])`
+      : "";
+  const result = await db.execute(
+    `select mi.id
+       from marketplace_items mi
+       left join lateral (
+         select o.observed_at
+           from marketplace_item_observations o
+          where o.marketplace_item_id = mi.id
+          order by o.observed_at desc
+          limit 1
+       ) lo on true
+      where true ${idsClause}
+      order by lo.observed_at ${dir} nulls last, mi.id asc`,
+  );
+  return result.rows.map((row) => ({ id: row["id"] as string }));
 }
 
 export const marketplaceItemInputSchema = z.strictObject({

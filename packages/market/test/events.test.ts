@@ -13,6 +13,7 @@ import {
   deduplicationKeyFor,
   deriveMarketEvents,
   latestObservations,
+  listItemEventsPage,
   recordObservationBatch,
   upsertMarketplaceItem,
 } from "../src/index.ts";
@@ -295,5 +296,94 @@ describe("latestObservations", () => {
     expect(rows[0]!.observedAt.getTime()).toBeGreaterThan(
       rows[1]!.observedAt.getTime(),
     );
+  });
+});
+
+describe("listItemEventsPage (loxep-foi.7)", () => {
+  it("paginates and sorts by detectedAt server-side over the full per-item history", async () => {
+    const item = await upsertMarketplaceItem({
+      db: handle.db,
+      item: {
+        provider: "ebay",
+        marketplace: "EBAY_US",
+        externalItemId: "events-page",
+        seenAt: t1,
+      },
+    });
+    // Five independent price_changed events, each with its own detectedAt
+    // and toObservedAt (so deduplication keys don't collide), ascending.
+    const EVENT_COUNT = 5;
+    for (let i = 0; i < EVENT_COUNT; i += 1) {
+      await deriveMarketEvents({
+        db: handle.db,
+        marketplaceItemId: item.id,
+        previous: snap({ price: "10.00" }, new Date(t1.getTime() - 60_000)),
+        current: snap(
+          { price: `${20 + i}.00` },
+          new Date(t1.getTime() + i * 60_000),
+        ),
+        detectedAt: new Date(t1.getTime() + i * 60_000),
+      });
+    }
+
+    // Newest-first by default, page 0 of size 2 → the two latest (i=4, i=3).
+    const defaultPage = await listItemEventsPage(handle.db, {
+      marketplaceItemId: item.id,
+      page: 0,
+      pageSize: 2,
+    });
+    expect(defaultPage.total).toBe(EVENT_COUNT);
+    expect(defaultPage.events).toHaveLength(2);
+    expect(defaultPage.events[0]?.detectedAt.getTime()).toBe(
+      t1.getTime() + 4 * 60_000,
+    );
+    expect(defaultPage.events[1]?.detectedAt.getTime()).toBe(
+      t1.getTime() + 3 * 60_000,
+    );
+
+    // Next page continues without overlap.
+    const secondPage = await listItemEventsPage(handle.db, {
+      marketplaceItemId: item.id,
+      page: 1,
+      pageSize: 2,
+    });
+    expect(secondPage.events).toHaveLength(2);
+    expect(secondPage.events[0]?.detectedAt.getTime()).toBe(
+      t1.getTime() + 2 * 60_000,
+    );
+    expect(secondPage.events[1]?.detectedAt.getTime()).toBe(
+      t1.getTime() + 1 * 60_000,
+    );
+
+    // sortDir "asc" reverses the order (oldest first).
+    const ascending = await listItemEventsPage(handle.db, {
+      marketplaceItemId: item.id,
+      page: 0,
+      pageSize: EVENT_COUNT,
+      sortDir: "asc",
+    });
+    expect(ascending.events.map((e) => e.detectedAt.getTime())).toEqual([
+      t1.getTime(),
+      t1.getTime() + 1 * 60_000,
+      t1.getTime() + 2 * 60_000,
+      t1.getTime() + 3 * 60_000,
+      t1.getTime() + 4 * 60_000,
+    ]);
+  });
+
+  it("returns an empty page (total 0) for an item with no events", async () => {
+    const item = await upsertMarketplaceItem({
+      db: handle.db,
+      item: {
+        provider: "ebay",
+        marketplace: "EBAY_US",
+        externalItemId: "events-page-empty",
+        seenAt: t1,
+      },
+    });
+    const result = await listItemEventsPage(handle.db, {
+      marketplaceItemId: item.id,
+    });
+    expect(result).toEqual({ events: [], total: 0 });
   });
 });

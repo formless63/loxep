@@ -15,9 +15,11 @@ import type { OpportunityEventDto } from '@/server/market-functions';
 
 /**
  * Rule-stamped events, ranked by score (loxep-foi.3). Sorting on
- * `rule`/`score`/`detectedAt` and the `detectedAt` date filter apply to the
- * currently-fetched page only — see `applyClientSort`'s doc
- * (`../../lib/apply-client-sort.ts`) for why.
+ * `rule`/`score`/`detectedAt` and the `detectedAt` date filter are
+ * server-truthful over the full dataset (loxep-foi.7): `index.tsx` reads
+ * the URL `sort`/`detectedAt` state and passes it to
+ * `fetchOpportunityEvents`, which pushes ordering/filtering into
+ * `@loxep/market`'s `listOpportunityEventsPage`.
  */
 export const columns: ColumnDef<OpportunityEventDto>[] = [
   {
