@@ -1,0 +1,86 @@
+version: 2
+
+updates:
+  # Bun workspace at the repo root (bun@1.3.14, bun.lock; workspaces:
+  # apps/*, packages/*, packages/integrations/*). Dependabot's dedicated
+  # `bun` ecosystem (GA Feb 2025) reads the text bun.lock directly and
+  # covers every workspace manifest from this single root entry.
+  # https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      # All deps here are exact-pinned (dependency-policy.md); routine
+      # minor/patch bumps land as one grouped PR per week.
+      routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Deliberately NOT grouped: majors need individual review and feed
+      # the deliberate-major queue (dependency-policy.md), so any update
+      # not matched above (i.e. every major) still gets its own PR.
+    ignore:
+      # TanStack Router set pinned below latest per loxep-rz9 / the
+      # "Current intentional exceptions" section of dependency-policy.md
+      # until upstream router-core ships the SSR streaming fix
+      # (https://github.com/TanStack/router/issues/7529).
+      - dependency-name: "@tanstack/react-router"
+      - dependency-name: "@tanstack/react-start"
+      - dependency-name: "@tanstack/router-plugin"
+      # Nitro 3.x beta is an intentional pairing with the pinned TanStack
+      # Start/Router set, re-verified together rather than bumped alone.
+      - dependency-name: "nitro"
+
+  # GitHub Actions used by .github/workflows/*.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # docker/Dockerfile (oven/bun base image + any other referenced images).
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Compose image references: compose.yml + compose.override.yml at repo
+  # root, docker/compose.dev.yml in docker/. `directories` (plural) lets
+  # one entry cover both locations.
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/docker"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+    groups:
+      routine:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

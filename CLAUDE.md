@@ -90,7 +90,7 @@ Accepted stack (do not relitigate): TanStack Start/Router/Query/Table/Form, Reac
 
 ## Dependency policy
 
-Before adding or pinning any runtime, library, container image, or GitHub Action, verify the newest viable current upstream release — starter templates and training-data versions are not authoritative. Reproducible pins + Renovate; never float production deps on `latest`.
+Before adding or pinning any runtime, library, container image, or GitHub Action, verify the newest viable current upstream release — starter templates and training-data versions are not authoritative. Reproducible pins + Dependabot; never float production deps on `latest`.
 
 ## Documentation discipline
 

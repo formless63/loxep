@@ -50,21 +50,22 @@ Container images used in reference/production Compose should also use deliberate
 Documented deviations from "newest stable, no prereleases" (reviewed whenever the surrounding stack moves):
 
 - **`nitro` 3.x beta** in `apps/web`: the current TanStack Start Vite integration is built against the Nitro v3 line, which upstream currently ships as beta releases. It is pinned to an exact verified beta build and re-verified together with the TanStack Start/Router set rather than independently upgraded. Revisit whenever TanStack Start or Nitro publishes a stable pairing.
-- **Deliberate-major queue**: upstream majors that exist but require real migration work (not drive-by bumps) are tracked as explicit issues rather than adopted silently or ignored silently. Renovate surfaces them; adoption happens through reviewed migrations with green builds.
+- **Deliberate-major queue**: upstream majors that exist but require real migration work (not drive-by bumps) are tracked as explicit issues rather than adopted silently or ignored silently. Dependabot surfaces them as individual (ungrouped) pull requests; adoption happens through reviewed migrations with green builds.
 - **TanStack Router set pinned below latest** in `apps/web` (`@tanstack/react-router` 1.170.8, `@tanstack/react-start` 1.168.12, `@tanstack/router-plugin` 1.168.11): upstream `router-core` ≥ 1.171.7 carries an open SSR streaming regression ([TanStack/router#7529](https://github.com/TanStack/router/issues/7529) — the query dehydration stream's close listener is silently dropped), which broke SSR dehydration on every `useQuery` page. Pinned to the last known-good `router-core` 1.171.6 as a self-consistent same-week set. Un-pinning is tracked as an explicit issue and happens when a release containing the upstream fix is verified. The deprecated `@tanstack/react-router-with-query` was replaced by `@tanstack/react-router-ssr-query` in the same change.
 
 ## Automated updates
 
-Loxep intends to use Renovate for dependency maintenance because it supports Bun manifests/lockfiles as well as GitHub Actions and container references.
+Loxep uses GitHub's built-in Dependabot for dependency maintenance (`.github/dependabot.yml`) rather than a third-party app: this is a personal, non-org repository, so a zero-install, zero-secrets tool is the right fit. Dependabot's `bun` ecosystem (GA February 2025) reads the root `bun.lock` directly and covers every workspace manifest (`apps/*`, `packages/*`, `packages/integrations/*`) from a single entry; separate entries cover `github-actions` and the `docker`/`docker-compose` ecosystems (`docker/Dockerfile`, `compose.yml`, `compose.override.yml`, `docker/compose.dev.yml`).
 
 Automated updates do not remove the requirement to review major-version migrations. The desired workflow is:
 
-- Renovate detects a new stable release;
+- Dependabot detects a new stable release and opens a pull request weekly;
+- routine minor/patch bumps are grouped into a single PR per ecosystem; each major-version bump stays its own individual PR and feeds the deliberate-major queue above;
 - CI builds and tests the proposed update;
 - breaking changes are reviewed where relevant;
 - the dependency remains current rather than silently aging for years.
 
-Lockfile maintenance should also be automated once the application workspace and root Bun lockfile are established.
+The `ignore` entries in `dependabot.yml` keep the TanStack Router set and `nitro` off the update train while the pins above are in effect. Dependabot's `bun` ecosystem does not yet support automated security updates or lockfile-only maintenance PRs; revisit once upstream adds that.
 
 ## Agent instructions
 

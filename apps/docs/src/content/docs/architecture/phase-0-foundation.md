@@ -44,7 +44,7 @@ Before copying package manifests or pinning dependencies:
 - verify current viable versions from upstream sources;
 - treat starter/example versions as non-authoritative;
 - use exact/reproducible pins and Bun's lockfile;
-- keep Renovate/CI responsible for surfacing updates;
+- keep Dependabot/CI responsible for surfacing updates;
 - re-verify tightly coupled TanStack/Start/Nitro dependencies as a compatible set rather than independently trusting broad ranges.
 
 ### UI/application shell

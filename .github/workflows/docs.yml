@@ -6,7 +6,7 @@ on:
     paths:
       - 'apps/docs/**'
       - '.github/workflows/docs.yml'
-      - 'renovate.json'
+      - '.github/dependabot.yml'
   workflow_dispatch:
 
 permissions:
