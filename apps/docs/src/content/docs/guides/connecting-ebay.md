@@ -90,16 +90,43 @@ The eBay card should now read **Keyset configured**, with the environment shown 
 
 ### Connect an eBay account
 
-Go to **Settings → Connections** and choose **Add eBay account** on the eBay group. The dialog asks for two things and then hands off:
+Go to **Settings → Connections** and choose **Add eBay account** on the eBay group. The dialog asks for three things and then hands off:
 
 - **Account name** — how this account is labelled inside Loxep. It is a local label; it does not have to match the eBay username.
 - **Economic entity** — optional business attribution. It records which of your businesses the account belongs to and grants no access of any kind.
+- **Access to request** — how much the consent screen asks for. See [How much access to ask for](#how-much-access-to-ask-for) below.
 
 The dialog's **What happens next** section states the environment the installation is in and, in sandbox, repeats the test-user requirement.
 
 Choosing **Continue to eBay** creates the connection record and then navigates this tab to eBay's consent screen. Sign in there as the account you want Loxep to observe — the sandbox test user in sandbox, the real account in production — and accept the requested access. eBay returns you to Loxep and the account shows as connected.
 
 If you decline, the connection record stays in place, unconnected, so you can retry it later rather than starting over.
+
+### How much access to ask for
+
+eBay grants access in *scopes*, and Loxep offers two fixed combinations rather than a checklist:
+
+| Choice | What it covers | When to pick it |
+|---|---|---|
+| **Watchlist & browsing** | Watchlists, listings, and searches — everything the observation vertical needs. | The default, and the safe answer. Every keyset can grant it. |
+| **Watchlist + order history** | The above plus read-only access to the account's **order history** (eBay's Sell Fulfillment scope). | Only when you intend to ingest that account's orders, and the keyset was granted the Sell Fulfillment scope. |
+
+The distinction matters because eBay does not partially grant a consent. If you ask for a scope the keyset was never approved for, eBay rejects the **whole** request with `invalid_scope` — you do not get a watchlist-only connection as a consolation, you get no connection at all. Asking for the narrower tier first therefore costs nothing and cannot fail for this reason.
+
+Scopes are chosen by Loxep from the tier you picked; there is nowhere to type a scope string, and nothing the browser sends can widen the request.
+
+Once consent completes, the connection's **Credentials** column states which tier it holds — *Watchlist & browsing* or *Watchlist + order history*. That label is read back from the scopes eBay actually granted, so it is a statement about the stored token rather than about what was requested.
+
+### Adding order access later
+
+A connection made with **Watchlist & browsing** can be widened afterwards: use its **Grant order access** action on the connections page. It re-runs the same consent flow at the wider tier and replaces the stored token.
+
+Two things follow from how eBay works here:
+
+- **It is a fresh consent, not an increment.** eBay has no incremental-consent grant, so you sign in on the consent screen again and the previous token is superseded. Sign in as the *same* eBay account — consenting as a different one silently rebinds the connection to that account.
+- **It can be refused for the keyset, not the account.** If the keyset was never granted the Sell Fulfillment scope, this attempt fails with `invalid_scope` at eBay. The existing watchlist connection is untouched, so nothing is lost by trying — but the fix is on the keyset in the developer portal, not in Loxep.
+
+The action disappears once a connection holds the wider tier. **Reconnect** on an account that already has order access asks for order access again, so re-consenting never silently narrows an account.
 
 ### Confirm it works
 
@@ -120,6 +147,8 @@ Validating also records the outcome on the connection, so it doubles as a manual
 | Consent returns to an error page or the wrong host | The registered auth accepted URL does not match this installation's real callback URL. Compare it against the URL shown in the keyset dialog. |
 | Consent fails only after a long detour | The nonce cookie backing the flow is short-lived. Start the connection again and complete it in one sitting. |
 | Everything authenticates but nothing is observed | Consent succeeded on a different eBay account than intended. Check which account you signed in as. |
+| eBay reports `invalid_scope` and the consent screen never appears | Order access was requested against a keyset that was not granted the Sell Fulfillment scope. Connect with **Watchlist & browsing**, and take the scope up with the keyset in the developer portal. |
+| Order sync reports an authentication error on a connection that validates | The connection holds the watchlist tier only. Its Credentials column says so; use **Grant order access** to re-consent. |
 
 ## Switching to production
 

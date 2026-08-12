@@ -7,7 +7,10 @@
  *    the application secret `integration.ebay.keyset` (purpose `ebay_keyset`,
  *    ADR-0019). `storeEbayKeyset` is the server-side write path.
  * 2. **Consent** — `startEbayConsent` builds the eBay authorization URL and
- *    plants the CSRF nonce cookie.
+ *    plants the CSRF nonce cookie. It takes a consent TIER (loxep-ld0), never
+ *    scope strings: `watchlist` (base scope) or `orders` (base + Sell
+ *    Fulfillment read-only), resolved to scopes server-side from the
+ *    integration package's constants.
  * 3. **Callback** — `handleEbayConsentCallback` (`@/server/ebay-oauth-callback`)
  *    validates state, exchanges the code, and stores the user token as an
  *    encrypted connection credential. It lives in a separate module — see
@@ -60,7 +63,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
-import type { EbayErrorKind } from '@loxep/integration-ebay';
+import type { EbayConsentTier, EbayErrorKind } from '@loxep/integration-ebay';
 import type { EbayKeyset, EbayKeysetSource } from '@/server/ebay-oauth-internal';
 
 /** Application-secret key holding the eBay application keyset. */
@@ -79,6 +82,97 @@ export const EBAY_CALLBACK_PATH = '/api/integrations/ebay/callback';
 const CONSENT_COOKIE_MAX_AGE_SECONDS = 600;
 
 export type { EbayKeyset, EbayKeysetSource };
+
+// ---------------------------------------------------------------------------
+// Consent tiers (loxep-ld0)
+// ---------------------------------------------------------------------------
+
+export type { EbayConsentTier };
+
+/**
+ * Tier ids as a runtime value, for the zod input and the UI's choice list.
+ *
+ * Deliberately a literal tuple rather than a re-export: this module is
+ * imported by CLIENT components, so it must not pull a VALUE out of
+ * `@loxep/integration-ebay` (see the CLIENT-BUNDLE BOUNDARY note above). The
+ * `satisfies` clause plus {@link EBAY_CONSENT_TIER_LABELS}' exhaustive
+ * `Record` make the pair a compile error the moment the package's
+ * `EbayConsentTier` union gains or renames a member.
+ */
+export const EBAY_CONSENT_TIER_IDS = [
+  'watchlist',
+  'orders'
+] as const satisfies readonly EbayConsentTier[];
+
+/** Operator-facing tier names. Exhaustive over the package's union. */
+export const EBAY_CONSENT_TIER_LABELS: Record<EbayConsentTier, string> = {
+  watchlist: 'Watchlist & browsing',
+  orders: 'Watchlist + order history'
+};
+
+/** One line each, shown beside the choice at consent time. */
+export const EBAY_CONSENT_TIER_DESCRIPTIONS: Record<EbayConsentTier, string> = {
+  watchlist: 'Watchlists, listings, and searches. Every keyset can grant this.',
+  orders:
+    'Adds read-only access to the account’s order history. Only offer it if the keyset was granted the Sell Fulfillment scope — eBay rejects the whole consent otherwise.'
+};
+
+/** The narrow tier, assumed whenever nothing said otherwise. */
+export const DEFAULT_EBAY_CONSENT_TIER: EbayConsentTier = 'watchlist';
+
+/**
+ * Mirrors `@loxep/integration-ebay`'s `EBAY_SELL_FULFILLMENT_READONLY_SCOPE`
+ * as a plain string, for the same client-bundle reason as
+ * {@link EBAY_CONSENT_TIER_IDS} — the tier a connection HOLDS has to be
+ * readable in the browser from `connections.config`, and importing the
+ * package's constant would drag `ebay-api` into the client graph. The
+ * authoritative copy is the package's; this one only classifies.
+ */
+export const EBAY_ORDER_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly';
+
+/** `connections.config` key holding the tier a pending consent asked for. */
+export const EBAY_CONSENT_REQUEST_CONFIG_KEY = 'ebayConsentRequest';
+/** `connections.config` key holding the granted, non-secret consent facts. */
+export const EBAY_OAUTH_CONFIG_KEY = 'ebayOAuth';
+
+const consentTierSchema = z.enum(EBAY_CONSENT_TIER_IDS);
+
+/**
+ * Non-secret facts `startEbayConsent`/the callback write to
+ * `connections.config` are read through these helpers rather than a cast: the
+ * config column is untyped JSON, and a connection consented before a given
+ * key existed must read as "absent", never as a crash.
+ */
+function readObject(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** Granted scopes recorded on a connection, or `null` when there are none. */
+export function ebayGrantedScopes(config: Record<string, unknown>): string[] | null {
+  const scopes = readObject(config[EBAY_OAUTH_CONFIG_KEY]).scopes;
+  return Array.isArray(scopes) && scopes.every((scope) => typeof scope === 'string')
+    ? (scopes as string[])
+    : null;
+}
+
+/**
+ * Classify recorded scopes into a tier — the browser-side twin of the
+ * package's `consentTierForScopes`. Conservative by construction: anything
+ * that is not demonstrably an order-scoped grant reads as `watchlist`.
+ */
+export function ebayConsentTierForScopes(
+  scopes: readonly string[] | null | undefined
+): EbayConsentTier {
+  return Array.isArray(scopes) && scopes.includes(EBAY_ORDER_SCOPE) ? 'orders' : 'watchlist';
+}
+
+/** The tier a pending (started but not yet completed) consent asked for. */
+export function ebayRequestedConsentTier(config: Record<string, unknown>): EbayConsentTier | null {
+  const tier = readObject(config[EBAY_CONSENT_REQUEST_CONFIG_KEY]).tier;
+  return tier === 'watchlist' || tier === 'orders' ? tier : null;
+}
 
 export interface EbayKeysetStatus {
   configured: boolean;
@@ -193,6 +287,8 @@ export const fetchEbayCallbackUrl = createServerFn({ method: 'GET' }).handler(
 export interface StartEbayConsentResult {
   url: string;
   scopes: string[];
+  /** The tier the URL was built for — resolved server-side, never echoed input. */
+  tier: EbayConsentTier;
   environment: 'sandbox' | 'production';
   keysetSource: EbayKeysetSource;
 }
@@ -201,9 +297,21 @@ export interface StartEbayConsentResult {
  * Build the eBay consent URL for one connection and plant the CSRF nonce.
  * The caller navigates the browser to `url` (eBay requires a real browser
  * session for consent — there is no headless path).
+ *
+ * SCOPES (loxep-ld0): the caller passes a TIER, never scope strings. The
+ * scope set is resolved from `@loxep/integration-ebay`'s own constants inside
+ * this handler, so no request body can widen (or corrupt) a consent.
+ *
+ * The requested tier is also recorded on the connection
+ * (`config.ebayConsentRequest`) before the browser leaves, because eBay's
+ * callback carries no scope information back: the callback resolves the SAME
+ * tier from the connection row when it exchanges the code, which is what
+ * makes the recorded `config.ebayOAuth.scopes` true rather than always the
+ * default set. A cookie would have done the same job less durably and with a
+ * tamperable value; the connection row is server-owned and admin-gated.
  */
 export const startEbayConsent = createServerFn({ method: 'POST' })
-  .inputValidator(z.strictObject({ connectionId: z.uuid() }))
+  .inputValidator(z.strictObject({ connectionId: z.uuid(), tier: consentTierSchema.optional() }))
   .handler(async ({ data }): Promise<StartEbayConsentResult> => {
     const [{ requireAdmin, getAdminServices }, { setCookie, getRequestProtocol }, internal] =
       await Promise.all([
@@ -212,9 +320,10 @@ export const startEbayConsent = createServerFn({ method: 'POST' })
         import('@/server/ebay-oauth-internal')
       ]);
     const integration = await internal.ebayIntegration();
-    await requireAdmin();
+    const session = await requireAdmin();
+    const services = getAdminServices();
 
-    const connection = await getAdminServices().connections.getConnection(data.connectionId);
+    const connection = await services.connections.getConnection(data.connectionId);
     if (connection.provider !== EBAY_CONNECTION_PROVIDER) {
       throw new internal.EbayOAuthSetupError(
         `Connection ${connection.id} has provider "${connection.provider}"; eBay consent needs an "${EBAY_CONNECTION_PROVIDER}" connection.`,
@@ -222,10 +331,26 @@ export const startEbayConsent = createServerFn({ method: 'POST' })
       );
     }
 
+    const tier: EbayConsentTier = data.tier ?? DEFAULT_EBAY_CONSENT_TIER;
     const { keyset, source } = await internal.requireKeyset();
     const adapter = await internal.adapterForKeyset(keyset);
     const state = integration.buildConsentState(connection.id);
-    const consent = integration.buildConsentUrl(adapter, { state: state.state });
+    const consent = integration.buildConsentUrl(adapter, {
+      state: state.state,
+      scopes: integration.consentScopesForTier(tier)
+    });
+
+    // Remembered for the callback, which eBay gives no scope information to.
+    await services.connections.updateConnection(
+      connection.id,
+      {
+        config: {
+          ...connection.config,
+          [EBAY_CONSENT_REQUEST_CONFIG_KEY]: { tier, requestedAt: new Date().toISOString() }
+        }
+      },
+      { actorUserId: session.user.id }
+    );
 
     setCookie(EBAY_CONSENT_NONCE_COOKIE, state.nonce, {
       httpOnly: true,
@@ -238,6 +363,7 @@ export const startEbayConsent = createServerFn({ method: 'POST' })
     return {
       url: consent.url,
       scopes: consent.scopes,
+      tier,
       environment: keyset.environment,
       keysetSource: source
     };
@@ -246,12 +372,6 @@ export const startEbayConsent = createServerFn({ method: 'POST' })
 // ---------------------------------------------------------------------------
 // Validation (loxep-62y.5)
 // ---------------------------------------------------------------------------
-
-/** Non-secret facts `startEbayConsent`/the callback write to `connections.config`. */
-interface EbayOAuthConnectionConfig {
-  scopes?: unknown;
-  refreshTokenExpiresAt?: unknown;
-}
 
 export interface EbayValidationResult {
   ok: boolean;
@@ -328,20 +448,17 @@ export const validateEbayConnection = createServerFn({ method: 'POST' })
           connection.id,
           EBAY_OAUTH_CREDENTIAL_TYPE
         );
-        const ebayOAuthConfig = (connection.config as { ebayOAuth?: EbayOAuthConnectionConfig })
-          .ebayOAuth;
-        const scopes = Array.isArray(ebayOAuthConfig?.scopes)
-          ? (ebayOAuthConfig.scopes as string[])
-          : undefined;
-        const refreshTokenExpiresAt =
-          typeof ebayOAuthConfig?.refreshTokenExpiresAt === 'string'
-            ? ebayOAuthConfig.refreshTokenExpiresAt
-            : null;
+        const connectionConfig = connection.config as Record<string, unknown>;
+        const scopes = ebayGrantedScopes(connectionConfig) ?? undefined;
+        const refreshTokenExpiresAt = readObject(
+          connectionConfig[EBAY_OAUTH_CONFIG_KEY]
+        ).refreshTokenExpiresAt;
         const bundle = integration.bundleFromCredential({
           payload,
           expiresAt: oauthMeta.expiresAt,
           scopes,
-          refreshTokenExpiresAt
+          refreshTokenExpiresAt:
+            typeof refreshTokenExpiresAt === 'string' ? refreshTokenExpiresAt : null
         });
         const refresh = await integration.refreshTokenBundleIfNeeded({ bundle, adapter });
         if (refresh.refreshed) {

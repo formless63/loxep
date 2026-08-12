@@ -102,7 +102,7 @@ export const integrationServices: IntegrationService[] = [
     name: 'eBay',
     category: 'Marketplaces',
     description:
-      'Watch listings, searches, and sellers on eBay. One application keyset covers the installation; each eBay account is then connected through eBay’s consent screen.',
+      'Watch listings, searches, and sellers on eBay, and optionally read an account’s order history. One application keyset covers the installation; each eBay account is then connected through eBay’s consent screen, at the access level you choose.',
     manage: { kind: 'ebay-keyset' },
     accounts: {
       provider: 'ebay',
@@ -110,7 +110,7 @@ export const integrationServices: IntegrationService[] = [
       form: 'ebay-consent',
       addLabel: 'Add eBay account',
       formHint:
-        'Name the account and, optionally, attribute it to an economic entity. eBay’s consent screen opens next and binds the account itself.',
+        'Name the account, choose how much access to ask eBay for, and optionally attribute it to an economic entity. eBay’s consent screen opens next and binds the account itself; order access can also be granted later from the account’s actions.',
       blockedReason: ({ ebayKeyset }) => {
         if (ebayKeyset === null) {
           return 'Only an administrator can set up the eBay application keyset.';

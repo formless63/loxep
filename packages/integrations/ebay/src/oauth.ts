@@ -93,6 +93,66 @@ export const EBAY_ORDER_CONSENT_SCOPES: readonly string[] = [
   EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
 ];
 
+/**
+ * The consent TIERS a connection can be consented at (loxep-ld0).
+ *
+ * A tier — not a raw scope list — is what crosses the app's trust boundary:
+ * an operator picks `'watchlist'` or `'orders'` and the scopes are resolved
+ * HERE, server-side, from the constants above. Nothing accepts a caller-
+ * supplied scope string, so no surface can widen a consent by editing a
+ * request body, and the recorded scopes always match a tier Loxep knows how
+ * to refresh (eBay's refresh grant requires a subset of what was granted).
+ *
+ * - `watchlist` — {@link EBAY_DEFAULT_CONSENT_SCOPES}: the base scope alone,
+ *   which every keyset holds. Enough for the traditional Trading calls the
+ *   watchlist/browse vertical uses.
+ * - `orders` — {@link EBAY_ORDER_CONSENT_SCOPES}: base plus
+ *   {@link EBAY_SELL_FULFILLMENT_READONLY_SCOPE}. Required by the RESTful
+ *   Sell Fulfillment order read, and REJECTED WITH `invalid_scope` — failing
+ *   the WHOLE consent, not just the extra scope — when the keyset was never
+ *   granted it. That is why `watchlist` stays the default: an operator opts
+ *   into the wider tier deliberately, and can fall back to the narrow one.
+ */
+export type EbayConsentTier = "watchlist" | "orders";
+
+/** The scope set behind each tier. Exhaustive over {@link EbayConsentTier}. */
+export const EBAY_CONSENT_TIER_SCOPES = {
+  watchlist: EBAY_DEFAULT_CONSENT_SCOPES,
+  orders: EBAY_ORDER_CONSENT_SCOPES,
+} as const satisfies Record<EbayConsentTier, readonly string[]>;
+
+/** Tier assumed whenever nothing said otherwise — the narrow, always-grantable one. */
+export const DEFAULT_EBAY_CONSENT_TIER: EbayConsentTier = "watchlist";
+
+/** Narrow untrusted input (a stored config value, a request field) to a tier. */
+export function isEbayConsentTier(value: unknown): value is EbayConsentTier {
+  return value === "watchlist" || value === "orders";
+}
+
+/**
+ * Resolve a tier to the scopes to request. The ONLY sanctioned way to build a
+ * consent scope set outside this module.
+ */
+export function consentScopesForTier(tier: EbayConsentTier): string[] {
+  return [...EBAY_CONSENT_TIER_SCOPES[tier]];
+}
+
+/**
+ * Classify scopes already granted (as recorded on
+ * `connections.config.ebayOAuth.scopes`) back into a tier, so a UI can say
+ * which tier a connection actually holds. Anything carrying the Sell
+ * Fulfillment scope is an `orders` connection; everything else — including a
+ * missing/unreadable value — reads as `watchlist`, the conservative answer.
+ */
+export function consentTierForScopes(
+  scopes: readonly string[] | null | undefined,
+): EbayConsentTier {
+  return Array.isArray(scopes) &&
+    scopes.includes(EBAY_SELL_FULFILLMENT_READONLY_SCOPE)
+    ? "orders"
+    : "watchlist";
+}
+
 /** Refresh an access token this many seconds before it actually expires. */
 export const DEFAULT_REFRESH_SKEW_SECONDS = 300;
 

@@ -14,9 +14,13 @@
  * connection is re-validated — nothing is written until all four hold.
  */
 import {
+  DEFAULT_EBAY_CONSENT_TIER,
   EBAY_CALLBACK_PATH,
   EBAY_CONNECTION_PROVIDER,
   EBAY_CONSENT_NONCE_COOKIE,
+  EBAY_CONSENT_REQUEST_CONFIG_KEY,
+  EBAY_OAUTH_CONFIG_KEY,
+  ebayRequestedConsentTier,
   type EbayKeyset
 } from '@/server/ebay-oauth';
 import {
@@ -159,9 +163,21 @@ export async function handleEbayConsentCallback(request: Request): Promise<Respo
     );
   }
 
+  // The tier `startEbayConsent` asked for. eBay's callback carries NO scope
+  // information, so without this the exchange would fall back to the default
+  // (base-scope) set and record a watchlist-only grant on a connection that
+  // had actually been consented for orders — the bug loxep-ld0 fixes. The
+  // value is server-written and admin-gated; anything unrecognised (an older
+  // connection consented before this existed) reads as the narrow tier.
+  const connectionConfig = connection.config as Record<string, unknown>;
+  const tier = ebayRequestedConsentTier(connectionConfig) ?? DEFAULT_EBAY_CONSENT_TIER;
+
   try {
     const adapter = await adapterForKeyset(keyset);
-    const bundle = await integration.exchangeConsentCode(adapter, { code });
+    const bundle = await integration.exchangeConsentCode(adapter, {
+      code,
+      scopes: integration.consentScopesForTier(tier)
+    });
     // The integration boundary owns the secret/non-secret split.
     const write = integration.credentialWriteForBundle(bundle);
 
@@ -176,18 +192,21 @@ export async function handleEbayConsentCallback(request: Request): Promise<Respo
       }
     );
     // Non-secret consent facts live on the connection, not in the ciphertext.
+    // The pending-consent marker is consumed here — it described THIS
+    // exchange, and leaving it would misreport the next one.
+    const nextConfig: Record<string, unknown> = { ...connectionConfig };
+    delete nextConfig[EBAY_CONSENT_REQUEST_CONFIG_KEY];
+    // No `tier` field: the granted SCOPES are the fact, and the tier is
+    // derived from them (`ebayConsentTierForScopes`). A stored tier would be
+    // a second copy that a later token refresh could leave stale.
+    nextConfig[EBAY_OAUTH_CONFIG_KEY] = {
+      environment: keyset.environment,
+      ...write.connectionConfig,
+      consentedAt: new Date().toISOString()
+    };
     await services.connections.updateConnection(
       connection.id,
-      {
-        config: {
-          ...connection.config,
-          ebayOAuth: {
-            environment: keyset.environment,
-            ...write.connectionConfig,
-            consentedAt: new Date().toISOString()
-          }
-        }
-      },
+      { config: nextConfig },
       { actorUserId: session.user.id }
     );
     await services.connections.recordConnectionSuccess(connection.id, {
