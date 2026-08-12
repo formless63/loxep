@@ -68,7 +68,7 @@ RUN bun install --frozen-lockfile --production --linker=hoisted --filter '!./app
 # Runtime stage: Node.js 24 runs bin/ and packages/ TypeScript natively via
 # type stripping; the web runtime is the prebuilt Nitro output.
 # ---------------------------------------------------------------------------
-FROM node:24-slim AS runtime
+FROM node:26-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
