@@ -115,7 +115,7 @@ function accountCountDetail(count: number): string {
 const DEV_FILE_KEYSET_WARNING = {
   label: 'Keyset: dev file',
   title:
-    "Resolved from the local ~/.config/loxep/ebay-sandbox.env development fallback, not a stored application secret. A stored secret always takes precedence over this file; it exists for local sandbox development only and does not carry to another install or a fresh database."
+    'Resolved from the local ~/.config/loxep/ebay-sandbox.env development fallback, not a stored application secret. A stored secret always takes precedence over this file; it exists for local sandbox development only and does not carry to another install or a fresh database.'
 };
 
 export const integrationServices: IntegrationService[] = [
@@ -163,8 +163,7 @@ export const integrationServices: IntegrationService[] = [
       // A dev-machine fallback resolving over an empty database must never
       // read as "configured" the same way a stored secret does — flag it with
       // its own badge rather than folding it into the plain `details` chips.
-      const warning =
-        ebayKeyset.source === 'dev-file' ? { ...DEV_FILE_KEYSET_WARNING } : undefined;
+      const warning = ebayKeyset.source === 'dev-file' ? { ...DEV_FILE_KEYSET_WARNING } : undefined;
       return ebayKeyset.ruNameConfigured
         ? { tone: 'ready', label: 'Keyset configured', details, ...(warning && { warning }) }
         : {
