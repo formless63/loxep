@@ -682,7 +682,7 @@ services       packages/commerce/src/                    (@loxep/commerce)
 
 8. **Buyer data — columns hold an identifier and a channel handle, nothing else.** `buyer_external_id` plus an optional `buyer_display_name`, where "display name" means a channel-native handle (an eBay username), **not** a legal name from a billing address. The Woo translator therefore leaves it null: Woo exposes no handle, and copying a customer's real name into a domain column would defeat the line this question draws. The full payload stays in `provider_objects`.
 
-   **Retention remains an unresolved POLICY question and no retention logic was built.** Order payloads contain personal data that marketplace observation payloads do not, and whether "no automatic retention deletion by default" should hold for this object class specifically is still open. Ingestion retains one `provider_objects` row per distinct payload hash per order — an unchanged re-sync reuses the existing row rather than storing a second copy — which bounds growth but is not a retention policy.
+   **Retention is now decided (PROVISIONAL) by [ADR-0021](../../decisions/0021-order-payload-retention/): order-class payloads are redacted in place after a configurable 180-day default window; provenance rows and `order_source_links` are never automatically deleted.** No retention logic ships with Phase 3 ingestion itself — the sweep is a separate implementation issue. Ingestion retains one `provider_objects` row per distinct payload hash per order — an unchanged re-sync reuses the existing row rather than storing a second copy — which bounds growth but is not itself a retention policy.
 
 ### Also implemented from the WooCommerce reality findings
 

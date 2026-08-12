@@ -94,6 +94,8 @@ Canonical marketplace-item identity remains independent of connection identity a
 
 `provider_objects` are debugging/synchronization snapshots. Where history is useful, keep changed snapshots and deduplicate identical payloads by hash. High-frequency polling must not dump a full provider JSON response every minute when a narrow observation row already preserves the useful state.
 
+For **order-class** provider objects specifically — the one class whose payloads carry buyer personal data — [ADR-0021](../../decisions/0021-order-payload-retention/) refines this stance: payloads are redacted in place after a configurable window (180-day default), while the rows themselves are still never automatically deleted.
+
 ## 8. Enum/state strategy
 
 **Decision:** do not use PostgreSQL enum types for application/domain states initially.
