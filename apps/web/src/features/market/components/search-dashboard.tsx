@@ -26,7 +26,7 @@ import { QueryErrorAlert } from '@/features/settings/components/query-error-aler
 import { formatDateTime, formatQuantity, formatTimestampPrecise } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import { monitorsQuery, searchDashboardQuery } from '@/features/market/api/queries';
-import { applyClientSort } from '@/features/market/lib/apply-client-sort';
+import { sortRows } from '@/features/market/lib/sort-rows';
 import { marketEventTypeTone, monitorTargetTypeLabel } from '@/features/market/constants';
 import type {
   DiscoveryMonitorStatsDto,
@@ -127,7 +127,7 @@ function DiscoveryMonitorsTable({ rows }: { rows: DiscoveryMonitorRow[] }) {
   const sortStr = search.sort as string | undefined;
 
   const sorting = parseSortingState<DiscoveryMonitorRow>(sortStr, DISCOVERY_COLUMN_IDS);
-  const sorted = applyClientSort(rows, sorting, {
+  const sorted = sortRows(rows, sorting, {
     name: (row) => row.monitor.name,
     discoveredItemCount: (row) => row.stats?.discoveredItemCount ?? 0,
     newListingCount24h: (row) => row.stats?.newListingCount24h ?? 0,

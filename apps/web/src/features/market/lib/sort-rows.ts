@@ -1,16 +1,20 @@
 import type { ExtendedColumnSort } from '@/types/data-table';
 
 /**
- * `useDataTable` always sets `manualSorting: true` (URL-synced state, see
- * `@/hooks/use-data-table`), which means the caller — not TanStack Table —
- * is responsible for ordering `data` to match the current sort. Loxep's
- * `/market` server functions (`@/server/market-functions`) paginate with a
- * fixed page size and a single `detectedAt DESC` order, and do not (yet)
- * accept a `sort` parameter — extending them is a server-side change outside
- * this pass's fence. Until that lands, sortable market-table columns sort
- * only the current page's rows, client-side, via this helper.
+ * Generic client-side multi-type sort for a fully-in-memory row set.
+ *
+ * This is honest ONLY when `rows` is the complete dataset — `useDataTable`
+ * always sets `manualSorting: true` (URL-synced state, `@/hooks/use-data-table`),
+ * so the caller, not TanStack Table, is responsible for ordering `data` to
+ * match the current sort. `monitors-table` and `search-dashboard`'s tables
+ * are the legitimate case: `fetchMonitors`/`fetchSearchDashboard` return
+ * every row unbounded (no server pagination), so sorting the full array
+ * client-side is correct, not a "current page only" shortcut (that trade-off
+ * — and the server functions that had it — is what loxep-foi.7 removed; see
+ * `items-table/`, `opportunities-table/`, and `event-history-list.tsx`,
+ * which now sort server-side instead of calling this).
  */
-export function applyClientSort<TRow>(
+export function sortRows<TRow>(
   rows: TRow[],
   sorting: ExtendedColumnSort<TRow>[],
   accessors: Record<string, (row: TRow) => string | number | null>
@@ -36,13 +40,4 @@ export function applyClientSort<TRow>(
 
   // eslint-disable-next-line unicorn/no-array-reverse
   return desc ? sorted.reverse() : sorted;
-}
-
-/** True when two dates fall on the same local calendar day. */
-export function isSameLocalDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
 }

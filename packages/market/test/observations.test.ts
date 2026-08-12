@@ -12,6 +12,7 @@ import {
   deactivateAbsentMonitorItems,
   latestObservations,
   linkItemToMonitor,
+  listWatchedItemIds,
   recordObservationBatch,
   upsertMarketplaceItem,
 } from "../src/index.ts";
@@ -373,5 +374,115 @@ describe("deactivateAbsentMonitorItems", () => {
     const retry = await deactivateAbsentMonitorItems(handle.db, options);
     expect(retry.deactivated).toBe(0);
     expect(await activeFlag(target.id, absent.id)).toBe(false);
+  });
+});
+
+describe("listWatchedItemIds (loxep-foi.7)", () => {
+  async function upsert(externalItemId: string, seenAt: Date) {
+    return upsertMarketplaceItem({
+      db: handle.db,
+      item: {
+        provider: "ebay",
+        marketplace: "EBAY_US",
+        externalItemId,
+        seenAt,
+      },
+    });
+  }
+
+  async function observe(marketplaceItemId: string, observedAt: Date) {
+    await recordObservationBatch({
+      db: handle.db,
+      batch: {
+        observationBatchId: randomUUID(),
+        observedAt,
+        source: "ebay_watchlist",
+        items: [{ marketplaceItemId, price: "10.00" }],
+      },
+    });
+  }
+
+  it("defaults to last_seen_at DESC", async () => {
+    const older = await upsert("watched-default-older", new Date("2026-08-12T12:00:00.000Z"));
+    const newer = await upsert("watched-default-newer", new Date("2026-08-12T13:00:00.000Z"));
+    const ids = await listWatchedItemIds(handle.db, {
+      allowedItemIds: [older.id, newer.id],
+    });
+    expect(ids.map((row) => row.id)).toEqual([newer.id, older.id]);
+  });
+
+  it("sortBy 'lastObserved' orders by the true latest OBSERVATION, not last_seen_at — they can diverge", async () => {
+    const t1 = new Date("2026-08-12T14:00:00.000Z");
+    const t2 = new Date("2026-08-12T15:00:00.000Z");
+    const t3 = new Date("2026-08-12T16:00:00.000Z");
+
+    // A: last_seen_at bumped to t3 (e.g. a watchlist membership sync), but
+    // its only actual OBSERVATION is the earlier t1 — this poll's
+    // rate-limited snapshot pass never touched it this cycle.
+    const a = await upsert("watched-diverge-a", t3);
+    await observe(a.id, t1);
+
+    // B: last_seen_at is the older t1, but its real observation (t2) is
+    // more recent than A's.
+    const b = await upsert("watched-diverge-b", t1);
+    await observe(b.id, t2);
+
+    const allowedItemIds = [a.id, b.id];
+
+    // Default order (last_seen_at desc): A (t3) before B (t1).
+    const byLastSeen = await listWatchedItemIds(handle.db, { allowedItemIds });
+    expect(byLastSeen.map((row) => row.id)).toEqual([a.id, b.id]);
+
+    // lastObserved desc: B's real observation (t2) is newer than A's (t1) —
+    // the opposite order from last_seen_at.
+    const byObservedDesc = await listWatchedItemIds(handle.db, {
+      allowedItemIds,
+      sortBy: "lastObserved",
+      sortDir: "desc",
+    });
+    expect(byObservedDesc.map((row) => row.id)).toEqual([b.id, a.id]);
+
+    const byObservedAsc = await listWatchedItemIds(handle.db, {
+      allowedItemIds,
+      sortBy: "lastObserved",
+      sortDir: "asc",
+    });
+    expect(byObservedAsc.map((row) => row.id)).toEqual([a.id, b.id]);
+  });
+
+  it("sorts an item with no observation last, in either direction", async () => {
+    const observed = await upsert("watched-noobs-observed", new Date("2026-08-12T09:00:00.000Z"));
+    await observe(observed.id, new Date("2026-08-12T09:30:00.000Z"));
+    // last_seen_at pushed later than `observed`'s, but never actually observed.
+    const neverObserved = await upsert(
+      "watched-noobs-never",
+      new Date("2026-08-12T10:00:00.000Z"),
+    );
+
+    const allowedItemIds = [observed.id, neverObserved.id];
+    const desc = await listWatchedItemIds(handle.db, {
+      allowedItemIds,
+      sortBy: "lastObserved",
+      sortDir: "desc",
+    });
+    expect(desc.map((row) => row.id)).toEqual([observed.id, neverObserved.id]);
+
+    const asc = await listWatchedItemIds(handle.db, {
+      allowedItemIds,
+      sortBy: "lastObserved",
+      sortDir: "asc",
+    });
+    expect(asc.map((row) => row.id)).toEqual([observed.id, neverObserved.id]);
+  });
+
+  it("restricts to allowedItemIds, and returns [] without querying when it's empty", async () => {
+    const kept = await upsert("watched-restrict-kept", new Date("2026-08-12T11:00:00.000Z"));
+    await upsert("watched-restrict-excluded", new Date("2026-08-12T11:30:00.000Z"));
+
+    const restricted = await listWatchedItemIds(handle.db, { allowedItemIds: [kept.id] });
+    expect(restricted.map((row) => row.id)).toEqual([kept.id]);
+
+    const empty = await listWatchedItemIds(handle.db, { allowedItemIds: [] });
+    expect(empty).toEqual([]);
   });
 });

@@ -111,6 +111,7 @@ import {
   intLiteral,
   jsonbLiteral,
   textLiteral,
+  timestamptzLiteral,
   uuidLiteral,
 } from "./sql.ts";
 
@@ -852,6 +853,164 @@ export function opportunityRuleSnapshot(
     scoreWeight: row.scoreWeight,
     createdByUserId: row.createdByUserId,
   };
+}
+
+/* ------------------------------------------------------------------------ */
+/* listOpportunityEventsPage (loxep-foi.7)                                  */
+/* ------------------------------------------------------------------------ */
+
+/** Sortable columns for {@link listOpportunityEventsPage}. */
+export const OPPORTUNITY_EVENTS_SORT_KEYS = ["detectedAt", "score", "rule"] as const;
+export type OpportunityEventsSortKey = (typeof OPPORTUNITY_EVENTS_SORT_KEYS)[number];
+
+export interface OpportunityEventsPageOptions {
+  page?: number;
+  pageSize?: number;
+  /** Defaults to `"detectedAt"`. */
+  sortBy?: OpportunityEventsSortKey;
+  /** Defaults to `"desc"`. */
+  sortDir?: "asc" | "desc";
+  /** Half-open range: `detected_at >= detectedAtFrom AND detected_at < detectedAtTo`. */
+  detectedAtFrom?: Date;
+  detectedAtTo?: Date;
+}
+
+const opportunityEventsPageOptionsSchema = z.strictObject({
+  page: z.number().int().nonnegative().optional(),
+  pageSize: z.number().int().positive().optional(),
+  sortBy: z.enum(OPPORTUNITY_EVENTS_SORT_KEYS).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+  detectedAtFrom: z.date().optional(),
+  detectedAtTo: z.date().optional(),
+});
+
+/** One rule-stamped `market_events` row plus its CURRENT rule name (if the rule still exists). */
+export interface OpportunityEventRow {
+  id: string;
+  eventType: string;
+  detectedAt: Date;
+  marketplaceItemId: string;
+  ruleId: string | null;
+  /** `opportunity_rules.name` today, or `null` if the rule was since deleted. */
+  currentRuleName: string | null;
+  /** Opaque `market_events.payload` — the caller reads `payload.opportunity` (score/reasons/frozen name). */
+  payload: Record<string, unknown>;
+}
+
+export interface OpportunityEventsPageResult {
+  events: OpportunityEventRow[];
+  total: number;
+}
+
+const DEFAULT_OPPORTUNITY_EVENTS_PAGE_SIZE = 25;
+
+/**
+ * Fixed ORDER BY expressions, one per whitelisted {@link OpportunityEventsSortKey}
+ * — selected by a lookup, never built by concatenating client input, so no
+ * client string ever reaches the SQL string directly.
+ */
+const OPPORTUNITY_EVENT_ORDER_EXPRESSIONS: Record<OpportunityEventsSortKey, string> = {
+  detectedAt: "me.detected_at",
+  // `market_events.payload` has no index on `->'opportunity'->>'score'` — see
+  // `metrics.ts`'s continuous-aggregate trigger-criteria note for the same
+  // Phase 1 scale trade-off; a missing score sorts as 0, not last/first.
+  score: "coalesce((me.payload -> 'opportunity' ->> 'score')::numeric, 0)",
+  // Mirrors the web layer's `ruleName` fallback: current name wins over the
+  // name frozen in the payload at stamp time, which wins over a literal.
+  rule: "lower(coalesce(r.name, me.payload -> 'opportunity' ->> 'ruleName', 'unknown rule'))",
+};
+
+/**
+ * `db.execute`'s raw-string path does not apply the same type-aware `Date`
+ * parsing plain queries get (see `metrics.ts`'s identical note), so
+ * `detected_at` is parsed explicitly here.
+ */
+function toDate(value: unknown): Date {
+  return value instanceof Date ? value : new Date(value as string);
+}
+
+/** `payload` normally round-trips as a parsed object; defensively re-parse if it ever arrives as text. */
+function toJsonObject(value: unknown): Record<string, unknown> {
+  if (value === null || value === undefined) return {};
+  if (typeof value === "object") return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+/**
+ * Rule-stamped `market_events` (`rule_id IS NOT NULL`), sorted/filtered/paged
+ * server-truthfully over the FULL matching set (loxep-foi.7 — the web layer
+ * previously fetched one fixed-order page and sorted/filtered only that
+ * page client-side). Sorting by `score`/`rule` needs raw SQL: `score` lives inside
+ * `payload.opportunity`, and `rule`'s CURRENT name needs a join to
+ * `opportunity_rules` — neither is expressible through the Drizzle
+ * relational query API's column-only `orderBy`, so this reads through
+ * `db.execute` with the escaped-literal helpers from `sql.ts`, exactly like
+ * `metrics.ts`. `sortBy`/`sortDir` select a FIXED SQL fragment from
+ * {@link OPPORTUNITY_EVENT_ORDER_EXPRESSIONS} by lookup — never
+ * interpolated from the caller's string.
+ */
+export async function listOpportunityEventsPage(
+  db: LoxepDb,
+  options: OpportunityEventsPageOptions = {},
+): Promise<OpportunityEventsPageResult> {
+  const parsed = opportunityEventsPageOptionsSchema.parse(options);
+  const page = parsed.page ?? 0;
+  const pageSize = parsed.pageSize ?? DEFAULT_OPPORTUNITY_EVENTS_PAGE_SIZE;
+  const sortBy = parsed.sortBy ?? "detectedAt";
+  const dir = parsed.sortDir === "asc" ? "asc" : "desc";
+  const orderExpr = OPPORTUNITY_EVENT_ORDER_EXPRESSIONS[sortBy];
+
+  const rangeParts: string[] = [];
+  if (parsed.detectedAtFrom !== undefined) {
+    rangeParts.push(`me.detected_at >= ${timestamptzLiteral(parsed.detectedAtFrom)}`);
+  }
+  if (parsed.detectedAtTo !== undefined) {
+    rangeParts.push(`me.detected_at < ${timestamptzLiteral(parsed.detectedAtTo)}`);
+  }
+  const rangeClause = rangeParts.length > 0 ? `and ${rangeParts.join(" and ")}` : "";
+
+  const countResult = await db.execute(
+    `select count(*)::int as total
+       from market_events me
+      where me.rule_id is not null
+        ${rangeClause}`,
+  );
+  const total = Number(countResult.rows[0]?.["total"] ?? 0);
+  if (total === 0) {
+    return { events: [], total: 0 };
+  }
+
+  const pageResult = await db.execute(
+    `select me.id, me.event_type, me.detected_at, me.marketplace_item_id,
+            me.rule_id, me.payload, r.name as current_rule_name
+       from market_events me
+       left join opportunity_rules r on r.id = me.rule_id
+      where me.rule_id is not null
+        ${rangeClause}
+      order by ${orderExpr} ${dir}, me.id ${dir}
+      limit ${intLiteral(pageSize)} offset ${intLiteral(page * pageSize)}`,
+  );
+
+  const events: OpportunityEventRow[] = pageResult.rows.map((row) => ({
+    id: row["id"] as string,
+    eventType: row["event_type"] as string,
+    detectedAt: toDate(row["detected_at"]),
+    marketplaceItemId: row["marketplace_item_id"] as string,
+    ruleId: (row["rule_id"] as string | null) ?? null,
+    currentRuleName: (row["current_rule_name"] as string | null) ?? null,
+    payload: toJsonObject(row["payload"]),
+  }));
+  return { events, total };
 }
 
 const createRuleSchema = z.strictObject({

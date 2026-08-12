@@ -44,6 +44,7 @@
  */
 import { marketEvents } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
+import { z } from "zod";
 import { MarketValidationError } from "./errors.ts";
 
 /**
@@ -212,6 +213,71 @@ export function deduplicationKeyFor(
 }
 
 export type MarketEventRow = typeof marketEvents.$inferSelect;
+
+/** The one sortable column {@link listItemEventsPage} exposes (loxep-foi.7). */
+export const ITEM_EVENTS_SORT_KEYS = ["detectedAt"] as const;
+export type ItemEventsSortKey = (typeof ITEM_EVENTS_SORT_KEYS)[number];
+
+export interface ItemEventsPageOptions {
+  marketplaceItemId: string;
+  page?: number;
+  pageSize?: number;
+  /** Only `"detectedAt"` exists today; kept for a whitelisted, extensible shape. */
+  sortBy?: ItemEventsSortKey;
+  /** Defaults to `"desc"` (newest first), matching prior behavior. */
+  sortDir?: "asc" | "desc";
+}
+
+const itemEventsPageOptionsSchema = z.strictObject({
+  marketplaceItemId: z.uuid(),
+  page: z.number().int().nonnegative().optional(),
+  pageSize: z.number().int().positive().optional(),
+  sortBy: z.enum(ITEM_EVENTS_SORT_KEYS).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
+});
+
+export interface ItemEventsPageResult {
+  events: MarketEventRow[];
+  total: number;
+}
+
+const DEFAULT_ITEM_EVENTS_PAGE_SIZE = 25;
+
+/**
+ * One item's `market_events`, newest-first by default, server-truthfully
+ * paginated and sorted (loxep-foi.7 — this replaces the web layer's prior
+ * fetch-everything-then-`.slice()` shape, which only sorted the fetched
+ * page). Total is a plain count of matching rows (ids only), same two-pass
+ * shape the rest of this package's list reads use at Phase 1 scale.
+ */
+export async function listItemEventsPage(
+  db: LoxepDb,
+  options: ItemEventsPageOptions,
+): Promise<ItemEventsPageResult> {
+  const parsed = itemEventsPageOptionsSchema.parse(options);
+  const page = parsed.page ?? 0;
+  const pageSize = parsed.pageSize ?? DEFAULT_ITEM_EVENTS_PAGE_SIZE;
+  const sortAsc = parsed.sortDir === "asc";
+
+  const idRows = await db.query.marketEvents.findMany({
+    where: (table, { eq }) => eq(table.marketplaceItemId, parsed.marketplaceItemId),
+    columns: { id: true },
+  });
+  const total = idRows.length;
+  if (total === 0) {
+    return { events: [], total };
+  }
+
+  const events = await db.query.marketEvents.findMany({
+    where: (table, { eq }) => eq(table.marketplaceItemId, parsed.marketplaceItemId),
+    orderBy: (table, { asc, desc }) => [
+      sortAsc ? asc(table.detectedAt) : desc(table.detectedAt),
+    ],
+    limit: pageSize,
+    offset: page * pageSize,
+  });
+  return { events, total };
+}
 
 /**
  * Derive and persist market events for one item transition. Insertion is
