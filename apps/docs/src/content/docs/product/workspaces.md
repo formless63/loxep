@@ -17,6 +17,8 @@ The repository already has the first workspace roots:
 /starter/*      preserved UI-donor/reference workspace
 ```
 
+`/account/*` also exists but is **not** a workspace — see [Account surfaces](#account-surfaces) below.
+
 The shared shell owns the application frame:
 
 ```text
@@ -89,6 +91,16 @@ Documents/media are cross-cutting infrastructure and business evidence. Attachme
 ### Reporting and analytics
 
 Derived reporting belongs close to the workflow it explains when practical: market analytics in Market, inventory valuation in Inventory, project profitability in Projects, financial statements in Finance. A global reporting workspace remains possible later.
+
+### Account surfaces
+
+The signed-in user's own account lives at `/account/*` — today `/account/profile`, which owns full name, display name, and avatar. It is an **account control of the shared shell**, not a workspace: it has no entry in the workspace configuration, does not appear in the workspace switcher, and keeps whatever sidebar the user already had. That follows from the rule below that the switcher stays independent of application user identity.
+
+Self-service and administration are separate surfaces on purpose. `/account/profile` edits only the caller's own record; `/settings/users` is the admin directory over everyone's. They must not be merged, and the self-service page is never placed under `/settings`.
+
+Profile values arrive pre-filled where the identity provider supplies them — a generic OIDC issuer's `name` and `picture` claims become the user's name and avatar, and `nickname`/`preferred_username` seeds the display name. Provider values apply only when the account is created: an in-app edit is permanent and is never overwritten by a later sign-in. Wherever Loxep names a person it resolves display name, then full name, then email.
+
+Avatars are a URL today. Uploading an image file is a later change, once media upload and serving are wired through the storage abstraction.
 
 ### Notifications and search
 

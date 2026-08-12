@@ -9,6 +9,7 @@
 export {
   buildOidcProviderConfig,
   createAuth,
+  mapOidcProfileToUser,
   OIDC_PROVIDER_ID,
 } from "./create-auth.ts";
 export type { CreateAuthOptions, LoxepAuth } from "./create-auth.ts";

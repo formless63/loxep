@@ -7,7 +7,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getWorkspaceForPath, workspaces } from '@/config/workspaces';
+import { userDisplayLabel, userInitials } from '@/lib/user-identity';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
 import { authClient } from '@/lib/auth-client';
@@ -50,8 +52,12 @@ export default function AppSidebar() {
   const activeWorkspace = getWorkspaceForPath(pathname);
   const filteredGroups = useFilteredNavGroups(activeWorkspace.navGroups);
 
-  const userName = auth?.user.name || auth?.user.email || 'User';
+  // displayName → name → email → 'User' (`@/lib/user-identity`), so the
+  // account button, the profile page, and anything added later name the
+  // signed-in person the same way.
+  const userName = userDisplayLabel(auth?.user);
   const userEmail = auth?.user.email ?? '';
+  const userImage = auth?.user.image ?? '';
 
   React.useEffect(() => {
     // Side effects based on sidebar state changes
@@ -171,9 +177,10 @@ export default function AppSidebar() {
                   size='lg'
                   className='data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground'
                 >
-                  <div className='bg-muted flex aspect-square size-8 shrink-0 items-center justify-center rounded-full'>
-                    <Icons.account className='size-4' />
-                  </div>
+                  <Avatar className='size-8 shrink-0'>
+                    {userImage && <AvatarImage src={userImage} alt='' />}
+                    <AvatarFallback>{userInitials(auth?.user)}</AvatarFallback>
+                  </Avatar>
                   <div className='grid flex-1 text-left text-sm leading-tight'>
                     <span className='truncate font-medium'>{userName}</span>
                     <span className='text-muted-foreground truncate text-xs'>{userEmail}</span>
@@ -188,6 +195,10 @@ export default function AppSidebar() {
                 sideOffset={4}
               >
                 <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={() => router.navigate({ to: '/account/profile' })}>
+                    <Icons.account className='mr-2 h-4 w-4' />
+                    Account
+                  </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() =>
                       router.navigate({

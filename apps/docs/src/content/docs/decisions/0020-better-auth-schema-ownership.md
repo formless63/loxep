@@ -18,6 +18,14 @@ Regeneration after a Better Auth upgrade is an explicit, reviewed event: regener
 
 The exact current Better Auth CLI commands and plugin table requirements (OIDC, magic link, admin/roles) are verified against upstream documentation at implementation time, per the dependency policy.
 
+### Loxep columns on auth tables are declared, never hand-added
+
+When Loxep needs a column that Better Auth does not define — a profile field, a preference — it is declared through Better Auth's own extension mechanism (`user.additionalFields` and the equivalent per-model options) in the shared options builder, then emitted by re-running the generator. It is never appended to the generated schema file by hand.
+
+This keeps "Better Auth defines what the auth model must contain" true even for Loxep's own additions: a regeneration reproduces the column instead of deleting it, and the runtime instance validates and serializes the field because it is part of the model rather than a column the application happens to write behind Better Auth's back. Correspondingly, the application does not `UPDATE` auth tables directly; self-service and administrative profile writes go through Better Auth's endpoints.
+
+Field-level validation for such columns lives at the application's validation boundary (Zod in the web layer), not in `@loxep/db`, which carries no validation dependency.
+
 ### User references never cascade-delete history
 
 Historical domain, audit, and business data must never disappear because an auth user is removed. User-reference columns follow one of two intentional forms:
@@ -33,3 +41,10 @@ Which form each column uses is chosen deliberately in the schema; `ON DELETE CAS
 - Auth schema changes are visible in review like any other schema change, and drift between Better Auth's expectations and the database is caught at regeneration time.
 - Audit and business history are durable across user lifecycle events; user deletion degrades provenance to NULL (or retains a historical identifier) rather than destroying records.
 - The foundation schema draft's bare-`text` user columns are refined: each becomes a nullable `SET NULL` FK or a documented intentional non-FK reference.
+- Loxep's own auth-table columns survive regeneration, because the generator is the thing that writes them.
+
+## Implementation notes
+
+`packages/db/src/auth.ts` holds the shared options builder (`buildAuthPluginConfig`) that both the CLI generation instance and `@loxep/auth`'s runtime `createAuth()` spread, so the plugin set and the additional fields cannot drift from the generated schema. `userAdditionalFields` in that file is the declared list of Loxep columns on the `user` model; today it is `displayName` (migration `0008_user_display_name`), the short self-chosen label alongside Better Auth's own `name` and `image`.
+
+Regeneration is `bun --cwd packages/db generate:auth`, followed by `bun --cwd packages/db generate` for the migration and the usual line-by-line review.

@@ -1,0 +1,27 @@
+-- User profile display name: one nullable column on the Better Auth `user` table.
+--
+-- ADR-0020 (Better Auth owns the model; Loxep owns the artifact) — the column
+-- is declared as a Better Auth `user.additionalFields` entry in
+-- `src/auth.ts` (`userAdditionalFields`), emitted into `src/schema/auth.ts` by
+-- `bun --cwd packages/db generate:auth`, and shipped here through the ordinary
+-- drizzle-kit generate/review workflow. It is NOT a hand-added column: a
+-- regeneration reproduces it exactly.
+--
+--   display_name  the short, informal label a user picks for themselves
+--                 ("Will" for "Alex Rivera"). Nullable because every
+--                 existing row predates the column and no OIDC issuer is
+--                 obliged to supply anything resembling a display name.
+--                 `user.name` remains the full name; `user.image` the avatar.
+--
+-- ## What this migration deliberately does NOT do
+--
+--   split name into first/last     the profile form composes first + last into
+--                                  Better Auth's single `name` field; the auth
+--                                  model stays exactly what the generator says.
+--   backfill display_name          null means "no override"; the UI falls back
+--                                  to `name`, then `email`.
+--   add an avatar/media table      avatars are a URL today. An uploaded-avatar
+--                                  pipeline over @loxep/storage media is a
+--                                  separate, later change.
+--
+ALTER TABLE "user" ADD COLUMN "display_name" text;

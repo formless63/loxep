@@ -55,6 +55,36 @@ const deploymentRoles = {
 /** Signature Better Auth requires for magic-link delivery. */
 export type SendMagicLink = Parameters<typeof magicLink>[0]["sendMagicLink"];
 
+/**
+ * Loxep's additional columns on Better Auth's `user` model.
+ *
+ * Better Auth already owns `name` (the person's full name) and `image` (avatar
+ * URL); `displayName` is the short, informal label a user chooses for
+ * themselves ("Will" for "Alex Rivera"). It is declared through Better
+ * Auth's `user.additionalFields` mechanism rather than hand-added to the
+ * generated Drizzle schema, so `better-auth generate` reproduces the column
+ * and ADR-0020's "the generator owns the model" rule keeps holding.
+ *
+ * - `required: false` — every existing row predates the column, and OIDC
+ *   issuers are not obliged to supply anything resembling a display name.
+ * - `input: true` — the self-service profile form writes it through
+ *   `auth.api.updateUser`, and the OIDC create path may seed it from the
+ *   provider profile (see `@loxep/auth`'s `buildOidcProviderConfig`).
+ *
+ * Length validation lives at the web validation boundary (Zod), not here:
+ * `@loxep/db` deliberately carries no Zod dependency.
+ */
+export const userAdditionalFields = {
+  displayName: {
+    type: "string",
+    required: false,
+    input: true,
+    returned: true,
+  },
+} as const satisfies NonNullable<
+  NonNullable<Parameters<typeof betterAuth>[0]["user"]>["additionalFields"]
+>;
+
 export interface AuthPluginConfigInput {
   /** Magic-link delivery implementation (real SMTP at runtime; a stub for CLI generation). */
   sendMagicLink: SendMagicLink;
@@ -63,10 +93,11 @@ export interface AuthPluginConfigInput {
 }
 
 /**
- * The Better Auth options that define the auth schema: plugin set and
- * password policy. Pure — no I/O, no instance construction. Both the CLI
- * schema-generation instance and the runtime `createAuth()` spread this into
- * their `betterAuth()` options so the plugin set can never diverge.
+ * The Better Auth options that define the auth schema: plugin set, password
+ * policy, and Loxep's additional `user` columns. Pure — no I/O, no instance
+ * construction. Both the CLI schema-generation instance and the runtime
+ * `createAuth()` spread this into their `betterAuth()` options so the plugin
+ * set and the generated schema can never diverge.
  */
 export function buildAuthPluginConfig(input: AuthPluginConfigInput) {
   const magicLinkPlugin = magicLink({
@@ -96,6 +127,9 @@ export function buildAuthPluginConfig(input: AuthPluginConfigInput) {
     // No passwords initially (ADR-0007): OIDC + magic links only.
     emailAndPassword: {
       enabled: false,
+    },
+    user: {
+      additionalFields: userAdditionalFields,
     },
     plugins,
   };

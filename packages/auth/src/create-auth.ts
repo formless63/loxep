@@ -33,6 +33,51 @@ import {
  */
 export const OIDC_PROVIDER_ID = "oidc";
 
+/** First non-blank string in `values`, trimmed; `undefined` when there is none. */
+function firstNonBlank(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+/**
+ * Seed Loxep's additional `user` columns from standard OIDC claims.
+ *
+ * Better Auth's generic OAuth provider already maps the standard `name` and
+ * `picture` claims onto `user.name` / `user.image` with no help from us (see
+ * its `getUserInfo`, which reads them from the id_token and from the userinfo
+ * endpoint). What it cannot know is which claim means "display name", so this
+ * hook supplies it:
+ *
+ *   - `nickname` — OIDC Core's "casual name of the End-User"; the closest
+ *     standard claim to a chosen display name;
+ *   - `preferred_username` — the fallback Pocket ID and most IdPs populate;
+ *   - `given_name` — last resort, so "Alex Rivera" still gets "William"
+ *     rather than nothing.
+ *
+ * Extra keys returned here flow through Better Auth's
+ * `parseAdditionalUserInputFromProviderProfile` into the declared
+ * `user.additionalFields` (`@loxep/db` `userAdditionalFields`).
+ *
+ * **This never overwrites an in-app override.** `overrideUserInfo` is left at
+ * its default (`false`), so Better Auth applies provider profile values only
+ * when it *creates* the user; every later sign-in leaves `name`, `image`, and
+ * `displayName` exactly as the profile page last saved them.
+ */
+export function mapOidcProfileToUser(
+  profile: Record<string, unknown>,
+): Record<string, unknown> {
+  const displayName = firstNonBlank(
+    profile["nickname"],
+    profile["preferred_username"],
+    profile["given_name"],
+  );
+  return displayName === undefined ? {} : { displayName };
+}
+
 /**
  * Generic OAuth entry for the bootstrap OIDC issuer. Everything is derived
  * from the issuer's OIDC discovery document
@@ -49,6 +94,10 @@ export function buildOidcProviderConfig(
     clientSecret: oidc.clientSecret,
     scopes: ["openid", "profile", "email"],
     pkce: true,
+    // Standard `name`/`picture` claims are mapped by the plugin itself; this
+    // only adds Loxep's `displayName`. Deliberately no `overrideUserInfo`:
+    // provider values seed the user at creation and never re-sync after.
+    mapProfileToUser: mapOidcProfileToUser,
   };
 }
 

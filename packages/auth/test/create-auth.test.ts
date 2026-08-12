@@ -9,6 +9,7 @@ import { loadBootstrapConfig } from "@loxep/config";
 import {
   buildOidcProviderConfig,
   createAuth,
+  mapOidcProfileToUser,
   OIDC_PROVIDER_ID,
 } from "../src/index.ts";
 import {
@@ -116,5 +117,55 @@ describe("createAuth", () => {
     );
     expect(provider.pkce).toBe(true);
     expect(provider.scopes).toEqual(["openid", "profile", "email"]);
+  });
+
+  it("declares the displayName profile column as a Better Auth additional field", () => {
+    const { sender } = captureMagicLinkEmails();
+    const auth = createAuth({
+      config: testBootstrapConfig(databaseUrl),
+      db,
+      sendMagicLinkEmail: sender,
+    });
+    const displayName = auth.options.user?.additionalFields?.["displayName"];
+    expect(displayName).toMatchObject({
+      type: "string",
+      required: false,
+      input: true,
+    });
+  });
+
+  it("seeds displayName from OIDC claims without ever re-syncing the profile", () => {
+    const provider = buildOidcProviderConfig({
+      issuer: "https://pocket-id.example.com",
+      clientId: "client",
+      clientSecret: "secret",
+    });
+    // `overrideUserInfo` stays unset: Better Auth then applies provider values
+    // only when creating the user, so an in-app override survives every later
+    // sign-in.
+    expect(provider.overrideUserInfo).toBeUndefined();
+    expect(provider.mapProfileToUser).toBe(mapOidcProfileToUser);
+
+    // `name`/`picture` are mapped by the plugin itself, so the hook adds only
+    // displayName — nickname first, then preferred_username, then given_name.
+    expect(
+      mapOidcProfileToUser({
+        name: "Alex Rivera",
+        picture: "https://pocket-id.example.com/avatar.png",
+        nickname: "Will",
+        preferred_username: "arivera",
+        given_name: "William",
+      }),
+    ).toEqual({ displayName: "Will" });
+    expect(
+      mapOidcProfileToUser({ preferred_username: "arivera", given_name: "William" }),
+    ).toEqual({ displayName: "arivera" });
+    expect(mapOidcProfileToUser({ given_name: " William " })).toEqual({
+      displayName: "William",
+    });
+    expect(mapOidcProfileToUser({ nickname: "   ", name: "Alex Rivera" })).toEqual(
+      {},
+    );
+    expect(mapOidcProfileToUser({})).toEqual({});
   });
 });
