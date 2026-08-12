@@ -26,6 +26,15 @@
  * (`createTradingApi` throws without one), derived here from the configured
  * marketplace.
  *
+ * SELL FULFILLMENT (Phase 3, loxep-xh9.2): `sellGetOrders` /
+ * `sellGetOrder` / `sellGetShippingFulfillments` wrap
+ * `client.sell.fulfillment.*` (verified in ebay-api@10.0.0,
+ * `dist/api/restful/sell/fulfillment/index.js`, base path
+ * `/sell/fulfillment/v1`). They are USER-context only — the seller's orders
+ * are not public data — and unlike the traditional Trading calls they DO
+ * enforce an OAuth scope; see `EBAY_ORDER_CONSENT_SCOPES` in `oauth.ts`.
+ * Provider-shaped payloads out; normalization lives in `orders.ts`.
+ *
  * Boundary rules enforced by this module:
  * - provider SDK types never appear in exported types (raw payloads cross as
  *   `Record<string, unknown>`);
@@ -121,6 +130,20 @@ export interface EbayUserAdapterOptions {
   onTokenRefreshed?: (bundle: EbayUserTokenBundle) => void;
 }
 
+/**
+ * Query shape for `GET /sell/fulfillment/v1/order`, as the library's
+ * `Fulfillment.getOrders` accepts it (verified in ebay-api@10.0.0,
+ * `dist/api/restful/sell/fulfillment/index.js`). `filter` is eBay's own
+ * filter grammar; `orders.ts` builds it and nothing else in Loxep does.
+ */
+export interface EbaySellOrdersQuery {
+  filter?: string;
+  limit?: number;
+  offset?: number;
+  orderIds?: readonly string[];
+  fieldGroups?: string;
+}
+
 export interface EbayUserAdapter extends EbayBrowseOperations {
   readonly environment: EbayEnvironment;
   readonly marketplaceId: string;
@@ -136,6 +159,30 @@ export interface EbayUserAdapter extends EbayBrowseOperations {
   tradingCall(
     callName: string,
     fields: Record<string, unknown>,
+  ): Promise<Record<string, unknown>>;
+  /**
+   * Sell Fulfillment `getOrders` — the SELLER's orders. Requires the OAuth
+   * scope `.../sell.fulfillment.readonly` (see `EBAY_SELL_FULFILLMENT_*` in
+   * `oauth.ts`); a bundle consented for the base scope alone gets `auth`.
+   *
+   * Provider-shaped payload out (`OrderSearchPagedCollection`); mapping into
+   * Loxep facts belongs to `orders.ts`.
+   */
+  sellGetOrders(
+    query?: EbaySellOrdersQuery,
+  ): Promise<Record<string, unknown>>;
+  /** Sell Fulfillment `getOrder` — one order by its eBay order id. */
+  sellGetOrder(
+    orderId: string,
+    options?: { fieldGroups?: readonly string[] },
+  ): Promise<Record<string, unknown>>;
+  /**
+   * Sell Fulfillment `getShippingFulfillments` — the shipments the SELLER
+   * created against one order. One extra call per order; see `orders.ts` for
+   * the rate-budget reasoning behind when it is made.
+   */
+  sellGetShippingFulfillments(
+    orderId: string,
   ): Promise<Record<string, unknown>>;
   stats(): EbayAdapterStats;
 }
@@ -458,6 +505,43 @@ export function createUserAdapter(
         }
         return asRecord(await method(fields));
       });
+    },
+
+    async sellGetOrders(query = {}) {
+      return call("sell.fulfillment.getOrders", async () =>
+        asRecord(
+          await client.sell.fulfillment.getOrders({
+            ...(query.filter !== undefined ? { filter: query.filter } : {}),
+            ...(query.limit !== undefined ? { limit: query.limit } : {}),
+            ...(query.offset !== undefined ? { offset: query.offset } : {}),
+            ...(query.orderIds !== undefined
+              ? { orderIds: [...query.orderIds] }
+              : {}),
+            ...(query.fieldGroups !== undefined
+              ? { fieldGroups: query.fieldGroups }
+              : {}),
+          }),
+        ),
+      );
+    },
+
+    async sellGetOrder(orderId, options) {
+      return call("sell.fulfillment.getOrder", async () =>
+        asRecord(
+          await client.sell.fulfillment.getOrder(
+            orderId,
+            options?.fieldGroups === undefined
+              ? {}
+              : { fieldGroups: [...options.fieldGroups] },
+          ),
+        ),
+      );
+    },
+
+    async sellGetShippingFulfillments(orderId) {
+      return call("sell.fulfillment.getShippingFulfillments", async () =>
+        asRecord(await client.sell.fulfillment.getShippingFulfillments(orderId)),
+      );
     },
 
     stats,

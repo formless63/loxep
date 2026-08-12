@@ -52,9 +52,26 @@ export type {
   EbayApplicationTokenInfo,
   EbayBrowseSearchInput,
   EbayBrowseSearchResult,
+  EbaySellOrdersQuery,
   EbayUserAdapter,
   EbayUserAdapterOptions,
 } from "./adapter.ts";
+
+export {
+  DECIMAL_STRING,
+  MAX_QUOTIENT_SCALE,
+  absDecimal,
+  amountCurrency,
+  amountValue,
+  decimalFromNumber,
+  decimalFromProvider,
+  decimalFromUnknown,
+  divideDecimals,
+  isDecimalString,
+  isZeroDecimal,
+  subtractDecimals,
+  sumDecimals,
+} from "./money.ts";
 
 export {
   accessTokenNeedsRefresh,
@@ -70,6 +87,8 @@ export {
   DEFAULT_REFRESH_SKEW_SECONDS,
   EBAY_BASE_SCOPE,
   EBAY_DEFAULT_CONSENT_SCOPES,
+  EBAY_ORDER_CONSENT_SCOPES,
+  EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
   buildConsentState,
   buildConsentUrl,
   bundleFromCredential,
@@ -145,6 +164,50 @@ export {
   hasUnknownSellerWarning,
 } from "./sellers.ts";
 export type { FetchSellerListingsInput } from "./sellers.ts";
+
+export {
+  EBAY_BUYER_FEE_ID,
+  EBAY_CANCELLED_STATE,
+  EBAY_FULFILLMENT_STATUSES,
+  EBAY_FULFILLMENT_STATUS_MAP,
+  EBAY_MARKETPLACE_FEE_ID,
+  EBAY_ORDERS_DEFAULT_LIMIT,
+  EBAY_ORDERS_MAX_LIMIT,
+  EBAY_ORDER_STATUSES,
+  EBAY_PAYMENT_STATUSES,
+  EBAY_PAYMENT_STATUS_MAP,
+  EBAY_REFUND_STATUS_MAP,
+  EBAY_UNKNOWN_STATUS_MAPPING,
+  buildEbayOrdersFilter,
+  buildEbayOrdersQuery,
+  ebaySourceAccountKey,
+  fetchEbayOrders,
+  fetchEbayOrdersPage,
+  fetchOrderFulfillments,
+  isoFromEbay,
+  iterateEbayOrders,
+  mapEbayFulfillment,
+  mapEbayOrder,
+  redactEbayOrderFact,
+} from "./orders.ts";
+export type {
+  EbayFulfillmentFact,
+  EbayFulfillmentLineFact,
+  EbayFulfillmentStatus,
+  EbayOrderFact,
+  EbayOrderFeeFact,
+  EbayOrderLineFact,
+  EbayOrderPage,
+  EbayOrderStatus,
+  EbayOrderTotals,
+  EbayPaymentStatus,
+  EbayRawOrderPayload,
+  EbayRefundFact,
+  EbayRefundLineFact,
+  EbayStatusMapping,
+  FetchEbayOrdersInput,
+  MapEbayOrderOptions,
+} from "./orders.ts";
 
 export {
   OBSERVATION_HASH_FIELDS,
