@@ -855,6 +855,12 @@ export interface FetchMedusaOrdersInput {
    * Timestamps come back as full ISO-8601 with milliseconds and a `Z`
    * designator (e.g. `2026-08-12T13:23:35.142Z`), so the boundary compares
    * exactly.
+   *
+   * **Fail-open canary.** When set, {@link fetchOrdersPage} and
+   * {@link iterateMedusaOrders} assert every returned order's `updated_at`
+   * is `>= updatedAfter`; a violation throws a `provider_unavailable`
+   * {@link MedusaAdapterError} rather than silently accepting an unfiltered
+   * page — see {@link assertWatermarkHonored}.
    */
   updatedAfter?: Date | string;
   /** 0-based. Default 0. */
@@ -877,6 +883,55 @@ export interface MedusaOrderPage {
     count: number | null;
     hasNextPage: boolean;
   };
+}
+
+/**
+ * Fail-open canary (loxep-pyg). Live-verified that Medusa 2.18.0 returns
+ * HTTP 200 with UNFILTERED results for a typo'd watermark filter
+ * (`updated_at[$nope]=…`) or filter key (`not_a_field[$gte]=…`) — see the
+ * module doc's "`fields` FAILS OPEN, and so do filters" section. A future
+ * regression in {@link buildMedusaOrdersQuery}'s watermark-param
+ * construction would reproduce that failure mode with a VALID key/operator,
+ * and would be invisible: the request still returns HTTP 200, `count` still
+ * looks plausible, and incremental sync would silently degrade into a
+ * repeated full scan with no error anywhere.
+ *
+ * This is the cheap invariant that catches it on the first poisoned page,
+ * with no extra request: when a watermark is supplied, every order already
+ * present in the response must itself have `updated_at >= watermark`. A
+ * single violation proves the filter did not apply server-side, so the
+ * whole page is rejected rather than partially trusted — the caller's
+ * at-least-once retry then either recovers (transient provider hiccup) or
+ * surfaces a loud, actionable error (a real serialization regression)
+ * instead of a slow, silent data-completeness bug.
+ */
+function assertWatermarkHonored(
+  orders: readonly MedusaOrderFact[],
+  watermarkIso: string,
+  operation: string,
+): void {
+  const watermarkMs = Date.parse(watermarkIso);
+  for (const order of orders) {
+    const updatedMs =
+      order.updatedAt === null ? Number.NaN : Date.parse(order.updatedAt);
+    if (!Number.isFinite(updatedMs) || updatedMs < watermarkMs) {
+      throw new MedusaAdapterError(
+        "provider_unavailable",
+        "Medusa returned an order whose updated_at precedes the requested " +
+          "updated_at[$gte] watermark. Medusa 2.18.0 is live-verified to " +
+          "fail OPEN on filter typos (HTTP 200, unfiltered results) rather " +
+          "than rejecting the request, so this adapter refuses to treat " +
+          "this page as an incremental delta instead of silently degrading " +
+          "to a full scan.",
+        {
+          operation,
+          externalOrderId: order.externalOrderId,
+          watermark: watermarkIso,
+          orderUpdatedAt: order.updatedAt,
+        },
+      );
+    }
+  }
 }
 
 function toIsoInstant(value: Date | string): string {
@@ -919,16 +974,19 @@ export async function fetchOrdersPage(
   adapter: MedusaAdapter,
   input: FetchMedusaOrdersInput = {},
 ): Promise<MedusaOrderPage> {
-  const result = await adapter.list(
-    "/orders",
-    "orders",
-    buildMedusaOrdersQuery(input),
-    { operation: "orders.list" },
+  const query = buildMedusaOrdersQuery(input);
+  const result = await adapter.list("/orders", "orders", query, {
+    operation: "orders.list",
+  });
+  const orders = result.items.map((item) =>
+    mapMedusaOrder(item, { sourceAccountKey: adapter.sourceAccountKey }),
   );
+  const watermark = query["updated_at[$gte]"];
+  if (typeof watermark === "string") {
+    assertWatermarkHonored(orders, watermark, "orders.list");
+  }
   return {
-    orders: result.items.map((item) =>
-      mapMedusaOrder(item, { sourceAccountKey: adapter.sourceAccountKey }),
-    ),
+    orders,
     page: {
       offset: result.page.offset,
       limit: result.page.limit,
@@ -958,6 +1016,7 @@ export async function* iterateMedusaOrders(
 ): AsyncGenerator<MedusaOrderPage, void, undefined> {
   const { offset: _offset, limit, ...filter } = input;
   const query = buildMedusaOrdersQuery({ ...filter, limit });
+  const watermark = query["updated_at[$gte]"];
   const { offset: _o, limit: _l, ...rest } = query as Record<string, unknown>;
   for await (const result of adapter.paginate("/orders", "orders", {
     query: rest as MedusaQuery,
@@ -965,10 +1024,14 @@ export async function* iterateMedusaOrders(
     startOffset: input.offset ?? 0,
     ...(options.maxPages !== undefined ? { maxPages: options.maxPages } : {}),
   })) {
+    const orders = result.items.map((item) =>
+      mapMedusaOrder(item, { sourceAccountKey: adapter.sourceAccountKey }),
+    );
+    if (typeof watermark === "string") {
+      assertWatermarkHonored(orders, watermark, "orders.iterate");
+    }
     yield {
-      orders: result.items.map((item) =>
-        mapMedusaOrder(item, { sourceAccountKey: adapter.sourceAccountKey }),
-      ),
+      orders,
       page: {
         offset: result.page.offset,
         limit: result.page.limit,
