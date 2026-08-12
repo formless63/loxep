@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, ReferenceDot, XAxis, YAxis } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -85,7 +85,7 @@ export default function AvailabilityTimeline({ marketplaceItemId }: { marketplac
         )}
 
         {historyPending ? (
-          <Skeleton className='h-48 w-full' />
+          <Skeleton className='aspect-video w-full' />
         ) : points.length === 0 ? (
           <p className='text-muted-foreground text-sm'>No availability observations yet.</p>
         ) : (
@@ -121,8 +121,30 @@ export default function AvailabilityTimeline({ marketplaceItemId }: { marketplac
                 dot={false}
                 connectNulls={false}
               />
+              {points
+                .filter((point) => point.wentUnavailable)
+                .map((point) => (
+                  <ReferenceDot
+                    key={point.bucketStart}
+                    x={point.bucketStart}
+                    y={point.quantity ?? 0}
+                    r={5}
+                    fill='var(--destructive)'
+                    stroke='var(--background)'
+                    strokeWidth={2}
+                  />
+                ))}
             </LineChart>
           </ChartContainer>
+        )}
+        {points.some((point) => point.wentUnavailable) && (
+          <p className='flex items-center gap-1.5 text-muted-foreground text-xs'>
+            <span
+              aria-hidden='true'
+              className='inline-block size-2 shrink-0 rounded-full bg-destructive'
+            />
+            Marked points are hourly buckets in which the item went unavailable (sellout).
+          </p>
         )}
       </CardContent>
     </Card>

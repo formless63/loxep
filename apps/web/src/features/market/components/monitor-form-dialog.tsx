@@ -12,7 +12,11 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
 import { createMonitor, updateMonitor, type MonitorDto } from '@/server/market-functions';
-import { ebayConnectionOptionsQuery, monitorsQuery } from '@/features/market/api/queries';
+import {
+  ebayConnectionOptionsQuery,
+  monitorDefaultsQuery,
+  monitorsQuery
+} from '@/features/market/api/queries';
 import {
   monitorTargetTypeLabel,
   monitorTargetTypeOptions,
@@ -70,6 +74,14 @@ const monitorFormSchema = z
 type MonitorFormValues = z.infer<typeof monitorFormSchema>;
 
 /**
+ * Mirrors `monitorDefaultsSetting`'s own `defaultValue.intervalSeconds`
+ * (`@loxep/domain/settings-defaults.ts`) — used only for the brief window
+ * before `monitorDefaultsQuery` resolves, so the create form's initial value
+ * is never worse than the setting's own out-of-the-box default.
+ */
+const FALLBACK_INTERVAL_SECONDS = 60;
+
+/**
  * Create/edit dialog for monitor targets (loxep-62y.4.1): type determines
  * which fields apply — `ebay_item` needs `externalItemId` and an optional
  * connection, `ebay_watchlist` is identified entirely by its connection.
@@ -88,6 +100,9 @@ export default function MonitorFormDialog({
   const queryClient = useQueryClient();
   const isEdit = monitor !== null;
   const { data: connections } = useQuery(ebayConnectionOptionsQuery);
+  // Only needed to seed the CREATE form's default — editing always shows the
+  // monitor's own stored `intervalSeconds` (loxep-62y.2.7).
+  const { data: monitorDefaults } = useQuery({ ...monitorDefaultsQuery, enabled: !isEdit });
   const connectionOptions = [
     { value: NO_CONNECTION_VALUE, label: 'No connection' },
     ...(connections ?? []).map((connection) => ({ value: connection.id, label: connection.name }))
@@ -204,7 +219,8 @@ export default function MonitorFormDialog({
       query: config.query ?? '',
       categoryId: config.categoryId ?? '',
       sellerUsername: config.sellerUsername ?? '',
-      intervalSeconds: monitor?.intervalSeconds ?? 3600,
+      intervalSeconds:
+        monitor?.intervalSeconds ?? monitorDefaults?.intervalSeconds ?? FALLBACK_INTERVAL_SECONDS,
       priority: monitor?.priority ?? 0,
       enabled: monitor?.enabled ?? true
     } as MonitorFormValues,

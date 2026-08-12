@@ -47,9 +47,15 @@ export function RecentSales() {
         <CardDescription>You made 265 sales this month.</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className='space-y-8'>
-          {salesData.map((sale, index) => (
-            <div key={index} className='flex items-center'>
+        {/*
+          Static donor demo data, five rows, no sort/filter/paging — a
+          semantic list with stable keys is the right call here per the
+          add-data-table skill (full DataTable is for lists the user would
+          sort, filter, or page; this is neither).
+        */}
+        <ul className='space-y-8'>
+          {salesData.map((sale) => (
+            <li key={sale.email} className='flex items-center'>
               <Avatar className='h-9 w-9'>
                 <AvatarImage src={sale.avatar} alt='Avatar' />
                 <AvatarFallback>{sale.fallback}</AvatarFallback>
@@ -58,10 +64,10 @@ export function RecentSales() {
                 <p className='text-sm leading-none font-medium'>{sale.name}</p>
                 <p className='text-muted-foreground text-sm'>{sale.email}</p>
               </div>
-              <div className='ml-auto font-medium'>{sale.amount}</div>
-            </div>
+              <div className='ml-auto font-medium tabular-nums'>{sale.amount}</div>
+            </li>
           ))}
-        </div>
+        </ul>
       </CardContent>
     </Card>
   );

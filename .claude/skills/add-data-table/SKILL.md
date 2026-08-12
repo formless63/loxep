@@ -119,9 +119,11 @@ const STATE_VARIANT = {
 } as const satisfies Record<ItemState, BadgeVariant>;
 ```
 
-There is no `--success`/`--warning` token and no matching `Badge` variant. Express at-risk
-state with `--accent` or `bg-chart-N/15 text-chart-N`; reserve `--destructive` for genuine
-failure; never reach for `text-green-600`/`text-amber-500`/`gray-*`/hex.
+`--success`/`--warning` tokens exist in every theme with matching `Badge` and `Alert`
+variants — use them for healthy/at-risk states, always paired with an icon (mono and
+notebook are near-achromatic, so hue alone must never carry meaning); reserve
+`--destructive` for genuine failure; never reach for
+`text-green-600`/`text-amber-500`/`gray-*`/hex.
 
 ## Done when
 

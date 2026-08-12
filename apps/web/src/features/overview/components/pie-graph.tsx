@@ -60,7 +60,7 @@ export function PieGraph() {
       <CardContent className='flex flex-1 items-center justify-center pb-0'>
         <ChartContainer
           config={chartConfig}
-          className='[&_.recharts-text]:fill-background mx-auto aspect-square max-h-[300px] min-h-[250px]'
+          className='mx-auto aspect-square max-h-[300px] min-h-[250px]'
         >
           <PieChart>
             <ChartTooltip content={<ChartTooltipContent nameKey='visitors' hideLabel />} />
@@ -77,7 +77,7 @@ export function PieGraph() {
                 stroke='none'
                 fontSize={12}
                 fontWeight={500}
-                fill='currentColor'
+                fill='var(--background)'
                 formatter={(value) => String(value)}
               />
             </Pie>

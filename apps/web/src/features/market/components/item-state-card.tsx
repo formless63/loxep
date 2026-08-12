@@ -1,20 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Icons } from '@/components/icons';
 import { itemActivitySummaryQuery } from '@/features/market/api/queries';
 import { marketEventTypeLabel } from '@/features/settings/constants';
+import { formatDateTime, formatMoney, formatPercent } from '@/lib/format';
 import type { MarketItemDetailDto } from '@/server/market-functions';
-
-function formatTimestamp(value: string | null): string {
-  return value ? format(new Date(value), 'yyyy-MM-dd HH:mm') : '—';
-}
-
-function formatPrice(price: string | null, currency: string | null): string {
-  if (price === null) return '—';
-  return currency ? `${price} ${currency}` : price;
-}
 
 /** Current-state card: item identity, latest observation, and 7-day activity summary. */
 export default function ItemStateCard({ item }: { item: MarketItemDetailDto }) {
@@ -37,38 +28,48 @@ export default function ItemStateCard({ item }: { item: MarketItemDetailDto }) {
       <CardContent className='flex flex-col gap-4'>
         <div className='grid grid-cols-2 gap-4 text-sm md:grid-cols-4'>
           <div>
-            <p className='text-muted-foreground'>Price</p>
-            <p className='font-medium'>
-              {formatPrice(observation?.price ?? null, observation?.currency ?? null)}
-            </p>
+            <CardDescription>Price</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {formatMoney(observation?.price ?? null, observation?.currency ?? null)}
+            </CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Availability</p>
-            <p className='font-medium'>{observation?.availability ?? '—'}</p>
+            <CardDescription>Availability</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {observation?.availability ?? '—'}
+            </CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Quantity available</p>
-            <p className='font-medium'>{observation?.quantityAvailable ?? '—'}</p>
+            <CardDescription>Quantity available</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {observation?.quantityAvailable ?? '—'}
+            </CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Listing state</p>
-            <p className='font-medium'>{observation?.listingState ?? '—'}</p>
+            <CardDescription>Listing state</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {observation?.listingState ?? '—'}
+            </CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Last observed</p>
-            <p className='font-medium'>{formatTimestamp(observation?.observedAt ?? null)}</p>
+            <CardDescription>Last observed</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {formatDateTime(observation?.observedAt ?? null)}
+            </CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Condition</p>
-            <p className='font-medium'>{item.conditionCode ?? '—'}</p>
+            <CardDescription>Condition</CardDescription>
+            <CardTitle className='text-base tabular-nums'>{item.conditionCode ?? '—'}</CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Listing type</p>
-            <p className='font-medium'>{item.listingType ?? '—'}</p>
+            <CardDescription>Listing type</CardDescription>
+            <CardTitle className='text-base tabular-nums'>{item.listingType ?? '—'}</CardTitle>
           </div>
           <div>
-            <p className='text-muted-foreground'>Listing ends</p>
-            <p className='font-medium'>{formatTimestamp(item.listingEndsAt)}</p>
+            <CardDescription>Listing ends</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {formatDateTime(item.listingEndsAt)}
+            </CardTitle>
           </div>
         </div>
 
@@ -97,12 +98,27 @@ export default function ItemStateCard({ item }: { item: MarketItemDetailDto }) {
             {activity.priceChangePct !== null && (
               <div className='flex items-center gap-1'>
                 <span className='text-muted-foreground'>Price change</span>
-                <span>{activity.priceChangePct.toFixed(2)}%</span>
+                <span
+                  className={
+                    activity.priceChangePct < 0
+                      ? 'flex items-center gap-0.5 text-destructive tabular-nums'
+                      : activity.priceChangePct > 0
+                        ? 'flex items-center gap-0.5 text-success tabular-nums'
+                        : 'tabular-nums'
+                  }
+                >
+                  {activity.priceChangePct < 0 ? (
+                    <Icons.trendingDown className='size-3.5' />
+                  ) : activity.priceChangePct > 0 ? (
+                    <Icons.trendingUp className='size-3.5' />
+                  ) : null}
+                  {formatPercent(activity.priceChangePct)}
+                </span>
               </div>
             )}
             <div className='flex items-center gap-1'>
               <span className='text-muted-foreground'>Observations</span>
-              <span>{activity.observationCount}</span>
+              <span className='tabular-nums'>{activity.observationCount}</span>
             </div>
           </div>
         )}

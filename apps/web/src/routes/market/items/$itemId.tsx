@@ -8,6 +8,7 @@ import ItemStateCard from '@/features/market/components/item-state-card';
 import { MarketPage } from '@/features/market/components/market-page';
 import PriceHistoryChart from '@/features/market/components/price-history-chart';
 import { marketItemQuery } from '@/features/market/api/queries';
+import { formatDateTime } from '@/lib/format';
 
 export const Route = createFileRoute('/market/items/$itemId')({
   component: MarketItemDetail
@@ -19,7 +20,7 @@ function MarketItemDetail() {
 
   if (isPending) {
     return (
-      <MarketPage title='Item' description='Loading…'>
+      <MarketPage title='Item' description='Loading item details…'>
         <div className='flex flex-col gap-4'>
           <Skeleton className='h-40 w-full' />
           <Skeleton className='h-64 w-full' />
@@ -45,7 +46,7 @@ function MarketItemDetail() {
   return (
     <MarketPage
       title={item.title ?? item.externalItemId}
-      description={`${item.provider}/${item.marketplace} · first seen ${item.firstSeenAt}`}
+      description={`${item.provider}/${item.marketplace} · first seen ${formatDateTime(item.firstSeenAt)}`}
     >
       <div className='flex flex-col gap-4'>
         <ItemStateCard item={item} />
