@@ -261,3 +261,43 @@ export async function linkItemToMonitor(
         active = true`,
   );
 }
+
+/**
+ * Deactivate `monitor_items` links for one target whose item is absent from
+ * a poll's fetched membership. `presentMarketplaceItemIds` is the FULL set
+ * of canonical item ids the poll just confirmed present (already re-linked
+ * via {@link linkItemToMonitor} at the same `at`); every OTHER currently
+ * active link for this target is marked inactive.
+ *
+ * `at` is a defensive guard, not just a timestamp to log: only links whose
+ * `last_matched_at` is strictly BEFORE `at` are touched, so a link that was
+ * (re)matched at or after this poll's own observation instant — by this
+ * poll's own membership sync, or a concurrently interleaved one — is never
+ * deactivated out from under it. Combined with the `active = true` filter,
+ * a link this call already deactivated stays untouched on retry, so
+ * replaying the whole call (at-least-once) is a no-op the second time.
+ */
+export async function deactivateAbsentMonitorItems(
+  db: LoxepDb,
+  options: {
+    monitorTargetId: string;
+    presentMarketplaceItemIds: readonly string[];
+    at?: Date;
+  },
+): Promise<{ deactivated: number }> {
+  const at = timestamptzLiteral(options.at ?? new Date());
+  const present =
+    options.presentMarketplaceItemIds.length === 0
+      ? "array[]::uuid[]"
+      : `array[${options.presentMarketplaceItemIds.map(uuidLiteral).join(", ")}]::uuid[]`;
+  const result = await db.execute(
+    `update monitor_items
+        set active = false
+      where monitor_target_id = ${uuidLiteral(options.monitorTargetId)}
+        and active = true
+        and last_matched_at < ${at}
+        and marketplace_item_id <> all (${present})
+      returning marketplace_item_id`,
+  );
+  return { deactivated: result.rows.length };
+}

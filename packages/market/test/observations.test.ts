@@ -9,6 +9,7 @@ import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import {
   createMonitorService,
+  deactivateAbsentMonitorItems,
   latestObservations,
   linkItemToMonitor,
   recordObservationBatch,
@@ -276,5 +277,101 @@ describe("linkItemToMonitor", () => {
     expect(links[0]?.firstDiscoveredAt.getTime()).toBe(t1.getTime());
     expect(links[0]?.lastMatchedAt.getTime()).toBe(t2.getTime());
     expect(links[0]?.active).toBe(true);
+  });
+});
+
+describe("deactivateAbsentMonitorItems", () => {
+  async function linkedTarget() {
+    const service = createMonitorService({ db: handle.db });
+    return service.createTarget({
+      targetType: "ebay_watchlist",
+      name: "absence test",
+      intervalSeconds: 300,
+    });
+  }
+
+  async function activeFlag(targetId: string, marketplaceItemId: string) {
+    const link = await handle.db.query.monitorItems.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.monitorTargetId, targetId),
+          eq(table.marketplaceItemId, marketplaceItemId),
+        ),
+    });
+    return link?.active;
+  }
+
+  it("deactivates links absent from the present set and leaves present links untouched", async () => {
+    const target = await linkedTarget();
+    const present = await makeItem("absence-present");
+    const absent = await makeItem("absence-absent");
+    const t1 = new Date("2026-08-12T09:00:00.000Z");
+    await linkItemToMonitor(handle.db, {
+      monitorTargetId: target.id,
+      marketplaceItemId: present.id,
+      at: t1,
+    });
+    await linkItemToMonitor(handle.db, {
+      monitorTargetId: target.id,
+      marketplaceItemId: absent.id,
+      at: t1,
+    });
+
+    const t2 = new Date("2026-08-12T09:30:00.000Z");
+    const result = await deactivateAbsentMonitorItems(handle.db, {
+      monitorTargetId: target.id,
+      presentMarketplaceItemIds: [present.id],
+      at: t2,
+    });
+
+    expect(result.deactivated).toBe(1);
+    expect(await activeFlag(target.id, present.id)).toBe(true);
+    expect(await activeFlag(target.id, absent.id)).toBe(false);
+  });
+
+  it("deactivates every active link when presentMarketplaceItemIds is empty", async () => {
+    const target = await linkedTarget();
+    const item = await makeItem("absence-empty-present");
+    const t1 = new Date("2026-08-12T10:00:00.000Z");
+    await linkItemToMonitor(handle.db, {
+      monitorTargetId: target.id,
+      marketplaceItemId: item.id,
+      at: t1,
+    });
+
+    const t2 = new Date("2026-08-12T10:30:00.000Z");
+    const result = await deactivateAbsentMonitorItems(handle.db, {
+      monitorTargetId: target.id,
+      presentMarketplaceItemIds: [],
+      at: t2,
+    });
+
+    expect(result.deactivated).toBe(1);
+    expect(await activeFlag(target.id, item.id)).toBe(false);
+  });
+
+  it("is idempotent: replaying the same call a second time deactivates 0 more", async () => {
+    const target = await linkedTarget();
+    const absent = await makeItem("absence-idempotent");
+    const t1 = new Date("2026-08-12T11:00:00.000Z");
+    await linkItemToMonitor(handle.db, {
+      monitorTargetId: target.id,
+      marketplaceItemId: absent.id,
+      at: t1,
+    });
+
+    const t2 = new Date("2026-08-12T11:30:00.000Z");
+    const options = {
+      monitorTargetId: target.id,
+      presentMarketplaceItemIds: [],
+      at: t2,
+    };
+    const first = await deactivateAbsentMonitorItems(handle.db, options);
+    expect(first.deactivated).toBe(1);
+
+    // At-least-once retry: the link is already inactive, so this is a no-op.
+    const retry = await deactivateAbsentMonitorItems(handle.db, options);
+    expect(retry.deactivated).toBe(0);
+    expect(await activeFlag(target.id, absent.id)).toBe(false);
   });
 });

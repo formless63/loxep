@@ -72,6 +72,7 @@ export type {
 } from "./adaptive.ts";
 
 export {
+  deactivateAbsentMonitorItems,
   latestObservations,
   linkItemToMonitor,
   marketplaceItemInputSchema,
