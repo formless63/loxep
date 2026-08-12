@@ -8,7 +8,9 @@ The name combines **loxodrome** and **ephemeris**: navigation and observation ov
 
 ## Current implementation direction
 
-The Phase 0 platform foundation is implemented: one Loxep image with `LOXEP_MODE=all|web|worker` runtime modes, explicit advisory-locked Drizzle migrations, Better Auth sign-in (magic links + generic OIDC, `admin`/`member` deployment roles, first-admin bootstrap and shell-level recovery), database-backed application settings with application-encrypted runtime secrets, the embedded Graphile Worker job runtime with database-controlled polling dispatch, local/S3 media storage behind one contract with resumable migration, monitoring/notification write-path foundations, structured logging and health probes, and the `/settings` administration workspace. Phase 1 — eBay ingestion and the first useful monitor — is the next implementation focus.
+The Phase 0 platform foundation is implemented: one Loxep image with `LOXEP_MODE=all|web|worker` runtime modes, explicit advisory-locked Drizzle migrations, Better Auth sign-in (magic links + generic OIDC, `admin`/`member` deployment roles, first-admin bootstrap and shell-level recovery), database-backed application settings with application-encrypted runtime secrets, the embedded Graphile Worker job runtime with database-controlled polling dispatch, local/S3 media storage behind one contract with resumable migration, monitoring/notification write-path foundations, structured logging and health probes, and the `/settings` administration workspace.
+
+Phase 1 (eBay connections, watchlist/item monitors, TimescaleDB observations, change detection, ntfy delivery) and much of Phase 2 (persistent searches, seller monitoring, new-listing detection, opportunity scoring, the `/market` workspace) are implemented; WooCommerce order ingestion has landed provisionally against the commerce schema review. See the [Roadmap](apps/docs/src/content/docs/product/roadmap.md) for the per-item status of record.
 
 The foundation follows this accepted direction:
 
@@ -50,20 +52,27 @@ cp .env.example .env
 # Generate real secrets (see .env.example comments):
 head -c 32 /dev/urandom | base64    # -> keyring key inside LOXEP_KEYRING
 head -c 32 /dev/urandom | base64    # -> LOXEP_AUTH_SECRET
-docker compose up -d
+docker compose up -d --build
 ```
+
+All configuration comes from the repo-root `.env`. The stack starts PostgreSQL/TimescaleDB, runs the one-shot `migrate` service (the same image with the `migrate` command), and only then starts the application — the app waits on `service_completed_successfully`, and startup never mutates the schema. After a schema change, re-run migrations explicitly with `docker compose run --rm migrate`. Follow the structured logs with `docker compose logs -f loxep`.
 
 Loxep is then available at `http://localhost:3020` (readiness: `/health/ready`). Add the optional S3-compatible object-storage companion with `docker compose --profile rustfs up -d`. For scale-out, the same image runs `LOXEP_MODE=web` and `LOXEP_MODE=worker` replicas against the shared PostgreSQL, so background processing can scale independently of web traffic without any architectural change.
 
-Note: the bundled database image is TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
+Marketplace and store connections are made **in the app**, not in Compose: `/settings/integrations` lists the integration catalog (and holds the eBay application keyset), and `/settings/connections` adds individual provider accounts. Credentials are encrypted in PostgreSQL with the root key supplied outside the database. Walkthroughs: [Connecting eBay](apps/docs/src/content/docs/guides/connecting-ebay.md), [WooCommerce](apps/docs/src/content/docs/guides/connecting-woocommerce.md), [Medusa](apps/docs/src/content/docs/guides/connecting-medusa.md).
+
+Note: the bundled database image is `timescale/timescaledb-ha:pg18.4-ts2.29.1-all` — TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
 
 ## Development quickstart
+
+The Compose stack above is the normal way to run Loxep. `bun run dev` is the fast UI loop — a Vite dev server, web-only, on the same port 3020, so run one or the other.
 
 ```bash
 bun install
 
-# Real PostgreSQL + TimescaleDB for development and tests (host port 5433;
-# package integration tests create their own scratch databases here)
+# Real PostgreSQL + TimescaleDB for development and package tests
+# (timescale/timescaledb-ha:pg18.4-ts2.29.1-all, host port 5433; package
+# integration tests create their own scratch databases here)
 docker compose -f docker/compose.dev.yml up -d --wait
 psql postgres://postgres:loxep-dev@localhost:5433/postgres -c 'CREATE DATABASE loxep'
 
@@ -87,12 +96,14 @@ LOXEP_PORT=3021 node --env-file=apps/web/.env bin/loxep.ts start --mode=worker
 Checks:
 
 ```bash
-bun run test:packages   # package vitest suites against real Postgres/TimescaleDB
+bun run test:packages   # ~1,600 vitest tests across 18 packages, against real Postgres/TimescaleDB
 bun run typecheck       # aggregate tsc across the workspace
 bun run lint            # oxlint (apps/web)
 bun run format:check    # oxfmt
 bun run docs:build      # docs build + internal-link validation
 ```
+
+The workspace packages are `app`, `accounting`, `auth`, `commerce`, `config`, `counterparties`, `db`, `domain`, `integrations/{ebay,medusa,woo}`, `inventory`, `jobs`, `market`, `notifications`, `observability`, `runtime`, and `storage`. Tests run against real PostgreSQL/TimescaleDB — never SQLite substitutes.
 
 Browser e2e tests (Playwright, chromium) run against a **built** app plus a Mailpit SMTP sink; the harness — scratch database, environment, server start — is documented in [`apps/web/e2e/harness.md`](apps/web/e2e/harness.md) (`bun --cwd apps/web test:e2e`).
 
@@ -105,6 +116,7 @@ Source documentation lives in `apps/docs` and is currently published with Astro 
 Useful starting points:
 
 - [Vision](apps/docs/src/content/docs/overview/vision.md)
+- [Guides](apps/docs/src/content/docs/guides/index.md) — connecting eBay, WooCommerce, and Medusa
 - [Master Domain Map](apps/docs/src/content/docs/product/master-domain-map.md)
 - [Workspaces & Navigation](apps/docs/src/content/docs/product/workspaces.md)
 - [Roadmap](apps/docs/src/content/docs/product/roadmap.md)
@@ -115,6 +127,7 @@ Useful starting points:
 - [Foundational Data Model](apps/docs/src/content/docs/architecture/foundational-data-model.md)
 - [Foundation Schema](apps/docs/src/content/docs/architecture/foundation-schema.md)
 - [Implementation Contract](apps/docs/src/content/docs/development/implementation-contract.md)
+- [Frontend Standards](apps/docs/src/content/docs/development/frontend-standards.md)
 - [Project Surfaces & Future Sites](apps/docs/src/content/docs/development/project-surfaces.md)
 - [Companion Services](apps/docs/src/content/docs/product/companion-services.md)
 - [Dependency & Version Policy](apps/docs/src/content/docs/development/dependency-policy.md)

@@ -98,6 +98,8 @@ Accepted stack:
 
 The Kiranism dashboard is a presentation donor, not the domain architecture.
 
+How that stack must be *used* — TanStack Table via the donor `DataTable` components as the only data table, `useAppForm` for forms, Recharts series bound to the `--chart-1..5` theme tokens, semantic-token discipline, shared formatters, and empty/skeleton/toast conventions — is specified in [Frontend Standards](../frontend-standards/). Treat it as part of this contract for any work inside `apps/web`.
+
 ### Preserve useful donor capability
 
 Do not remove dependencies/features merely to minimize package count when they have credible product use.
