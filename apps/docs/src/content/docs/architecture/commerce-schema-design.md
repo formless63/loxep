@@ -649,11 +649,19 @@ schema         packages/db/src/schema/commerce.ts        (10 tables, 0 altered)
 services       packages/commerce/src/                    (@loxep/commerce)
   orders.ts      idempotent ingestion, attribution, duplicate detection
   woo.ts         WooOrderFact -> the provider-neutral CommerceOrderFact
+  ebay.ts        EbayOrderFact -> the same shape (second provider)
   catalog.ts     catalog items, channel listings, link suggestions
   reports.ts     currency-grouped order summary, entity attribution report
-  sync.ts        incremental sync + monitor_targets cursor
-  tasks.ts       commerce.sync-woo-orders
+  sync.ts        incremental sync + monitor_targets cursor (shared helpers)
+  ebay-sync.ts   the same, for target type `ebay_orders`
+  tasks.ts       commerce.sync-woo-orders, commerce.sync-ebay-orders
+adapter        packages/integrations/ebay/src/orders.ts  (Sell Fulfillment v1)
+               packages/integrations/ebay/src/money.ts   (decimal discipline)
+executor       packages/app/src/commerce.ts              (woo_orders)
+               packages/app/src/commerce-ebay.ts         (ebay_orders)
 ```
+
+**The second provider cost a translator and a status table, and nothing else.** Adding eBay touched `orders.ts` only to add a four-line `ingestEbayOrder` entry point — idempotency, attachment rewriting, attribution, provenance, and duplicate detection are still written and tested exactly once. That was the design's central claim for `CommerceOrderFact`, and it held.
 
 ### The eight open questions, as implemented
 
@@ -661,15 +669,23 @@ services       packages/commerce/src/                    (@loxep/commerce)
 
    **Divergence from the draft, forced by the WooCommerce findings:** `order_fees` gains a column the draft does not have — `fee_direction text not null check (fee_direction in ('seller_charge','buyer_surcharge'))`. The draft's `order_fees` means "an amount the platform charges the SELLER", but a Woo `fee_line` is a surcharge the merchant adds to the BUYER's cart, already inside `orders.total`, and Woo core reports no seller-side fees at all. The three candidate resolutions were: invert the sign (silently corrupts every fee report), drop the rows (loses a real fact), or make the semantic explicit. The third shipped. Woo `fee_lines` ingest as `buyer_surcharge`; `orders.fee_amount` remains a seller-side magnitude and is therefore `0` for Woo; every profitability figure subtracts only `seller_charge`.
 
+   **The eBay leg vindicates the column.** eBay reports both polarities on the same order: `Order.totalMarketplaceFee` is charged to the seller (`seller_charge`, and the first non-zero `orders.fee_amount` in the system) while `pricingSummary.fee` is charged to the buyer and is already inside `pricingSummary.total` (`buyer_surcharge`). Had the sign been inverted or the rows dropped, one of the two would have been wrong on every eBay order. Neither fee has a provider id, so both get the deterministic natural keys the draft prescribes for that case (`ebay:total-marketplace-fee`, `ebay:pricing-summary-fee`), and both are written at `fee_scope = 'order'` — nothing is allocated to lines at ingest.
+
 2. **Cross-connection duplicate orders — detect, do not constrain.** `orders.source_account_key` is an ordinary fact, the detection index `(provider, source_account_key, external_order_id)` is deliberately **non-unique**, and `duplicate_of_order_id` links the later row to the canonical one. Ingestion marks duplicates automatically (canonical = earliest `first_ingested_at` that is not itself a duplicate); pass `markDuplicates: false` to record the fact without acting on it. Every read model excludes marked rows. No evidence is ever deleted.
 
 3. **Partial fulfillment — kept as designed, plus `unknown`.** `order_fulfillments` with `order_fulfillment_lines` per-line quantities. The `fulfillment_status` union gains a fifth member, `unknown`, because Woo's `refunded` status REPLACES the previous status and a fully refunded order no longer says whether it shipped — reporting that as `unfulfilled` asserts a fact nobody observed. Unrecognized plugin statuses map to `unknown` for the same reason. A Woo `completed` order yields one synthesized fulfillment covering every line, with no carrier and no tracking; any other status yields none.
+
+   **eBay makes the depth pay for itself.** `partially_fulfilled` — unreachable from WooCommerce — is exactly eBay's `orderFulfillmentStatus = IN_PROGRESS`, and eBay exposes real `ShippingFulfillment` objects with per-line quantities, a carrier code, a tracking number, and a shipped date. Nothing is synthesized for eBay: a shipment is read through `getShippingFulfillments` (one extra call per shipped order, skipped for `NOT_STARTED`) or it is not recorded. The adapter distinguishes "this fetch did not ask" (`null`) from "eBay reported none" (`[]`); both write zero rows, but only the second is a fact.
+
+   For eBay the `unknown` projection lives in the **adapter**, not in `@loxep/commerce`'s translator — the placement loxep-xh9.7.3 prescribes for new code. An eBay status the adapter does not recognize degrades to `unknown` and sets `statusRecognized: false`, and the sync result carries the offending `provider_status_raw` strings so a vocabulary change is a visible finding rather than a silent floor.
 
 4. **Multi-currency — no FX, at all.** No `base_currency_amount`, no stored rate, no reporting currency. Every read model groups by currency and never sums across them. A fee or refund settled in a different currency than its order is excluded from that order's currency group and counted in `foreignCurrencyFeeCount` / `foreignCurrencyRefundCount`, so the omission is visible rather than silent.
 
 5. **Order status history — deferred.** No `order_status_events` table. Current-state columns only; transitions are reconstructable from `order_source_links` plus retained snapshots. The revisit trigger stands: if reconstruction proves lossy in practice, the table earns its place.
 
-6. **Sync scheduling — `monitor_targets`, target type `woo_orders`.** No second scheduler and no `commerce_sync_cursors` table. The cursor lives under the namespaced `config.commerceSync` key, exactly as the scheduler's own `config.adaptive` state does. The ownership question is answered in documentation: [Domain Boundaries](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) now describes the scheduling model as shared foundation infrastructure domains register target types against — also marked PROVISIONAL.
+6. **Sync scheduling — `monitor_targets`, target types `woo_orders` and `ebay_orders`.** No second scheduler and no `commerce_sync_cursors` table. Both cursors live under the same namespaced `config.commerceSync` key, exactly as the scheduler's own `config.adaptive` state does, because the cursor's fields are provider-neutral facts; only the `target_type` differs. The ownership question is answered in documentation: [Domain Boundaries](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) now describes the scheduling model as shared foundation infrastructure domains register target types against — also marked PROVISIONAL.
+
+   **Registration gap, recorded rather than hidden:** `woo_orders` is in `@loxep/market`'s closed `MONITOR_TARGET_TYPES` enum and its `monitorTargetConfigSchemas` record; **`ebay_orders` is not yet**, because `packages/market` was outside the eBay change's write fence. The consequence is narrow: `claimDueTargets`, `recordPollSuccess`, and `recordPollFailure` read `target_type` as text, so claim → route → sync → cursor advance all work, and `@loxep/commerce`'s `ensureEbayOrderSyncTarget` inserts the row directly. What does not work is creating or editing such a row through `createMonitorService`, whose `targetType` is a closed `z.enum`. A test in `packages/app` asserts the gap explicitly so it cannot be forgotten, and closing it is a two-line edit to `@loxep/market`.
 
    Two implementation notes a reviewer needs:
 
@@ -682,6 +698,8 @@ services       packages/commerce/src/                    (@loxep/commerce)
 
 8. **Buyer data — columns hold an identifier and a channel handle, nothing else.** `buyer_external_id` plus an optional `buyer_display_name`, where "display name" means a channel-native handle (an eBay username), **not** a legal name from a billing address. The Woo translator therefore leaves it null: Woo exposes no handle, and copying a customer's real name into a domain column would defeat the line this question draws. The full payload stays in `provider_objects`.
 
+   **The eBay leg is the case the rule was written for**, and it populates the column with `buyer.username` — a handle, not a name. Everything else eBay sends about the buyer stays in the retained payload, and there is considerably more of it than WooCommerce sends: `buyer.buyerRegistrationAddress` (full name, email, phone, street address), `buyer.taxAddress`, `buyer.taxIdentifier.taxpayerId`, `fulfillmentStartInstructions[].shippingStep.shipTo` (full name, email, phone, street address), `lineItems[].giftDetails` (recipient email, sender name, free-text message), and `buyerCheckoutNotes`. Only the ship-to country and region are normalized, exactly as `order_fulfillments` specifies. Per [ADR-0021](../../decisions/0021-order-payload-retention/) the eBay adapter ships `redactEbayOrderFact` alongside `redactWooOrderFact`; the live sandbox leg asserts only on redacted facts, so a failing expectation cannot print a buyer's address.
+
    **Retention is now decided (PROVISIONAL) by [ADR-0021](../../decisions/0021-order-payload-retention/): order-class payloads are redacted in place after a configurable 180-day default window; provenance rows and `order_source_links` are never automatically deleted.** No retention logic ships with Phase 3 ingestion itself — the sweep is a separate implementation issue. Ingestion retains one `provider_objects` row per distinct payload hash per order — an unchanged re-sync reuses the existing row rather than storing a second copy — which bounds growth but is not itself a retention policy.
 
 ### Also implemented from the WooCommerce reality findings
@@ -690,10 +708,22 @@ services       packages/commerce/src/                    (@loxep/commerce)
 - **`*_gmt` Z-suffix handling stays the adapter's job** (`isoFromWooGmt`), already shipped in Phase 3's WooCommerce child issue. Nothing downstream re-parses provider timestamps.
 - **`line_items[].price` is the payload's only float money field.** Where the adapter cannot represent it exactly it returns null, and the translator falls back to the exact quotient of line subtotal by quantity, then to that quotient rounded to `numeric(20,6)`. That rounded value is the only rounded number anywhere in the pipeline and nothing is derived from it — every order and line total comes from the provider.
 
+### Also implemented from the eBay reality findings
+
+- **eBay reports a subtotal.** `pricingSummary.priceSubtotal` is used directly; the exact-summation derivation is kept only as a fallback. The `subtotal_amount not null` decision costs nothing here.
+- **eBay reports no unit price.** `order_lines.unit_price` is derived as the EXACT `lineItemCost / quantity`; the adapter returns null rather than rounding a non-terminating quotient, and the translator then falls back to that quotient rounded to `numeric(20,6)` — the same single-rounded-value discipline the Woo leg uses, and nothing is derived from it.
+- **eBay apportions delivery cost per line** (`lineItems[].deliveryCost.shippingCost`), so `order_lines.shipping_amount` is a provider fact rather than the `0` the Woo leg writes.
+- **Per-line refunds are real.** `lineItems[].refunds[]` are matched onto `paymentSummary.refunds[]` by `refundId`, so `order_refund_lines` is populated for eBay where Woo's embedded summary names no lines. A refund line naming an unknown line id becomes an order-level refund line (the column is nullable for exactly that), while a *fulfillment* line naming an unknown line id is dropped, because `order_fulfillment_lines.order_line_id` is `not null` and fabricating a line to satisfy it would invent a fact.
+- **`source_account_key` is `ebay:<sellerId>`**, computed from the order payload itself, confirming the design's guess and the detect-don't-constrain recommendation for a second provider.
+- **eBay's timestamps need no repair** — ISO-8601 with an explicit `Z`, unlike WooCommerce's `*_gmt` fields.
+- **eBay's watermark filter bracket is INCLUSIVE** (`lastmodifieddate:[<from>..]`), the opposite of WordPress's exclusive `modified_after`. Handing back the last watermark seen therefore re-reads the boundary order rather than skipping it, which is the safe direction; the one-second rewind is kept anyway.
+
 ### Other divergences from the draft
 
 - `order_fulfillments.status` gets its own documented union (`pending | shipped | delivered | cancelled | unknown`); the draft named the column without listing values.
 - `fee_type` gains a `buyer_surcharge` member, pairing with `fee_direction`.
+- eBay's aggregate seller fee is written as `fee_type = 'marketplace_final_value'` with `provider_fee_code = 'totalMarketplaceFee'`. It is the closest member of the draft's union, but the value is an **aggregate**, not strictly a final value fee — see the reviewer list below.
+- `@loxep/commerce` re-declares the eBay adapter's fact types structurally rather than importing them, so the domain package takes no dependency on `@loxep/integration-ebay`. This is the discipline `@loxep/market` already applies to eBay's search-filter shape and that `decimal.ts` applies to Woo's money helpers; the Woo translator's direct import predates it. The duplication is guarded by `packages/app`'s eBay sync test, which passes a REAL adapter fact through the translator — if the two shapes drift, that file stops compiling.
 - The Woo `refunded`/unrecognized-status re-mapping to `unknown` lives in `@loxep/commerce`'s translator rather than in the adapter's `WOO_STATUS_MAP`, only because `packages/integrations/woo` was outside the implementing change's write fence. Its correct long-term home is the adapter; a follow-up moves it.
 - Profitability read models expose both `feeAmount` (the provider's own seller-fee rollup on `orders`) and `sellerChargeFeeAmount` (the sum of `seller_charge` fee rows in the order's currency). The draft's contribution formula uses the rollup; a persistent gap between the two is a reconciliation finding, which is exactly the treatment the draft prescribes for provider-reported rollups.
 
@@ -701,11 +731,14 @@ services       packages/commerce/src/                    (@loxep/commerce)
 
 In rough order of how expensive each is to reverse after data exists:
 
-1. **`fee_direction`** — a new column and a new semantic, invented during implementation rather than during design. If buyer surcharges should instead be absent for Woo, or modelled as a separate concept entirely, that decision is cheapest now.
-2. **Automatic duplicate marking.** Detection is uncontroversial; automatically writing `duplicate_of_order_id` at ingest is a judgement call about how much an adapter-computed `source_account_key` is trusted.
-3. **`fulfillment_status = 'unknown'`** — widening a union is easy; narrowing it after rows carry the value is not.
-4. **Synthesizing a fulfillment for a Woo `completed` order.** It is a faithful reading of "what the channel said", but it is a reading.
-5. **The `woo_orders` target type name** and the scheduling-ownership documentation edit.
+1. **`fee_direction`** — a new column and a new semantic, invented during implementation rather than during design. If buyer surcharges should instead be absent for Woo, or modelled as a separate concept entirely, that decision is cheapest now. (The eBay leg, which reports both polarities on one order, is evidence for keeping it.)
+2. **eBay's aggregate fee typed as `marketplace_final_value`.** The Sell Fulfillment API reports only `totalMarketplaceFee` — the total eBay charges the seller, predominantly but not exclusively the final value fee — and offers no breakdown; itemization needs the **Finances** API (`getTransactions`), which is Phase 5 payout territory. The alternatives were `other` (unhelpful for the largest fee in the system) or a new `marketplace_aggregate` union member. `fee_type` is `text` with no `CHECK`, so adding that member later is free, and `provider_fee_code` already carries the evidence — but the name that ships is a claim, and this is the cheapest moment to change it.
+3. **Automatic duplicate marking.** Detection is uncontroversial; automatically writing `duplicate_of_order_id` at ingest is a judgement call about how much an adapter-computed `source_account_key` is trusted.
+4. **`fulfillment_status = 'unknown'`** — widening a union is easy; narrowing it after rows carry the value is not.
+5. **Synthesizing a fulfillment for a Woo `completed` order.** It is a faithful reading of "what the channel said", but it is a reading. (The eBay leg synthesizes nothing, because eBay has real shipment objects — the asymmetry is deliberate but worth confirming.)
+6. **Reading eBay shipments by default.** `includeFulfillments` defaults to true, which costs one extra provider call per shipped order in a page. The alternative is an order marked `fulfilled` with no shipment rows behind it.
+7. **The `woo_orders` / `ebay_orders` target type names**, the missing `ebay_orders` registration in `@loxep/market`, and the scheduling-ownership documentation edit.
+8. **Line tax when eBay reports it twice.** `lineItems[].taxes[]` is preferred and `ebayCollectAndRemitTaxes[]` is a fallback used only when the first is empty, because summing both would double-count in jurisdictions that populate both. This is design-derived and is the mapping most likely to be corrected by the live leg.
 
 ## Open questions
 
@@ -738,6 +771,23 @@ The Woo adapter was implemented against a live production store before this desi
 - Payload traps recorded in the adapter: `number` is a string, `line_items[].price` is the lone float money field, `*_gmt` timestamps carry no zone designator (must append `Z`), and plugin-injected top-level keys mean mapping must be key-driven.
 - Order payloads carry substantial buyer PII (addresses, email, phone, IP, UA) — open question 8's provenance-retention concern is confirmed real; the adapter ships a `redactWooOrderFact` helper pending the policy decision.
 
+### Provider reality findings (eBay, fixture-verified — NOT yet live-verified)
+
+The eBay adapter reads the **Sell Fulfillment API v1** (`GET /sell/fulfillment/v1/order`) through hendt/`ebay-api` v10, per [ADR-0009](../../decisions/0009-integration-boundaries/). Every container and field name below was read out of the installed client's bundled OpenAPI types (`ebay-api@10.0.0`, `lib/types/restful/specs/sell_fulfillment_v1_oas3.d.ts`: `Order`, `LineItem`, `PricingSummary`, `PaymentSummary`, `OrderRefund`, `LineItemRefund`, `Amount`, `CancelStatus`, `Buyer`, `FulfillmentStartInstruction`, `ShippingFulfillment`).
+
+**What is not yet verified, and why it matters.** That schema types every status field as a plain `string` and enumerates nothing, so the status VOCABULARIES (`PAID`, `FULLY_REFUNDED`, `NOT_STARTED`, `IN_PROGRESS`, `FULFILLED`, `CANCELED`, `REFUNDED`, …) and the `filter` range/set grammar come from eBay's published documentation rather than from an observed payload. They are **design-derived**. The adapter is built so that being wrong about them degrades rather than breaks: an unrecognized status maps to the documented floor, sets `statusRecognized: false`, and leaves the provider's own strings in `provider_status_raw`. A live sandbox leg (`packages/integrations/ebay/test/live-orders.test.ts`) exists to close this out and **skips cleanly today**, because it needs a user token consented for the Sell Fulfillment scope and no such artifact exists yet.
+
+The findings themselves:
+
+- **eBay has no single order status.** It reports payment, fulfillment, and cancellation as three independent axes and nothing that means "the order overall". `orders.status` is therefore DERIVED (`cancelState = CANCELED` → `cancelled`; `orderFulfillmentStatus = FULFILLED` → `completed`; paid or refunded → `open`; otherwise `pending`), and `provider_status_raw` holds a COMPOSITE of the strings eBay actually sent (`"<payment>/<fulfillment>"`, plus `"/<cancelState>"` when a cancellation is in play) because there is no single provider field to quote. This is the opposite failure mode from WooCommerce, which has one status where the design wants three.
+- **`orders.fee_amount` is finally non-zero.** `Order.totalMarketplaceFee` is a genuine seller-side deduction, so eBay is the first provider for which the contribution formula subtracts anything. It is an aggregate, not itemized — see the reviewer list.
+- **Both fee polarities appear on one order**, confirming `fee_direction`: `totalMarketplaceFee` is a `seller_charge`, `pricingSummary.fee` is a `buyer_surcharge` already inside the order total.
+- **`partially_fulfilled` is reachable** (`orderFulfillmentStatus = IN_PROGRESS`), and real `ShippingFulfillment` objects carry per-line quantities, a carrier code, a tracking number, and a shipped date — the depth open question 3 defended.
+- **`source_account_key = 'ebay:<sellerId>'`** is computable from the payload alone, as the draft guessed.
+- **`buyer_display_name` has its intended occupant**, the eBay username; nothing else about the buyer leaves the retained payload.
+- **The order payload carries more PII than WooCommerce's**, including a taxpayer id and gift-recipient details — see open question 8 as implemented.
+- **Scope, not just consent.** Unlike the traditional Trading calls the watchlist vertical uses, the RESTful Sell APIs enforce OAuth scopes: order ingestion needs `.../sell.fulfillment.readonly`, which the base consent set deliberately does not request (asking for a scope a keyset lacks makes eBay reject the entire consent with `invalid_scope`). An existing eBay connection must be re-consented with `EBAY_ORDER_CONSENT_SCOPES` before it can sync orders; until then the poll fails `auth`, records `ebay_auth` on the connection, and drops the cached adapter so a re-consent is picked up on the next poll.
+
 ## Contradictions and tensions found in existing documentation
 
 Recorded here for a human to resolve; this document does not attempt to fix them.
@@ -752,7 +802,7 @@ Recorded here for a human to resolve; this document does not attempt to fix them
 
 ## Before implementing this schema
 
-Retained as the original pre-implementation checklist. Items 1, 3, 5, 6, and 7 were satisfied during the provisional implementation; item 2 (human confirmation of attribution precedence and immutability) and item 4 for eBay/Medusa are still outstanding, and item 8 is what the [provisional decisions](#provisional-implementation-decisions) section discharges.
+Retained as the original pre-implementation checklist. Items 1, 3, 5, 6, and 7 were satisfied during the provisional implementation; item 2 (human confirmation of attribution precedence and immutability) is still outstanding; item 4 is satisfied for WooCommerce (live) and **partially** for eBay (verified against the installed client's bundled OpenAPI types, with the status vocabularies and filter grammar still design-derived — see the [eBay findings](#provider-reality-findings-ebay-fixture-verified--not-yet-live-verified)) and still outstanding for Medusa; item 5 is now confirmed for eBay as well; and item 8 is what the [provisional decisions](#provisional-implementation-decisions) section discharges.
 
 1. resolve open question 6 (sync scheduling ownership) — it determines package boundaries, not just table shapes;
 2. confirm the attribution precedence and its immutability rule with a human; it is the hardest thing to change after data exists;

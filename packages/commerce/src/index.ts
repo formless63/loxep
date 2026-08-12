@@ -27,6 +27,20 @@
  * 8  buyer columns are id + display handle only       woo.ts, facts.ts
  * ```
  *
+ * ## Providers
+ *
+ * ```text
+ * woo.ts        WooOrderFact  → CommerceOrderFact   (live-verified)
+ * ebay.ts       EbayOrderFact → CommerceOrderFact   (fixture-verified;
+ *                 the Sell Fulfillment status vocabularies are design-derived
+ *                 until the live sandbox leg runs)
+ * ```
+ *
+ * Adding the second provider touched `orders.ts` only to add a four-line
+ * entry point — idempotency, attachment rewriting, attribution, provenance,
+ * and duplicate detection are written and tested exactly once, which is the
+ * claim `facts.ts` makes and this is the evidence for it.
+ *
  * ## What this package does NOT do
  *
  * No inventory, no cost basis, no COGS, no payouts, no accounting books, no
@@ -83,6 +97,7 @@ export {
 } from "./orders.ts";
 export type {
   DuplicateOrderCandidate,
+  IngestEbayOrderInput,
   IngestOrderFactInput,
   IngestOrderResult,
   IngestWooOrderInput,
@@ -117,13 +132,18 @@ export {
   DEFAULT_SYNC_MAX_PAGES,
   DEFAULT_SYNC_PER_PAGE,
   WOO_ORDERS_TARGET_TYPE,
+  commerceSyncTargetConfigSchema,
   createWooOrderSync,
+  ensureOrderSyncTarget,
   ensureWooOrderSyncTarget,
+  readOrderSyncCursor,
   readWooOrderSyncCursor,
   wooOrdersTargetConfigSchema,
+  writeOrderSyncCursor,
   writeWooOrderSyncCursor,
 } from "./sync.ts";
 export type {
+  CommerceOrderSyncCursor,
   EnsureWooOrderSyncTargetInput,
   SyncWooOrdersInput,
   SyncWooOrdersResult,
@@ -134,9 +154,50 @@ export type {
 } from "./sync.ts";
 
 export {
+  EBAY_DEFAULT_CHANNEL,
+  EBAY_ORDER_OBJECT_TYPE,
+  EBAY_PROVIDER,
+  ebayOrderFactToCommerceFact,
+} from "./ebay.ts";
+export type {
+  EbayFulfillmentFactLike,
+  EbayOrderFactLike,
+  EbayOrderFeeFactLike,
+  EbayOrderLineFactLike,
+  EbayOrderTotalsLike,
+  EbayRefundFactLike,
+  EbayTranslationOptions,
+} from "./ebay.ts";
+
+export {
+  DEFAULT_EBAY_SYNC_PER_PAGE,
+  EBAY_ORDERS_TARGET_TYPE,
+  createEbayOrderSync,
+  ebayOrdersTargetConfigSchema,
+  ensureEbayOrderSyncTarget,
+  readEbayOrderSyncCursor,
+} from "./ebay-sync.ts";
+export type {
+  EbayOrderPageIterator,
+  EbayOrderPageLike,
+  EbayOrderSyncService,
+  EbayOrdersTargetConfig,
+  SyncEbayOrdersInput,
+  SyncEbayOrdersResult,
+} from "./ebay-sync.ts";
+
+export {
+  SYNC_EBAY_ORDERS_TASK_NAME,
   SYNC_WOO_ORDERS_TASK_NAME,
   createCommerceTasks,
+  ebayOrderSyncJobKey,
+  enqueueEbayOrderSync,
   enqueueWooOrderSync,
   wooOrderSyncJobKey,
 } from "./tasks.ts";
-export type { CommerceTasks, RawAddJob, SyncWooOrdersTask } from "./tasks.ts";
+export type {
+  CommerceTasks,
+  RawAddJob,
+  SyncEbayOrdersTask,
+  SyncWooOrdersTask,
+} from "./tasks.ts";

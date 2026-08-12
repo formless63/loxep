@@ -122,6 +122,9 @@ describe("createEbayAdapter", () => {
       "environment",
       "marketplaceId",
       "refreshUserToken",
+      "sellGetOrder",
+      "sellGetOrders",
+      "sellGetShippingFulfillments",
       "stats",
       "tradingCall",
     ]);

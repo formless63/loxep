@@ -4,7 +4,10 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "@loxep/db";
-import { SYNC_WOO_ORDERS_TASK_NAME } from "@loxep/commerce";
+import {
+  SYNC_EBAY_ORDERS_TASK_NAME,
+  SYNC_WOO_ORDERS_TASK_NAME,
+} from "@loxep/commerce";
 import { DISPATCH_TASK_NAME, POLL_TARGET_TASK_NAME } from "@loxep/market";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
@@ -59,6 +62,7 @@ describe("buildWorkerRegistry", () => {
         DELIVER_TASK_NAME,
         REFRESH_TOKENS_TASK_NAME,
         SYNC_WOO_ORDERS_TASK_NAME,
+        SYNC_EBAY_ORDERS_TASK_NAME,
         "maintenance.heartbeat",
       ].sort(),
     );
@@ -68,10 +72,11 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain(DISPATCH_TASK_NAME);
     expect(cronTasks).toContain(REFRESH_TOKENS_TASK_NAME);
     // @loxep/commerce defines NO cron item on purpose: its scheduled work is
-    // a `woo_orders` monitor target the market dispatcher claims, which is
-    // the whole point of registering a target type rather than adding a
-    // second scheduler.
+    // a `woo_orders` / `ebay_orders` monitor target the market dispatcher
+    // claims, which is the whole point of registering a target type rather
+    // than adding a second scheduler.
     expect(cronTasks).not.toContain(SYNC_WOO_ORDERS_TASK_NAME);
+    expect(cronTasks).not.toContain(SYNC_EBAY_ORDERS_TASK_NAME);
     // Every cron item points at a registered task, or the runtime drops it.
     for (const task of cronTasks) {
       expect(composition.registry.has(task)).toBe(true);
