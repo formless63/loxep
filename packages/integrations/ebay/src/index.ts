@@ -84,16 +84,21 @@ export {
 export type { EbayUserTokenBundle } from "./tokens.ts";
 
 export {
+  DEFAULT_EBAY_CONSENT_TIER,
   DEFAULT_REFRESH_SKEW_SECONDS,
   EBAY_BASE_SCOPE,
+  EBAY_CONSENT_TIER_SCOPES,
   EBAY_DEFAULT_CONSENT_SCOPES,
   EBAY_ORDER_CONSENT_SCOPES,
   EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
   buildConsentState,
   buildConsentUrl,
   bundleFromCredential,
+  consentScopesForTier,
+  consentTierForScopes,
   credentialWriteForBundle,
   exchangeConsentCode,
+  isEbayConsentTier,
   refreshTokenBundleIfNeeded,
   refreshUserToken,
   tokenRefreshAfter,
@@ -102,6 +107,7 @@ export {
 } from "./oauth.ts";
 export type {
   ConsentState,
+  EbayConsentTier,
   EbayConsentUrl,
   EbayConsentUrlInput,
   EbayCredentialWrite,

@@ -11,18 +11,26 @@ import { describe, expect, it, vi } from "vitest";
 import { adapterInternals } from "../src/adapter.ts";
 import type { EbayAdapter, EbayUserAdapter } from "../src/adapter.ts";
 import {
+  DEFAULT_EBAY_CONSENT_TIER,
   DEFAULT_REFRESH_SKEW_SECONDS,
   EBAY_BASE_SCOPE,
+  EBAY_CONSENT_TIER_SCOPES,
+  EBAY_DEFAULT_CONSENT_SCOPES,
+  EBAY_ORDER_CONSENT_SCOPES,
+  EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
   EbayAdapterError,
   accessTokenNeedsRefresh,
   buildConsentState,
   buildConsentUrl,
   bundleFromCredential,
   bundleFromProviderToken,
+  consentScopesForTier,
+  consentTierForScopes,
   credentialWriteForBundle,
   createEbayAdapter,
   createRateBudget,
   exchangeConsentCode,
+  isEbayConsentTier,
   parseEbayUserTokenBundle,
   providerTokenFromBundle,
   refreshTokenBundleIfNeeded,
@@ -129,6 +137,146 @@ describe("buildConsentUrl", () => {
     expect(() =>
       buildConsentUrl({} as unknown as EbayAdapter, { state: "s" }),
     ).toThrowError(EbayAdapterError);
+  });
+});
+
+describe("consent tiers (loxep-ld0)", () => {
+  it("resolves each tier to its documented scope set", () => {
+    expect(consentScopesForTier("watchlist")).toEqual([
+      ...EBAY_DEFAULT_CONSENT_SCOPES,
+    ]);
+    expect(consentScopesForTier("orders")).toEqual([
+      ...EBAY_ORDER_CONSENT_SCOPES,
+    ]);
+    // The narrow tier is the default: it is the one every keyset can grant.
+    expect(DEFAULT_EBAY_CONSENT_TIER).toBe("watchlist");
+    expect(consentScopesForTier(DEFAULT_EBAY_CONSENT_TIER)).toEqual([
+      EBAY_BASE_SCOPE,
+    ]);
+  });
+
+  it("returns a fresh mutable copy, so a caller cannot edit the constants", () => {
+    const scopes = consentScopesForTier("orders");
+    scopes.push("https://api.ebay.com/oauth/api_scope/sell.account");
+    expect(consentScopesForTier("orders")).toEqual([
+      ...EBAY_ORDER_CONSENT_SCOPES,
+    ]);
+    expect(EBAY_CONSENT_TIER_SCOPES.orders).toEqual(EBAY_ORDER_CONSENT_SCOPES);
+  });
+
+  it("every tier includes the base scope", () => {
+    for (const tier of ["watchlist", "orders"] as const) {
+      expect(consentScopesForTier(tier)).toContain(EBAY_BASE_SCOPE);
+    }
+  });
+
+  it("classifies granted scopes back into a tier, conservatively", () => {
+    expect(consentTierForScopes([EBAY_BASE_SCOPE])).toBe("watchlist");
+    expect(consentTierForScopes([...EBAY_ORDER_CONSENT_SCOPES])).toBe("orders");
+    // Order-independent, and only the fulfillment scope counts.
+    expect(
+      consentTierForScopes([
+        EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
+        EBAY_BASE_SCOPE,
+      ]),
+    ).toBe("orders");
+    expect(
+      consentTierForScopes([
+        EBAY_BASE_SCOPE,
+        "https://api.ebay.com/oauth/api_scope/buy.order.readonly",
+      ]),
+    ).toBe("watchlist");
+    // Missing/unreadable values read as the narrow tier, never as orders.
+    expect(consentTierForScopes(null)).toBe("watchlist");
+    expect(consentTierForScopes(undefined)).toBe("watchlist");
+    expect(consentTierForScopes([])).toBe("watchlist");
+  });
+
+  it("round-trips every tier through scopes", () => {
+    for (const tier of ["watchlist", "orders"] as const) {
+      expect(consentTierForScopes(consentScopesForTier(tier))).toBe(tier);
+    }
+  });
+
+  it("narrows untrusted tier input", () => {
+    expect(isEbayConsentTier("watchlist")).toBe(true);
+    expect(isEbayConsentTier("orders")).toBe(true);
+    for (const value of [
+      "ORDERS",
+      "",
+      "sell.fulfillment",
+      null,
+      undefined,
+      0,
+      {},
+      ["orders"],
+    ]) {
+      expect(isEbayConsentTier(value)).toBe(false);
+    }
+  });
+
+  it("builds a consent URL carrying exactly the selected tier's scopes", () => {
+    const consent = buildConsentUrl(makeAdapter(), {
+      state: "s",
+      scopes: consentScopesForTier("orders"),
+    });
+    expect(new URL(consent.url).searchParams.get("scope")).toBe(
+      EBAY_ORDER_CONSENT_SCOPES.join(" "),
+    );
+    expect(consent.scopes).toEqual([...EBAY_ORDER_CONSENT_SCOPES]);
+
+    const narrow = buildConsentUrl(makeAdapter(), {
+      state: "s",
+      scopes: consentScopesForTier("watchlist"),
+    });
+    expect(new URL(narrow.url).searchParams.get("scope")).toBe(EBAY_BASE_SCOPE);
+  });
+
+  it("carries the tier's scopes onto the exchanged bundle, which is what persistence records", async () => {
+    const adapter = makeAdapter();
+    vi.spyOn(
+      adapterInternals(adapter).client.OAuth2,
+      "getToken",
+    ).mockResolvedValue({
+      access_token: FAKE_ACCESS_TOKEN,
+      expires_in: 7200,
+      refresh_token: FAKE_REFRESH_TOKEN,
+      refresh_token_expires_in: 47_304_000,
+      token_type: "User Access Token",
+    } as never);
+
+    const exchanged = await exchangeConsentCode(adapter, {
+      code: "fake-authorization-code",
+      scopes: consentScopesForTier("orders"),
+    });
+    expect(exchanged.scopes).toEqual([...EBAY_ORDER_CONSENT_SCOPES]);
+    // The scopes the callback writes to connections.config.ebayOAuth.
+    expect(credentialWriteForBundle(exchanged).connectionConfig.scopes).toEqual([
+      ...EBAY_ORDER_CONSENT_SCOPES,
+    ]);
+    expect(consentTierForScopes(exchanged.scopes)).toBe("orders");
+  });
+
+  it("defaults an exchange with no scopes to the narrow tier (the pre-tier behaviour)", async () => {
+    const adapter = makeAdapter();
+    vi.spyOn(
+      adapterInternals(adapter).client.OAuth2,
+      "getToken",
+    ).mockResolvedValue({
+      access_token: FAKE_ACCESS_TOKEN,
+      expires_in: 7200,
+      refresh_token: FAKE_REFRESH_TOKEN,
+      refresh_token_expires_in: 47_304_000,
+      token_type: "User Access Token",
+    } as never);
+
+    const exchanged = await exchangeConsentCode(adapter, {
+      code: "fake-authorization-code",
+    });
+    expect(exchanged.scopes).toEqual([...EBAY_DEFAULT_CONSENT_SCOPES]);
+    expect(consentTierForScopes(exchanged.scopes)).toBe(
+      DEFAULT_EBAY_CONSENT_TIER,
+    );
   });
 });
 

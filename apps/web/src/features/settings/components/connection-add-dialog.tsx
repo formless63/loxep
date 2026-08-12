@@ -13,7 +13,13 @@ import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { createConnection, createStoreConnection, type EntityDto } from '@/server/admin-functions';
-import { startEbayConsent } from '@/server/ebay-oauth';
+import {
+  DEFAULT_EBAY_CONSENT_TIER,
+  EBAY_CONSENT_TIER_DESCRIPTIONS,
+  EBAY_CONSENT_TIER_IDS,
+  EBAY_CONSENT_TIER_LABELS,
+  startEbayConsent
+} from '@/server/ebay-oauth';
 import { connectionsQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
 import { submitFormEvent } from '@/features/settings/lib/dialog-form';
@@ -92,8 +98,21 @@ const ENTITY_FIELD_DESCRIPTION = 'Business context only — grants and restricts
 
 const ebayAccountSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
-  economicEntityId: z.string()
+  economicEntityId: z.string(),
+  consentTier: z.enum(EBAY_CONSENT_TIER_IDS)
 });
+
+/**
+ * The scope-tier choice (loxep-ld0). Only the TIER ID travels — the scopes it
+ * resolves to are chosen server-side from the eBay package's constants, so
+ * nothing here can widen a consent.
+ */
+const EBAY_CONSENT_TIER_OPTIONS = EBAY_CONSENT_TIER_IDS.map((tier) => ({
+  value: tier,
+  label: EBAY_CONSENT_TIER_LABELS[tier]
+}));
+
+const EBAY_CONSENT_TIER_FIELD_DESCRIPTION = `${EBAY_CONSENT_TIER_LABELS.watchlist}: ${EBAY_CONSENT_TIER_DESCRIPTIONS.watchlist} ${EBAY_CONSENT_TIER_LABELS.orders}: ${EBAY_CONSENT_TIER_DESCRIPTIONS.orders}`;
 
 const EBAY_SANDBOX_USER_DOCS_URL =
   'https://developer.ebay.com/api-docs/static/gs_create-a-test-sandbox-user.html';
@@ -148,6 +167,12 @@ function EbayConsentGuidance() {
         </GuidanceCallout>
       )}
       <GuidanceNote>
+        Pick the narrower access if you are unsure. eBay rejects the whole consent — not just the
+        extra permission — when the installation&apos;s keyset was never granted the order scope,
+        and an account connected for watchlists can be re-consented for orders later from its{' '}
+        <strong>Grant order access</strong> action.
+      </GuidanceNote>
+      <GuidanceNote>
         Loxep only ever reads from eBay. Consent can be withdrawn from eBay&apos;s own account
         settings, and removing the connection here deletes the stored token.
       </GuidanceNote>
@@ -184,7 +209,7 @@ function EbayAccountForm({
           economicEntityId: entityIdFrom(values.economicEntityId)
         }
       });
-      return startEbayConsent({ data: { connectionId: created.id } });
+      return startEbayConsent({ data: { connectionId: created.id, tier: values.consentTier } });
     },
     onSuccess: (consent) => {
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
@@ -194,7 +219,11 @@ function EbayAccountForm({
   });
 
   const form = useAppForm({
-    defaultValues: { name: '', economicEntityId: NO_ENTITY_VALUE },
+    defaultValues: {
+      name: '',
+      economicEntityId: NO_ENTITY_VALUE,
+      consentTier: DEFAULT_EBAY_CONSENT_TIER
+    },
     validators: { onSubmit: ebayAccountSchema },
     onSubmit: async ({ value }) => {
       try {
@@ -228,6 +257,17 @@ function EbayAccountForm({
               options={entityOptionsFrom(entities)}
               placeholder='No attribution'
               description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+        <form.AppField
+          name='consentTier'
+          children={(field) => (
+            <field.RadioGroupField
+              label='Access to request'
+              required
+              options={EBAY_CONSENT_TIER_OPTIONS}
+              description={EBAY_CONSENT_TIER_FIELD_DESCRIPTION}
             />
           )}
         />
