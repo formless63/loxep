@@ -110,9 +110,44 @@ export const ebayRateBudgetSetting = defineSetting({
   defaultValue: { capacity: 10, refillPerSecond: 1.5 },
 });
 
+/**
+ * The per-connection WooCommerce token bucket (`capacity`,
+ * `refillPerSecond`), the Woo sibling of `integration.ebay.rate_budget`.
+ *
+ * As with eBay, `refillPerSecond` also derives the per-connection adaptive
+ * INTERVAL FLOOR (`wooRateBudgetIntervalFloorSeconds`), so tightening the
+ * budget slows every order sync on the connection — a rate budget is a safety
+ * constraint, not a preference. The defaults are deliberately gentler than
+ * eBay's: the other end is a self-hosted WordPress install, not a marketplace
+ * API built to be polled. (These defaults mirror `@loxep/app`'s
+ * `WOO_RATE_BUDGET_CAPACITY` / `WOO_RATE_BUDGET_REFILL_PER_SECOND`; this
+ * module cannot import those without depending on `@loxep/app`, so the
+ * values are duplicated as literals the same way `ebayRateBudgetSetting`'s
+ * are above.)
+ */
+export const wooRateBudgetSetting = defineSetting({
+  key: "integration.woo.rate_budget",
+  schema: z.strictObject({
+    /** Burst size, in provider calls. */
+    capacity: z.number().int().min(1).max(1000),
+    /** Sustained provider calls per second. */
+    refillPerSecond: z.number().positive().max(100),
+  }),
+  description:
+    "Per-connection WooCommerce rate budget (token-bucket capacity and " +
+    "refill per second); the refill rate also derives the adaptive interval " +
+    "floor for that store's order sync",
+  schemaVersion: 1,
+  defaultValue: {
+    capacity: 5,
+    refillPerSecond: 1,
+  },
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   ebayRateBudgetSetting,
+  wooRateBudgetSetting,
 ] as const;

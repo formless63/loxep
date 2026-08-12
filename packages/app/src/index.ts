@@ -44,7 +44,6 @@ export type { AppServices, BuildAppServicesOptions } from "./services.ts";
 export {
   DEFAULT_SETTINGS_TTL_MS,
   createMonitorSettingsReader,
-  wooRateBudgetSetting,
 } from "./settings.ts";
 export type {
   CreateMonitorSettingsReaderOptions,
