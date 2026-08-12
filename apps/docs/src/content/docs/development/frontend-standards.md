@@ -36,6 +36,8 @@ Every theme defines the **same** token vocabulary. That vocabulary is the whole 
 | `--muted` / `--muted-foreground` | `bg-muted`, `text-muted-foreground` | de-emphasised fills and secondary text |
 | `--accent` / `--accent-foreground` | `bg-accent`, `text-accent-foreground` | hover/selected states, highlighted rows |
 | `--destructive` / `--destructive-foreground` | `bg-destructive`, `text-destructive` | errors, failures, destructive actions |
+| `--success` / `--success-foreground` | `bg-success`, `text-success` | healthy/succeeded states |
+| `--warning` / `--warning-foreground` | `bg-warning`, `text-warning` | degraded/at-risk states, operator-caused states that are not failures |
 | `--border`, `--input`, `--ring` | `border`, `border-border`, `bg-input`, `ring-ring` | edges, field chrome, focus rings |
 | `--chart-1` … `--chart-5` | `fill-chart-1`, `text-chart-3`, `bg-chart-2/15`, `var(--chart-N)` | **all** categorical series and category accents |
 | `--sidebar`, `--sidebar-foreground`, `--sidebar-primary(-foreground)`, `--sidebar-accent(-foreground)`, `--sidebar-border`, `--sidebar-ring` | `bg-sidebar`, `text-sidebar-foreground`, `bg-sidebar-accent`, … | navigation chrome only |
@@ -44,7 +46,7 @@ Every theme defines the **same** token vocabulary. That vocabulary is the whole 
 | `--shadow-2xs` … `--shadow-2xl` | `shadow-sm`, `shadow-md`, … | themes vary elevation (neobrutualism is hard-offset) |
 | `--spacing`, `--tracking-normal` | Tailwind spacing scale | never hardcode `px` where a scale step works |
 
-There is **no** `--success` or `--warning` token today, and `Badge` has no matching variant. That gap has already produced real bugs: a *disabled* endpoint (an operator's choice) renders in the same alarm red as a *failing* health check, and `IntegrationStatusTone`'s `partial` — a warning — maps to `destructive` in `src/features/settings/components/integration-card.tsx`. Until the tokens exist, express at-risk status with `--accent` or the chart ramp and reserve `--destructive` for genuine failure. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
+`--success` / `--success-foreground` and `--warning` / `--warning-foreground` exist in all ten theme files, wired into each `@theme inline` block, with matching `Badge` (`variant='success'`, `variant='warning'`) and `Alert` (`variant='success'`, `variant='warning'`) variants. `mono` and `notebook` deliberately keep these tokens desaturated/neutral-leaning rather than fully saturated hues, in keeping with those themes' achromatic character — pair the tone with an icon there so meaning does not depend on hue. Reserve `--destructive` for genuine failure, `--warning` for degraded/at-risk states and operator-caused states (a *disabled* endpoint is a warning-or-neutral state, not the same alarm red as a *failing* health check), and `--success` for healthy/succeeded states. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
 
 ### How much themes actually vary
 
@@ -199,9 +201,9 @@ Reference: `src/features/overview/components/overview.tsx` (`/starter/overview`)
 
 ### Status and health tone
 
-Status must map to tone. Today 19 of 24 badges across settings and market are `variant='outline'`, which renders every state — healthy, degraded, ended, failed, sold — as the same grey pill.
+Status must map to tone. As of this writing 19 of 24 badges across settings and market are still `variant='outline'`, which renders every state — healthy, degraded, ended, failed, sold — as the same grey pill; converting those call sites to the tones below is tracked per-feature (one state→tone map per feature, no duplicates), not done in this pass.
 
-Map the domain state to a variant, once, in a shared helper per feature:
+`Badge` and `Alert` now have `success` and `warning` variants alongside `default` / `secondary` / `destructive` / `outline` / `ghost` / `link`, backed by the `--success`/`--warning` tokens above. Map the domain state to a variant, once, in a shared helper per feature:
 
 ```tsx
 // before — every state looks identical
@@ -209,10 +211,10 @@ Map the domain state to a variant, once, in a shared helper per feature:
 
 // after — tone carries meaning, still theme-driven
 const STATE_VARIANT = {
-  active:   'default',      // --primary
-  changed:  'secondary',
-  ended:    'outline',
-  failed:   'destructive'
+  active:    'success',     // --success — healthy/succeeded
+  changed:   'warning',     // --warning — at-risk, needs attention
+  ended:     'outline',
+  failed:    'destructive'  // --destructive — genuine failure only
 } as const satisfies Record<ItemState, BadgeVariant>;
 
 <Badge variant={STATE_VARIANT[item.currentState]} className='capitalize'>
@@ -221,7 +223,7 @@ const STATE_VARIANT = {
 </Badge>
 ```
 
-Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so the meaning survives `mono` and colorblind viewers. Reach for `bg-chart-N/15 text-chart-N` when a state is categorical rather than good/bad.
+Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so the meaning survives `mono`/`notebook` (where `--success`/`--warning` are deliberately desaturated) and colorblind viewers. Reach for `bg-chart-N/15 text-chart-N` when a state is categorical rather than good/bad/at-risk.
 
 ### Theme-response check (required)
 
@@ -242,18 +244,16 @@ What exists today:
 | Helper | Status |
 | --- | --- |
 | `formatDate(date, opts)` — `Intl.DateTimeFormat` | exists, unused by product surfaces |
+| `formatDateTime(value)` | exists — absolute timestamp, minute precision, `—` for null/invalid |
+| `formatTimestampPrecise(value)` | exists — second precision, for event/audit logs |
+| `formatRelativeTime(value)` | exists — "3 minutes ago" via `Intl.RelativeTimeFormat`; pair with an absolute value (`formatDateTime`/`formatTimestampPrecise`) in a `title`/tooltip |
+| `formatMoney(amount, currency)` | exists — `amount` is a decimal string, fed to `Intl.NumberFormat({ style: 'currency', currency })` for display only; no fabricated currency when `currency` is null |
+| `formatQuantity(value)` / `formatPercent(value)` | exists — grouped integers; percent carries an explicit sign |
+| `formatDuration(seconds)` | exists — uptime, backoff, poll intervals; built on `date-fns` `intervalToDuration` |
+| `formatScore(value)` | exists — canonical two-decimal precision for scores |
+| `formatBytes(bytes)` | exists in `lib/format`; `src/lib/utils.ts` re-exports it for existing callers |
 
-What must exist (add to `src/lib/format.ts` as surfaces are converted; do not add a tenth local copy):
-
-| Helper | Contract |
-| --- | --- |
-| `formatDateTime(value)` | absolute timestamp, minute precision, `—` for null |
-| `formatTimestampPrecise(value)` | second precision, for event/audit logs |
-| `formatRelativeTime(value)` | "3 minutes ago" via `Intl.RelativeTimeFormat`; pair with an absolute value in a `title`/tooltip |
-| `formatMoney(amount, currency)` | `amount` is a **decimal string** — money is PostgreSQL `numeric` and must never round-trip through JS `number`. Render with `Intl.NumberFormat(locale, { style: 'currency', currency })` fed from the string, or a decimal library; never `Number(x).toFixed(2)`, never `` `${price} ${currency}` `` |
-| `formatQuantity(value)` / `formatPercent(value)` | grouped integers; percent with fixed precision and an explicit sign |
-| `formatDuration(seconds)` | uptime, backoff, poll intervals |
-| `formatBytes(bytes)` | already in `src/lib/utils.ts`; move or re-export from `lib/format` |
+Feature-side adoption (deleting the local `formatTimestamp`/`formatPrice`/`formatSeconds`/`formatUptime` copies enumerated above and converting call sites) is a separate, follow-up pass — the helpers above are ready to be imported.
 
 Rules:
 
