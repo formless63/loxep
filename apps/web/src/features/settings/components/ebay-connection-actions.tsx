@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toastError } from '@/lib/errors';
+import { formatDateTime } from '@/lib/format';
 import {
   EBAY_OAUTH_CREDENTIAL_TYPE,
   startEbayConsent,
@@ -10,10 +11,6 @@ import {
 } from '@/server/ebay-oauth';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import type { ConnectionDto } from '@/server/admin-functions';
-
-function formatTimestamp(value: string | null): string {
-  return value ? format(new Date(value), 'yyyy-MM-dd HH:mm') : '—';
-}
 
 /** The `ebay_oauth` credential (registered purpose `oauth_tokens`), if any. */
 function ebayOAuthCredential(connection: ConnectionDto) {
@@ -32,7 +29,7 @@ export function EbayCredentialStatus({ connection }: { connection: ConnectionDto
     <div className='flex flex-col gap-0.5'>
       <Badge variant='secondary'>eBay account connected</Badge>
       <span className='text-muted-foreground text-xs'>
-        expires {formatTimestamp(credential.expiresAt)}
+        expires {formatDateTime(credential.expiresAt)}
       </span>
     </div>
   );
@@ -56,9 +53,7 @@ export function EbayConnectionActions({ connection }: { connection: ConnectionDt
     onSuccess: (result) => {
       window.location.href = result.url;
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to start eBay consent');
-    }
+    onError: (error) => toastError(error, 'Failed to start eBay consent')
   });
 
   const validateMutation = useMutation({
@@ -68,9 +63,7 @@ export function EbayConnectionActions({ connection }: { connection: ConnectionDt
       else toast.error(result.message);
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'eBay validation failed');
-    }
+    onError: (error) => toastError(error, 'eBay validation failed')
   });
 
   return (

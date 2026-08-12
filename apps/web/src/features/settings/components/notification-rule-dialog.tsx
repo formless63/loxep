@@ -11,6 +11,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import {
   createNotificationRule,
@@ -25,6 +26,7 @@ import {
   ANY_MONITOR_TARGET_VALUE,
   marketEventTypeOptions
 } from '@/features/settings/constants';
+import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 
 const ruleFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -105,9 +107,7 @@ export default function NotificationRuleDialog({
       queryClient.invalidateQueries({ queryKey: notificationRulesQuery.queryKey });
       onOpenChange(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to save rule');
-    }
+    onError: (error) => toastError(error, 'Failed to save rule')
   });
 
   const form = useAppForm({
@@ -117,12 +117,16 @@ export default function NotificationRuleDialog({
       marketEventType: rule?.marketEventType ?? ANY_MARKET_EVENT_TYPE_VALUE,
       monitorTargetId: rule?.monitorTargetId ?? ANY_MONITOR_TARGET_VALUE,
       enabled: rule?.enabled ?? true
-    } as RuleFormValues,
+    },
     validators: {
       onSubmit: ruleFormSchema
     },
-    onSubmit: ({ value }) => {
-      mutation.mutate(value);
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
     }
   });
 
@@ -136,13 +140,7 @@ export default function NotificationRuleDialog({
             one endpoint. Event detection and delivery stay separate concepts.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className='space-y-6'
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
+        <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
               name='name'
@@ -197,9 +195,11 @@ export default function NotificationRuleDialog({
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type='submit' disabled={mutation.isPending || endpointOptions.length === 0}>
-              {isEdit ? 'Save changes' : 'Create rule'}
-            </Button>
+            <form.AppForm>
+              <form.SubmitButton disabled={endpointOptions.length === 0}>
+                {isEdit ? 'Save changes' : 'Create rule'}
+              </form.SubmitButton>
+            </form.AppForm>
           </div>
         </form>
       </DialogContent>

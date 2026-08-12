@@ -10,10 +10,12 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { createEntity, updateEntity, type EntityDto } from '@/server/admin-functions';
 import { entitiesQuery } from '@/features/settings/api/queries';
 import { entityKindOptions, NO_ENTITY_VALUE } from '@/features/settings/constants';
+import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 
 const entityFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -81,9 +83,7 @@ export default function EntityFormDialog({
       queryClient.invalidateQueries({ queryKey: entitiesQuery.queryKey });
       onOpenChange(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to save entity');
-    }
+    onError: (error) => toastError(error, 'Failed to save entity')
   });
 
   const form = useAppForm({
@@ -92,12 +92,16 @@ export default function EntityFormDialog({
       kind: entity?.kind ?? '',
       parentEntityId: entity?.parentEntityId ?? NO_ENTITY_VALUE,
       legalName: entity?.legalName ?? ''
-    } as EntityFormValues,
+    },
     validators: {
       onSubmit: entityFormSchema
     },
-    onSubmit: ({ value }) => {
-      mutation.mutate(value);
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
     }
   });
 
@@ -111,13 +115,7 @@ export default function EntityFormDialog({
             book.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className='space-y-6'
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
+        <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
               name='name'
@@ -158,9 +156,9 @@ export default function EntityFormDialog({
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type='submit' disabled={mutation.isPending}>
-              {isEdit ? 'Save changes' : 'Create entity'}
-            </Button>
+            <form.AppForm>
+              <form.SubmitButton>{isEdit ? 'Save changes' : 'Create entity'}</form.SubmitButton>
+            </form.AppForm>
           </div>
         </form>
       </DialogContent>
