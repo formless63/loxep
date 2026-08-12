@@ -82,15 +82,19 @@ import {
  * they poll through the SAME claim/backoff/adaptive machinery as the Phase 1
  * types; only their executor differs.
  *
- * `woo_orders` is the Phase 3 COMMERCE type and the first entry here that
- * @loxep/market does not own. Domain Boundaries' PROVISIONAL "Scheduling is
- * shared foundation infrastructure" rule makes `monitor_targets` a shared
- * mechanism any domain may register a target type against; Market
- * Intelligence owns the `ebay_*` types and the mechanism's implementation,
- * not the list. Nothing else about the row is special: its executor lives in
- * @loxep/commerce (wired in @loxep/app), its cursor lives under the
- * `commerceSync` namespace this package never reads, and claim/backoff/
- * adaptive advancement treat it exactly like any other row.
+ * `woo_orders` and `ebay_orders` are the Phase 3 COMMERCE types and the first
+ * entries here that @loxep/market does not own. Domain Boundaries'
+ * PROVISIONAL "Scheduling is shared foundation infrastructure" rule makes
+ * `monitor_targets` a shared mechanism any domain may register a target type
+ * against; Market Intelligence owns the `ebay_watchlist`/`ebay_item`/
+ * `ebay_search`/`ebay_seller` discovery types and the mechanism's
+ * implementation, not the list. Nothing else about either row is special:
+ * their executors live in @loxep/commerce (wired in @loxep/app), their
+ * cursors live under the `commerceSync` namespace this package never reads,
+ * and claim/backoff/adaptive advancement treat them exactly like any other
+ * row. (`ebay_orders` was registered after `woo_orders` — see loxep-itn —
+ * closing a gap where `ensureEbayOrderSyncTarget`'s direct insert worked but
+ * `createMonitorService` CRUD did not.)
  */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
@@ -98,6 +102,7 @@ export const MONITOR_TARGET_TYPES = [
   "ebay_search",
   "ebay_seller",
   "woo_orders",
+  "ebay_orders",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
 
@@ -169,13 +174,16 @@ export const ebaySearchFiltersSchema = z.strictObject({
 export type EbaySearchFiltersConfig = z.infer<typeof ebaySearchFiltersSchema>;
 
 /**
- * Namespaced `config` key @loxep/commerce owns on a `woo_orders` row. Declared
- * here only so this package can name the key it must NOT interpret.
+ * Namespaced `config` key @loxep/commerce owns on a `woo_orders`/`ebay_orders`
+ * row. Declared here only so this package can name the key it must NOT
+ * interpret.
  */
 export const COMMERCE_SYNC_CONFIG_KEY = "commerceSync";
 
 /**
- * The stored form of @loxep/commerce's WooCommerce order-sync cursor.
+ * The stored form of @loxep/commerce's order-sync cursor — WooCommerce and
+ * eBay share this one provider-neutral shape (`commerceSyncTargetConfigSchema`
+ * in @loxep/commerce).
  *
  * RE-DECLARED, NOT IMPORTED — the same discipline as
  * {@link ebaySearchFiltersSchema}, for the same reason and with the same
@@ -284,6 +292,19 @@ export const monitorTargetConfigSchemas = {
    * namespace Commerce owns.
    */
   woo_orders: z.strictObject({
+    [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One eBay seller account's incremental ORDER SYNC (Phase 3, PROVISIONAL).
+   * Registered by Commerce, executed by Commerce — structurally identical to
+   * `woo_orders` above (same `commerceSync` cursor shape; see
+   * `ensureEbayOrderSyncTarget`/`ensureOrderSyncTarget` in @loxep/commerce,
+   * which share one provider-neutral config schema) because the cursor's
+   * fields are provider-neutral facts. The store/seller itself is identified
+   * by the target's connection, so the config carries no identity of its own.
+   */
+  ebay_orders: z.strictObject({
     [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
