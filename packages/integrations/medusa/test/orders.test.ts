@@ -19,6 +19,7 @@ import {
   iterateMedusaOrders,
   mapMedusaOrder,
   redactMedusaOrderFact,
+  subtractDecimals,
 } from "../src/index.ts";
 import type { MedusaOrderFact } from "../src/index.ts";
 import {
@@ -246,12 +247,34 @@ describe("mapMedusaOrder — money is always a decimal string, and Medusa's own 
     );
     expect(fact.totals).toEqual({
       total: "0.00",
+      // `original_total` is left at the fixture default in this override set,
+      // which is the point: it does not follow `total` down.
+      originalTotal: "48.15",
       subtotal: "45", // subtotal left at the fixture default in this override set
       shipping: "0.00",
       tax: "0.00",
       discount: "0.00",
       refunded: "0.00",
     });
+  });
+
+  it("keeps originalTotal above total once a refund has moved total (live behavior)", () => {
+    const fact = map(partiallyRefundedOrderFixture());
+    expect(fact.totals.total).toBe("35.65");
+    expect(fact.totals.originalTotal).toBe("48.15");
+    expect(fact.totals.refunded).toBe("12.5");
+    // The trap this guards: total is ALREADY net of refunds, so
+    // total - refunded double-counts. originalTotal - refunded is the identity
+    // that actually holds.
+    expect(
+      subtractDecimals(fact.totals.originalTotal, fact.totals.refunded),
+    ).toBe("35.65");
+  });
+
+  it("falls back to total when a payload omits original_total", () => {
+    const fact = map(capturedOrderFixture({ original_total: undefined }));
+    expect(fact.totals.originalTotal).toBe("48.15");
+    expect(fact.totals.originalTotal).toBe(fact.totals.total);
   });
 
   it("emits decimal strings for every money field of every fixture", () => {

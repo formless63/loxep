@@ -788,6 +788,28 @@ The findings themselves:
 - **The order payload carries more PII than WooCommerce's**, including a taxpayer id and gift-recipient details — see open question 8 as implemented.
 - **Scope, not just consent.** Unlike the traditional Trading calls the watchlist vertical uses, the RESTful Sell APIs enforce OAuth scopes: order ingestion needs `.../sell.fulfillment.readonly`, which the base consent set deliberately does not request (asking for a scope a keyset lacks makes eBay reject the entire consent with `invalid_scope`). An existing eBay connection must be re-consented with `EBAY_ORDER_CONSENT_SCOPES` before it can sync orders; until then the poll fails `auth`, records `ebay_auth` on the connection, and drops the cached adapter so a re-consent is picked up on the next poll.
 
+### Provider reality findings (Medusa, live-verified)
+
+The Medusa adapter was built fixtures-only against Medusa's GitHub source, then verified against a **real Medusa 2.18.0 backend** with orders placed through the Store API and then captured, partially refunded, and fulfilled (`packages/integrations/medusa/test/live-store.test.ts`). Three of the source-derived claims survived unchanged; three did not, and the adapter was corrected rather than the finding softened.
+
+Confirmed as designed:
+
+- **Money is a plain JSON number in the MAJOR currency unit.** A €10.00 variant reports `unit_price: 10`, not `1000`. This holds across order totals, line items, refund amounts, and variant prices — so Medusa is the one Phase 3 provider needing no minor-unit conversion, and the decimal-string discipline at the boundary is a formatting concern rather than a scaling one.
+- **Every list response is `{<resultKey>, count, offset, limit}` in the BODY**, with no header-based pagination, and an offset past the end is an ordinary `200` with an empty array — not WooCommerce's `400`.
+- **`source_account_key` is computable from configuration alone** (`medusa:<baseUrl>`), satisfying checklist item 5 for the third provider.
+
+Corrected by contact with a running backend:
+
+- **An order's `total` MOVES.** It is the *current* total, and Medusa reduces it when a refund is issued: a €30 order refunded €5 reports `total: 25`, `original_total: 30`, `subtotal: 30` (unmoved), `summary.refunded_total: 5`. Two consequences for this schema: `orders.total` is not a stable as-placed amount unless it is sourced from `original_total`, and **`total - refunded` double-counts**, because Medusa has already subtracted the refund. This is the first provider where the order total is mutable after the fact, and it is a stronger argument for `order_refunds` as rows than the design made on its own.
+- **`subtotal` includes shipping** (`item_subtotal + shipping_subtotal`), which is the opposite of the WooCommerce finding above, where no order-level subtotal exists at all. Any cross-provider "subtotal" column therefore holds three different meanings unless each adapter derives it — worth deciding explicitly rather than by accident.
+- **Nested `fields` selection expands the leaf relation only.** Requesting `*payment_collections.payments.refunds` returns payments as `{id, refunds}` — no `amount`, no `captured_at`. Every level whose scalars are read must be named. This silently produced a null `paid_at` for months of fixture-verified confidence, and no fixture could have caught it, because the fixtures were written from the DTO type rather than from a response.
+- **Filters and field lists fail OPEN.** `fields=id,not_a_real_field`, `updated_at[$nope]=…`, and `not_a_field[$gte]=…` all return `200` — the unknown name is dropped and the filter silently degrades to a full scan. Incremental order sync against Medusa cannot rely on a malformed watermark erroring; it must stay idempotent, which the at-least-once job contract already requires. (Relatedly, a bad `order=` sort key returns `500`, not `4xx`.)
+- **The error envelope is not uniform.** A `401` from the authenticate middleware carries `{message}` alone — no `type`, no `code` — while `404` carries `{type, message}` and `500` carries `{code, type, message}`. Connection-health classification must rest on the HTTP status.
+
+Also confirmed, smaller: `Authorization: Basic <sk_…>` is the wire format (the token is *not* base64-encoded, though a base64 `sk_…:` is accepted by a back-compat path, and a `Bearer` token is rejected with a message naming the correct scheme); `updated_at[$gte]` works percent-encoded exactly as `URLSearchParams` emits it; `$gte` is **inclusive** of the boundary instant, so a watermark re-delivers its boundary row on every poll; `payment_status` and `fulfillment_status` are returned both on request *and* by default in 2.18.0, contradicting the adapter's original reading of Medusa's own query-config source; and `limit` has no server-enforced ceiling (`limit=100000` → `200`), so the adapter's cap is Loxep protecting a self-hosted backend from itself.
+
+Unlike WooCommerce and eBay, a Medusa order payload carries no marketplace fee of any kind — Medusa is a commerce engine, not a marketplace, so `order_fees` has no Medusa source until a payment-provider integration supplies one.
+
 ## Contradictions and tensions found in existing documentation
 
 Recorded here for a human to resolve; this document does not attempt to fix them.
@@ -802,7 +824,7 @@ Recorded here for a human to resolve; this document does not attempt to fix them
 
 ## Before implementing this schema
 
-Retained as the original pre-implementation checklist. Items 1, 3, 5, 6, and 7 were satisfied during the provisional implementation; item 2 (human confirmation of attribution precedence and immutability) is still outstanding; item 4 is satisfied for WooCommerce (live) and **partially** for eBay (verified against the installed client's bundled OpenAPI types, with the status vocabularies and filter grammar still design-derived — see the [eBay findings](#provider-reality-findings-ebay-fixture-verified--not-yet-live-verified)) and still outstanding for Medusa; item 5 is now confirmed for eBay as well; and item 8 is what the [provisional decisions](#provisional-implementation-decisions) section discharges.
+Retained as the original pre-implementation checklist. Items 1, 3, 5, 6, and 7 were satisfied during the provisional implementation; item 2 (human confirmation of attribution precedence and immutability) is still outstanding; item 4 is satisfied for WooCommerce (live) and for Medusa (live, against a real 2.18.0 backend — see the [Medusa findings](#provider-reality-findings-medusa-live-verified)) and **partially** for eBay (verified against the installed client's bundled OpenAPI types, with the status vocabularies and filter grammar still design-derived — see the [eBay findings](#provider-reality-findings-ebay-fixture-verified--not-yet-live-verified)); item 5 is now confirmed for eBay as well; and item 8 is what the [provisional decisions](#provisional-implementation-decisions) section discharges.
 
 1. resolve open question 6 (sync scheduling ownership) — it determines package boundaries, not just table shapes;
 2. confirm the attribution precedence and its immutability rule with a human; it is the hardest thing to change after data exists;

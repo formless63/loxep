@@ -12,20 +12,23 @@
  * save them is a poor trade, the same call the WooCommerce adapter made
  * against `@woocommerce/woocommerce-rest-api`.
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT. Every fact this
- * module encodes was verified against Medusa's own GitHub source
- * (`medusajs/medusa`, `develop` branch, fetched 2026-08-11) and the
- * `docs.medusajs.com` narrative pages that were fetchable, because Medusa's
- * generated API-reference pages did not yield concrete JSON shapes through
- * the tool available here (see the module doc / commerce-schema-design.md
- * live-verification gap for the citation trail). Live verification against
- * a real Medusa v2 backend is tracked as a follow-up.
+ * LIVE-VERIFIED against Medusa **2.18.0** on 2026-08-12 (loxep-xh9.4.1).
+ * The facts below began as readings of Medusa's own GitHub source
+ * (`medusajs/medusa`, `develop` branch, fetched 2026-08-11) plus the
+ * fetchable `docs.medusajs.com` narrative pages; every claim in this module
+ * doc has since been exercised against a running backend by
+ * `test/live-store.test.ts`, and the transport-level results are recorded
+ * inline. (`orders.ts` is where the source reading and reality actually
+ * diverged.)
  *
  * ## What is structurally different from the WooCommerce adapter
  *
  * - **Pagination lives in the response BODY, not headers.** Every Admin API
- *   list response is `{ <resultKey>: T[], count, offset, limit }`
- *   (verified: `GET /admin/orders` →
+ *   list response is `{ <resultKey>: T[], count, offset, limit }` — live
+ *   response top-level keys are exactly `["orders","count","offset","limit"]`
+ *   and `["products","count","offset","limit"]`, with `count`/`offset`/`limit`
+ *   all JSON numbers, and `offset`/`limit` echoing what was requested
+ *   (verified in source too: `GET /admin/orders` →
  *   https://github.com/medusajs/medusa/blob/develop/packages/medusa/src/api/admin/orders/route.ts
  *   returns `{ orders, count, offset: metadata.skip, limit: metadata.take }`;
  *   `GET /admin/products` →
@@ -37,17 +40,18 @@
  * - **No "page past the end" error.** WooCommerce's `page`-based pagination
  *   returns HTTP 400 for a page beyond the last; Medusa's `offset`-based
  *   pagination is ordinary SQL `OFFSET`, which returns an empty array with
- *   HTTP 200 past the end. `paginate()` therefore has one fewer stop
+ *   HTTP 200 past the end — live-confirmed (`offset=999` against 3 orders →
+ *   200, `orders: []`, `count: 3`). `paginate()` therefore has one fewer stop
  *   condition to special-case than the WooCommerce adapter's.
- * - **No documented maximum for `limit`.** WooCommerce's REST API rejects
- *   `per_page` outside 1..100 with HTTP 400 (confirmed live). No such
- *   server-enforced ceiling for Medusa's `limit` was found in the source
- *   reviewed for this adapter (`prepareListQuery` in
- *   https://github.com/medusajs/medusa/blob/develop/packages/core/framework/src/http/utils/get-query-config.ts
- *   applies no upper clamp). {@link MEDUSA_MAX_LIMIT} below is therefore
- *   Loxep's OWN conservative ceiling, not a provider-enforced one — flagged
- *   explicitly so a future maintainer does not mistake it for verified
- *   provider behavior.
+ * - **No maximum for `limit` — now confirmed live, not just unfound.**
+ *   WooCommerce's REST API rejects `per_page` outside 1..100 with HTTP 400
+ *   (confirmed live). Medusa applies no upper clamp: the source has none
+ *   (`prepareListQuery` in
+ *   https://github.com/medusajs/medusa/blob/develop/packages/core/framework/src/http/utils/get-query-config.ts)
+ *   and a live `limit=100000` returned HTTP 200 with `limit` echoed back as
+ *   `100000`. {@link MEDUSA_MAX_LIMIT} below is therefore Loxep's OWN
+ *   conservative ceiling protecting a self-hosted backend from a request it
+ *   would dutifully try to serve — not a provider-enforced one.
  *
  * Boundary rules enforced here, same as the WooCommerce adapter:
  * - the secret API token goes into an `Authorization` header ONLY. It is
@@ -180,6 +184,21 @@ export type CreateMedusaAdapterInput = MedusaAdapterConfigInput & {
   fetchImpl?: MedusaFetch;
 };
 
+/**
+ * Serialize a query with `URLSearchParams`. Two live-verified consequences
+ * (Medusa 2.18.0, loxep-xh9.4.1):
+ *
+ * - Operator filters keep working despite percent-encoding. A key like
+ *   `updated_at[$gte]` goes out as `updated_at%5B%24gte%5D`, and Medusa
+ *   parses that exactly as it parses literal brackets — same filtered
+ *   `count` either way. No special-casing needed.
+ * - Array values are emitted as repeated `key[]=v` pairs, which Medusa
+ *   accepts as a set filter (`status[]=pending` matched, `status[]=canceled`
+ *   returned `count: 0`).
+ *
+ * Beware: an unknown filter key or operator is SILENTLY IGNORED (HTTP 200,
+ * unfiltered `count`) rather than rejected — see `orders.ts`.
+ */
 function buildQuery(query: MedusaQuery | undefined): string {
   if (query === undefined) return "";
   const params = new URLSearchParams();

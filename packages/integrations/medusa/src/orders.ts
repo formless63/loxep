@@ -7,32 +7,59 @@
  * commerce tables do not exist yet and are deliberately not created here,
  * matching `packages/integrations/woo/src/orders.ts`.
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT. Every field mapping
- * below is sourced from Medusa's GitHub source (`medusajs/medusa`, `develop`
- * branch, fetched 2026-08-11) — principally
+ * LIVE-VERIFIED against Medusa **2.18.0** on 2026-08-12 (loxep-xh9.4.1) — a
+ * throwaway local backend with real Store-API-placed orders (captured,
+ * partially refunded, fulfilled). The mappings below started as readings of
+ * Medusa's GitHub source (`medusajs/medusa`, `develop`, fetched 2026-08-11) —
+ * principally
  * https://github.com/medusajs/medusa/blob/develop/packages/core/types/src/http/order/common.ts
  * (the `BaseOrder` / `BaseOrderLineItem` / `BaseOrderFulfillment` HTTP-layer
- * DTOs actually returned by the Admin API) and
+ * DTOs) and
  * https://github.com/medusajs/medusa/blob/develop/packages/core/types/src/order/common.ts
- * (the `OrderStatus` / `PaymentStatus` / `FulfillmentStatus` enums) — never
- * against a running backend. See the follow-up bead tracked against
- * loxep-xh9.4 for live verification.
+ * (the `OrderStatus` / `PaymentStatus` / `FulfillmentStatus` enums) — and the
+ * places where a running backend DISAGREED with that reading are called out
+ * inline below and in `test/live-store.test.ts`.
  *
  * ## Why the field list matters here more than it did for WooCommerce
  *
- * Medusa's own LIST-endpoint defaults are narrow by design: `GET
- * /admin/orders` without a `fields` query param returns only
- * `defaultAdminOrderFields` — id, display_id, status, version, summary,
- * total, metadata, locale, created_at, updated_at (verified:
- * https://github.com/medusajs/medusa/blob/develop/packages/medusa/src/api/admin/orders/query-config.ts).
- * Notably ABSENT from that default: `payment_status`, `fulfillment_status`,
- * `items`, `payment_collections`, `fulfillments` — even though the `BaseOrder`
- * TypeScript type declares `payment_status`/`fulfillment_status` as
- * non-optional. This adapter therefore ALWAYS sends an explicit, generous
- * `fields` list ({@link MEDUSA_DEFAULT_ORDER_FIELDS}) rather than relying on
- * Medusa's list defaults — the opposite of WooCommerce, where the whole
- * order (including embedded `line_items`/`refunds`) comes back on every
- * request with no `fields` handling at all.
+ * `fields` is not optional for this adapter, but NOT for the reason the
+ * source reading suggested.
+ *
+ * The pre-live reading of
+ * https://github.com/medusajs/medusa/blob/develop/packages/medusa/src/api/admin/orders/query-config.ts
+ * concluded that `payment_status` and `fulfillment_status` are absent from
+ * `GET /admin/orders`'s defaults. **That is wrong on 2.18.0.** A live
+ * fields-less `GET /admin/orders` returns exactly:
+ * `created_at, custom_display_id, display_id, fulfillment_status, id, items,
+ * locale, metadata, payment_status, status, summary, total, updated_at,
+ * version` — i.e. both statuses AND `items` AND `summary` are already there
+ * (`defaultAdminOrderFields` is not the whole story; the order list decorates
+ * its rows with computed status/totals afterwards).
+ *
+ * What IS genuinely missing from the default, and what the explicit list
+ * exists for, is the money/provenance detail: `currency_code`, `subtotal`,
+ * `tax_total`, `discount_total`, `shipping_total`, `original_total`,
+ * `customer_id`, `email`, `payment_collections`, and `fulfillments`. So the
+ * adapter still ALWAYS sends {@link MEDUSA_DEFAULT_ORDER_FIELDS} — it just
+ * does so to obtain the totals and the payment/fulfillment relations, not to
+ * rescue the two status fields.
+ *
+ * ## `fields` FAILS OPEN, and so do filters — live-observed, load-bearing
+ *
+ * Medusa 2.18.0 does not validate `fields` or filter keys. Live:
+ * `fields=id,not_a_real_field` returns HTTP 200 (the unknown name is
+ * silently dropped), and — far more dangerous for incremental sync —
+ * `updated_at[$nope]=…` and `not_a_field[$gte]=…` BOTH return HTTP 200 with
+ * `count` equal to the UNFILTERED total. A typo in a watermark filter does
+ * not error; it silently degrades to a full scan. Anything built on
+ * {@link FetchMedusaOrdersInput.updatedAfter} must therefore treat the filter
+ * as best-effort and stay idempotent, which Loxep's at-least-once job
+ * contract already requires.
+ *
+ * One more live quirk: `order=<not a column>` returns HTTP **500**
+ * (`{"code":"unknown_error","type":"unknown_error"}`), not a 4xx, so a bad
+ * sort key normalizes to `provider_unavailable` rather than
+ * `invalid_request`.
  *
  * `GET /admin/orders` also filters `is_draft_order: false` unconditionally
  * (same source file) — Medusa's draft-order feature lives at a separate
@@ -54,10 +81,18 @@
  *                                                  doc example shows lowercase
  *                                                  ("usd"); Loxep's design uses
  *                                                  char(3) ISO 4217, uppercase
- * totals.total          ← total
+ * totals.total          ← total                   LIVE WARNING: this is the
+ *                                                  CURRENT order total, NET of
+ *                                                  refunds — see "total moves"
+ *                                                  below
+ * totals.originalTotal   ← original_total          the total as placed, before
+ *                                                  refunds/edits
  * totals.subtotal        ← subtotal                Medusa reports this DIRECTLY —
  *                                                  unlike WooCommerce, no
- *                                                  line-sum derivation needed
+ *                                                  line-sum derivation needed.
+ *                                                  LIVE: it INCLUDES shipping
+ *                                                  (subtotal = item_subtotal +
+ *                                                  shipping_subtotal)
  * totals.shipping        ← shipping_total
  * totals.tax              ← tax_total
  * totals.discount         ← discount_total
@@ -82,6 +117,43 @@
  * refunds[]               ← payment_collections[].payments[].refunds[], flattened
  * fulfillments[]          ← fulfillments[]
  * ```
+ *
+ * ## `total` MOVES after a refund — the most consequential live finding
+ *
+ * A Medusa order's `total` is not the immutable "amount of the sale" a
+ * ledger wants; it is the CURRENT order total, recomputed as the order
+ * changes. Live-observed on 2.18.0, one order, before and after a €5 refund
+ * against a €30 captured order:
+ *
+ * ```text
+ *                       placed      after the €5 refund
+ * total                  30                25
+ * original_total         30                30
+ * subtotal               30                30      (item 20 + shipping 10)
+ * summary.paid_total     30                30
+ * summary.refunded_total  0                 5
+ * summary.credit_line_total 0               5
+ * summary.current_order_total  30          25
+ * summary.original_order_total 30          30
+ * payment_status     "captured"  "partially_refunded"
+ * ```
+ *
+ * Two consequences a consumer MUST respect:
+ *
+ * 1. `totals.total` is a moving value. Persisting it as the design's
+ *    `orders.total` means the stored amount changes on re-sync after a
+ *    refund. {@link MedusaOrderTotals.originalTotal} (`original_total`) is
+ *    the stable as-placed amount, and is the better source for an order's
+ *    face value.
+ * 2. **Do not compute `total - refunded`.** `totals.refunded` is the exact
+ *    sum of the refund rows, and Medusa has ALREADY subtracted it from
+ *    `total`. Subtracting again double-counts. (`subtotal` does NOT move.)
+ *
+ * The `summary` object is requested and retained in {@link
+ * MedusaOrderFact.raw} for exactly this reason: `paid_total`,
+ * `refunded_total`, `current_order_total`, and `original_order_total` are the
+ * accounting-grade numbers, and their `raw_*` twins carry Medusa's own
+ * `{value, precision}` decimal representation.
  *
  * ## No fee concept at all — stronger than WooCommerce's finding
  *
@@ -114,6 +186,20 @@
  *    states directly. It is offered as a diagnostic convenience — the
  *    design's `orders` table has no `paid_at` column at all, so nothing
  *    downstream depends on this being exact.
+ *
+ *    **This was silently broken until live verification.** Medusa's `*a.b.c`
+ *    selector expands the LEAF relation only — it does not select the
+ *    intermediate entity's own scalar columns. With the original field list
+ *    (`*payment_collections.payments.refunds` alone), every live payment came
+ *    back as `{id, refunds}`: no `captured_at`, no `amount`. `derivePaidAt`
+ *    could therefore only ever return `null`, and no fixture caught it
+ *    because the fixtures were written from the DTO type rather than from a
+ *    response. {@link MEDUSA_DEFAULT_ORDER_FIELDS} now also requests
+ *    `*payment_collections` and `*payment_collections.payments`, which live
+ *    returns with `amount`, `captured_at`, `canceled_at`, `provider_id`, and
+ *    the collection's own `status`/`authorized_amount`/`captured_amount`/
+ *    `refunded_amount`. The general rule this teaches: **request every level
+ *    of a nested path whose scalars you intend to read.**
  *
  * ## Status: three native lifecycles, still lossy in translation
  *
@@ -283,9 +369,23 @@ export const MEDUSA_FULFILLMENT_STATUS_MAP: Readonly<
 };
 
 export interface MedusaOrderTotals {
-  /** Provider `total`. */
+  /**
+   * Provider `total` — the CURRENT total, which Medusa reduces when a refund
+   * is issued (live-verified; see the module doc). Prefer
+   * {@link MedusaOrderTotals.originalTotal} for an order's as-placed face
+   * value, and never compute `total - refunded`.
+   */
   total: string;
-  /** Provider `subtotal` — reported directly, unlike WooCommerce. */
+  /**
+   * Provider `original_total` — the as-placed amount, unaffected by refunds.
+   * Falls back to `total` when a payload omits it.
+   */
+  originalTotal: string;
+  /**
+   * Provider `subtotal` — reported directly, unlike WooCommerce. LIVE:
+   * INCLUDES shipping (`item_subtotal + shipping_subtotal`), and does not
+   * move when a refund lands.
+   */
   subtotal: string;
   /** Provider `shipping_total`. */
   shipping: string;
@@ -638,6 +738,10 @@ export function mapMedusaOrder(
     currency: normalizeMedusaCurrencyCode(raw["currency_code"]),
     totals: {
       total: decimalFromUnknown(raw["total"]) ?? ZERO,
+      originalTotal:
+        decimalFromUnknown(raw["original_total"]) ??
+        decimalFromUnknown(raw["total"]) ??
+        ZERO,
       subtotal: decimalFromUnknown(raw["subtotal"]) ?? ZERO,
       shipping: decimalFromUnknown(raw["shipping_total"]) ?? ZERO,
       tax: decimalFromUnknown(raw["tax_total"]) ?? ZERO,
@@ -671,14 +775,24 @@ export function redactMedusaOrderFact(
 /* ---------------------------------------------------------------- fetching */
 
 /**
- * The `fields` list this adapter sends on every order fetch, because
- * Medusa's own list defaults omit `payment_status`, `fulfillment_status`,
- * `items`, `payment_collections`, and `fulfillments` — see the module doc.
- * `*relation` syntax and the exact behavior of chained/nested `*` expansion
- * follow the general `fields` parameter documentation
- * (https://docs.medusajs.com/resources/admin-api — "Select Fields and
- * Relations", fetched 2026-08-11) but the precise nested-expansion result
- * was NOT confirmed against a live response.
+ * The `fields` list this adapter sends on every order fetch — see the module
+ * doc for why (the totals and the payment/fulfillment relations, NOT the two
+ * status fields, which 2.18.0 returns by default).
+ *
+ * LIVE-VERIFIED as a whole string against Medusa 2.18.0 (HTTP 200, every
+ * requested relation populated). Two rules this list encodes, both learned
+ * from a running backend rather than from the docs:
+ *
+ * 1. **Every level of a nested path must be requested if you read its own
+ *    columns.** `*payment_collections.payments.refunds` alone yields
+ *    `payments: [{id, refunds}]` — the intermediate `payments` entity keeps
+ *    only its id. `*payment_collections` and `*payment_collections.payments`
+ *    are therefore listed explicitly (see the `paidAt` gap in the module
+ *    doc).
+ * 2. **Unknown names are silently ignored** (`fields=id,not_a_real_field` →
+ *    HTTP 200), so a typo here degrades data quietly instead of failing.
+ *
+ * `items` and `version` come back whether or not they are requested.
  */
 const MEDUSA_ORDER_FIELDS = [
   "id",
@@ -690,14 +804,21 @@ const MEDUSA_ORDER_FIELDS = [
   "created_at",
   "updated_at",
   "total",
+  // The as-placed amount. `total` moves when a refund lands; this does not.
+  "original_total",
   "subtotal",
   "tax_total",
   "discount_total",
   "shipping_total",
+  // Accounting-grade provenance (paid_total / refunded_total /
+  // current_order_total / original_order_total) — raw payload only.
+  "summary",
   "payment_status",
   "fulfillment_status",
   "*items",
   "*items.detail",
+  "*payment_collections",
+  "*payment_collections.payments",
   "*payment_collections.payments.refunds",
   "*payment_collections.payments.refunds.refund_reason",
   "*fulfillments",
@@ -715,8 +836,25 @@ export interface FetchMedusaOrdersInput {
    * (https://github.com/medusajs/medusa/blob/develop/packages/core/utils/src/common/filter-operator-map.ts)
    * and the `OperatorMap<string>` typing of `AdminOrderFilters.updated_at`
    * (https://github.com/medusajs/medusa/blob/develop/packages/core/types/src/http/order/admin/queries.ts).
-   * The exact bracket-notation query-STRING encoding was not confirmed
-   * against a live request — flagged for the follow-up bead.
+   *
+   * LIVE-VERIFIED on 2.18.0 (loxep-xh9.4.1), both halves of the question:
+   *
+   * - **Encoding.** The adapter builds its query with `URLSearchParams`,
+   *   which percent-encodes the brackets — the wire form is
+   *   `updated_at%5B%24gte%5D=<ISO>`. Medusa parses that identically to
+   *   literal `updated_at[$gte]=<ISO>`: both returned the same filtered
+   *   `count`. No manual bracket handling is needed.
+   * - **Inclusivity.** `$gte` is INCLUSIVE of the boundary instant. Filtering
+   *   at exactly a known order's `updated_at` returned that order; `$gt` at
+   *   the same instant excluded it. A watermark carried forward as
+   *   `updated_at[$gte]=<last seen>` therefore re-delivers the boundary row
+   *   on every poll — correct for at-least-once ingestion with idempotent
+   *   handlers, and the reason to advance a cursor by row identity rather
+   *   than by assuming the timestamp excludes what was already seen.
+   *
+   * Timestamps come back as full ISO-8601 with milliseconds and a `Z`
+   * designator (e.g. `2026-08-12T13:23:35.142Z`), so the boundary compares
+   * exactly.
    */
   updatedAfter?: Date | string;
   /** 0-based. Default 0. */

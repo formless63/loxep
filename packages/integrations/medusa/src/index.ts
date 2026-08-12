@@ -8,13 +8,16 @@
  * body-driven pagination, and mapping into Loxep-owned order/product facts
  * aligned to the Commerce Schema Design.
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT. This package was built
- * fixtures-only, verified against Medusa's own GitHub source (`develop`
- * branch, fetched 2026-08-11) and the `docs.medusajs.com` narrative pages
- * that were fetchable — never against a running backend. See `orders.ts`,
- * `money.ts`, and `connection.ts` for the full citation trail, and the
- * "Live-verify Medusa adapter against a real instance" follow-up bead
- * (parent loxep-xh9.4) for the tracked gap.
+ * LIVE-VERIFIED against Medusa **2.18.0** on 2026-08-12 (loxep-xh9.4.1).
+ * This package was originally built fixtures-only from Medusa's own GitHub
+ * source (`develop` branch, fetched 2026-08-11); it has since been exercised
+ * end-to-end against a running backend with real Store-API-placed orders by
+ * `test/live-store.test.ts`, which skips cleanly when
+ * ~/.config/loxep/medusa.env is absent. Where the source reading was wrong,
+ * the adapter was corrected rather than the finding softened — see
+ * `orders.ts` (nested `fields` expansion, `total` moving after a refund,
+ * filters failing open) and `errors.ts` (the 401 envelope). `orders.ts`,
+ * `money.ts`, and `connection.ts` carry the full citation trail.
  *
  * SCOPE: read adapters only. This package writes nothing — the Phase 3
  * commerce tables do not exist and persistence is deliberately excluded.

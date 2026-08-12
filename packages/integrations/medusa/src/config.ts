@@ -8,8 +8,13 @@
  * WooCommerce adapter (`packages/integrations/woo/src/config.ts`). Loxep
  * rejects an `http:` base URL at config parse time.
  *
- * AUTHENTICATION — verified against Medusa's own source (no live instance
- * exists here; fixtures-only, see the module doc):
+ * The https rule has one practical consequence worth recording: a local
+ * Medusa dev backend speaks plain http on :9000, so the live-verification
+ * harness (loxep-xh9.4.1) puts an nginx TLS terminator in front of it rather
+ * than relaxing this check. See `test/live-store.test.ts`.
+ *
+ * AUTHENTICATION — LIVE-VERIFIED against Medusa 2.18.0 on 2026-08-12
+ * (loxep-xh9.4.1), and originally read from Medusa's own source:
  *
  * Medusa v2's Admin API supports three authentication mechanisms — session
  * cookie, JWT bearer (from an interactive email/password login), and a
@@ -36,9 +41,22 @@
  * it. The server's `getApiKeyInfo()` splits on the first space, and only
  * base64-decodes the remainder when it does *not* already start with `sk_`
  * (a back-compat path for callers that base64-encoded the token the way a
- * literal HTTP Basic client would). Sending the key as a `Bearer` token is
- * explicitly rejected with a dedicated 401 message pointing the caller back
- * at `Authorization: Basic` — confirmed in the same source file:
+ * literal HTTP Basic client would).
+ *
+ * Live results on 2.18.0, all four variants exercised against a real
+ * backend:
+ *
+ * ```text
+ * Authorization: Basic sk_…                     → 200   ← what this adapter sends
+ * Authorization: Basic base64("sk_…:")          → 200   ← the back-compat path, confirmed real
+ * Authorization: Bearer sk_…                    → 401   ← with the message quoted below
+ * (no Authorization header)                     → 401
+ * Authorization: Basic sk_<fabricated>          → 401   ← body is {"message"} only
+ * ```
+ *
+ * Sending the key as a `Bearer` token is explicitly rejected with a
+ * dedicated 401 message pointing the caller back at `Authorization: Basic` —
+ * confirmed in the source, and reproduced verbatim by the live backend:
  *
  * > "A secret API key was passed as a Bearer token. Secret API keys must be
  * > sent using HTTP Basic authentication instead (Authorization: Basic

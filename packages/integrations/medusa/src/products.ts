@@ -4,8 +4,8 @@
  * discipline of `packages/integrations/woo/src/products.ts` — Phase 3's
  * `catalog_items` / `channel_listings` matcher is a later child issue.
  *
- * NO LIVE MEDUSA INSTANCE EXISTS IN THIS ENVIRONMENT — see `orders.ts` and
- * the module doc for the verification trail and the follow-up bead.
+ * LIVE-VERIFIED against Medusa 2.18.0 on 2026-08-12 (loxep-xh9.4.1) — see
+ * `orders.ts` for the rest of the verification trail.
  *
  * ## A structurally different shape from WooCommerce, and why
  *
@@ -50,9 +50,16 @@
  * Medusa's own product LIST default already includes `*variants` and
  * `*variants.prices`
  * (https://github.com/medusajs/medusa/blob/develop/packages/medusa/src/api/admin/products/query-config.ts,
- * `defaultAdminProductFields`), unlike the narrow order-list default. This
- * adapter therefore does NOT override `fields` by default for products —
- * only `fetchOrders` needs the explicit override documented in `orders.ts`.
+ * `defaultAdminProductFields`). This adapter therefore does NOT override
+ * `fields` by default for products — only `fetchOrders` needs the explicit
+ * override documented in `orders.ts`.
+ *
+ * LIVE-CONFIRMED: a bare `GET /admin/products?limit=1` returned each product
+ * with `variants[]`, each variant carrying `sku`, `title`, and a populated
+ * `prices[]` of `{id, currency_code, amount, min_quantity, max_quantity,
+ * variant_id, …}`. Nothing this mapper reads had to be requested explicitly.
+ * (Note the contrast with orders, where the intermediate `payments` entity
+ * DOES have to be requested level by level — see `orders.ts`.)
  */
 import type { MedusaAdapter, MedusaQuery } from "./adapter.ts";
 import { MEDUSA_DEFAULT_LIMIT, MEDUSA_MAX_LIMIT } from "./adapter.ts";

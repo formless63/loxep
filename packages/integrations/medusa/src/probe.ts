@@ -1,12 +1,16 @@
 /**
  * Connection probe: "can this secret API key read this Medusa backend?"
  *
+ * LIVE-VERIFIED against Medusa 2.18.0 (loxep-xh9.4.1): the probe call
+ * returns `ok: true` with `visibleOrderCount` taken from the body's `count`,
+ * and a fabricated `sk_…` key yields `ok: false` with `kind: "auth"`.
+ *
  * ONE strategy, unlike the WooCommerce adapter's two. WooCommerce needs a
  * fallback because a key pair's readable endpoints depend on the WordPress
  * ROLE of the user that issued it (`manage_woocommerce` vs a lesser role).
  * Nothing found in the Medusa source reviewed for this package (see
- * `config.ts`/`orders.ts` for the citation trail; no live instance exists
- * here) suggests a Medusa secret API key can be scoped narrower than the
+ * `config.ts`/`orders.ts` for the citation trail), and nothing observed
+ * live, suggests a Medusa secret API key can be scoped narrower than the
  * admin `user` it authenticates as
  * (https://github.com/medusajs/medusa/blob/develop/packages/core/framework/src/http/middlewares/authenticate-middleware.ts
  * treats a valid API key as `actor_type: "api-key"` with no further scope
