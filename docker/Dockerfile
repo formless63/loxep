@@ -30,6 +30,10 @@ COPY . .
 # Force the Node.js server output: building under Bun would otherwise make
 # Nitro auto-detect a Bun.serve entry, which the node:24 runtime cannot run.
 ENV SERVER_PRESET=node-server
+# Bound the vite/nitro build's V8 heap: unbounded, it peaks ~9.5 GB RSS and
+# has OOMed a 16 GB host. CI's 7 GB runners prove the build completes when
+# V8 is forced to collect earlier; 6 GB keeps headroom without risking that.
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN bun run build
 
 # ---------------------------------------------------------------------------
@@ -38,12 +42,27 @@ RUN bun run build
 # creates; the runtime stage copies them verbatim. --linker=hoisted forces the
 # classic flat layout — Bun 1.3's default isolated linker scatters
 # per-workspace node_modules under packages/*, which this image does not carry.
+#
+# --filter '!./apps/*' installs root + packages/* only. The runtime executes
+# bin/loxep.ts, which imports packages/* from source (Node type stripping), so
+# those production deps must be real files on disk. apps/web is NOT imported
+# from source — it is served from the prebuilt Nitro bundle copied below, which
+# already has its dependencies bundled in — so installing apps/web's deps here
+# ships ~575MB of unreachable code (react-dom, recharts, faker, fonts, ...).
+# apps/docs is likewise build-time only.
+#
+# The full manifest set is still copied above so the workspace graph resolves
+# and the untouched bun.lock still satisfies --frozen-lockfile; the filter
+# selects which workspaces get *installed*, it does not rewrite any manifest.
+# Negation (rather than listing packages/*) keeps this correct for free when a
+# new workspace package is added — including packages/integrations/*, which an
+# explicit './packages/*' glob silently misses.
 # ---------------------------------------------------------------------------
 FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 
 COPY --from=manifests /manifests ./
-RUN bun install --frozen-lockfile --production --linker=hoisted
+RUN bun install --frozen-lockfile --production --linker=hoisted --filter '!./apps/*'
 
 # ---------------------------------------------------------------------------
 # Runtime stage: Node.js 24 runs bin/ and packages/ TypeScript natively via
