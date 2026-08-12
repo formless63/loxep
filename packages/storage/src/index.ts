@@ -2,9 +2,11 @@
  * @loxep/storage — media/object-storage foundation (ADR-0012, ADR-0014).
  *
  * One storage-driver contract with `local` and generic `s3` implementations,
- * `storage_backends` records with encrypted credentials, media identity in
- * PostgreSQL, and the resumable copy→verify→cutover→explicit-cleanup
- * storage-migration workflow on Graphile Worker.
+ * `storage_backends` records with encrypted credentials, and media identity
+ * in PostgreSQL. This entry point is dependency-light and does not import
+ * @loxep/jobs. The resumable copy→verify→cutover→explicit-cleanup
+ * storage-migration workflow (Graphile Worker-backed) is exported from the
+ * "@loxep/storage/migration" subpath instead — see ./migration.ts.
  */
 export {
   MediaObjectNotFoundError,
@@ -63,20 +65,6 @@ export type {
   UploadInput,
 } from "./media.ts";
 
-export {
-  STORAGE_MIGRATE_OBJECT_TASK_NAME,
-  STORAGE_MIGRATION_OBJECT_STATUSES,
-  STORAGE_MIGRATION_STATUSES,
-  createStorageMigrationService,
-} from "./migration.ts";
-export type {
-  CleanupResult,
-  MigrationEnqueue,
-  MigrationStatus,
-  MigrationStatusCounts,
-  StartMigrationInput,
-  StorageMigrationObjectStatus,
-  StorageMigrationRecord,
-  StorageMigrationService,
-  StorageMigrationStatus,
-} from "./migration.ts";
+// Storage-migration exports (Graphile Worker-backed) live behind the
+// "@loxep/storage/migration" subpath so importers that only need the
+// driver/backend/media surface do not pull in @loxep/jobs transitively.

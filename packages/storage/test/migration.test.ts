@@ -26,18 +26,20 @@ import {
 } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import {
-  STORAGE_MIGRATE_OBJECT_TASK_NAME,
   StorageMigrationError,
   createMediaService,
   createStorageBackendsService,
-  createStorageMigrationService,
 } from "../src/index.ts";
 import type {
   MediaObjectRecord,
   MediaService,
   StorageBackendsService,
-  StorageMigrationService,
 } from "../src/index.ts";
+import {
+  STORAGE_MIGRATE_OBJECT_TASK_NAME,
+  createStorageMigrationService,
+} from "../src/migration.ts";
+import type { StorageMigrationService } from "../src/migration.ts";
 import {
   collect,
   createScratchDb,
