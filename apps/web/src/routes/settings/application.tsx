@@ -7,12 +7,14 @@ export const Route = createFileRoute('/settings/application')({
 });
 
 function SettingsApplication() {
+  const { auth } = Route.useRouteContext();
+  const isAdmin = auth?.roles.includes('admin') ?? false;
   return (
     <SettingsPage
       title='Application settings'
       description='Database-backed application configuration — secrets never appear here.'
     >
-      <ApplicationSettings />
+      <ApplicationSettings isAdmin={isAdmin} />
     </SettingsPage>
   );
 }

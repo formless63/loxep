@@ -8,8 +8,11 @@ import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import {
   SettingNotRegisteredError,
+  SettingValidationError,
   createSettingsService,
   defineSetting,
+  findRegisteredSetting,
+  monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
 } from "../src/index.ts";
@@ -246,6 +249,140 @@ describe("settings service", () => {
       mode: "keep",
       afterDays: 30,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Key-addressed write path (loxep-fev) — what `/settings/application`'s edit
+  // dialog reaches: a KEY plus a value of unknown shape.
+  // -------------------------------------------------------------------------
+
+  it("findRegisteredSetting resolves the registry's own definition", () => {
+    expect(findRegisteredSetting(pollingDefaults.key)).toBe(pollingDefaults);
+    expect(findRegisteredSetting("test.never_declared")).toBeUndefined();
+  });
+
+  it("setByKey rejects a key nothing registered, writing nothing", async () => {
+    await expect(
+      service.setByKey("test.not_a_setting", { anything: true }, {}),
+    ).rejects.toBeInstanceOf(SettingNotRegisteredError);
+    const rows = await handle.pool.query(
+      "select 1 from application_settings where key = $1",
+      ["test.not_a_setting"],
+    );
+    expect(rows.rowCount).toBe(0);
+  });
+
+  it("setByKey rejects wrong shapes, unknown properties, and wrong types", async () => {
+    const key = monitorObservationCapsSetting.key;
+    // Wrong type for a field.
+    await expect(
+      service.setByKey(
+        key,
+        { watchlistItemsPerPoll: "20", searchItemsPerPoll: 50 },
+        { actorUserId: actorId },
+      ),
+    ).rejects.toBeInstanceOf(SettingValidationError);
+    // Out of range.
+    await expect(
+      service.setByKey(
+        key,
+        { watchlistItemsPerPoll: 0, searchItemsPerPoll: 50 },
+        { actorUserId: actorId },
+      ),
+    ).rejects.toBeInstanceOf(SettingValidationError);
+    // Unknown property — the shipped schemas are strictObject.
+    await expect(
+      service.setByKey(
+        key,
+        { watchlistItemsPerPoll: 20, searchItemsPerPoll: 50, extra: 1 },
+        { actorUserId: actorId },
+      ),
+    ).rejects.toBeInstanceOf(SettingValidationError);
+    // Not an object at all.
+    await expect(
+      service.setByKey(key, "20", { actorUserId: actorId }),
+    ).rejects.toBeInstanceOf(SettingValidationError);
+
+    // The message names the offending path so the operator's dialog can show it.
+    await expect(
+      service.setByKey(key, { watchlistItemsPerPoll: 20 }, {}),
+    ).rejects.toThrow(/searchItemsPerPoll/);
+
+    // Nothing was persisted and nothing was audited by any of the above.
+    const rows = await handle.pool.query(
+      "select 1 from application_settings where key = $1",
+      [key],
+    );
+    expect(rows.rowCount).toBe(0);
+    const audits = await handle.pool.query(
+      "select 1 from audit_events where resource_id = $1",
+      [key],
+    );
+    expect(audits.rowCount).toBe(0);
+  });
+
+  it("setByKey round-trips a valid value and audits it like set()", async () => {
+    const entry = await service.setByKey(
+      monitorObservationCapsSetting.key,
+      { watchlistItemsPerPoll: 25, searchItemsPerPoll: 75 },
+      { actorUserId: actorId, requestId: "req-setbykey-1" },
+    );
+    expect(entry).toMatchObject({
+      key: monitorObservationCapsSetting.key,
+      description: monitorObservationCapsSetting.description,
+      schemaVersion: monitorObservationCapsSetting.schemaVersion,
+      isSet: true,
+      value: { watchlistItemsPerPoll: 25, searchItemsPerPoll: 75 },
+      updatedByUserId: actorId,
+    });
+    expect(entry.updatedAt).toBeInstanceOf(Date);
+
+    // The typed reader (the worker's path) sees the same value.
+    await expect(
+      service.get(monitorObservationCapsSetting),
+    ).resolves.toEqual({
+      watchlistItemsPerPoll: 25,
+      searchItemsPerPoll: 75,
+    });
+
+    // A second write upserts the one row and audits an update, not a create.
+    await service.setByKey(
+      monitorObservationCapsSetting.key,
+      { watchlistItemsPerPoll: 30, searchItemsPerPoll: 80 },
+      { actorUserId: actorId },
+    );
+    const rows = await handle.pool.query<{ count: number }>(
+      "select count(*)::int as count from application_settings where key = $1",
+      [monitorObservationCapsSetting.key],
+    );
+    expect(rows.rows[0]?.count).toBe(1);
+
+    const audits = await handle.pool.query<{
+      action: string;
+      request_id: string | null;
+      actor_user_id: string;
+    }>(
+      `select * from audit_events
+        where resource_type = 'application_setting' and resource_id = $1
+        order by occurred_at asc`,
+      [monitorObservationCapsSetting.key],
+    );
+    expect(audits.rowCount).toBe(2);
+    expect(audits.rows[0]?.action).toBe("settings.create");
+    expect(audits.rows[0]?.request_id).toBe("req-setbykey-1");
+    expect(audits.rows[0]?.actor_user_id).toBe(actorId);
+    expect(audits.rows[1]?.action).toBe("settings.update");
+  });
+
+  it("setByKey validates a non-object setting's schema too", async () => {
+    await expect(
+      service.setByKey(displayName.key, "", {}),
+    ).rejects.toBeInstanceOf(SettingValidationError);
+    const entry = await service.setByKey(displayName.key, "Ops Loxep", {
+      actorUserId: actorId,
+    });
+    expect(entry.value).toBe("Ops Loxep");
+    await expect(service.get(displayName)).resolves.toBe("Ops Loxep");
   });
 
   it("rejects duplicate registration of the same key", () => {

@@ -600,6 +600,56 @@ export const fetchApplicationSettings = createServerFn({ method: 'GET' }).handle
   }
 );
 
+/**
+ * Admin write for ONE registered application setting (loxep-fev).
+ *
+ * The browser cannot run a setting's Zod schema — the registry lives in
+ * `@loxep/domain`, server-side — so the dialog sends the operator's raw JSON
+ * text and this handler is the only validator: `settings.setByKey` rejects
+ * any key that `defineSetting()` did not register and parses the value
+ * through that definition's schema before a row is written. The domain
+ * service appends the `settings.create`/`settings.update` audit event; there
+ * is deliberately no separate audit call here.
+ *
+ * Setting values are non-secret by definition (ADR-0016/ADR-0019 — secret
+ * material lives in the secrets service), so unlike credential forms this one
+ * both reads the current value back and echoes the stored value on success.
+ */
+const updateApplicationSettingInput = z.strictObject({
+  key: z.string().min(1),
+  /** Raw JSON text as typed in the dialog; parsed and validated here. */
+  valueJson: z.string()
+});
+
+export const updateApplicationSetting = createServerFn({ method: 'POST' })
+  .inputValidator(updateApplicationSettingInput)
+  .handler(async ({ data }): Promise<RegisteredSettingDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+
+    let value: unknown;
+    try {
+      value = JSON.parse(data.valueJson) as unknown;
+    } catch (error) {
+      throw new Error(
+        `Value is not valid JSON: ${error instanceof Error ? error.message : 'parse failed'}`,
+        { cause: error }
+      );
+    }
+
+    const entry = await getAdminServices().settings.setByKey(data.key, value, {
+      actorUserId: session.user.id
+    });
+    return {
+      key: entry.key,
+      description: entry.description,
+      schemaVersion: entry.schemaVersion,
+      isSet: entry.isSet,
+      value: entry.value as JsonValue,
+      updatedAt: iso(entry.updatedAt)
+    };
+  });
+
 // ---------------------------------------------------------------------------
 // Notifications (loxep-62y.3) — ntfy endpoints, rules, delivery status
 // ---------------------------------------------------------------------------

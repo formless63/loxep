@@ -195,6 +195,8 @@ validated server action/API
 
 A restart requirement is acceptable only when the underlying runtime genuinely needs it, such as changing database connectivity, bind behavior, or another bootstrap concern.
 
+Implemented behavior for registered application settings: `/settings/application` lists every registered setting and, for an `admin`, offers a per-setting edit dialog. Because a setting's Zod schema lives in the server-side registry, the dialog submits the operator's raw JSON and the admin-gated server function is the only validator — `SettingsService.setByKey` refuses any key `defineSetting()` did not register, parses the value through that definition's schema before touching a row, writes the row stamped with the definition's `schema_version` and the acting user, and appends the `settings.create`/`settings.update` audit event with before/after in the same transaction. A schema rejection is reported back onto the dialog's field verbatim, so the operator reads the validation message rather than a generic failure. No restart is needed: the worker's settings reader (`@loxep/app`) memoizes a resolved snapshot for ~15 seconds, so a saved change is picked up within seconds.
+
 ## Storage configuration
 
 Storage illustrates the boundary well:

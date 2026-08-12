@@ -70,6 +70,45 @@ test('admin creates an economic entity through the dialog', async ({ page }) => 
   await expect(row.getByText('active')).toBeVisible();
 });
 
+/**
+ * Application settings are editable by admins (loxep-fev). The registered
+ * setting's Zod schema only exists server-side, so the dialog's job is to send
+ * raw JSON and surface the server's validation message inline — both halves
+ * are asserted here. `commerce.order_payload_retention` is used because
+ * changing its window has no effect on any other spec's flow.
+ */
+test('admin edits a registered application setting', async ({ page }) => {
+  await page.goto('/settings/application');
+  const settingKey = 'commerce.order_payload_retention';
+
+  await page
+    .getByRole('row')
+    .filter({ hasText: settingKey })
+    .getByRole('button', { name: 'Edit' })
+    .first()
+    .click();
+
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(settingKey)).toBeVisible();
+  const valueField = dialog.getByLabel('Value (JSON) *');
+
+  // A shape the registered schema rejects: the server's message renders on the
+  // field, and the dialog stays open.
+  await valueField.fill('{"mode":"delete","afterDays":180}');
+  await dialog.getByRole('button', { name: 'Save setting' }).click();
+  await expect(dialog.getByText(/mode/)).toBeVisible();
+  await expect(dialog).toBeVisible();
+
+  // A valid value saves, closes the dialog, and shows up in the table.
+  await valueField.fill('{"mode":"redact","afterDays":200}');
+  await dialog.getByRole('button', { name: 'Save setting' }).click();
+  await expect(dialog).toBeHidden();
+
+  const row = page.getByRole('row').filter({ hasText: settingKey }).first();
+  await expect(row.getByText('200')).toBeVisible();
+  await expect(row.getByText('stored')).toBeVisible();
+});
+
 test('admin creates a child entity beneath a parent', async ({ page }) => {
   await page.goto('/settings/entities');
   await page.getByRole('button', { name: 'New entity' }).click();

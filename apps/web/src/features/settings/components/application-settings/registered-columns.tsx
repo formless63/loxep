@@ -1,5 +1,6 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import { formatDateTime } from '@/lib/format';
@@ -80,3 +81,29 @@ export const registeredColumns: ColumnDef<RegisteredSettingDto>[] = [
     )
   }
 ];
+
+/**
+ * Registered-setting columns, plus an Edit action for admins. A setting value
+ * is non-secret configuration (ADR-0016), so unlike a credential surface it
+ * is both displayed and editable; the server function re-checks the role and
+ * validates the submitted value against the setting's registered schema.
+ */
+export function getRegisteredColumns(
+  isAdmin: boolean,
+  onEdit: (setting: RegisteredSettingDto) => void
+): ColumnDef<RegisteredSettingDto>[] {
+  if (!isAdmin) return registeredColumns;
+  return [
+    ...registeredColumns,
+    {
+      id: 'actions',
+      cell: ({ row }) => (
+        <div className='flex justify-end'>
+          <Button size='sm' variant='outline' onClick={() => onEdit(row.original)}>
+            Edit
+          </Button>
+        </div>
+      )
+    }
+  ];
+}
