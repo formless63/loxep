@@ -139,6 +139,7 @@ import { randomUUID } from "node:crypto";
 import type { LoxepDb } from "@loxep/db";
 import type { AddJob, JobsLogger } from "@loxep/jobs";
 import {
+  deactivateAbsentMonitorItems,
   deriveMarketEvents,
   deriveNewListingEvents,
   diffDiscoveredItems,
@@ -594,36 +595,6 @@ export function createEbayPollExecutor(
   }
 
   /**
-   * Deactivate `monitor_items` links whose item is no longer in the fetched
-   * membership.
-   *
-   * NOTE (documented gap): @loxep/market exposes `linkItemToMonitor` but no
-   * absence-marking counterpart, and that package is not this one's to
-   * change. This is the minimal safe equivalent — one idempotent set-based
-   * UPDATE using the same escaped-literal discipline as `@loxep/market`'s own
-   * raw statements — and it should move into @loxep/market as
-   * `deactivateAbsentMonitorItems` (filed separately).
-   */
-  async function deactivateAbsentLinks(
-    monitorTargetId: string,
-    presentItemIds: readonly string[],
-  ): Promise<number> {
-    const present =
-      presentItemIds.length === 0
-        ? "array[]::uuid[]"
-        : `array[${presentItemIds.map(uuidLiteral).join(", ")}]::uuid[]`;
-    const result = await db.execute(
-      `update monitor_items
-          set active = false
-        where monitor_target_id = ${uuidLiteral(monitorTargetId)}
-          and active = true
-          and marketplace_item_id <> all (${present})
-        returning marketplace_item_id`,
-    );
-    return result.rows.length;
-  }
-
-  /**
    * The members to snapshot this poll: stalest first (never observed wins),
    * capped so one poll cannot drain the connection's rate budget.
    */
@@ -675,7 +646,12 @@ export function createEbayPollExecutor(
         "watchlist membership truncated by the page bound; skipping absence marking",
       );
     } else {
-      deactivated = await deactivateAbsentLinks(target.id, presentIds);
+      const result = await deactivateAbsentMonitorItems(db, {
+        monitorTargetId: target.id,
+        presentMarketplaceItemIds: presentIds,
+        at: observedAt,
+      });
+      deactivated = result.deactivated;
     }
 
     const { watchlistItemsPerPoll } = await observationCaps();
