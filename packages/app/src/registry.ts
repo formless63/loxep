@@ -12,13 +12,14 @@
  * | `notifications.deliver`     | @loxep/notifications | sends one rendered message      |
  * | `ebay.refresh-tokens`       | @loxep/app           | keeps user tokens warm (15 min) |
  * | `commerce.sync-woo-orders`  | @loxep/commerce      | on-demand order sync for one connection |
+ * | `commerce.sync-ebay-orders` | @loxep/commerce      | the same, for an eBay seller account |
  *
  * Cron: `maintenance.heartbeat` (@loxep/jobs' defaults),
  * `market.dispatch-due-monitors` (every minute), `ebay.refresh-tokens`
  * (every 15 minutes). @loxep/commerce deliberately defines NO cron item —
- * its scheduled work is a `woo_orders` monitor target claimed by the market
- * dispatcher, which is the whole point of registering a target type instead
- * of adding a second scheduler (see the routing note below).
+ * its scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed
+ * by the market dispatcher, which is the whole point of registering a target
+ * type instead of adding a second scheduler (see the routing note below).
  *
  * ## Poll routing (Phase 3)
  *
@@ -29,6 +30,7 @@
  * ```text
  * ebay_item | ebay_watchlist | ebay_search | ebay_seller → createEbayPollExecutor
  * woo_orders                                            → createWooOrderPollExecutor
+ * ebay_orders                                           → createEbayOrderPollExecutor
  * ```
  *
  * Each branch is built by the domain that owns the type and joined here,
@@ -36,11 +38,21 @@
  * target type belongs to the domain that registered it, wired in the
  * composition root — never in the scheduling package".
  *
- * The `commerce.sync-woo-orders` TASK is registered alongside it and shares
- * the very same sync service instance. It is not how scheduled syncs run —
- * the dispatcher/poll path above is — it is the on-demand entry point (a
- * backfill, a "sync now" button, a script), which is why it keeps its own
- * job-key-per-connection and its own Graphile retry budget.
+ * REGISTRATION CAVEAT: `woo_orders` is in `@loxep/market`'s
+ * `MONITOR_TARGET_TYPES` and `monitorTargetConfigSchemas`; **`ebay_orders` is
+ * not yet**, because `packages/market` was outside loxep-xh9.2's write fence.
+ * Nothing about polling depends on that list — `claimDueTargets`,
+ * `recordPollSuccess`, and `recordPollFailure` read `target_type` as text —
+ * so the route below works end to end. What does not work is creating such a
+ * row through `createMonitorService`, whose `targetType` is a closed enum;
+ * `@loxep/commerce`'s `ensureEbayOrderSyncTarget` inserts it directly. See
+ * that module's doc for the follow-up.
+ *
+ * The `commerce.sync-*-orders` TASKS are registered alongside the routes and
+ * share the very same sync service instances. They are not how scheduled
+ * syncs run — the dispatcher/poll path above is — they are the on-demand
+ * entry points (a backfill, a "sync now" button, a script), which is why each
+ * keeps its own job-key-per-connection and its own Graphile retry budget.
  *
  * The registry is a plain value: nothing starts, connects, or polls until
  * `startWorkerRuntime` receives it. `apps/web` must never import this module
@@ -64,8 +76,12 @@
  * about the wiring depends on it.
  */
 import type { BootstrapConfig } from "@loxep/config";
-import { WOO_ORDERS_TARGET_TYPE, createCommerceTasks } from "@loxep/commerce";
-import type { CommerceTasks } from "@loxep/commerce";
+import {
+  EBAY_ORDERS_TARGET_TYPE,
+  WOO_ORDERS_TARGET_TYPE,
+  createCommerceTasks,
+} from "@loxep/commerce";
+import type { CommerceTasks, EbayOrderPageIterator } from "@loxep/commerce";
 import {
   addJob as standaloneAddJob,
   createTaskRegistry,
@@ -87,6 +103,10 @@ import type {
 // See the WIRING CAVEAT in this module's doc comment.
 import { renderMarketEventMessage as renderEnrichedMarketEventMessage } from "@loxep/notifications/render";
 import { createWooOrderPollExecutor } from "./commerce.ts";
+import {
+  createEbayOrderPageIterator,
+  createEbayOrderPollExecutor,
+} from "./commerce-ebay.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -120,6 +140,14 @@ export interface BuildWorkerRegistryOptions {
    * {@link CreateEbayPollExecutorOptions.discovery} for why it exists.
    */
   discovery?: CreateEbayPollExecutorOptions["discovery"];
+  /**
+   * Provider seam for `ebay_orders`. Defaults to
+   * `createEbayOrderPageIterator(services)`, which binds
+   * `@loxep/integration-ebay`'s `iterateEbayOrders` to this composition's
+   * adapter factory. A test supplies canned pages here instead of stubbing
+   * the Sell Fulfillment HTTP surface.
+   */
+  ebayOrders?: EbayOrderPageIterator;
 }
 
 export interface WorkerComposition {
@@ -199,12 +227,15 @@ export function buildWorkerRegistry(
     standaloneAddJob(services.handle.pool, task, payload, enqueueOptions);
 
   // --- commerce -------------------------------------------------------
-  // Built before the market tasks because its sync service is what the
-  // `woo_orders` poll route runs; the task and the route share this instance.
+  // Built before the market tasks because its sync services are what the
+  // `woo_orders` / `ebay_orders` poll routes run; each task and its route
+  // share one instance.
   const commerce = createCommerceTasks({
     db: services.db,
     adapterFactory: async ({ connectionId }) =>
       (await services.getWooAdapterForConnection(connectionId)).adapter,
+    iterateEbayOrders:
+      options.ebayOrders ?? createEbayOrderPageIterator(services),
   });
 
   // --- market ---------------------------------------------------------
@@ -221,8 +252,20 @@ export function buildWorkerRegistry(
     services,
     sync: commerce.sync,
   });
+  // `commerce.ebaySync` is non-null because `iterateEbayOrders` was supplied
+  // above; the guard keeps the route out of the table rather than registering
+  // a branch that would throw when claimed.
+  const ebayOrderPollExecutor =
+    commerce.ebaySync === null
+      ? null
+      : createEbayOrderPollExecutor({ services, sync: commerce.ebaySync });
   const pollExecutor: PollExecutor = createRoutedPollExecutor({
-    routes: { [WOO_ORDERS_TARGET_TYPE]: wooOrderPollExecutor },
+    routes: {
+      [WOO_ORDERS_TARGET_TYPE]: wooOrderPollExecutor,
+      ...(ebayOrderPollExecutor === null
+        ? {}
+        : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
+    },
     fallback: ebayPollExecutor,
   });
   const market = createMarketTasks({

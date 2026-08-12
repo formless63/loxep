@@ -119,6 +119,16 @@ export const wooOrdersTargetConfigSchema = z.looseObject({
 
 export type WooOrdersTargetConfig = z.infer<typeof wooOrdersTargetConfigSchema>;
 
+/**
+ * The same shape under a provider-neutral name. Every commerce order sync —
+ * WooCommerce today, eBay in `ebay-sync.ts` — stores its cursor under the one
+ * `config.commerceSync` namespace, because the cursor's fields are the same
+ * facts (a watermark, a last-run stamp, a page budget) regardless of which
+ * provider produced them. One namespace, one schema, one set of read/write
+ * helpers; only the `target_type` differs.
+ */
+export const commerceSyncTargetConfigSchema = wooOrdersTargetConfigSchema;
+
 /** The cursor as callers see it. */
 export interface WooOrderSyncCursor {
   monitorTargetId: string;
@@ -129,14 +139,18 @@ export interface WooOrderSyncCursor {
   maxPages: number | null;
 }
 
+/** Provider-neutral alias — see {@link commerceSyncTargetConfigSchema}. */
+export type CommerceOrderSyncCursor = WooOrderSyncCursor;
+
 function readCursorFrom(
   monitorTargetId: string,
   config: unknown,
+  targetType: string = WOO_ORDERS_TARGET_TYPE,
 ): WooOrderSyncCursor {
-  const parsed = wooOrdersTargetConfigSchema.safeParse(config ?? {});
+  const parsed = commerceSyncTargetConfigSchema.safeParse(config ?? {});
   if (!parsed.success) {
     throw new CommerceValidationError(
-      `invalid "${WOO_ORDERS_TARGET_TYPE}" monitor config: ${parsed.error.issues
+      `invalid "${targetType}" monitor config: ${parsed.error.issues
         .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.code}`)
         .join("; ")}`,
     );
@@ -179,6 +193,28 @@ export async function ensureWooOrderSyncTarget(
   db: LoxepDb,
   input: EnsureWooOrderSyncTargetInput,
 ): Promise<WooOrderSyncCursor> {
+  return ensureOrderSyncTarget(db, {
+    ...input,
+    targetType: WOO_ORDERS_TARGET_TYPE,
+    namePrefix: "WooCommerce orders",
+  });
+}
+
+/**
+ * The provider-neutral form of {@link ensureWooOrderSyncTarget}. A second
+ * provider is a different `targetType` and a different default name; every
+ * other rule — one target per connection, enforced by looking rather than by
+ * a constraint, and a direct insert rather than a `@loxep/market` dependency —
+ * is identical and lives here once.
+ */
+export async function ensureOrderSyncTarget(
+  db: LoxepDb,
+  input: EnsureWooOrderSyncTargetInput & {
+    targetType: string;
+    namePrefix: string;
+  },
+): Promise<WooOrderSyncCursor> {
+  const { targetType, namePrefix } = input;
   const connection = await db.query.connections.findFirst({
     where: (table, { eq }) => eq(table.id, input.connectionId),
     columns: { id: true, name: true },
@@ -193,13 +229,13 @@ export async function ensureWooOrderSyncTarget(
     where: (table, { and, eq }) =>
       and(
         eq(table.connectionId, input.connectionId),
-        eq(table.targetType, WOO_ORDERS_TARGET_TYPE),
+        eq(table.targetType, targetType),
       ),
     orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
     columns: { id: true, config: true },
   });
   if (existing !== undefined) {
-    return readCursorFrom(existing.id, existing.config);
+    return readCursorFrom(existing.id, existing.config, targetType);
   }
 
   const config =
@@ -217,8 +253,8 @@ export async function ensureWooOrderSyncTarget(
     .insert(monitorTargets)
     .values({
       connectionId: input.connectionId,
-      targetType: WOO_ORDERS_TARGET_TYPE,
-      name: input.name ?? `WooCommerce orders — ${connection.name}`,
+      targetType,
+      name: input.name ?? `${namePrefix} — ${connection.name}`,
       enabled: input.enabled ?? true,
       intervalSeconds: input.intervalSeconds ?? DEFAULT_SYNC_INTERVAL_SECONDS,
       // A new sync target is immediately due.
@@ -231,7 +267,7 @@ export async function ensureWooOrderSyncTarget(
   if (row === undefined) {
     throw new CommerceNotFoundError("monitor target insert returned no row");
   }
-  return readCursorFrom(row.id, row.config);
+  return readCursorFrom(row.id, row.config, targetType);
 }
 
 /** Read the stored cursor for a connection, or null when none exists yet. */
@@ -239,16 +275,25 @@ export async function readWooOrderSyncCursor(
   db: LoxepDb,
   connectionId: string,
 ): Promise<WooOrderSyncCursor | null> {
+  return readOrderSyncCursor(db, connectionId, WOO_ORDERS_TARGET_TYPE);
+}
+
+/** The provider-neutral form of {@link readWooOrderSyncCursor}. */
+export async function readOrderSyncCursor(
+  db: LoxepDb,
+  connectionId: string,
+  targetType: string,
+): Promise<WooOrderSyncCursor | null> {
   const row = await db.query.monitorTargets.findFirst({
     where: (table, { and, eq }) =>
       and(
         eq(table.connectionId, connectionId),
-        eq(table.targetType, WOO_ORDERS_TARGET_TYPE),
+        eq(table.targetType, targetType),
       ),
     orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
     columns: { id: true, config: true },
   });
-  return row === undefined ? null : readCursorFrom(row.id, row.config);
+  return row === undefined ? null : readCursorFrom(row.id, row.config, targetType);
 }
 
 /**
@@ -257,7 +302,7 @@ export async function readWooOrderSyncCursor(
  * `jsonb_set`-with-fallback shape `@loxep/market` uses, for the same reason: a
  * whole-object write would clobber state this package does not own.
  */
-export async function writeWooOrderSyncCursor(
+export async function writeOrderSyncCursor(
   db: LoxepDb,
   monitorTargetId: string,
   patch: {
@@ -306,6 +351,13 @@ export async function writeWooOrderSyncCursor(
     );
   }
 }
+
+/**
+ * The cursor write is already target-type-agnostic — it takes a monitor
+ * target id — so the WooCommerce-named export is a plain alias kept for the
+ * callers that predate the second provider.
+ */
+export const writeWooOrderSyncCursor = writeOrderSyncCursor;
 
 /* ------------------------------------------------------------------- sync */
 

@@ -69,6 +69,11 @@ import type {
   CommerceOrderRefundFact,
 } from "./facts.ts";
 import { textLiteral, timestamptzLiteral, uuidLiteral } from "./sql.ts";
+import { ebayOrderFactToCommerceFact } from "./ebay.ts";
+import type {
+  EbayOrderFactLike,
+  EbayTranslationOptions,
+} from "./ebay.ts";
 import { wooOrderFactToCommerceFact } from "./woo.ts";
 import type { WooTranslationOptions } from "./woo.ts";
 
@@ -241,6 +246,18 @@ export interface IngestWooOrderInput
   fact: WooOrderFact;
 }
 
+/**
+ * The eBay entry point. `fact` is typed against this package's structural
+ * re-declaration of the adapter's shape rather than an imported provider type
+ * — see `ebay.ts` for why `@loxep/commerce` takes no dependency on
+ * `@loxep/integration-ebay`.
+ */
+export interface IngestEbayOrderInput
+  extends Omit<IngestOrderFactInput, "fact">,
+    EbayTranslationOptions {
+  fact: EbayOrderFactLike;
+}
+
 /** One row of the cross-connection duplicate diagnostic. */
 export interface DuplicateOrderCandidate {
   provider: string;
@@ -271,6 +288,8 @@ export interface OrderIngestionService {
   ingestOrderFact: (input: IngestOrderFactInput) => Promise<IngestOrderResult>;
   /** Translate a WooCommerce fact and persist it. Idempotent. */
   ingestWooOrder: (input: IngestWooOrderInput) => Promise<IngestOrderResult>;
+  /** Translate an eBay fact and persist it. Idempotent. */
+  ingestEbayOrder: (input: IngestEbayOrderInput) => Promise<IngestOrderResult>;
   /** Read-only diagnostic: orders that look like the same sale twice. */
   findDuplicateOrderCandidates: (options?: {
     provider?: string;
@@ -565,6 +584,19 @@ export function createOrderIngestionService(options: {
     });
   }
 
+  async function ingestEbayOrder(
+    input: IngestEbayOrderInput,
+  ): Promise<IngestOrderResult> {
+    const { fact, channel, retainRawPayload, ...rest } = input;
+    return ingestOrderFact({
+      ...rest,
+      fact: ebayOrderFactToCommerceFact(fact, {
+        ...(channel === undefined ? {} : { channel }),
+        ...(retainRawPayload === undefined ? {} : { retainRawPayload }),
+      }),
+    });
+  }
+
   async function findDuplicateOrderCandidates(
     options: { provider?: string; limit?: number } = {},
   ): Promise<DuplicateOrderCandidate[]> {
@@ -707,6 +739,7 @@ export function createOrderIngestionService(options: {
   return {
     ingestOrderFact,
     ingestWooOrder,
+    ingestEbayOrder,
     findDuplicateOrderCandidates,
     setOrderAttribution,
     reattributeOrders,

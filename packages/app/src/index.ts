@@ -38,6 +38,12 @@ export type {
 export { createWooOrderPollExecutor } from "./commerce.ts";
 export type { CreateWooOrderPollExecutorOptions } from "./commerce.ts";
 
+export {
+  createEbayOrderPageIterator,
+  createEbayOrderPollExecutor,
+} from "./commerce-ebay.ts";
+export type { CreateEbayOrderPollExecutorOptions } from "./commerce-ebay.ts";
+
 export { buildAppServices } from "./services.ts";
 export type { AppServices, BuildAppServicesOptions } from "./services.ts";
 
