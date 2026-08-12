@@ -71,6 +71,28 @@ export const EBAY_DEFAULT_CONSENT_SCOPES: readonly string[] = [
   EBAY_BASE_SCOPE,
 ];
 
+/**
+ * Read-only Sell Fulfillment scope — required by `GET /sell/fulfillment/v1/
+ * order`, the source of Phase 3 eBay order ingestion (`orders.ts`). RESTful
+ * Sell APIs, unlike the traditional Trading calls, DO enforce OAuth scopes.
+ *
+ * It is deliberately NOT in {@link EBAY_DEFAULT_CONSENT_SCOPES}: requesting a
+ * scope a keyset was not granted makes eBay reject the whole consent with
+ * `invalid_scope`, which would break watchlist connections that need nothing
+ * beyond the base scope. A connection that intends to ingest orders consents
+ * with {@link EBAY_ORDER_CONSENT_SCOPES} instead, and a bundle stored before
+ * that (base scope only) gets an `auth` error from `sellGetOrders` — the
+ * correct, diagnosable outcome, not a silent empty result.
+ */
+export const EBAY_SELL_FULFILLMENT_READONLY_SCOPE =
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly";
+
+/** Consent set a connection needs for order ingestion. */
+export const EBAY_ORDER_CONSENT_SCOPES: readonly string[] = [
+  EBAY_BASE_SCOPE,
+  EBAY_SELL_FULFILLMENT_READONLY_SCOPE,
+];
+
 /** Refresh an access token this many seconds before it actually expires. */
 export const DEFAULT_REFRESH_SKEW_SECONDS = 300;
 

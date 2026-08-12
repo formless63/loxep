@@ -51,6 +51,7 @@ Documented deviations from "newest stable, no prereleases" (reviewed whenever th
 
 - **`nitro` 3.x beta** in `apps/web`: the current TanStack Start Vite integration is built against the Nitro v3 line, which upstream currently ships as beta releases. It is pinned to an exact verified beta build and re-verified together with the TanStack Start/Router set rather than independently upgraded. Revisit whenever TanStack Start or Nitro publishes a stable pairing.
 - **Deliberate-major queue**: upstream majors that exist but require real migration work (not drive-by bumps) are tracked as explicit issues rather than adopted silently or ignored silently. Renovate surfaces them; adoption happens through reviewed migrations with green builds.
+- **TanStack Router set pinned below latest** in `apps/web` (`@tanstack/react-router` 1.170.8, `@tanstack/react-start` 1.168.12, `@tanstack/router-plugin` 1.168.11): upstream `router-core` ≥ 1.171.7 carries an open SSR streaming regression ([TanStack/router#7529](https://github.com/TanStack/router/issues/7529) — the query dehydration stream's close listener is silently dropped), which broke SSR dehydration on every `useQuery` page. Pinned to the last known-good `router-core` 1.171.6 as a self-consistent same-week set. Un-pinning is tracked as an explicit issue and happens when a release containing the upstream fix is verified. The deprecated `@tanstack/react-router-with-query` was replaced by `@tanstack/react-router-ssr-query` in the same change.
 
 ## Automated updates
 
