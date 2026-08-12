@@ -27,7 +27,7 @@
  * channel            'medusa'                Loxep's selling-surface name
  * marketplace         null                   a Medusa backend is a single market,
  *                                            same reasoning as WooCommerce
- * credential_type    'medusa_api'            on the connection credential record
+ * credential_type    'medusa_credentials'    on the connection credential record
  * bundle purpose     'medusa_credentials'    ADR-0019 encrypted bundle
  * source_account_key 'medusa:<baseUrl>'      see `medusaSourceAccountKey()`
  * ```

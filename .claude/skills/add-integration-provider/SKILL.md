@@ -53,7 +53,7 @@ contract in `connection.ts` the way Woo and Medusa do:
 
 ```text
 provider  'medusa'   channel 'medusa'   marketplace null
-credential_type 'medusa_api'   bundle purpose 'medusa_credentials'
+credential_type 'medusa_credentials'   bundle purpose 'medusa_credentials'  (same SecretPurpose string)
 source_account_key 'medusa:<baseUrl>'
 ```
 

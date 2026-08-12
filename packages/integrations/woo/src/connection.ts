@@ -23,7 +23,7 @@
  * provider           'woocommerce'          matches design `orders.provider`
  * channel            'woocommerce'          Loxep's selling-surface name
  * marketplace         null                  a Woo store is a single market
- * credential_type    'woo_api'              on the connection credential record
+ * credential_type    'woo_credentials'      on the connection credential record
  * bundle purpose     'woo_credentials'      ADR-0019 encrypted bundle
  * source_account_key 'woocommerce:<siteUrl>'  see `wooSourceAccountKey()`
  * ```
