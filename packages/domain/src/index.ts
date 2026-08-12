@@ -17,7 +17,9 @@ export {
   EntityHierarchyError,
   EntityInactiveError,
   ConnectionNotFoundError,
+  ConnectionInUseError,
 } from "./errors.ts";
+export type { ConnectionReferenceCount } from "./errors.ts";
 
 export { REDACTED, redactJson } from "./redact.ts";
 export type { RedactOptions } from "./redact.ts";
@@ -96,10 +98,17 @@ export type {
   EntityMutationOptions,
 } from "./economic-entities.ts";
 
-export { CONNECTION_STATUSES, createConnectionsService } from "./connections.ts";
+export {
+  CONNECTION_REFERENCE_TABLES,
+  CONNECTION_STATUSES,
+  createConnectionsService,
+  isConnectionArchived,
+} from "./connections.ts";
 export type {
   Connection,
+  ConnectionDeleteResult,
   ConnectionMutationOptions,
+  ConnectionReferences,
   ConnectionStatus,
   ConnectionsService,
 } from "./connections.ts";

@@ -37,7 +37,8 @@ export function entityKindLabel(kind: EconomicEntityKind | string): string {
 export const CONNECTION_STATUS_LABELS = {
   active: 'Active',
   disabled: 'Disabled',
-  error: 'Error'
+  error: 'Error',
+  archived: 'Archived'
 } satisfies Record<ConnectionStatus, string>;
 
 export const STORAGE_DRIVER_LABELS = {

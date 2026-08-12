@@ -132,6 +132,7 @@ import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
+  createArchivedConnectionGate,
   createEbayPollExecutor,
   createRoutedPollExecutor,
 } from "./poll-executor.ts";
@@ -294,14 +295,19 @@ export function buildWorkerRegistry(
     commerce.ebaySync === null
       ? null
       : createEbayOrderPollExecutor({ services, sync: commerce.ebaySync });
-  const pollExecutor: PollExecutor = createRoutedPollExecutor({
-    routes: {
-      [WOO_ORDERS_TARGET_TYPE]: wooOrderPollExecutor,
-      ...(ebayOrderPollExecutor === null
-        ? {}
-        : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
-    },
-    fallback: ebayPollExecutor,
+  // The archived-connection gate wraps the ROUTER, so every target type
+  // inherits it (loxep-o7h) — see `createArchivedConnectionGate`.
+  const pollExecutor: PollExecutor = createArchivedConnectionGate({
+    services,
+    executor: createRoutedPollExecutor({
+      routes: {
+        [WOO_ORDERS_TARGET_TYPE]: wooOrderPollExecutor,
+        ...(ebayOrderPollExecutor === null
+          ? {}
+          : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
+      },
+      fallback: ebayPollExecutor,
+    }),
   });
   const market = createMarketTasks({
     db: services.db,

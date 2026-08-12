@@ -94,6 +94,7 @@ export {
   ITEM_OBSERVATION_SOURCE,
   WATCHLIST_MAX_PAGES,
   WATCHLIST_OBSERVATION_SOURCE,
+  createArchivedConnectionGate,
   createEbayPollExecutor,
   createRoutedPollExecutor,
 } from "./poll-executor.ts";

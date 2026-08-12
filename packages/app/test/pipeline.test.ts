@@ -526,3 +526,41 @@ describe("provider failure path", () => {
     }
   });
 });
+
+describe("archived connection gate (loxep-o7h)", () => {
+  it("skips polling a target whose connection is archived, without failing it", async () => {
+    const archivedConnection = await services.connections.createConnection({
+      provider: "ebay",
+      kind: "marketplace",
+      name: "retired buyer",
+      createdByUserId: "test-user",
+    });
+    const externalItemId = "v1|140000000001|0";
+    // The fake provider WOULD serve this item, so a written row would prove
+    // the gate let the poll through.
+    stateFor(archivedConnection.id).items.set(
+      externalItemId,
+      browseItemPayload({ itemId: externalItemId, price: "42.00" }),
+    );
+    await services.connections.archiveConnection(archivedConnection.id);
+
+    const target = await monitors.createTarget({
+      targetType: "ebay_item",
+      name: "retired widget",
+      connectionId: archivedConnection.id,
+      intervalSeconds: 300,
+      config: { externalItemId },
+      nextPollAt: new Date(Date.now() - 1000),
+    });
+
+    const polled = await pollOnce(target.id);
+    // Skipped, not failed: no backoff, no error count, no provider write.
+    expect(polled.consecutiveErrors).toBe(0);
+    expect(polled.backoffUntil).toBeNull();
+    expect(await itemByExternalId(externalItemId)).toBeUndefined();
+    const connection = await services.connections.getConnection(
+      archivedConnection.id,
+    );
+    expect(connection.status).toBe("archived");
+  });
+});

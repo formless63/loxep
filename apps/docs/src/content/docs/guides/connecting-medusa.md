@@ -42,6 +42,17 @@ Save. The backend URL is kept as ordinary connection configuration and stays vis
 | Requests 404 | The URL includes `/admin` or another path. Give the server root only. |
 | Authentication is refused | The key was revoked, or it belongs to a different backend. Create a new one. |
 
+## Removing a backend
+
+Removing a backend connection has two outcomes, and the stored data decides which one you get.
+
+- **Delete** is available when nothing in Loxep references the backend. The connection and the encrypted API key are removed outright.
+- **Archive** is what happens instead once the backend has produced anything — orders, monitors, or provenance records. Nothing is deleted: the backend is retired, disappears from pickers, and is skipped by polling, while everything it produced keeps resolving.
+
+Open the backend's row menu on **Settings → Connections** and choose **Delete**. If anything references it, Loxep refuses, lists exactly what is in the way with counts, and offers **Archive instead**. **Archive** is also available directly.
+
+Archiving is reversible: **Unarchive** returns the backend to **Disabled** rather than straight to **Active**. Revoking the secret API key is a separate step in the Medusa admin dashboard.
+
 ## Related
 
 - [Connecting eBay](../connecting-ebay/) and [Connecting WooCommerce](../connecting-woocommerce/) — the other provider setups.

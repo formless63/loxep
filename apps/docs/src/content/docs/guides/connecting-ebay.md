@@ -150,6 +150,19 @@ Validating also records the outcome on the connection, so it doubles as a manual
 | eBay reports `invalid_scope` and the consent screen never appears | Order access was requested against a keyset that was not granted the Sell Fulfillment scope. Connect with **Watchlist & browsing**, and take the scope up with the keyset in the developer portal. |
 | Order sync reports an authentication error on a connection that validates | The connection holds the watchlist tier only. Its Credentials column says so; use **Grant order access** to re-consent. |
 
+## Removing an account
+
+Removing an account has two outcomes, and the stored data decides which one you get.
+
+- **Delete** is available when nothing in Loxep references the account. The connection and every credential held against it are removed outright.
+- **Archive** is what happens instead once the account has produced anything — monitors, observations, orders, or provenance records. Nothing is deleted: the account is retired, disappears from pickers, and is skipped by polling and token refresh, while everything it produced keeps resolving.
+
+Open the account's row menu on **Settings → Connections** and choose **Delete**. If anything references it, Loxep refuses, lists exactly what is in the way with counts, and offers **Archive instead**. **Archive** is also available directly when you already know that is what you want.
+
+Archiving is reversible: **Unarchive** returns the account to **Disabled** rather than straight to **Active**, so resuming provider traffic is always a deliberate second step.
+
+One eBay-specific caveat: neither action withdraws consent at eBay. Deleting removes Loxep's copy of the token; revoking the application's access on the eBay account itself is done in eBay's own account settings.
+
 ## Switching to production
 
 Moving an installation from sandbox to production is not a toggle — the production environment needs its own keyset, its own registered redirect URL, and fresh consent from real accounts.

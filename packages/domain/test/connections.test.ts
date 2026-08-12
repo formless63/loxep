@@ -3,7 +3,8 @@
  * status text-union and config validation, success/failure recording with
  * status transitions, credential set/get roundtrip through the ADR-0019
  * encrypted credentials service, and redacted audit events for every
- * mutation. Deletion is intentionally absent — disable instead.
+ * mutation. Removal (delete when unreferenced, archive when not) has its own
+ * file: `connection-lifecycle.test.ts`.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -214,12 +215,13 @@ describe("connections service", () => {
     expect(JSON.stringify(metadata)).not.toContain(MARKER);
   });
 
-  it("has no delete pathway — rows persist for imported-history semantics", () => {
-    expect(
-      Object.keys(service).some((key) =>
-        key.toLowerCase().includes("delete"),
-      ),
-    ).toBe(false);
+  it("exposes the guarded removal lifecycle (loxep-o7h)", () => {
+    // Removal exists, but only through the reference-guarded pair; the
+    // behavior itself lives in `connection-lifecycle.test.ts`.
+    expect(typeof service.deleteConnection).toBe("function");
+    expect(typeof service.archiveConnection).toBe("function");
+    expect(typeof service.unarchiveConnection).toBe("function");
+    expect(typeof service.countConnectionReferences).toBe("function");
   });
 
   it("wrote redacted audit events for every mutation", async () => {

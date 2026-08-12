@@ -8,9 +8,18 @@
  * `created_by_user_id` is audit/provenance metadata, not ownership: Phase 0
  * has no per-connection ACLs and this service never filters by user.
  *
- * Deleting a connection is intentionally out of scope (credential
- * revocation/deletion must not delete imported historical data) — disable
- * it instead via `setConnectionStatus(id, "disabled")`.
+ * Removing a connection has TWO outcomes, decided by the data (loxep-o7h):
+ *
+ * - `deleteConnection` hard-deletes a connection that nothing references,
+ *   together with its encrypted credential rows (secret hygiene — a deleted
+ *   account must not leave ciphertext behind);
+ * - `archiveConnection` is the answer whenever anything does reference it.
+ *   Archiving never deletes imported history; it parks the connection in a
+ *   terminal state that pickers and polling skip.
+ *
+ * A delete is never silently downgraded to an archive: `deleteConnection`
+ * refuses with {@link ConnectionInUseError}, carrying the per-table counts,
+ * so the operator makes that call knowingly.
  *
  * Credential material never touches this table: credential workflows
  * delegate to the connection-credentials service (ADR-0019 encrypted
@@ -32,21 +41,77 @@ import type {
 } from "./connection-credentials.ts";
 import type { SecretBundle, SecretPurpose } from "./bundles.ts";
 import {
+  ConnectionInUseError,
   ConnectionNotFoundError,
   DomainValidationError,
   EntityInactiveError,
   EntityNotFoundError,
 } from "./errors.ts";
+import type { ConnectionReferenceCount } from "./errors.ts";
+import { uuidLiteral } from "./sql.ts";
 
 /**
  * Application-owned connection status union (text column, no PG enum).
  * `error` marks a connection whose most recent operation failed; `disabled`
  * is the deliberate off switch and is never changed by success/failure
- * recording.
+ * recording; `archived` is the terminal state a connection reaches when it is
+ * retired but its data must survive (see {@link ConnectionsService.archiveConnection}).
  */
-export const CONNECTION_STATUSES = ["active", "disabled", "error"] as const;
+export const CONNECTION_STATUSES = [
+  "active",
+  "disabled",
+  "error",
+  "archived",
+] as const;
 
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
+
+/**
+ * Whether a connection may be used for work — pickers, polling, token
+ * refresh. `archived` is terminal and always excluded; `disabled` and `error`
+ * keep the meanings they already had elsewhere in the codebase, so callers
+ * that intentionally still act on those states are unaffected.
+ */
+export function isConnectionArchived(status: string): boolean {
+  return status === "archived";
+}
+
+/**
+ * Every table that carries a `connection_id`, enumerated from the schema
+ * rather than guessed, in the order an operator most wants to hear about.
+ *
+ * `marketplace_item_observations` has no foreign key (it is a hypertable and
+ * the column is provenance resolved in the application), so it would NOT stop
+ * a delete at the database level — which is exactly why it is counted here.
+ */
+export const CONNECTION_REFERENCE_TABLES = [
+  { table: "orders", label: "orders" },
+  { table: "channel_listings", label: "channel listings" },
+  { table: "monitor_targets", label: "monitors" },
+  { table: "marketplace_item_observations", label: "observations" },
+  { table: "source_events", label: "source events" },
+  { table: "provider_objects", label: "provider snapshots" },
+  { table: "external_resources", label: "external resources" },
+  { table: "acquisitions", label: "acquisitions" },
+] as const satisfies readonly { table: string; label: string }[];
+
+/** Reference counts for one connection, including the zero rows. */
+export interface ConnectionReferences {
+  /** One entry per table in {@link CONNECTION_REFERENCE_TABLES}. */
+  counts: ConnectionReferenceCount[];
+  /** Only the non-zero entries. */
+  blocking: ConnectionReferenceCount[];
+  total: number;
+}
+
+/** Outcome of a hard delete. */
+export interface ConnectionDeleteResult {
+  id: string;
+  /** Logical credential rows removed with the connection (ADR-0019). */
+  deletedCredentials: number;
+  /** Encrypted credential VERSION rows removed with them. */
+  deletedCredentialVersions: number;
+}
 
 const statusSchema = z.enum(CONNECTION_STATUSES);
 
@@ -138,10 +203,50 @@ export interface ConnectionsService {
     kind?: string;
     status?: ConnectionStatus;
   }) => Promise<Connection[]>;
-  /** Explicit status transition; use `"disabled"` instead of deletion. */
+  /** Explicit status transition (the operator's on/off switch). */
   setConnectionStatus: (
     id: string,
     status: ConnectionStatus,
+    options?: ConnectionMutationOptions,
+  ) => Promise<Connection>;
+  /**
+   * Per-table counts of everything that still references the connection.
+   * Read-only: the UI uses it to decide whether to offer delete or archive
+   * before the operator commits to either.
+   */
+  countConnectionReferences: (id: string) => Promise<ConnectionReferences>;
+  /**
+   * HARD delete, allowed only when nothing references the connection.
+   *
+   * Removes the connection row plus its `connection_credentials` and
+   * `connection_credential_versions` (explicitly — those foreign keys are
+   * `no action`, and leaving ciphertext behind for a deleted account would be
+   * a secret-hygiene failure).
+   *
+   * Throws {@link ConnectionInUseError} carrying the per-table counts when
+   * anything at all references it; archive instead.
+   */
+  deleteConnection: (
+    id: string,
+    options?: ConnectionMutationOptions,
+  ) => Promise<ConnectionDeleteResult>;
+  /**
+   * Terminal retirement: status `archived`. Nothing is deleted, so orders,
+   * observations, and provenance keep resolving; the connection disappears
+   * from pickers and is skipped by polling and token refresh. Reversible
+   * through {@link ConnectionsService.unarchiveConnection}.
+   */
+  archiveConnection: (
+    id: string,
+    options?: ConnectionMutationOptions,
+  ) => Promise<Connection>;
+  /**
+   * Restores an archived connection to `disabled`, never straight to
+   * `active`: re-enabling provider traffic stays a separate, deliberate
+   * operator action.
+   */
+  unarchiveConnection: (
+    id: string,
     options?: ConnectionMutationOptions,
   ) => Promise<Connection>;
   /**
@@ -464,6 +569,137 @@ export function createConnectionsService(options: {
     );
   }
 
+  /**
+   * One round trip for every referencing table: a `union all` of counts, so
+   * the answer is a single consistent snapshot rather than eight reads that
+   * could disagree with each other.
+   */
+  async function readReferences(
+    executor: Pick<LoxepDb, "execute">,
+    id: string,
+  ): Promise<ConnectionReferences> {
+    const literal = uuidLiteral(id);
+    const statement = CONNECTION_REFERENCE_TABLES.map(
+      (entry) =>
+        `select '${entry.table}' as source, count(*) as total ` +
+        `from ${entry.table} where connection_id = ${literal}`,
+    ).join(" union all ");
+    const result = await executor.execute(statement);
+    const totals = new Map<string, number>();
+    for (const row of result.rows) {
+      totals.set(String(row["source"]), Number(row["total"] ?? 0));
+    }
+    const counts = CONNECTION_REFERENCE_TABLES.map((entry) => ({
+      table: entry.table,
+      label: entry.label,
+      count: totals.get(entry.table) ?? 0,
+    }));
+    const blocking = counts.filter((entry) => entry.count > 0);
+    return {
+      counts,
+      blocking,
+      total: blocking.reduce((sum, entry) => sum + entry.count, 0),
+    };
+  }
+
+  async function countConnectionReferences(
+    id: string,
+  ): Promise<ConnectionReferences> {
+    await requireConnection(db, id);
+    return readReferences(db, id);
+  }
+
+  async function deleteConnection(
+    id: string,
+    mutationOptions?: ConnectionMutationOptions,
+  ): Promise<ConnectionDeleteResult> {
+    const literal = uuidLiteral(id);
+    return db.transaction(async (tx) => {
+      const existing = await requireConnection(tx, id);
+      const references = await readReferences(tx, id);
+      if (references.total > 0) {
+        throw new ConnectionInUseError(
+          `connection ${id} still has ${references.total} referencing ` +
+            `record(s) (${references.blocking
+              .map((entry) => `${entry.label}: ${entry.count}`)
+              .join(", ")}) and cannot be deleted; archive it instead`,
+          references.blocking,
+        );
+      }
+
+      // Secret hygiene: versions first (they reference the logical row), then
+      // the logical credentials, then the connection itself. These foreign
+      // keys are `no action`, so nothing cascades on its own.
+      const versions = await tx.execute(
+        `delete from connection_credential_versions
+          where credential_id in (
+            select id from connection_credentials
+             where connection_id = ${literal}
+          )`,
+      );
+      const credentials = await tx.execute(
+        `delete from connection_credentials where connection_id = ${literal}`,
+      );
+      await tx.execute(`delete from connections where id = ${literal}`);
+
+      const audit = createAuditService({ db: tx });
+      await audit.append({
+        actorUserId: mutationOptions?.actorUserId ?? null,
+        action: "connection.delete",
+        resourceType: "connection",
+        resourceId: id,
+        before: connectionSnapshot(existing),
+        after: null,
+        requestId: mutationOptions?.requestId ?? null,
+        metadata: {
+          provider: existing.provider,
+          name: existing.name,
+          deletedCredentials: credentials.rowCount ?? 0,
+          deletedCredentialVersions: versions.rowCount ?? 0,
+        },
+      });
+      return {
+        id,
+        deletedCredentials: credentials.rowCount ?? 0,
+        deletedCredentialVersions: versions.rowCount ?? 0,
+      };
+    });
+  }
+
+  async function archiveConnection(
+    id: string,
+    mutationOptions?: ConnectionMutationOptions,
+  ): Promise<Connection> {
+    return applyUpdate(
+      id,
+      "connection.archive",
+      { status: "archived" satisfies ConnectionStatus },
+      mutationOptions,
+      { status: "archived" },
+    );
+  }
+
+  async function unarchiveConnection(
+    id: string,
+    mutationOptions?: ConnectionMutationOptions,
+  ): Promise<Connection> {
+    const existing = await requireConnection(db, id);
+    if (!isConnectionArchived(existing.status)) {
+      throw new DomainValidationError(
+        `connection ${id} is "${existing.status}", not archived`,
+      );
+    }
+    // Deliberately `disabled`, not `active`: un-archiving restores the record,
+    // re-enabling provider traffic stays a separate operator decision.
+    return applyUpdate(
+      id,
+      "connection.unarchive",
+      { status: "disabled" satisfies ConnectionStatus },
+      mutationOptions,
+      { status: "disabled" },
+    );
+  }
+
   async function recordConnectionSuccess(
     id: string,
     successOptions?: { at?: Date } & ConnectionMutationOptions,
@@ -648,6 +884,10 @@ export function createConnectionsService(options: {
     getConnection,
     listConnections,
     setConnectionStatus,
+    countConnectionReferences,
+    deleteConnection,
+    archiveConnection,
+    unarchiveConnection,
     recordConnectionSuccess,
     recordConnectionFailure,
     setConnectionCredential,

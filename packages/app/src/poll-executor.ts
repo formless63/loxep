@@ -176,6 +176,7 @@ import type {
   EbaySearchWarning,
   EbayWatchlistEntry,
 } from "@loxep/integration-ebay";
+import { isConnectionArchived } from "@loxep/domain";
 import { AppConfigurationError } from "./errors.ts";
 import type { EbayConnectionAdapter } from "./ebay.ts";
 import type { ListingContextCache } from "./listing-context.ts";
@@ -210,6 +211,51 @@ export function createRoutedPollExecutor(options: {
   const { routes, fallback } = options;
   return (target, context) =>
     (routes[target.targetType] ?? fallback)(target, context);
+}
+
+/**
+ * Wrap a poll executor so a target bound to an ARCHIVED connection never
+ * reaches a provider (loxep-o7h).
+ *
+ * Archiving is the answer for a connection whose data must survive — orders,
+ * observations, provenance all keep resolving — so its `monitor_targets` rows
+ * survive too, and the dispatcher's claim (`enabled = true and next_poll_at
+ * <= now`) knows nothing about connection status. This gate is where that
+ * status becomes a polling decision, and it sits ABOVE the routed executor so
+ * every target type — eBay item/watchlist/discovery, `woo_orders`,
+ * `ebay_orders` — inherits it rather than each executor re-checking.
+ *
+ * A gated poll reports zero observations instead of throwing: an archived
+ * connection is a deliberate operator state, not a failure, and failing the
+ * poll would burn `consecutive_errors`/`backoff_until` and make a healthy
+ * decision look like an outage. `disabled` deliberately does NOT gate here —
+ * that flag keeps the meaning it already has elsewhere (token refresh skips
+ * it; polling always has); only `archived` is terminal.
+ */
+export function createArchivedConnectionGate(options: {
+  services: Pick<AppServices, "connections">;
+  executor: PollExecutor;
+}): PollExecutor {
+  const { services, executor } = options;
+  return async (target, context) => {
+    if (target.connectionId !== null) {
+      const connection = await services.connections.getConnection(
+        target.connectionId,
+      );
+      if (isConnectionArchived(connection.status)) {
+        context.logger.info(
+          {
+            monitorTargetId: target.id,
+            connectionId: target.connectionId,
+            targetType: target.targetType,
+          },
+          "poll skipped: connection archived",
+        );
+        return { observations: 0 };
+      }
+    }
+    return executor(target, context);
+  };
 }
 
 /** `marketplace_item_observations.source` written by each poll kind. */

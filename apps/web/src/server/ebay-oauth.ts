@@ -330,6 +330,14 @@ export const startEbayConsent = createServerFn({ method: 'POST' })
         400
       );
     }
+    // The row menu hides these actions on an archived account; this guard is
+    // for the stale tab that still has them (loxep-o7h).
+    if (connection.status === 'archived') {
+      throw new internal.EbayOAuthSetupError(
+        `Connection ${connection.id} is archived. Unarchive it before connecting an eBay account to it.`,
+        400
+      );
+    }
 
     const tier: EbayConsentTier = data.tier ?? DEFAULT_EBAY_CONSENT_TIER;
     const { keyset, source } = await internal.requireKeyset();

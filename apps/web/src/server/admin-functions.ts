@@ -339,6 +339,88 @@ export const setConnectionStatus = createServerFn({ method: 'POST' })
     return { id: connection.id };
   });
 
+/** One referencing table's surviving row count (loxep-o7h). */
+export interface ConnectionReferenceDto {
+  table: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * Delete outcome. A refusal is DATA, not an exception: the browser needs the
+ * per-table counts to explain why the account cannot be removed and to offer
+ * archiving instead, and a thrown error would arrive as an opaque message.
+ */
+export type DeleteConnectionResultDto =
+  | { deleted: true; id: string; deletedCredentials: number }
+  | { deleted: false; id: string; total: number; references: ConnectionReferenceDto[] };
+
+/**
+ * Hard-delete an account that nothing references, credentials included.
+ *
+ * The domain service owns the rule (see `deleteConnection` in
+ * `@loxep/domain`): zero references → the connection row and its encrypted
+ * credential rows go; anything at all → `ConnectionInUseError`, translated
+ * here into the refusal branch above.
+ */
+export const deleteConnection = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<DeleteConnectionResultDto> => {
+    const [{ requireAdmin, getAdminServices }, { ConnectionInUseError }] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain')
+    ]);
+    const session = await requireAdmin();
+    try {
+      const result = await getAdminServices().connections.deleteConnection(data.id, {
+        actorUserId: session.user.id
+      });
+      return {
+        deleted: true,
+        id: result.id,
+        deletedCredentials: result.deletedCredentials
+      };
+    } catch (error) {
+      if (error instanceof ConnectionInUseError) {
+        return {
+          deleted: false,
+          id: data.id,
+          total: error.total,
+          references: error.references.map((reference) => ({
+            table: reference.table,
+            label: reference.label,
+            count: reference.count
+          }))
+        };
+      }
+      throw error;
+    }
+  });
+
+/** Terminal retirement: keeps every referencing record, stops all use. */
+export const archiveConnection = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string; status: ConnectionStatus }> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const connection = await getAdminServices().connections.archiveConnection(data.id, {
+      actorUserId: session.user.id
+    });
+    return { id: connection.id, status: connection.status };
+  });
+
+/** Restores an archived account to `disabled` — re-enabling stays deliberate. */
+export const unarchiveConnection = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string; status: ConnectionStatus }> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const connection = await getAdminServices().connections.unarchiveConnection(data.id, {
+      actorUserId: session.user.id
+    });
+    return { id: connection.id, status: connection.status };
+  });
+
 export const attributeConnection = createServerFn({ method: 'POST' })
   .inputValidator(z.strictObject({ id: z.uuid(), economicEntityId: z.uuid().nullable() }))
   .handler(async ({ data }): Promise<{ id: string }> => {

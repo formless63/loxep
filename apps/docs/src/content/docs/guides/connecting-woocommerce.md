@@ -54,6 +54,17 @@ Save. The store URL is kept as ordinary connection configuration and stays visib
 | Requests are rejected as unauthorised over plain HTTP | WooCommerce's key-pair authentication requires HTTPS. |
 | Reads work but return nothing | The key's user may not be able to see the resources in question. Reissue against an administrator account. |
 
+## Removing a store
+
+Removing a store connection has two outcomes, and the stored data decides which one you get.
+
+- **Delete** is available when nothing in Loxep references the store. The connection and the encrypted key pair are removed outright.
+- **Archive** is what happens instead once the store has produced anything — orders, monitors, or provenance records. Nothing is deleted: the store is retired, disappears from pickers, and is skipped by polling, while everything it produced keeps resolving.
+
+Open the store's row menu on **Settings → Connections** and choose **Delete**. If anything references it, Loxep refuses, lists exactly what is in the way with counts, and offers **Archive instead**. **Archive** is also available directly.
+
+Archiving is reversible: **Unarchive** returns the store to **Disabled** rather than straight to **Active**. Revoking the key pair in WooCommerce is a separate step on the WordPress side.
+
 ## Related
 
 - [Connecting eBay](../connecting-ebay/) and [Connecting Medusa](../connecting-medusa/) — the other provider setups.

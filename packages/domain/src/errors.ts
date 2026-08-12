@@ -52,3 +52,32 @@ export class EntityInactiveError extends DomainError {}
 
 /** Referenced connection does not exist. */
 export class ConnectionNotFoundError extends DomainError {}
+
+/** One table's surviving references to a connection that cannot be deleted. */
+export interface ConnectionReferenceCount {
+  /** PostgreSQL table name, e.g. `orders`. */
+  table: string;
+  /** Operator-facing wording for that table, e.g. `orders`. */
+  label: string;
+  count: number;
+}
+
+/**
+ * A hard delete was refused because stored data still references the
+ * connection. Carries the per-table counts so the caller can explain exactly
+ * what is in the way (and offer archiving instead) rather than saying "no".
+ */
+export class ConnectionInUseError extends DomainError {
+  /** Only the tables with a non-zero count, in reporting order. */
+  readonly references: readonly ConnectionReferenceCount[];
+  readonly total: number;
+
+  constructor(
+    message: string,
+    references: readonly ConnectionReferenceCount[],
+  ) {
+    super(message);
+    this.references = references;
+    this.total = references.reduce((sum, entry) => sum + entry.count, 0);
+  }
+}

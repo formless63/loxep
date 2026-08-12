@@ -30,6 +30,7 @@
 import { defineTask, jobKeyFor } from "@loxep/jobs";
 import type { LoxepTask } from "@loxep/jobs";
 import { EbayAdapterError } from "@loxep/integration-ebay";
+import { isConnectionArchived } from "@loxep/domain";
 import { z } from "zod";
 import {
   EBAY_CONNECTION_PROVIDER,
@@ -112,7 +113,14 @@ export function createEbayTokenRefreshTasks(options: {
     });
     let enqueued = 0;
     for (const connection of connections) {
-      if (connection.status === "disabled") continue;
+      // `disabled` is the operator's off switch; `archived` is terminal
+      // retirement (loxep-o7h). Neither should keep refreshing tokens.
+      if (
+        connection.status === "disabled" ||
+        isConnectionArchived(connection.status)
+      ) {
+        continue;
+      }
       const credentials = await services.connectionCredentials.listCredentials(
         connection.id,
       );

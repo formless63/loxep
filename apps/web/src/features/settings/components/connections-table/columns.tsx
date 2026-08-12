@@ -16,12 +16,15 @@ const EBAY_PROVIDER = 'ebay';
 
 /**
  * `disabled` is operator-caused, not a failure — it renders `warning`, never
- * the same alarm red as `error` (a genuine connection failure).
+ * the same alarm red as `error` (a genuine connection failure). `archived` is
+ * a neutral terminal state and renders `outline` for the same reason: an
+ * operator state is never alarm red.
  */
 const CONNECTION_STATUS_TONE = {
   active: 'success',
   disabled: 'warning',
-  error: 'destructive'
+  error: 'destructive',
+  archived: 'outline'
 } as const satisfies Record<ConnectionStatus, Tone>;
 
 const CONNECTION_STATUS_OPTIONS = (Object.keys(CONNECTION_STATUS_LABELS) as ConnectionStatus[]).map(
@@ -40,7 +43,17 @@ export function getColumns(
       header: ({ column }: { column: Column<ConnectionDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Account' />
       ),
-      cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>,
+      // Archived rows read as retired, not broken: the name goes muted while
+      // the status badge (tone `outline`) carries the state itself.
+      cell: ({ row, cell }) => (
+        <span
+          className={
+            row.original.status === 'archived' ? 'text-muted-foreground font-medium' : 'font-medium'
+          }
+        >
+          {cell.getValue<string>()}
+        </span>
+      ),
       meta: {
         label: 'Account',
         placeholder: 'Search accounts...',

@@ -96,8 +96,16 @@ export interface IntegrationService {
   status: (input: IntegrationStatusInput) => IntegrationStatus;
 }
 
+/**
+ * A service's live accounts. Archived accounts are excluded (loxep-o7h):
+ * they are retired records kept so their history resolves, so counting them
+ * would report a service as connected on the strength of an account that can
+ * no longer do anything.
+ */
 function accountsFor(connections: ConnectionDto[], provider: string): ConnectionDto[] {
-  return connections.filter((connection) => connection.provider === provider);
+  return connections.filter(
+    (connection) => connection.provider === provider && connection.status !== 'archived'
+  );
 }
 
 function accountCountDetail(count: number): string {

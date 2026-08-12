@@ -312,4 +312,25 @@ describe("ebay.refresh-tokens", () => {
       jobKeyMode: "replace",
     });
   });
+
+  it("skips an archived connection even though it still holds a token", async () => {
+    // Archiving is terminal retirement (loxep-o7h): the credential rows are
+    // deliberately KEPT, so only the status gate stops the refresh.
+    await services.connections.archiveConnection(connectionId);
+    try {
+      const calls: Array<{
+        identifier: string;
+        payload: unknown;
+        spec: unknown;
+      }> = [];
+      const tasks = createEbayTokenRefreshTasks({ services });
+      await tasks.refreshTokensTask.handler(
+        {},
+        { logger: silentJobsLogger, helpers: helpersWithAddJob(calls) },
+      );
+      expect(calls).toHaveLength(0);
+    } finally {
+      await services.connections.unarchiveConnection(connectionId);
+    }
+  });
 });

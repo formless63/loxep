@@ -160,6 +160,10 @@ Do not globally enforce uniqueness of `external_account_id`; provider semantics 
 
 Provider connections are created and managed through authenticated Loxep workflows. They are not Compose environment entries.
 
+`status` is a text union owned by the application (no PostgreSQL enum): `active`, `disabled`, `error`, `archived`. `error` records that the most recent provider operation failed; `disabled` is the operator's off switch; `archived` is terminal retirement.
+
+Removal has two outcomes and the data decides which. A connection that **nothing** references is hard-deleted, together with its `connection_credentials` and `connection_credential_versions` rows — those foreign keys are `no action`, so the credential rows are removed explicitly rather than cascaded, and no ciphertext survives a deleted account. A connection that **is** referenced is not deletable at all: the domain service counts every table carrying a `connection_id` — `orders`, `channel_listings`, `monitor_targets`, `marketplace_item_observations`, `source_events`, `provider_objects`, `external_resources`, `acquisitions` — and refuses with those per-table counts so the caller can explain the refusal and archive instead. The observations count matters most: that column has no foreign key (it is application-resolved provenance on a hypertable), so nothing but this check stands between a delete and orphaned observation rows. Archiving deletes nothing; it takes the connection out of pickers, polling, and token refresh while every referencing record keeps resolving. Un-archiving restores `disabled`, never `active`, so resuming provider traffic stays a separate deliberate action.
+
 Phase 0 intentionally has no `connection_users` relation. Better Auth `admin` and `member` users have installation-wide ordinary product access. `created_by_user_id` is audit/provenance metadata, not an ACL or ownership rule. Fine-grained connection/entity/workspace permissions are deferred until a real use case requires them.
 
 ### `connection_credentials` and `connection_credential_versions`

@@ -66,6 +66,11 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
     ebayKeyset: ebayKeyset ?? null
   };
   const activeCount = connections.filter((connection) => connection.status === 'active').length;
+  // Archived accounts are retired, so they are not part of the "of N" the
+  // headline counts; they still appear in their service's table (muted) and
+  // in the status filter, so nothing is hidden.
+  const liveCount = connections.filter((connection) => connection.status !== 'archived').length;
+  const archivedCount = connections.length - liveCount;
 
   const catalogProviders = new Set(
     connectableIntegrationServices.map((service) => service.accounts?.provider)
@@ -82,7 +87,8 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
         <p className='text-sm'>
           <span className='text-primary text-2xl font-semibold tabular-nums'>{activeCount}</span>{' '}
           <span className='text-muted-foreground'>
-            of {connections.length} account{connections.length === 1 ? '' : 's'} active
+            of {liveCount} account{liveCount === 1 ? '' : 's'} active
+            {archivedCount > 0 ? ` · ${archivedCount} archived` : ''}
           </span>
         </p>
       )}
