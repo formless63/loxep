@@ -48,6 +48,7 @@ export {
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   registeredApplicationSettings,
+  wooRateBudgetSetting,
 } from "./settings-defaults.ts";
 
 export {
