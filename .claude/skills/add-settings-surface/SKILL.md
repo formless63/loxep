@@ -40,17 +40,20 @@ module). `entities`, `connections`, `settings`, `secrets` are built eagerly in `
 
 **Any package whose index re-exports job/task code must be reached through a
 runtime-resolved dynamic import**, or the SSR bundle breaks at runtime (`__filename` in ESM)
-because `graphile-worker` and its cosmiconfig/TypeScript CJS chain get bundled:
+because `graphile-worker` and its cosmiconfig/TypeScript CJS chain get bundled.
+(`@loxep/storage` no longer needs this — its jobs-dependent migration service moved behind
+the `@loxep/storage/migration` subpath, so the default entry imports statically; the pattern
+below still applies to `@loxep/notifications` and `@loxep/market`, whose indexes re-export
+job code):
 
 ```ts
-export function getStorageBackendsService(): Promise<StorageBackendsService> {
+export function getNotificationsModule(): Promise<typeof import('@loxep/notifications')> {
   const registry = getAdminServices();
-  registry.storageBackendsPromise ??= (async () => {
-    const specifier = '@loxep/storage';            // variable specifier — not a literal
-    const storage = (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/storage');
-    return storage.createStorageBackendsService({ db: registry.handle.db, keyring: registry.config.keyring });
+  registry.notificationsModulePromise ??= (async () => {
+    const specifier = '@loxep/notifications';      // variable specifier — not a literal
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/notifications');
   })();
-  return registry.storageBackendsPromise;
+  return registry.notificationsModulePromise;
 }
 ```
 

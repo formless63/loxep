@@ -28,7 +28,7 @@ import {
   type SecretsService,
   type SettingsService
 } from '@loxep/domain';
-import type { StorageBackendsService } from '@loxep/storage';
+import { createStorageBackendsService, type StorageBackendsService } from '@loxep/storage';
 import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
 import { AuthorizationError, requireRole } from '@loxep/auth';
@@ -88,25 +88,23 @@ export function getAdminServices(): AdminRegistry {
 }
 
 /**
- * Storage-backends service, loaded through a runtime-resolved import.
+ * Storage-backends service, cached on the registry.
  *
- * `@loxep/storage`'s index re-exports the migration workflow, which reaches
- * `graphile-worker` (via `@loxep/jobs`) and its cosmiconfig/TypeScript CJS
- * chain — bundling that into the SSR server-function graph breaks at runtime
- * (`__filename` in ESM). The `@vite-ignore` variable specifier keeps the
- * package out of the bundle so Node resolves it from real node_modules,
- * mirroring `@loxep/runtime`'s dynamic-import treatment of `@loxep/jobs`.
+ * `@loxep/storage`'s default entry (`.`) only reaches the driver/backends/
+ * media surface now — the Graphile Worker-backed migration workflow (which
+ * pulls `@loxep/jobs` and its cosmiconfig/TypeScript CJS chain) lives behind
+ * the separate `@loxep/storage/migration` subpath, so a plain static import
+ * here no longer risks the SSR-bundling hazard documented on
+ * `getNotificationsModule` below.
  */
 export function getStorageBackendsService(): Promise<StorageBackendsService> {
   const registry = getAdminServices();
-  registry.storageBackendsPromise ??= (async () => {
-    const specifier = '@loxep/storage';
-    const storage = (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/storage');
-    return storage.createStorageBackendsService({
+  registry.storageBackendsPromise ??= Promise.resolve(
+    createStorageBackendsService({
       db: registry.handle.db,
       keyring: registry.config.keyring
-    });
-  })();
+    })
+  );
   return registry.storageBackendsPromise;
 }
 
@@ -114,11 +112,12 @@ export function getStorageBackendsService(): Promise<StorageBackendsService> {
  * Dynamically-loaded `@loxep/notifications` module, cached on the registry.
  *
  * `@loxep/notifications`'s index re-exports the delivery pipeline, which
- * reaches `graphile-worker` (via `@loxep/jobs`) the same way `@loxep/storage`
- * does — the `getStorageBackendsService` doc above explains why that chain
- * cannot be statically bundled into the SSR server-function graph. The
- * `@vite-ignore` variable specifier keeps it out of the bundle so Node
- * resolves it from real node_modules.
+ * reaches `graphile-worker` (via `@loxep/jobs`) and its cosmiconfig/
+ * TypeScript CJS chain — bundling that into the SSR server-function graph
+ * breaks at runtime (`__filename` in ESM). The `@vite-ignore` variable
+ * specifier keeps it out of the bundle so Node resolves it from real
+ * node_modules, mirroring `@loxep/runtime`'s dynamic-import treatment of
+ * `@loxep/jobs`.
  */
 export function getNotificationsModule(): Promise<typeof import('@loxep/notifications')> {
   const registry = getAdminServices();
@@ -146,10 +145,10 @@ export function getNotificationsService(): Promise<NotificationService> {
  * Dynamically-loaded `@loxep/market` module, cached on the registry.
  *
  * `@loxep/market`'s index re-exports `tasks.ts`, which reaches
- * `graphile-worker` (via `@loxep/jobs`) the same way `@loxep/storage` and
- * `@loxep/notifications` do — see `getStorageBackendsService`'s doc above.
- * The `@vite-ignore` variable specifier keeps it out of the SSR bundle so
- * Node resolves it from real node_modules.
+ * `graphile-worker` (via `@loxep/jobs`) the same way `@loxep/notifications`
+ * does — see `getNotificationsModule`'s doc above. The `@vite-ignore`
+ * variable specifier keeps it out of the SSR bundle so Node resolves it
+ * from real node_modules.
  */
 export function getMarketModule(): Promise<typeof import('@loxep/market')> {
   const registry = getAdminServices();
