@@ -22,7 +22,7 @@ The `/starter/*` routes are the preserved donor workspace and the **living patte
 
 Themes live in `apps/web/src/styles/themes/*.css`, are imported by `src/styles/theme.css`, and are listed in `src/components/themes/theme.config.ts`. The active theme is a `data-theme` attribute on `<html>` (set by `ActiveThemeProvider`, persisted in the `active_theme` cookie); dark mode is the `.dark` class, so each theme file defines two blocks: `[data-theme='x']` and `[data-theme='x'].dark`.
 
-Ten themes ship today: `claude`, `neobrutualism`, `supabase`, `vercel`, `mono`, `notebook`, `light-green`, `zen`, `astro-vista`, `whatsapp`. `DEFAULT_THEME` is `vercel`.
+Ten themes ship today: `macaron`, `neobrutualism`, `cyberpunk`, `mono`, `notebook`, `light-green`, `zen`, `astro-vista`, `fallout`, `burning-acid`. `DEFAULT_THEME` is `macaron` (provisional — owner-picked tweakcn set, pending owner review, loxep-zzu).
 
 Every theme defines the **same** token vocabulary. That vocabulary is the whole palette you are allowed to use:
 
@@ -50,12 +50,12 @@ Every theme defines the **same** token vocabulary. That vocabulary is the whole 
 
 ### How much themes actually vary
 
-They vary a lot — the flatness is on us, not on them. `--primary` alone ranges from `oklch(0 0 0)` (vercel light) to `oklch(0.8871 0.2122 128.5)` (light-green) to `oklch(0.6489 0.237 27)` (neobrutualism). `--chart-1..5` are five distinct hues in `supabase`, `neobrutualism`, `whatsapp`, `light-green`, and `astro-vista`.
+They vary a lot — the flatness is on us, not on them. `--primary` alone ranges from `oklch(0.5555 0 0)` (mono light, fully achromatic) to `oklch(0.8871 0.2122 128.5)` (light-green) to `oklch(0.6489 0.237 27)` (neobrutualism). `--chart-1..5` are five distinct hues in `neobrutualism`, `light-green`, `astro-vista`, `cyberpunk`, and `burning-acid`.
 
 Two consequences you must design around:
 
 - **`mono` and `notebook` are intentionally achromatic** — `mono` sets all five chart tokens to the same grey. A chart must stay readable there, so never encode meaning in hue alone; pair color with shape, dash, label, or ordering.
-- **The default theme (`vercel`) is itself near-monochrome** — `--primary` is pure black/white and `--chart-3/4/5` are greys. Judging "does this surface respond to the theme?" against the default will always say "no". Verify against a chromatic theme.
+- **The default theme (`macaron`) is soft-chromatic, not neutral** — its hues are real (pink primary, mint accent, five distinct chart hues), but every token sits at high lightness and gentle chroma, so a surface leaning only on `--muted`/`--border` can still read as "responds to the theme" there while looking flat everywhere else. Judging "does this surface respond to the theme?" against the default alone is not enough — verify against a loud theme (`cyberpunk`, `burning-acid`) too.
 
 ## Tables
 
@@ -230,8 +230,8 @@ Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so 
 
 A surface is not done until it visibly responds to the theme. Before closing UI work:
 
-1. Switch to a **chromatic** theme (`supabase`, `neobrutualism`, `light-green`, or `whatsapp`) and confirm the surface picks up hue — emphasis, badges, charts, focus rings.
-2. Switch to a **second** theme with different geometry/typography (`claude`, `notebook`, `zen`) and confirm radius, shadow, and font change too.
+1. Switch to a **chromatic** theme (`neobrutualism`, `light-green`, `cyberpunk`, or `burning-acid`) and confirm the surface picks up hue — emphasis, badges, charts, focus rings.
+2. Switch to a **second** theme with different geometry/typography (`fallout`, `notebook`, `zen`) and confirm radius, shadow, and font change too.
 3. Toggle **dark mode** in both and confirm contrast holds and the two themes still look different from each other.
 
 If the surface looks the same in all three, it is built from `muted` and `border` only. Fix it before merging.

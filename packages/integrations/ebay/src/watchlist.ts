@@ -44,6 +44,35 @@
  * USER has watched sandbox listings, and only after that test user completes
  * the consent flow. Until then this call legitimately returns zero entries
  * (or `auth` if no user token has been granted) — that is not a mapping bug.
+ *
+ * SANDBOX DEFECT (verified 2026-08-12, loxep-76k): beyond the caveat above,
+ * the eBay **sandbox** `GetMyeBayBuying` handler (`Version 1193`, build
+ * `E1193_CORE_API_19146280_R1`) returns `Ack: Success` with an envelope that
+ * carries NO container at all — no `WatchList`, no `BuyingSummary`, no
+ * `BidList`/`WonList`/`LostList` — even when the watch list is provably
+ * non-empty. The request shape below is NOT the cause; it was eliminated
+ * experimentally:
+ *
+ * - Every argument shape returns the same bare envelope: no arguments at all,
+ *   `WatchList.Include` alone, with/without `Pagination`, `DetailLevel`
+ *   absent / `ReturnAll` / `ReturnSummary`, an explicit `Version` element,
+ *   `Sort`, `OutputSelector`, `WarningLevel: High`, and all containers at once.
+ * - Compatibility levels 967, 1131, 1193, 1247, 1349 and 1451 (sent raw on
+ *   the `X-EBAY-API-COMPATIBILITY-LEVEL` header) all behave identically.
+ * - The body IS parsed: a bogus `DetailLevel` fails with error 37, and a
+ *   `MessageID` is echoed back as `CorrelationID`. But an out-of-range
+ *   `WatchList.Pagination.EntriesPerPage` (9999) raises no error, so the
+ *   container subtree is never deserialized server-side.
+ * - The data provably exists: `AddToWatchList` on the same token and the same
+ *   build reports `WatchListCount: 4`, and `GetUser` confirms the token
+ *   belongs to the expected test user.
+ * - The sandbox is otherwise healthy: `GetMyeBaySelling` (`ActiveList`),
+ *   `GetBidderList` and `GetItemsAwaitingFeedback` all return their
+ *   containers normally for the same user token.
+ *
+ * So a sandbox watchlist poll reporting `members: 0` is a provider-side
+ * sandbox defect, not a Loxep mapping or call-shape bug. Watchlist retrieval
+ * can only be validated against a PRODUCTION account.
  */
 import type { EbayUserAdapter } from "./adapter.ts";
 import { EbayAdapterError } from "./errors.ts";

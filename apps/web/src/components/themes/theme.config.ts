@@ -2,25 +2,21 @@
  * Default theme that loads when no user preference is set
  * Change this value to set a different default theme
  */
-// PROVISIONAL: chromatic default pending owner review (loxep-foi.5)
-export const DEFAULT_THEME = 'supabase';
+// PROVISIONAL: owner-picked tweakcn set, default pending owner review (loxep-zzu)
+export const DEFAULT_THEME = 'macaron';
 
 export const THEMES = [
   {
-    name: 'Claude',
-    value: 'claude'
+    name: 'Macaron',
+    value: 'macaron'
   },
   {
     name: 'Neobrutualism',
     value: 'neobrutualism'
   },
   {
-    name: 'Supabase',
-    value: 'supabase'
-  },
-  {
-    name: 'Vercel',
-    value: 'vercel'
+    name: 'Cyberpunk',
+    value: 'cyberpunk'
   },
   {
     name: 'Mono',
@@ -43,7 +39,11 @@ export const THEMES = [
     value: 'astro-vista'
   },
   {
-    name: 'WhatsApp',
-    value: 'whatsapp'
+    name: 'Fallout',
+    value: 'fallout'
+  },
+  {
+    name: 'Burning Acid',
+    value: 'burning-acid'
   }
 ];
