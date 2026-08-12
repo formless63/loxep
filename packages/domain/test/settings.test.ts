@@ -10,6 +10,8 @@ import {
   SettingNotRegisteredError,
   createSettingsService,
   defineSetting,
+  orderPayloadRetentionSetting,
+  registeredApplicationSettings,
 } from "../src/index.ts";
 import type { SettingsService } from "../src/index.ts";
 import {
@@ -189,6 +191,60 @@ describe("settings service", () => {
       value: "Loxep",
       updatedByUserId: null,
       updatedAt: null,
+    });
+  });
+
+  it("lists every SHIPPED setting, so /settings can render it unchanged", async () => {
+    const entries = await service.list();
+    const keys = entries.map((entry) => entry.key);
+    for (const definition of registeredApplicationSettings) {
+      expect(keys).toContain(definition.key);
+    }
+
+    // ADR-0021's setting in particular: `/settings/application` renders
+    // whatever `list()` returns, so registration IS the surface wiring — no
+    // web code change is involved, and this assertion is what proves it.
+    const retention = entries.find(
+      (entry) => entry.key === orderPayloadRetentionSetting.key,
+    );
+    expect(retention).toMatchObject({
+      key: "commerce.order_payload_retention",
+      schemaVersion: 1,
+      isSet: false,
+      value: { mode: "redact", afterDays: 180 },
+    });
+  });
+
+  it("accepts both retention modes and rejects anything else", async () => {
+    expect(
+      orderPayloadRetentionSetting.schema.safeParse({
+        mode: "keep",
+        afterDays: 180,
+      }).success,
+    ).toBe(true);
+    // No hard-delete mode exists, by design (ADR-0021 #1 and #4).
+    expect(
+      orderPayloadRetentionSetting.schema.safeParse({
+        mode: "delete",
+        afterDays: 180,
+      }).success,
+    ).toBe(false);
+    expect(
+      orderPayloadRetentionSetting.schema.safeParse({
+        mode: "redact",
+        afterDays: 0,
+      }).success,
+    ).toBe(false);
+
+    const stored = await service.set(
+      orderPayloadRetentionSetting,
+      { mode: "keep", afterDays: 30 },
+      { actorUserId: null, requestId: null },
+    );
+    expect(stored).toEqual({ mode: "keep", afterDays: 30 });
+    expect(await service.get(orderPayloadRetentionSetting)).toEqual({
+      mode: "keep",
+      afterDays: 30,
     });
   });
 

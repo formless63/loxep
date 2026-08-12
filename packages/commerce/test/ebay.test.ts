@@ -822,8 +822,11 @@ describe("commerce task registration", () => {
     });
     expect(commerce.ebaySync).toBeNull();
     expect(commerce.syncEbayOrdersTask).toBeNull();
+    // The retention sweep is NEVER omitted — see `CommerceTasks` for why a
+    // partial composition must still enforce the ADR-0021 default.
     expect(commerce.tasks.map((task) => task.name)).toEqual([
       "commerce.sync-woo-orders",
+      "commerce.redact-order-payloads",
     ]);
   });
 
@@ -842,6 +845,7 @@ describe("commerce task registration", () => {
     expect(commerce.tasks.map((task) => task.name)).toEqual([
       "commerce.sync-woo-orders",
       SYNC_EBAY_ORDERS_TASK_NAME,
+      "commerce.redact-order-payloads",
     ]);
   });
 

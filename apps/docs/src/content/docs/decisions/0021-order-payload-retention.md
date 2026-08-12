@@ -2,7 +2,9 @@
 title: "ADR-0021: Order-Payload Retention in provider_objects"
 ---
 
-**Status:** PROVISIONAL — decided and scheduled for implementation per the delegated-decision policy; awaiting owner review. Refines foundational decision 7 (raw provider-object retention) for one object class; does not supersede it.
+**Status:** PROVISIONAL — **implemented**; the policy itself still awaits owner review per the delegated-decision policy. Refines foundational decision 7 (raw provider-object retention) for one object class; does not supersede it.
+
+Shipped in `0007_order_payload_retention.sql` (`provider_objects.redacted_at` plus the partial sweep index), `@loxep/domain`'s `commerce.order_payload_retention` setting, `@loxep/commerce`'s `runOrderPayloadRedactionSweep` and its daily `commerce.redact-order-payloads` job, and `@loxep/app`'s `createOrderPayloadRedactors` — the injected seam that binds each adapter's `redact*OrderFact` helper.
 
 ## Context
 
@@ -26,4 +28,6 @@ Order-class provider object payloads are **redacted by default after 180 days; p
 - Buyer PII exposure in the database becomes time-bounded by default while replay/debugging provenance and duplicate detection survive.
 - Ingestion re-sync of an old, unchanged order after redaction matches the existing row by `payload_hash` and re-stores nothing — the redacted state persists, which is the intended outcome.
 - Full-payload replay is only possible within the window (or with `mode: 'keep'`); anything the domain schema needs long-term must be normalized into columns, which is already the design's direction (buyer identity columns hold an external id and channel handle only).
-- The retention sweep is a small dispatcher-style Graphile Worker job over DB-stored state, consistent with the scheduling architecture; implementation is tracked separately (see the implementation issue created alongside this ADR).
+- The retention sweep is a small dispatcher-style Graphile Worker job over DB-stored state, consistent with the scheduling architecture. As built it is `commerce.redact-order-payloads`, scheduled daily and bounded per run (batches of 200, at most 25 batches), so a backlog drains over several runs instead of one long pass; it takes no provider call, and the `redacted_at is null` guard on every rewrite makes redelivery and overlapping runs no-ops.
+- Each adapter's redaction helper is **injected from the composition root**, not imported by `@loxep/commerce` — the same boundary as the eBay order pager. That injection also bounds the sweep's scope: only object types with a bound redactor are selected for rewriting, and an order class Loxep can ingest but not yet redact is counted and logged as `unhandled` rather than dragged into a batch it would occupy forever. WooCommerce and eBay are bound today; `@loxep/integration-medusa` already ships `redactMedusaOrderFact`, but no Medusa order ingestion exists yet, so no `medusa.order` provider object is ever written and there is nothing for it to redact.
+- The redacted form is the adapter's own fact minus `raw` — order economics, line items, statuses, and timestamps survive for replay and debugging, while every personal-data field lived only inside `raw`. The `source_account_key` the fact carries is deliberately not reconstructed by the sweep (the authoritative value is on `orders.source_account_key`, untouched by redaction).

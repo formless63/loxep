@@ -144,10 +144,52 @@ export const wooRateBudgetSetting = defineSetting({
   },
 });
 
+/**
+ * How long a retained ORDER payload keeps its buyer personal data (ADR-0021).
+ *
+ * Order payloads are the one provider-object class that carries buyer PII —
+ * billing/shipping addresses, email, phone, customer IP, user agent, and on
+ * eBay a taxpayer id and gift-recipient details. Foundational decision 7's
+ * "retain everything, delete nothing automatically" stance was written for
+ * marketplace observation payloads, which carry none of that, so ADR-0021
+ * refines it for order-class objects only.
+ *
+ * `mode: 'redact'` (the default) replaces the stored payload with the
+ * provider's redacted form once it is older than `afterDays`; the
+ * `provider_objects` row itself — identity, provider, object type,
+ * `payload_hash`, timestamps — and every `order_source_links` row pointing at
+ * it survive untouched. There is deliberately NO hard-delete mode:
+ * data-minimization here means removing personal data from a payload, never
+ * destroying provenance. `mode: 'keep'` restores the pre-ADR-0021 behavior
+ * for installations that want it, and makes the sweep a no-op.
+ *
+ * 180 days is the default because typical marketplace dispute, return, and
+ * chargeback windows run to about that, and the payload's support value
+ * (looking up a buyer address for a return) decays with them. The window
+ * applies per STORED PAYLOAD ROW, not per order, so a re-synced order that
+ * produced a newer payload keeps its newest facts longest.
+ */
+export const orderPayloadRetentionSetting = defineSetting({
+  key: "commerce.order_payload_retention",
+  schema: z.strictObject({
+    /** `redact` runs the sweep; `keep` makes it a no-op. Never deletes. */
+    mode: z.enum(["redact", "keep"]),
+    /** Age, in days, at which a stored order payload becomes eligible. */
+    afterDays: z.number().int().min(1).max(3650),
+  }),
+  description:
+    "Order-payload retention (ADR-0021): after how many days a retained " +
+    "order provider-object payload is replaced by its redacted form, or " +
+    "'keep' to retain payloads indefinitely. Provenance rows are never deleted",
+  schemaVersion: 1,
+  defaultValue: { mode: "redact", afterDays: 180 },
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   ebayRateBudgetSetting,
   wooRateBudgetSetting,
+  orderPayloadRetentionSetting,
 ] as const;

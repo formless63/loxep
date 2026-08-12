@@ -47,6 +47,7 @@ export {
   ebayRateBudgetSetting,
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
+  orderPayloadRetentionSetting,
   registeredApplicationSettings,
   wooRateBudgetSetting,
 } from "./settings-defaults.ts";

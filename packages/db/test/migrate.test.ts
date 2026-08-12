@@ -17,7 +17,7 @@ import {
  * 0005 inventory, acquisition, and shipments,
  * 0006 expenses and counterparties.
  */
-const MIGRATION_FILE_COUNT = 7;
+const MIGRATION_FILE_COUNT = 8;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

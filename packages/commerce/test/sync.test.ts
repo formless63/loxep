@@ -234,7 +234,9 @@ describe("woocommerce order sync", () => {
       db: scratch.handle.db,
       adapterFactory: () => adapterFor([[]]).adapter,
     });
-    expect(commerce.tasks).toHaveLength(1);
+    // The Woo sync and the always-registered ADR-0021 retention sweep; the
+    // eBay task is absent because no page iterator was bound.
+    expect(commerce.tasks).toHaveLength(2);
     expect(commerce.syncWooOrdersTask.name).toBe(SYNC_WOO_ORDERS_TASK_NAME);
     expect(wooOrderSyncJobKey(connectionId)).toBe(
       `${SYNC_WOO_ORDERS_TASK_NAME}:${connectionId}`,

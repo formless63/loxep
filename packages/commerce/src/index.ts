@@ -187,6 +187,21 @@ export type {
 } from "./ebay-sync.ts";
 
 export {
+  DEFAULT_REDACTION_BATCH_SIZE,
+  DEFAULT_REDACTION_MAX_BATCHES,
+  ORDER_PROVIDER_OBJECT_TYPES,
+  runOrderPayloadRedactionSweep,
+} from "./retention.ts";
+export type {
+  OrderPayloadRedactor,
+  OrderPayloadRedactors,
+  OrderPayloadRedactionSweepResult,
+  RunOrderPayloadRedactionSweepOptions,
+} from "./retention.ts";
+
+export {
+  REDACT_ORDER_PAYLOADS_CRON_MATCH,
+  REDACT_ORDER_PAYLOADS_TASK_NAME,
   SYNC_EBAY_ORDERS_TASK_NAME,
   SYNC_WOO_ORDERS_TASK_NAME,
   createCommerceTasks,
@@ -196,8 +211,10 @@ export {
   wooOrderSyncJobKey,
 } from "./tasks.ts";
 export type {
+  CommerceCronItem,
   CommerceTasks,
   RawAddJob,
+  RedactOrderPayloadsTask,
   SyncEbayOrdersTask,
   SyncWooOrdersTask,
 } from "./tasks.ts";

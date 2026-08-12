@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMigrations } from "@loxep/db";
 import {
+  REDACT_ORDER_PAYLOADS_TASK_NAME,
   SYNC_EBAY_ORDERS_TASK_NAME,
   SYNC_WOO_ORDERS_TASK_NAME,
 } from "@loxep/commerce";
@@ -63,6 +64,7 @@ describe("buildWorkerRegistry", () => {
         REFRESH_TOKENS_TASK_NAME,
         SYNC_WOO_ORDERS_TASK_NAME,
         SYNC_EBAY_ORDERS_TASK_NAME,
+        REDACT_ORDER_PAYLOADS_TASK_NAME,
         "maintenance.heartbeat",
       ].sort(),
     );
@@ -71,12 +73,16 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain("maintenance.heartbeat");
     expect(cronTasks).toContain(DISPATCH_TASK_NAME);
     expect(cronTasks).toContain(REFRESH_TOKENS_TASK_NAME);
-    // @loxep/commerce defines NO cron item on purpose: its scheduled work is
-    // a `woo_orders` / `ebay_orders` monitor target the market dispatcher
-    // claims, which is the whole point of registering a target type rather
-    // than adding a second scheduler.
+    // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
+    // scheduled work is a `woo_orders` / `ebay_orders` monitor target the
+    // market dispatcher claims, which is the whole point of registering a
+    // target type rather than adding a second scheduler.
     expect(cronTasks).not.toContain(SYNC_WOO_ORDERS_TASK_NAME);
     expect(cronTasks).not.toContain(SYNC_EBAY_ORDERS_TASK_NAME);
+    // The ADR-0021 retention sweep IS cron-driven, and is the one commerce
+    // job that is: a retention window is a wall-clock fact about stored rows,
+    // not something any connection polls.
+    expect(cronTasks).toContain(REDACT_ORDER_PAYLOADS_TASK_NAME);
     // Every cron item points at a registered task, or the runtime drops it.
     for (const task of cronTasks) {
       expect(composition.registry.has(task)).toBe(true);

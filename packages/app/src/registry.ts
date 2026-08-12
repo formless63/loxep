@@ -13,13 +13,29 @@
  * | `ebay.refresh-tokens`       | @loxep/app           | keeps user tokens warm (15 min) |
  * | `commerce.sync-woo-orders`  | @loxep/commerce      | on-demand order sync for one connection |
  * | `commerce.sync-ebay-orders` | @loxep/commerce      | the same, for an eBay seller account |
+ * | `commerce.redact-order-payloads` | @loxep/commerce | ADR-0021 retention sweep (daily) |
  *
  * Cron: `maintenance.heartbeat` (@loxep/jobs' defaults),
  * `market.dispatch-due-monitors` (every minute), `ebay.refresh-tokens`
- * (every 15 minutes). @loxep/commerce deliberately defines NO cron item —
- * its scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed
- * by the market dispatcher, which is the whole point of registering a target
- * type instead of adding a second scheduler (see the routing note below).
+ * (every 15 minutes), `commerce.redact-order-payloads` (daily).
+ *
+ * @loxep/commerce's ORDER SYNC deliberately defines no cron item — that
+ * scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed by
+ * the market dispatcher, which is the whole point of registering a target type
+ * instead of adding a second scheduler (see the routing note below). The
+ * retention sweep is the one commerce job that genuinely is cron-driven: a
+ * retention window is a wall-clock fact about stored rows, not something any
+ * connection polls, and it takes no provider call at all.
+ *
+ * ## The ADR-0021 redaction seam
+ *
+ * `commerce.redact-order-payloads` rewrites order-class `provider_objects`
+ * payloads into their redacted form after the configured window
+ * (`commerce.order_payload_retention`, default 180 days). @loxep/commerce owns
+ * the sweep but not the knowledge of what a provider's redacted payload looks
+ * like, so the `object_type` → redactor map is injected here, from
+ * `commerce-retention.ts` — the same discipline as the eBay page iterator, and
+ * the only module in the wiring that imports an adapter's redaction helper.
  *
  * ## Poll routing (Phase 3)
  *
@@ -81,7 +97,12 @@ import {
   WOO_ORDERS_TARGET_TYPE,
   createCommerceTasks,
 } from "@loxep/commerce";
-import type { CommerceTasks, EbayOrderPageIterator } from "@loxep/commerce";
+import type { CommerceCronItem } from "@loxep/commerce";
+import type {
+  CommerceTasks,
+  EbayOrderPageIterator,
+  OrderPayloadRedactors,
+} from "@loxep/commerce";
 import {
   addJob as standaloneAddJob,
   createTaskRegistry,
@@ -107,6 +128,7 @@ import {
   createEbayOrderPageIterator,
   createEbayOrderPollExecutor,
 } from "./commerce-ebay.ts";
+import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -148,6 +170,13 @@ export interface BuildWorkerRegistryOptions {
    * the Sell Fulfillment HTTP surface.
    */
   ebayOrders?: EbayOrderPageIterator;
+  /**
+   * ADR-0021 redaction seam for `commerce.redact-order-payloads`. Defaults to
+   * `createOrderPayloadRedactors()`, which binds each order adapter's
+   * `redact*OrderFact` helper. A test supplies a stub here instead of feeding
+   * the sweep real provider payloads.
+   */
+  orderPayloadRedactors?: OrderPayloadRedactors;
 }
 
 export interface WorkerComposition {
@@ -174,6 +203,7 @@ export interface WorkerComposition {
 export function buildCronItems(input: {
   marketDispatch: AppCronItem;
   ebayRefreshTokens: AppCronItem;
+  redactOrderPayloads: CommerceCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -181,6 +211,7 @@ export function buildCronItems(input: {
     ...defaultCronItems,
     input.marketDispatch,
     input.ebayRefreshTokens,
+    input.redactOrderPayloads,
   ];
 }
 
@@ -236,6 +267,10 @@ export function buildWorkerRegistry(
       (await services.getWooAdapterForConnection(connectionId)).adapter,
     iterateEbayOrders:
       options.ebayOrders ?? createEbayOrderPageIterator(services),
+    // ADR-0021: the only place in the wiring that knows a provider's redacted
+    // payload shape. See `commerce-retention.ts`.
+    orderPayloadRedactors:
+      options.orderPayloadRedactors ?? createOrderPayloadRedactors(),
   });
 
   // --- market ---------------------------------------------------------
@@ -292,6 +327,7 @@ export function buildWorkerRegistry(
     cronItems: buildCronItems({
       marketDispatch: market.dispatchDueMonitorsCronItem,
       ebayRefreshTokens: refresh.refreshTokensCronItem,
+      redactOrderPayloads: commerce.redactOrderPayloadsCronItem,
     }),
     services,
     listings,
