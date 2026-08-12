@@ -64,11 +64,47 @@ function itemLabel(event: RenderableMarketEvent): string {
     : `item ${event.marketplaceItemId}`;
 }
 
+/**
+ * `marketplace_item_observations` prices are PostgreSQL `numeric(20,6)` and
+ * arrive here as decimal strings — never round-tripped through JS float
+ * arithmetic. `Number(value)` below is used ONLY to feed `Intl.NumberFormat`
+ * for display; the decimal string itself remains the source of truth
+ * upstream. This mirrors the intent of apps/web `lib/format.ts`'s
+ * `formatMoney` (trim to canonical display scale, symbol/code placement via
+ * `Intl` on a fixed `en-US` locale) reimplemented locally because that
+ * module lives in `apps/web` and is not importable from a package.
+ *
+ * "12.5" and "12.50" normalize to the same two-decimal display, and a raw
+ * `49.990000` normalizes identically to an already-trimmed `34.99` so old
+ * and new prices in the same message never show a mismatched scale.
+ */
 function formatMoney(value: unknown, currency: unknown): string | null {
-  if (typeof value !== "string" || value.length === 0) return null;
-  const suffix =
-    typeof currency === "string" && currency.length > 0 ? ` ${currency}` : "";
-  return `${value}${suffix}`;
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+
+  const trimmedCurrency =
+    typeof currency === "string" && currency.trim().length > 0
+      ? currency.trim()
+      : null;
+
+  if (trimmedCurrency !== null) {
+    try {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: trimmedCurrency,
+      }).format(numeric);
+    } catch {
+      // Invalid/unrecognized currency code — fall through to plain decimal
+      // rather than throwing on a bad or legacy provider currency string.
+    }
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "decimal",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric);
 }
 
 function formatUnknown(value: unknown, fallback: string): string {
@@ -92,7 +128,18 @@ export function renderMarketEventMessage(
   const payload = payloadRecord(event.payload);
   const label = itemLabel(event);
   const url = listingUrl(event.listing);
+  const rendered = renderBody(event, payload, label, url);
+  // The URL stays in the body too (clients without click-action support);
+  // this additionally sets it as the transport's click-through target.
+  return url === null ? rendered : { ...rendered, url };
+}
 
+function renderBody(
+  event: RenderableMarketEvent,
+  payload: Record<string, unknown>,
+  label: string,
+  url: string | null,
+): NotificationMessage {
   switch (event.eventType) {
     case "price_changed":
     case "price_dropped": {
