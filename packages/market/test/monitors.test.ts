@@ -150,6 +150,84 @@ describe("monitor target CRUD", () => {
   });
 });
 
+/**
+ * loxep-itn: `woo_orders` and `ebay_orders` are the Phase 3 COMMERCE order-
+ * sync types @loxep/commerce registers against this shared scheduling
+ * mechanism (see `monitors.ts`'s module doc). Both share the exact same
+ * `commerceSync`/`adaptive` config shape — the whole point of the provider-
+ * neutral `commerceSyncTargetConfigSchema` in @loxep/commerce that this
+ * package's `commerceSyncStateSchema` structurally mirrors — so `createTarget`
+ * CRUD must accept either type identically and must not corrupt the
+ * commerce-owned `commerceSync` namespace it never interprets.
+ */
+describe("commerce order-sync target types", () => {
+  it.each(["woo_orders", "ebay_orders"] as const)(
+    "creates, reads, and updates a '%s' target with a commerceSync-shaped config",
+    async (targetType) => {
+      const created = await service.createTarget({
+        targetType,
+        name: `${targetType} sync`,
+        intervalSeconds: 900,
+      });
+      // A freshly created order-sync target has no cursor yet.
+      expect(created.config).toEqual({});
+
+      const fetched = await service.getTarget(created.id);
+      expect(fetched.targetType).toBe(targetType);
+
+      // The service must not corrupt a commerce-owned `commerceSync` cursor
+      // it merely validates, not interprets.
+      const cursor = {
+        modifiedAfter: "2026-01-01T00:00:00.000Z",
+        lastSyncedAt: "2026-01-02T00:00:00.000Z",
+        lastOrderCount: 12,
+        perPage: 25,
+        maxPages: 5,
+      };
+      const updated = await service.updateTarget(created.id, {
+        config: { commerceSync: cursor },
+      });
+      expect(updated.config).toEqual({ commerceSync: cursor });
+
+      await service.deleteTarget(created.id);
+    },
+  );
+
+  it.each(["woo_orders", "ebay_orders"] as const)(
+    "rejects an unrecognized key in a '%s' config",
+    async (targetType) => {
+      await expect(
+        service.createTarget({
+          targetType,
+          name: `bad ${targetType} config`,
+          intervalSeconds: 900,
+          config: { externalItemId: "not-a-commerce-field" },
+        }),
+      ).rejects.toThrow(MarketValidationError);
+    },
+  );
+
+  it("lists targets filtered by the 'ebay_orders' type without disturbing 'woo_orders' rows", async () => {
+    const woo = await service.createTarget({
+      targetType: "woo_orders",
+      name: "woo filter probe",
+      intervalSeconds: 900,
+    });
+    const ebay = await service.createTarget({
+      targetType: "ebay_orders",
+      name: "ebay filter probe",
+      intervalSeconds: 900,
+    });
+    const ebayOnly = await service.listTargets({ targetType: "ebay_orders" });
+    const ids = ebayOnly.map((row) => row.id);
+    expect(ids).toContain(ebay.id);
+    expect(ids).not.toContain(woo.id);
+
+    await service.deleteTarget(woo.id);
+    await service.deleteTarget(ebay.id);
+  });
+});
+
 describe("claimDueTargets", () => {
   async function createDueTargets(count: number, prefix: string) {
     const ids: string[] = [];

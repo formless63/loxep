@@ -19,9 +19,9 @@
  *
  * The four things it is here to prove:
  *
- * 1. an `ebay_orders` row is claimable and routable even though
- *    `@loxep/market`'s closed target-type enum does not list it (the
- *    registration gap is narrow and documented, not silent);
+ * 1. an `ebay_orders` row is claimable, routable, AND covered by
+ *    `@loxep/market`'s `createMonitorService` CRUD (loxep-itn closed the
+ *    registration gap loxep-xh9.2 left, matching `woo_orders`'s coverage);
  * 2. the dispatcher claims it and the app executor runs the commerce sync,
  *    advancing the cursor so a second poll asks for only what is newer;
  * 3. a provider failure records a poll failure with backoff AND puts the
@@ -224,10 +224,11 @@ interface TargetRow {
 
 /**
  * Read the target with plain SQL rather than `createMonitorService.getTarget`.
- * `@loxep/market`'s service validates `target_type` against a closed enum that
- * does not list `ebay_orders` yet (see the registration caveat in
- * `src/registry.ts`), so its CRUD path refuses these rows even though every
- * scheduling primitive handles them fine.
+ * That service now covers `ebay_orders` rows too (loxep-itn closed the
+ * registration gap), so this is no longer a CRUD-coverage workaround — kept
+ * as a direct read of the scheduling columns this file asserts on, avoiding a
+ * dependency on `@loxep/market`'s service surface for a handful of read-only
+ * checks.
  */
 async function readTarget(id: string): Promise<TargetRow> {
   const rows = await handle.pool.query<{
@@ -383,15 +384,17 @@ describe("'ebay_orders' registration state", () => {
   });
 
   /**
-   * The documented gap, asserted rather than described. `packages/market` was
-   * outside loxep-xh9.2's write fence, so `ebay_orders` is not in the closed
-   * enum yet. Nothing about POLLING depends on that list — the tests below
-   * prove the full claim → route → sync path — but monitor-service CRUD does.
-   * When the follow-up lands, this expectation flips and the raw-SQL helpers
-   * above can go.
+   * The gap loxep-xh9.2 documented (packages/market was outside its write
+   * fence, so `ebay_orders` was missing from the closed enum) is closed by
+   * loxep-itn: `ebay_orders` is now registered in `@loxep/market`'s
+   * `MONITOR_TARGET_TYPES` and `monitorTargetConfigSchemas`, so
+   * `createMonitorService` CRUD covers these rows the same way it already
+   * covers `woo_orders`. Nothing about POLLING ever depended on this list —
+   * the tests below prove the full claim → route → sync path — but this
+   * closes the monitor-service CRUD gap.
    */
-  it("is NOT yet in @loxep/market's closed target-type union", () => {
-    expect(MONITOR_TARGET_TYPES).not.toContain(EBAY_ORDERS_TARGET_TYPE);
+  it("IS registered in @loxep/market's target-type union", () => {
+    expect(MONITOR_TARGET_TYPES).toContain(EBAY_ORDERS_TARGET_TYPE);
   });
 });
 

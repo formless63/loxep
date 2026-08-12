@@ -290,7 +290,7 @@ ebay_watchlist
 ebay_item
 ```
 
-A later phase adds search/seller types without changing the scheduling model. Phase 2 added `ebay_search` and `ebay_seller`; Phase 3 added `woo_orders`, whose namespaced `config.commerceSync` key holds the WooCommerce order-sync watermark — see [Scheduling is shared foundation infrastructure](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) for the ownership rule that permits it, and [Commerce Schema Design](../commerce-schema-design/#provisional-implementation-decisions) for its provisional status.
+A later phase adds search/seller types without changing the scheduling model. Phase 2 added `ebay_search` and `ebay_seller`; Phase 3 added `woo_orders` and `ebay_orders`, whose namespaced `config.commerceSync` key holds the WooCommerce/eBay order-sync watermark — see [Scheduling is shared foundation infrastructure](../domain-boundaries/#scheduling-is-shared-foundation-infrastructure) for the ownership rule that permits it, and [Commerce Schema Design](../commerce-schema-design/#provisional-implementation-decisions) for its provisional status.
 
 ### `marketplace_items`
 

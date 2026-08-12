@@ -18,8 +18,8 @@ import {
   monitorsQuery
 } from '@/features/market/api/queries';
 import {
+  manuallyCreatableMonitorTargetTypeOptions,
   monitorTargetTypeLabel,
-  monitorTargetTypeOptions,
   NO_CONNECTION_VALUE
 } from '@/features/market/constants';
 
@@ -262,7 +262,11 @@ export default function MonitorFormDialog({
               <form.AppField
                 name='targetType'
                 children={(field) => (
-                  <field.SelectField label='Type' required options={monitorTargetTypeOptions} />
+                  <field.SelectField
+                    label='Type'
+                    required
+                    options={manuallyCreatableMonitorTargetTypeOptions}
+                  />
                 )}
               />
             )}
