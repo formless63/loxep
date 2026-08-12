@@ -205,7 +205,7 @@ Storage illustrates the boundary well:
 - S3 access/secret keys are encrypted runtime secrets;
 - changing storage backends uses the supported storage-migration workflow instead of hand-editing object references.
 
-Other encrypted runtime secrets follow the same shape. The provider application keyset an installation registers once — for eBay, the developer-portal app ID/cert ID/dev ID plus its RuName and target environment — is a single typed bundle stored under a stable key by convention `integration.<provider>.keyset` (`integration.ebay.keyset`, purpose `ebay_keyset`); per-connection user tokens obtained through that keyset live separately in `connection_credentials`.
+Other encrypted runtime secrets follow the same shape. The provider application keyset an installation registers once — for eBay, the developer-portal app ID/cert ID/dev ID plus its RuName and target environment — is a single typed bundle stored under a stable key by convention `integration.<provider>.keyset` (`integration.ebay.keyset`, purpose `ebay_keyset`); per-connection user tokens obtained through that keyset live separately in `connection_credentials`. When no stored secret exists, the eBay keyset resolver falls back to the local development file `~/.config/loxep/ebay-sandbox.env` for sandbox bring-up only — the stored secret always takes precedence once it is set, and the Integrations/Connections UI labels a dev-file keyset distinctly from a stored one so a fresh install with an empty database is never mistaken for a configured one.
 
 RustFS remains only the initial recommended self-hosted S3 companion. Loxep stores generic S3 semantics rather than RustFS-specific configuration throughout the domain model.
 

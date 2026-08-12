@@ -38,6 +38,14 @@ export interface IntegrationStatus {
   label: string;
   /** Extra facts worth a badge (environment, account counts) — never secrets. */
   details: string[];
+  /**
+   * A second, attention-worthy badge distinct from the plain `details` chips —
+   * currently used to flag the eBay application keyset resolving from the
+   * `~/.config/loxep/ebay-sandbox.env` development file rather than the
+   * stored application secret, so a fresh install never reads as configured
+   * from an empty database. Metadata only, never a credential value.
+   */
+  warning?: { label: string; title: string };
 }
 
 /**
@@ -96,6 +104,20 @@ function accountCountDetail(count: number): string {
   return count === 1 ? '1 account' : `${count} accounts`;
 }
 
+/**
+ * Shown when `EbayKeysetStatus.source` is `'dev-file'` — the keyset resolved
+ * from the local `~/.config/loxep/ebay-sandbox.env` fallback rather than the
+ * application secret stored in PostgreSQL. Documented precedence
+ * (`apps/docs/.../configuration-and-secrets.md`): a stored secret always
+ * wins, and this file exists only for local sandbox development, so a fresh
+ * install must never read as "configured" the same way a stored secret does.
+ */
+const DEV_FILE_KEYSET_WARNING = {
+  label: 'Keyset: dev file',
+  title:
+    "Resolved from the local ~/.config/loxep/ebay-sandbox.env development fallback, not a stored application secret. A stored secret always takes precedence over this file; it exists for local sandbox development only and does not carry to another install or a fresh database."
+};
+
 export const integrationServices: IntegrationService[] = [
   {
     id: 'ebay',
@@ -138,9 +160,19 @@ export const integrationServices: IntegrationService[] = [
         ...(ebayKeyset.environment === null ? [] : [ebayKeyset.environment]),
         accountCountDetail(count)
       ];
+      // A dev-machine fallback resolving over an empty database must never
+      // read as "configured" the same way a stored secret does — flag it with
+      // its own badge rather than folding it into the plain `details` chips.
+      const warning =
+        ebayKeyset.source === 'dev-file' ? { ...DEV_FILE_KEYSET_WARNING } : undefined;
       return ebayKeyset.ruNameConfigured
-        ? { tone: 'ready', label: 'Keyset configured', details }
-        : { tone: 'partial', label: 'Redirect URL name missing', details };
+        ? { tone: 'ready', label: 'Keyset configured', details, ...(warning && { warning }) }
+        : {
+            tone: 'partial',
+            label: 'Redirect URL name missing',
+            details,
+            ...(warning && { warning })
+          };
     }
   },
   {

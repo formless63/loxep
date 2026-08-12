@@ -22,15 +22,18 @@ const TONE_ICON: Record<Tone, (typeof Icons)['circleCheck']> = {
 export function ToneBadge({
   tone,
   className,
-  children
+  children,
+  title
 }: {
   tone: Tone;
   className?: string;
   children: ReactNode;
+  /** Native tooltip — for a badge whose tone/label alone doesn't explain itself. */
+  title?: string;
 }) {
   const Icon = TONE_ICON[tone];
   return (
-    <Badge variant={tone} className={cn('capitalize', className)}>
+    <Badge variant={tone} className={cn('capitalize', className)} title={title}>
       <Icon />
       {children}
     </Badge>
