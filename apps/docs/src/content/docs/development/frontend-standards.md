@@ -22,7 +22,7 @@ The `/starter/*` routes are the preserved donor workspace and the **living patte
 
 Themes live in `apps/web/src/styles/themes/*.css`, are imported by `src/styles/theme.css`, and are listed in `src/components/themes/theme.config.ts`. The active theme is a `data-theme` attribute on `<html>` (set by `ActiveThemeProvider`, persisted in the `active_theme` cookie); dark mode is the `.dark` class, so each theme file defines two blocks: `[data-theme='x']` and `[data-theme='x'].dark`.
 
-Ten themes ship today: `macaron`, `neobrutualism`, `cyberpunk`, `mono`, `notebook`, `light-green`, `zen`, `astro-vista`, `fallout`, `burning-acid`. `DEFAULT_THEME` is `macaron` (provisional — owner-picked tweakcn set, pending owner review, loxep-zzu).
+Eight themes ship today: `macaron`, `neobrutualism`, `cyberpunk`, `light-green`, `zen`, `astro-vista`, `fallout`, `burning-acid`. `DEFAULT_THEME` is `macaron` (provisional — owner-picked tweakcn set, pending owner review, loxep-zzu). The `mono` and `notebook` themes shipped briefly and were removed after owner visual review (loxep-l31) — every remaining theme is chromatic. `THEMES` in `theme.config.ts` is the validation list the root route checks the `active_theme` cookie against, so a stale cookie referencing a removed theme value falls back to `DEFAULT_THEME` automatically; no separate migration was needed.
 
 Every theme defines the **same** token vocabulary. That vocabulary is the whole palette you are allowed to use:
 
@@ -46,15 +46,15 @@ Every theme defines the **same** token vocabulary. That vocabulary is the whole 
 | `--shadow-2xs` … `--shadow-2xl` | `shadow-sm`, `shadow-md`, … | themes vary elevation (neobrutualism is hard-offset) |
 | `--spacing`, `--tracking-normal` | Tailwind spacing scale | never hardcode `px` where a scale step works |
 
-`--success` / `--success-foreground` and `--warning` / `--warning-foreground` exist in all ten theme files, wired into each `@theme inline` block, with matching `Badge` (`variant='success'`, `variant='warning'`) and `Alert` (`variant='success'`, `variant='warning'`) variants. `mono` and `notebook` deliberately keep these tokens desaturated/neutral-leaning rather than fully saturated hues, in keeping with those themes' achromatic character — pair the tone with an icon there so meaning does not depend on hue. Reserve `--destructive` for genuine failure, `--warning` for degraded/at-risk states and operator-caused states (a *disabled* endpoint is a warning-or-neutral state, not the same alarm red as a *failing* health check), and `--success` for healthy/succeeded states. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
+`--success` / `--success-foreground` and `--warning` / `--warning-foreground` exist in all eight theme files, wired into each `@theme inline` block, with matching `Badge` (`variant='success'`, `variant='warning'`) and `Alert` (`variant='success'`, `variant='warning'`) variants. **Status hues derive from the theme's own palette, not a fixed green/amber.** Every theme originally shipped with `--success` pinned near `oklch(_ _ 145)` (generic green) and `--warning` near `oklch(_ _ 70–85)` (generic amber), regardless of the theme's actual hues — that read as two off-brand chips bolted onto an otherwise coherent palette (loxep-l31). Instead, when adding or re-tuning a theme: pick `--success`'s hue from that theme's own greenest `--chart-N` (or `--primary`/`--secondary`) token where one exists — e.g. `cyberpunk` and `fallout` both reuse their own accent/secondary green-family hue exactly; `neobrutualism`'s success already equals `--chart-4`. Where a theme has no green in its palette at all (`zen`, `astro-vista`, `burning-acid`'s light mode), blend toward one at that theme's own chroma/lightness register instead of importing a foreign saturated green — `zen` uses a muted low-chroma sage rather than a bright grass green, `astro-vista` uses a cosmic teal. Harmonize `--warning` with the theme's own warm accent/secondary family the same way (`neobrutualism` reuses its bold secondary yellow, `fallout` reuses its amber-glow primary in dark mode). Keep `--destructive` as the theme already defines it — it was theme-native from the start and needs no re-derivation. Reserve `--destructive` for genuine failure, `--warning` for degraded/at-risk states and operator-caused states (a *disabled* endpoint is a warning-or-neutral state, not the same alarm red as a *failing* health check), and `--success` for healthy/succeeded states. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
 
 ### How much themes actually vary
 
-They vary a lot — the flatness is on us, not on them. `--primary` alone ranges from `oklch(0.5555 0 0)` (mono light, fully achromatic) to `oklch(0.8871 0.2122 128.5)` (light-green) to `oklch(0.6489 0.237 27)` (neobrutualism). `--chart-1..5` are five distinct hues in `neobrutualism`, `light-green`, `astro-vista`, `cyberpunk`, and `burning-acid`.
+They vary a lot — the flatness is on us, not on them. `--primary` alone ranges from `oklch(0.3012 0 0)` (zen, fully achromatic) to `oklch(0.8871 0.2122 128.5)` (light-green) to `oklch(0.6489 0.237 27)` (neobrutualism). `--chart-1..5` are five distinct hues in `neobrutualism`, `light-green`, `astro-vista`, `cyberpunk`, and `burning-acid`.
 
 Two consequences you must design around:
 
-- **`mono` and `notebook` are intentionally achromatic** — `mono` sets all five chart tokens to the same grey. A chart must stay readable there, so never encode meaning in hue alone; pair color with shape, dash, label, or ordering.
+- **Never encode meaning in hue alone, even though every theme is chromatic now.** `mono` and `notebook` — whole themes with a deliberately achromatic chart ramp — shipped briefly and were removed after owner visual review (loxep-l31), so this is no longer defended by "a whole theme might render your chart in one grey." It stays the rule anyway as good practice: individual tokens inside an otherwise-chromatic theme can still land at very low chroma (`zen`'s `--chart-2` is pure grey, `oklch(0.235 0 0)`, and several of its neighbors sit close to it), colorblind viewers don't get the hue distinction either way, and a chart that only works when every series color happens to be far apart in hue is fragile. Pair color with shape, dash, label, or ordering.
 - **The default theme (`macaron`) is soft-chromatic, not neutral** — its hues are real (pink primary, mint accent, five distinct chart hues), but every token sits at high lightness and gentle chroma, so a surface leaning only on `--muted`/`--border` can still read as "responds to the theme" there while looking flat everywhere else. Judging "does this surface respond to the theme?" against the default alone is not enough — verify against a loud theme (`cyberpunk`, `burning-acid`) too.
 
 ## Tables
@@ -196,9 +196,11 @@ A stat tile is `Card` + `CardHeader` + `CardDescription` (label) + `CardTitle` (
 - `tabular-nums` on the value — these numbers refetch on an interval and will visibly jitter without it;
 - a `CardAction` slot with a trend `Badge` (delta, direction icon) when a trend exists, or nothing when it does not — never a bare number with no context;
 - one grid-level tint so the row of tiles reads as a group, e.g. the donor's `*:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card`;
-- a visible `focus-visible:ring` treatment when the card is a link.
+- a visible `focus-visible:ring` treatment when the card is a link;
+- a per-tile graphic so a row of KPI tiles doesn't read as four bare numbers: a mini in-tile sparkline (no axis, no tooltip — the `CardTitle` already carries the value) when the tile has a real hourly/derived series to plot, otherwise a `CardAction` icon in a tinted `bg-chart-N/15 text-chart-N` circle, one distinct `--chart-N` per tile so themes drive the variety. Never fabricate a series to fill the slot — an icon-only tile is the honest fallback, same rule as the trend `Badge` above.
+- **Don't let one outsized card stretch a numeric KPI row.** A tile whose natural content (title + score + item name, a scored "top opportunity", …) is materially taller than the surrounding numeric tiles gets its own band below/beside the KPI row, not a fifth grid cell — see `src/routes/market/overview.tsx`'s `TopOpportunityCard`, paired with the events chart in a `md:grid-cols-2` band under the KPI row.
 
-Reference: `src/features/overview/components/overview.tsx` (`/starter/overview`). `src/routes/market/overview.tsx` now follows this pattern on a real product surface (shared `StatCard`, trend badge fed by real data only, grid tint, visible focus rings).
+Reference: `src/features/overview/components/overview.tsx` (`/starter/overview`). `src/routes/market/overview.tsx` now follows this pattern on a real product surface (shared `StatCard`, trend badge and sparklines fed by real data only, icon tiles where no series exists, grid tint, visible focus rings, an outsized card moved to its own band).
 
 ### Status and health tone
 
@@ -224,14 +226,14 @@ const STATE_VARIANT = {
 </Badge>
 ```
 
-Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so the meaning survives `mono`/`notebook` (where `--success`/`--warning` are deliberately desaturated) and colorblind viewers. Reach for `bg-chart-N/15 text-chart-N` when a state is categorical rather than good/bad/at-risk.
+Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so the meaning does not depend on hue alone — colorblind viewers still get it, and a low-chroma outlier token in an otherwise-chromatic theme (see "Never encode meaning in hue alone" above) doesn't lose the signal. Reach for `bg-chart-N/15 text-chart-N` when a state is categorical rather than good/bad/at-risk.
 
 ### Theme-response check (required)
 
 A surface is not done until it visibly responds to the theme. Before closing UI work:
 
 1. Switch to a **chromatic** theme (`neobrutualism`, `light-green`, `cyberpunk`, or `burning-acid`) and confirm the surface picks up hue — emphasis, badges, charts, focus rings.
-2. Switch to a **second** theme with different geometry/typography (`fallout`, `notebook`, `zen`) and confirm radius, shadow, and font change too.
+2. Switch to a **second** theme with different geometry/typography (`fallout`, `zen`, `astro-vista`) and confirm radius, shadow, and font change too.
 3. Toggle **dark mode** in both and confirm contrast holds and the two themes still look different from each other.
 
 If the surface looks the same in all three, it is built from `muted` and `border` only. Fix it before merging.
@@ -271,6 +273,36 @@ Rules:
 - **Skeleton:** the loading state mirrors the loaded layout. Tables use `DataTableSkeleton` with the real `columnCount`/`filterCount`; charts use a chart skeleton **matching the chart's height** (`aspect-video` by default, not `h-48`); cards use `Skeleton` blocks shaped like the card. A single `<Skeleton className='h-64 w-full' />` standing in for an eight-column table is a violation — it guarantees layout shift.
 - Never nest loading gates so the user sees skeleton → skeleton → content. One boundary per surface.
 - **Suspense** boundaries wrap the data component, with the skeleton as the fallback (see `src/features/products/components/product-listing.tsx`).
+- **One boundary per data source, not one per route.** A route that reads a single combined DTO (one server function, one query) gets one skeleton/error boundary for the whole surface — that is not a "page-wide gate," it is honest, because there is only one thing to wait on. A route that reads genuinely independent data (a table plus a chart plus a summary card, each its own query) gives **each card its own** `isPending`/skeleton pair so the fast ones render immediately instead of waiting on the slowest. The one legitimate joint gate across multiple `useQuery` calls is when two queries feed one *derived, joined* view — `src/features/market/components/search-dashboard.tsx`'s `SearchDashboard` reads `monitorsQuery` and `searchDashboardQuery` under one `isPending`/`isError` because its discovery-monitor rows are computed by joining both results; gating them separately would either show a table with no stats or require a second, nested loading state (the "skeleton → skeleton → content" violation above). Document the reason inline when you do this, the way that component does.
+
+### Suspense: route loader prefetch + `useSuspenseQuery`
+
+TanStack Start's router context carries a `queryClient` (`context: { queryClient }` in `src/router.tsx`), so a route can prefetch its data in the loader and read it with `useSuspenseQuery` instead of a client-only `useQuery` + `isPending` gate. This removes the client-fetch waterfall on first navigation (the loader's `ensureQueryData` already warms the cache before the component mounts) and moves error handling from an `isError` branch to the route's own `errorComponent`. `src/routes/market/overview.tsx` is the reference implementation for a single-combined-DTO route:
+
+```tsx
+export const Route = createFileRoute('/market/overview')({
+  loader: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData(marketOverviewQuery);
+  },
+  errorComponent: MarketOverviewError, // { error } → Alert(variant='destructive') + a router.invalidate() retry
+  component: MarketOverview
+});
+
+function MarketOverview() {
+  return (
+    <MarketPage title='Market' description='…'>
+      <Suspense fallback={<OverviewSkeleton />}>
+        <OverviewData /> {/* useSuspenseQuery(marketOverviewQuery) */}
+      </Suspense>
+    </MarketPage>
+  );
+}
+```
+
+The `<Suspense>` boundary inside the route component is defence-in-depth (a mount that races ahead of the loader, e.g. a client-side cache eviction), not the primary loading path — the loader prefetch is. This is the same `ensureQueryData` (loader) + `useSuspenseQuery` (component) + `Suspense` (fallback) shape already used by `/starter/product/$productId` and `/starter/users`; `errorComponent` (`{ error, reset }` from `@tanstack/react-router`) replaces the `isError` branch, with a `router.invalidate()` call as the retry action.
+
+Convert a route to this pattern when it reads one query (or a set of queries that are already jointly gated for a documented reason, per the bullet above). A route with several independent per-card queries is better served by keeping `useQuery` + a skeleton per card (the "one boundary per data source" rule above already gets you correct streaming there) — introducing `useSuspenseQuery` per card would mean one `<Suspense>` per card too, which is a bigger, separately-scoped refactor of those components, not a route-level change.
+
 - **Toast:** every mutation reports through `sonner` — success and error. Destructive actions get an `AlertDialog` confirm first. This is already consistent across settings and market; do not regress it. The sanctioned exception is a mutation that navigates away (OAuth start) — no toast, because the page is leaving.
 - **Errors:** a failed query renders an `Alert` with `variant='destructive'` and a retry, not a blank panel and not a bare `<p className='text-destructive'>`. Pick this one treatment; three coexist today.
 - Never `alert()`.

@@ -19,14 +19,6 @@ export const THEMES = [
     value: 'cyberpunk'
   },
   {
-    name: 'Mono',
-    value: 'mono'
-  },
-  {
-    name: 'Notebook',
-    value: 'notebook'
-  },
-  {
     name: 'Light Green',
     value: 'light-green'
   },
