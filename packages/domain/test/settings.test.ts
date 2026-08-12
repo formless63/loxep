@@ -214,7 +214,7 @@ describe("settings service", () => {
       key: "commerce.order_payload_retention",
       schemaVersion: 1,
       isSet: false,
-      value: { mode: "redact", afterDays: 180 },
+      value: { mode: "keep", afterDays: 180 },
     });
   });
 

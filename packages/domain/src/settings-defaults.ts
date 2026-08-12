@@ -163,11 +163,14 @@ export const wooRateBudgetSetting = defineSetting({
  * destroying provenance. `mode: 'keep'` restores the pre-ADR-0021 behavior
  * for installations that want it, and makes the sweep a no-op.
  *
- * 180 days is the default because typical marketplace dispute, return, and
- * chargeback windows run to about that, and the payload's support value
- * (looking up a buyer address for a return) decays with them. The window
- * applies per STORED PAYLOAD ROW, not per order, so a re-synced order that
- * produced a newer payload keeps its newest facts longest.
+ * The DEFAULT is `keep` — owner-reviewed 2026-08-12: retained payloads feed
+ * future CRM and cross-platform customer matching, and a lookup that hits a
+ * redaction is worse for this product than the residual PII exposure of a
+ * self-hosted install. `redact` remains fully supported for installations
+ * that prefer data minimization; 180 days stays its suggested window because
+ * typical marketplace dispute/return/chargeback windows run to about that.
+ * The window applies per STORED PAYLOAD ROW, not per order, so a re-synced
+ * order that produced a newer payload keeps its newest facts longest.
  */
 export const orderPayloadRetentionSetting = defineSetting({
   key: "commerce.order_payload_retention",
@@ -182,7 +185,7 @@ export const orderPayloadRetentionSetting = defineSetting({
     "order provider-object payload is replaced by its redacted form, or " +
     "'keep' to retain payloads indefinitely. Provenance rows are never deleted",
   schemaVersion: 1,
-  defaultValue: { mode: "redact", afterDays: 180 },
+  defaultValue: { mode: "keep", afterDays: 180 },
 });
 
 /** Every definition this module registers, for diagnostics and tests. */

@@ -86,8 +86,9 @@ describe("order payload retention sweep", () => {
   });
 
   beforeEach(async () => {
-    // Every test starts from the shipped default, so a test that changes the
-    // policy cannot leak into the next one.
+    // Every test starts from an explicit redact policy (the shipped default is
+    // 'keep' after owner review), so a test that changes the policy cannot
+    // leak into the next one and the sweep paths stay exercised.
     await settings.set(
       orderPayloadRetentionSetting,
       { mode: "redact", afterDays: 180 },

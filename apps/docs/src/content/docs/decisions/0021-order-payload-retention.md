@@ -2,7 +2,7 @@
 title: "ADR-0021: Order-Payload Retention in provider_objects"
 ---
 
-**Status:** PROVISIONAL — **implemented**; the policy itself still awaits owner review per the delegated-decision policy. Refines foundational decision 7 (raw provider-object retention) for one object class; does not supersede it.
+**Status:** Accepted, owner-reviewed 2026-08-12 — **with the default inverted from the original proposal**: the shipped default is `mode: 'keep'` (no automatic redaction). The owner's ruling: retained order payloads feed the long-term CRM direction — relating customers across platforms by whatever fields can be matched — and a support lookup that lands on a redaction is worse for this self-hosted product than the residual PII exposure. The redaction sweep is fully implemented and supported as an opt-in (`mode: 'redact'`, editable at `/settings/application`); the sections below describe that mechanism. Refines foundational decision 7 for one object class; does not supersede it.
 
 Shipped in `0007_order_payload_retention.sql` (`provider_objects.redacted_at` plus the partial sweep index), `@loxep/domain`'s `commerce.order_payload_retention` setting, `@loxep/commerce`'s `runOrderPayloadRedactionSweep` and its daily `commerce.redact-order-payloads` job, and `@loxep/app`'s `createOrderPayloadRedactors` — the injected seam that binds each adapter's `redact*OrderFact` helper.
 
@@ -14,7 +14,7 @@ Hash-deduplication bounds growth (one row per distinct payload per order) but is
 
 ## Decision
 
-Order-class provider object payloads are **redacted by default after 180 days; provenance rows are never automatically deleted.**
+Order-class provider object payloads are **retained by default** (owner ruling above); when an installation opts into redaction, payloads are **redacted in place after a configurable window (180-day suggested default); provenance rows are never automatically deleted.** The mechanism as designed and implemented:
 
 1. **Redaction, not deletion.** After the retention window, the stored payload is replaced by its provider-specific redacted form (for WooCommerce, `redactWooOrderFact`; every adapter that gains order ingestion must ship an equivalent redaction helper as part of that work). The `provider_objects` row itself — identity, provider, object type, payload hash, timestamps — is retained. Data-minimization is achieved by removing personal data from the payload, not by destroying provenance.
 2. **Default window: 180 days** from the payload row's storage time. Rationale: typical marketplace dispute, return, and chargeback windows run to ~180 days; the payload's support value (looking up a buyer address for a return) decays with them. The window applies per stored payload row, not per order, so a re-synced order that produced a newer payload keeps its newest facts longest.
