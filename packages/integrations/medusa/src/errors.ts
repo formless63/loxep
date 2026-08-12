@@ -72,7 +72,14 @@
  *                            conflict, duplicate_error, not_allowed),
  *                            malformed local input/config;
  * - `provider_unavailable` — HTTP 5xx, network/timeout failures, non-JSON
- *                            bodies, unclassifiable errors.
+ *                            bodies, unclassifiable errors; ALSO the kind
+ *                            `orders.ts`'s watermark fail-open canary throws
+ *                            when a `updated_at[$gte]`-filtered response
+ *                            contains an order older than the watermark — a
+ *                            live-verified case of the provider silently
+ *                            returning unfiltered results as if they were
+ *                            filtered, which this package treats the same as
+ *                            any other "cannot trust this response" failure.
  *
  * CREDENTIAL CONTAINMENT is structural, not filtered:
  *

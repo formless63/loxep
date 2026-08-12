@@ -26,6 +26,7 @@ import {
   TEST_BASE_URL,
   TEST_TOKEN,
   createFetchStub,
+  rejection,
   type FetchStub,
 } from "./http.ts";
 import {
@@ -608,7 +609,14 @@ describe("fetchOrders / fetchOrdersPage / iterateMedusaOrders", () => {
   it("iterates every page, carrying the filter and not the offset cursor", async () => {
     const stub = createFetchStub((index) => ({
       body: {
-        orders: [capturedOrderFixture({ id: `order_${2000 + index}` })],
+        orders: [
+          capturedOrderFixture({
+            id: `order_${2000 + index}`,
+            // Must honor the watermark below (2026-08-05) — the fail-open
+            // canary rejects a page containing an older updated_at.
+            updated_at: "2026-08-06T00:00:00.000Z",
+          }),
+        ],
         count: 3,
         offset: index,
         limit: 1,
@@ -644,5 +652,113 @@ describe("fetchOrders / fetchOrdersPage / iterateMedusaOrders", () => {
     }
     expect(ids).toEqual(["order_01FIXTURE0001"]);
     expect(stub.calls).toHaveLength(2);
+  });
+});
+
+describe("watermark wire serialization (loxep-pyg) — pins the exact percent-encoded query string", () => {
+  it("emits updated_at%5B%24gte%5D=<ISO> on the wire, unchanged by refactors to buildQuery", async () => {
+    const stub = createFetchStub([
+      { body: { orders: [], count: 0, offset: 0, limit: 50 } },
+    ]);
+    await fetchOrdersPage(makeAdapter(stub), {
+      updatedAfter: new Date("2026-08-05T00:00:00.000Z"),
+    });
+    // Asserted against the RAW recorded URL (not a re-parsed URLSearchParams)
+    // so this test fails loudly if serialization ever stops percent-encoding
+    // the operator-key brackets the way Medusa 2.18.0 was live-verified to
+    // accept (see orders.ts's FetchMedusaOrdersInput.updatedAfter doc).
+    expect(stub.calls[0]?.url).toContain(
+      "updated_at%5B%24gte%5D=2026-08-05T00%3A00%3A00.000Z",
+    );
+  });
+});
+
+describe("watermark fail-open canary (loxep-pyg)", () => {
+  it("throws a provider_unavailable error when fetchOrdersPage returns an order older than the watermark", async () => {
+    const stub = createFetchStub([
+      {
+        body: {
+          // Medusa 2.18.0 live-verified to fail OPEN like this on a typo'd
+          // filter key/operator: HTTP 200, `count` and rows unfiltered.
+          orders: [
+            capturedOrderFixture({ updated_at: "2026-01-01T00:00:00.000Z" }),
+          ],
+          count: 1,
+          offset: 0,
+          limit: 50,
+        },
+      },
+    ]);
+    const error = await rejection(
+      fetchOrdersPage(makeAdapter(stub), {
+        updatedAfter: new Date("2026-08-05T00:00:00.000Z"),
+      }),
+    );
+    expect(error).toBeInstanceOf(MedusaAdapterError);
+    expect(error.kind).toBe("provider_unavailable");
+    expect(error.message).toMatch(/fail open|fail OPEN/i);
+    expect(error.detail["watermark"]).toBe("2026-08-05T00:00:00.000Z");
+    expect(error.detail["orderUpdatedAt"]).toBe("2026-01-01T00:00:00.000Z");
+    expect(error.detail["externalOrderId"]).toBe("order_01FIXTURE0001");
+  });
+
+  it("throws mid-iteration when a later page in iterateMedusaOrders violates the watermark", async () => {
+    const stub = createFetchStub([
+      {
+        body: {
+          orders: [
+            capturedOrderFixture({
+              id: "order_ok",
+              updated_at: "2026-08-06T00:00:00.000Z",
+            }),
+          ],
+          count: 2,
+          offset: 0,
+          limit: 1,
+        },
+      },
+      {
+        body: {
+          // Second page fails open — this is exactly the "first poisoned
+          // page" the canary exists to catch immediately.
+          orders: [
+            capturedOrderFixture({
+              id: "order_poisoned",
+              updated_at: "2026-01-01T00:00:00.000Z",
+            }),
+          ],
+          count: 2,
+          offset: 1,
+          limit: 1,
+        },
+      },
+    ]);
+    const ids: string[] = [];
+    await expect(async () => {
+      for await (const page of iterateMedusaOrders(makeAdapter(stub), {
+        limit: 1,
+        updatedAfter: "2026-08-05T00:00:00Z",
+      })) {
+        ids.push(...page.orders.map((o) => o.externalOrderId));
+      }
+    }).rejects.toBeInstanceOf(MedusaAdapterError);
+    expect(ids).toEqual(["order_ok"]);
+  });
+
+  it("does not check the invariant when no watermark was supplied", async () => {
+    const stub = createFetchStub([
+      {
+        body: {
+          orders: [
+            capturedOrderFixture({ updated_at: "2020-01-01T00:00:00.000Z" }),
+          ],
+          count: 1,
+          offset: 0,
+          limit: 50,
+        },
+      },
+    ]);
+    const result = await fetchOrdersPage(makeAdapter(stub));
+    expect(result.orders).toHaveLength(1);
   });
 });
