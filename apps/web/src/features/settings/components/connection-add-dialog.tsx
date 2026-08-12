@@ -10,11 +10,13 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { createConnection, createStoreConnection, type EntityDto } from '@/server/admin-functions';
 import { startEbayConsent } from '@/server/ebay-oauth';
 import { connectionsQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
+import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 import {
   GuidanceCallout,
   GuidanceLink,
@@ -87,27 +89,6 @@ function entityIdFrom(value: string): string | null {
 }
 
 const ENTITY_FIELD_DESCRIPTION = 'Business context only — grants and restricts nothing.';
-
-function FormActions({
-  onCancel,
-  submitLabel,
-  pending
-}: {
-  onCancel: () => void;
-  submitLabel: string;
-  pending: boolean;
-}) {
-  return (
-    <div className='flex justify-end gap-2'>
-      <Button type='button' variant='outline' onClick={onCancel}>
-        Cancel
-      </Button>
-      <Button type='submit' disabled={pending}>
-        {submitLabel}
-      </Button>
-    </div>
-  );
-}
 
 const ebayAccountSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
@@ -209,25 +190,23 @@ function EbayAccountForm({
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
       window.location.href = consent.url;
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to start the eBay consent flow');
-    }
+    onError: (error) => toastError(error, 'Failed to start the eBay consent flow')
   });
 
   const form = useAppForm({
     defaultValues: { name: '', economicEntityId: NO_ENTITY_VALUE },
     validators: { onSubmit: ebayAccountSchema },
-    onSubmit: ({ value }) => mutation.mutate(value)
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
   });
 
   return (
-    <form
-      className='space-y-6'
-      onSubmit={(e) => {
-        e.preventDefault();
-        form.handleSubmit();
-      }}
-    >
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
       <EbayConsentGuidance />
       <FieldGroup>
         <form.AppField
@@ -253,11 +232,14 @@ function EbayAccountForm({
           )}
         />
       </FieldGroup>
-      <FormActions
-        onCancel={() => onDone(false)}
-        submitLabel='Continue to eBay'
-        pending={mutation.isPending}
-      />
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Continue to eBay</form.SubmitButton>
+        </form.AppForm>
+      </div>
     </form>
   );
 }
@@ -343,9 +325,7 @@ function WooAccountForm({
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
       onDone(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to connect the store');
-    }
+    onError: (error) => toastError(error, 'Failed to connect the store')
   });
 
   const form = useAppForm({
@@ -357,17 +337,17 @@ function WooAccountForm({
       economicEntityId: NO_ENTITY_VALUE
     },
     validators: { onSubmit: wooAccountSchema },
-    onSubmit: ({ value }) => mutation.mutate(value)
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
   });
 
   return (
-    <form
-      className='space-y-6'
-      onSubmit={(e) => {
-        e.preventDefault();
-        form.handleSubmit();
-      }}
-    >
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
       <WooSetupGuidance />
       <FieldGroup>
         <form.AppField
@@ -429,11 +409,14 @@ function WooAccountForm({
           )}
         />
       </FieldGroup>
-      <FormActions
-        onCancel={() => onDone(false)}
-        submitLabel='Connect store'
-        pending={mutation.isPending}
-      />
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect store</form.SubmitButton>
+        </form.AppForm>
+      </div>
     </form>
   );
 }
@@ -509,9 +492,7 @@ function MedusaAccountForm({
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
       onDone(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to connect the backend');
-    }
+    onError: (error) => toastError(error, 'Failed to connect the backend')
   });
 
   const form = useAppForm({
@@ -522,17 +503,17 @@ function MedusaAccountForm({
       economicEntityId: NO_ENTITY_VALUE
     },
     validators: { onSubmit: medusaAccountSchema },
-    onSubmit: ({ value }) => mutation.mutate(value)
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
   });
 
   return (
-    <form
-      className='space-y-6'
-      onSubmit={(e) => {
-        e.preventDefault();
-        form.handleSubmit();
-      }}
-    >
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
       <MedusaSetupGuidance />
       <FieldGroup>
         <form.AppField
@@ -582,11 +563,14 @@ function MedusaAccountForm({
           )}
         />
       </FieldGroup>
-      <FormActions
-        onCancel={() => onDone(false)}
-        submitLabel='Connect backend'
-        pending={mutation.isPending}
-      />
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect backend</form.SubmitButton>
+        </form.AppForm>
+      </div>
     </form>
   );
 }

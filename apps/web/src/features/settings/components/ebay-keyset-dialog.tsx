@@ -10,9 +10,11 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { storeEbayKeyset } from '@/server/ebay-oauth';
 import { ebayCallbackUrlQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
+import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 import {
   CopyableValue,
   GuidanceCallout,
@@ -148,24 +150,26 @@ export default function EbayKeysetDialog({
       queryClient.invalidateQueries({ queryKey: ebayKeysetStatusQuery.queryKey });
       onOpenChange(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to save eBay keyset');
-    }
+    onError: (error) => toastError(error, 'Failed to save eBay keyset')
   });
 
   const form = useAppForm({
     defaultValues: {
-      environment: 'sandbox',
+      environment: 'sandbox' as KeysetFormValues['environment'],
       appId: '',
       certId: '',
       devId: '',
       ruName: ''
-    } as KeysetFormValues,
+    },
     validators: {
       onSubmit: keysetFormSchema
     },
-    onSubmit: ({ value }) => {
-      mutation.mutate(value);
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
     }
   });
 
@@ -181,13 +185,7 @@ export default function EbayKeysetDialog({
           </DialogDescription>
         </DialogHeader>
         <KeysetSetupGuidance />
-        <form
-          className='space-y-6'
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
+        <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
               name='environment'
@@ -246,9 +244,9 @@ export default function EbayKeysetDialog({
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type='submit' disabled={mutation.isPending}>
-              Save keyset
-            </Button>
+            <form.AppForm>
+              <form.SubmitButton>Save keyset</form.SubmitButton>
+            </form.AppForm>
           </div>
         </form>
       </DialogContent>

@@ -10,10 +10,12 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { registerStorageBackend } from '@/server/admin-functions';
 import { storageBackendsQuery } from '@/features/settings/api/queries';
 import { STORAGE_DRIVER_LABELS } from '@/features/settings/constants';
+import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 
 const storageFormSchema = z
   .object({
@@ -109,15 +111,13 @@ export default function StorageBackendDialog({
       queryClient.invalidateQueries({ queryKey: storageBackendsQuery.queryKey });
       onOpenChange(false);
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to register backend');
-    }
+    onError: (error) => toastError(error, 'Failed to register backend')
   });
 
   const form = useAppForm({
     defaultValues: {
       name: '',
-      driver: 'local',
+      driver: 'local' as StorageFormValues['driver'],
       makeDefault: false,
       rootDir: '',
       endpoint: '',
@@ -126,12 +126,16 @@ export default function StorageBackendDialog({
       forcePathStyle: true,
       accessKeyId: '',
       secretAccessKey: ''
-    } as StorageFormValues,
+    },
     validators: {
       onSubmit: storageFormSchema
     },
-    onSubmit: ({ value }) => {
-      mutation.mutate(value);
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
     }
   });
 
@@ -145,13 +149,7 @@ export default function StorageBackendDialog({
             filesystem or any S3-compatible endpoint.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className='space-y-6'
-          onSubmit={(e) => {
-            e.preventDefault();
-            form.handleSubmit();
-          }}
-        >
+        <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
               name='name'
@@ -255,9 +253,9 @@ export default function StorageBackendDialog({
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type='submit' disabled={mutation.isPending}>
-              Register backend
-            </Button>
+            <form.AppForm>
+              <form.SubmitButton>Register backend</form.SubmitButton>
+            </form.AppForm>
           </div>
         </form>
       </DialogContent>

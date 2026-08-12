@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { Badge } from '@/components/ui/badge';
 
 /** Shared page frame for settings surfaces: heading, blurb, optional actions. */
 export function SettingsPage({
@@ -25,17 +24,4 @@ export function SettingsPage({
       {children}
     </div>
   );
-}
-
-/** Boolean status pill used across the settings tables. */
-export function StatusBadge({
-  ok,
-  okLabel,
-  failLabel
-}: {
-  ok: boolean;
-  okLabel: string;
-  failLabel: string;
-}) {
-  return <Badge variant={ok ? 'secondary' : 'destructive'}>{ok ? okLabel : failLabel}</Badge>;
 }
