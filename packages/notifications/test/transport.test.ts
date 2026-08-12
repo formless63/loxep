@@ -96,6 +96,48 @@ describe("createNtfyTransport", () => {
     expect(calls[0]!.headers["Priority"]).toBeUndefined();
   });
 
+  it("sets the Click header to message.url when present", async () => {
+    const { calls, fetch } = captureFetch();
+    const transport = createNtfyTransport(fetch);
+    await transport.send({
+      config,
+      token: null,
+      message: {
+        title: "Price drop: Widget",
+        body: "Widget: $34.99\nhttps://www.ebay.com/itm/123456789",
+        url: "https://www.ebay.com/itm/123456789",
+      },
+    });
+    const request = calls[0]!;
+    expect(request.headers["Click"]).toBe(
+      "https://www.ebay.com/itm/123456789",
+    );
+    // The URL stays in the body too, for clients without click support.
+    expect(request.body).toContain("https://www.ebay.com/itm/123456789");
+  });
+
+  it("omits the Click header when message.url is absent", async () => {
+    const { calls, fetch } = captureFetch();
+    const transport = createNtfyTransport(fetch);
+    await transport.send({
+      config,
+      token: null,
+      message: { title: "t", body: "b" },
+    });
+    expect(calls[0]!.headers["Click"]).toBeUndefined();
+  });
+
+  it("omits the Click header when message.url is empty", async () => {
+    const { calls, fetch } = captureFetch();
+    const transport = createNtfyTransport(fetch);
+    await transport.send({
+      config,
+      token: null,
+      message: { title: "t", body: "b", url: "" },
+    });
+    expect(calls[0]!.headers["Click"]).toBeUndefined();
+  });
+
   it("collapses control characters in header values", async () => {
     const { calls, fetch } = captureFetch();
     const transport = createNtfyTransport(fetch);

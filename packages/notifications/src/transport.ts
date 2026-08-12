@@ -8,7 +8,9 @@
  *
  * The ntfy transport publishes via `POST <baseUrl>/<topic>` with the message
  * body as the request body and `Title`/`Priority`/`Tags` headers, plus
- * `Authorization: Bearer <token>` when an access token is configured
+ * `Authorization: Bearer <token>` when an access token is configured, and
+ * `Click` (ntfy's short alias for `X-Click`) set to `message.url` when
+ * present so tapping the push opens the listing directly
  * (https://docs.ntfy.sh/publish/ — verified 2026-08). The HTTP client is an
  * injectable fetch-shaped function so tests capture requests without any
  * real network I/O.
@@ -23,6 +25,12 @@ export interface NotificationMessage {
   body: string;
   priority?: NtfyPriority;
   tags?: readonly string[];
+  /**
+   * Click-through target (e.g. the listing's canonical URL). Transports that
+   * support a click action (ntfy's `Click` header) use this; the URL should
+   * also be present in `body` for clients without click-action support.
+   */
+  url?: string;
 }
 
 export interface TransportSendInput {
@@ -93,6 +101,9 @@ export function createNtfyTransport(
       }
       if (message.tags !== undefined && message.tags.length > 0) {
         headers["Tags"] = headerValue(message.tags.join(","));
+      }
+      if (message.url !== undefined && message.url.length > 0) {
+        headers["Click"] = headerValue(message.url);
       }
       if (token !== null) {
         headers["Authorization"] = `Bearer ${headerValue(token)}`;

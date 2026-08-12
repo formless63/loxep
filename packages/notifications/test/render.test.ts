@@ -32,10 +32,13 @@ describe("renderMarketEventMessage", () => {
     });
     expect(message.title).toBe("Price changed: Vintage Widget 3000");
     expect(message.body).toBe(
-      "Vintage Widget 3000: 20.00 USD → 25.00 USD\nhttps://www.ebay.com/itm/123456789",
+      "Vintage Widget 3000: $20.00 → $25.00\nhttps://www.ebay.com/itm/123456789",
     );
     expect(message.tags).toEqual(["price_changed"]);
     expect(message.priority).toBe("default");
+    // The listing URL is also set as the click-through target, not just the
+    // trailing body line.
+    expect(message.url).toBe("https://www.ebay.com/itm/123456789");
   });
 
   it("renders price_dropped as high priority with the price delta", () => {
@@ -46,10 +49,62 @@ describe("renderMarketEventMessage", () => {
       listing,
     });
     expect(message.title).toBe("Price drop: Vintage Widget 3000");
-    expect(message.body).toContain("20.00 USD → 15.00 USD");
+    expect(message.body).toContain("$20.00 → $15.00");
     expect(message.body).toContain("https://www.ebay.com/itm/123456789");
     expect(message.priority).toBe("high");
     expect(message.tags).toEqual(["price_dropped", "moneybag"]);
+  });
+
+  it("normalizes an unrounded numeric(20,6) price to the same scale as an already-trimmed one", () => {
+    // Regression for the live push that read '49.990000 USD -> 34.99 USD':
+    // the raw DB scale (6 fraction digits) and an already-trimmed value must
+    // render identically once both go through formatMoney.
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_dropped",
+      payload: { from: "49.990000", to: "34.99", currency: "USD" },
+      listing,
+    });
+    expect(message.body).toContain("$49.99 → $34.99");
+  });
+
+  it("normalizes '12.5' and '12.50' to the same two-decimal display", () => {
+    const a = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_changed",
+      payload: { from: "12.5", to: "12.5", currency: "USD" },
+      listing,
+    });
+    const b = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_changed",
+      payload: { from: "12.50", to: "12.50", currency: "USD" },
+      listing,
+    });
+    expect(a.body).toContain("$12.50 → $12.50");
+    expect(a.body).toBe(b.body);
+  });
+
+  it("renders a plain normalized decimal (no fabricated currency) when currency is null", () => {
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_changed",
+      payload: { from: "20", to: "15.5", currency: null },
+      listing,
+    });
+    expect(message.body).toContain("20.00 → 15.50");
+    expect(message.body).not.toContain("USD");
+    expect(message.body).not.toContain("$");
+  });
+
+  it("does not set a click url when the listing has no canonical URL", () => {
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_dropped",
+      payload: { from: "20.00", to: "15.00", currency: "USD" },
+      listing: { ...listing, canonicalUrl: null },
+    });
+    expect(message.url).toBeUndefined();
   });
 
   it("renders quantity_changed with the old→new quantity", () => {
@@ -136,9 +191,10 @@ describe("renderMarketEventMessage", () => {
       payload: { from: "20.00", to: "15.00", currency: "USD" },
     });
     expect(message.body).toBe(
-      "item 22222222-2222-4222-8222-222222222222: 20.00 USD → 15.00 USD",
+      "item 22222222-2222-4222-8222-222222222222: $20.00 → $15.00",
     );
     expect(message.body).not.toContain("\n");
+    expect(message.url).toBeUndefined();
   });
 
   it("ignores a null canonicalUrl and a blank title rather than fabricating either", () => {
