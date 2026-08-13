@@ -182,7 +182,7 @@ Examples include:
 - Vikunja task/project links;
 - Outline/AFFiNE knowledge links;
 - Invoice Ninja billing delivery;
-- Beszel/Gatus operational links or health context.
+- Beszel/Gatus operational links or health context — designed in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/).
 
 ## Later directions
 
@@ -221,3 +221,33 @@ It also runs against an explicit non-goal — the [Master Domain Map](../master-
 - The `/infrastructure` workspace: domain list and detail with the delegation, DNS diff, mail, and hosting panels; fleet list and detail; and the run history with per-step retry — the meeting point [Workspaces & Navigation](../workspaces/#infrastructure-is-a-future-peer-root-and-it-is-about-the-installation-itself) reserves for the later container, metrics, and uptime layers.
 
 The physical schema for this phase — the intent tables, the materialization rules, the reconciler job graph, drift persistence, and the credential and scheduling reuse that keeps it inside existing conventions — is designed in [Infrastructure Control Plane Design (Phase 7)](../../architecture/infrastructure-control-design/). That document is **design only**, and several of its open questions are marked OWNER-REVIEW-CRITICAL because they are unrecoverable once a zone, a token, or a mailbox has been created against a live provider.
+## Phase 8 — Fleet observability and management
+
+Goal: make the installation's surrounding operational tooling — container management, host metrics, uptime monitoring, host consoles — visible inside Loxep without reimplementing any of it.
+
+This phase is the **observe and link** layer [Phase 7](#phase-7--infrastructure-control-plane) named and deferred. It owns nothing new: companion tools are linked through the generic external-resource model, their reachability and status roll into one shared health table, and their alerts continue to be delivered by the tools themselves. It adds **one table** and alters none.
+
+Two rules make the boundary checkable rather than aspirational. Loxep stores the **latest observed status** of a subject and never a metric sample — one row per subject, overwritten in place — so a hypertable of host metrics would be a visible violation rather than a judgement call. And Loxep **never calls a mutating endpoint** on a fleet tool: a deep link opens the real product, with the operator's own session and the tool's own permissions.
+
+The phase's central argument is that Loxep runs on the fleet it would observe, so it cannot alert on its own outage — and every candidate tool already delivers to ntfy, which the operator already runs for Loxep. Loxep therefore stays out of the infrastructure alert path and, in the one integration that runs the other way, **publishes its own health into the operator's uptime monitor** so something independent can raise the alarm when Loxep is the thing that broke.
+
+### Milestone 1 — the shared health model
+
+- `integration_health` as shared foundation: one current-state row per subject, keyed `(subject_type, subject_id)`, covering connections, notification endpoints, and storage backends first. It is a derived rollup for display and never drives retry or backoff.
+- One recurring probe sweep, with due-ness and backoff computed from columns the row already carries — no scheduling table and no per-subject cron.
+- The Dashboard's Operations health band and a health summary surface read it.
+
+### Milestone 2 — publish Loxep's own health outward
+
+- An outbound push of Loxep-only facts — worker backlog, sync freshness, drift count, readiness — into an operator's existing uptime monitor, so a stalled push becomes an alert Loxep could not have raised itself.
+
+### Milestone 3 — companion links and the fleet tools panel
+
+- Companion tools linked through `external_resources`/`resource_links` against hosting targets and domains, with a typed known-tool registry in code rather than a per-provider column or table.
+- A tools panel on each fleet record showing every linked tool's latest status, its provenance, and its age, with "unreachable from Loxep" as a distinct state from "failing".
+
+### Milestone 4 and beyond — selective adapters
+
+- Read-only adapters only where an API genuinely merits one, each with the standard error taxonomy, rate budget, and Loxep-owned fact types; link-and-probe everywhere else; and alert evidence ingestion only if the installation is to expose an inbound webhook surface at all.
+
+The verdict for each candidate tool, the upstream evidence behind it, and the questions that must be answered before any of it starts are in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/). Five of its open questions are marked OWNER-REVIEW-CRITICAL.

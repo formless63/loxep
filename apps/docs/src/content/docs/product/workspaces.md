@@ -92,10 +92,13 @@ It is the meeting point for capability that arrives in layers:
 ```text
 now (designed)   domains, DNS desired-vs-actual state, delegation, mail provider,
                  hosting targets/fleet, reconciler runs and drift
-later            container/stack management, host and container metrics, uptime and
-                 endpoint monitoring — surfaced through links and health state rather
-                 than reimplemented, per the companion-services guiding rule
+later (designed) container/stack management, host and container metrics, uptime and
+                 endpoint monitoring — surfaced as links plus one current-status
+                 health row per subject, never reimplemented and never stored as a
+                 metric series, per the companion-services guiding rule
 ```
+
+The second layer is designed in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/). It adds one shared health table and no other schema: companion tools are linked through the generic external-resource model, a deep link opens the real tool rather than a Loxep copy of it, and infrastructure alerts continue to be delivered by the tools themselves — because Loxep runs on the fleet it observes and cannot alert on its own outage.
 
 It is **not** `/settings`. `/settings` configures Loxep — its users, connections, secrets, storage, and application behavior. `/infrastructure` is a working surface over external estate that Loxep observes and reconciles, with its own tables, its own jobs, and its own daily use. The credentials that reach those external systems still live where every other provider credential lives: connections and encrypted secrets administered under `/settings`. The physical design is [Infrastructure Control Plane Design](../../architecture/infrastructure-control-design/).
 

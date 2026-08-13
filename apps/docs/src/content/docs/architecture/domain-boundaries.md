@@ -24,7 +24,7 @@ The shared foundation owns infrastructural concepts rather than commercial busin
 - durable jobs and job conventions;
 - media identity/storage abstraction and storage-migration state;
 - generic external-resource links;
-- audit metadata and health state;
+- audit metadata and integration health state. `integration_health` is shared foundation keyed by `(subject_type, subject_id)` across connections, notification endpoints, storage backends, external resources, and — where a later phase adds them — hosting targets and domains. It is a **derived rollup for display and attention**, and it never drives retry or backoff: the owning table's own error and backoff columns stay authoritative for that subject's behavior. Any domain may project into it; none may read another's subject rows as its own state. See [Fleet Observability Design (Phase 8)](../fleet-observability-design/);
 - stable identifiers and cross-domain references.
 
 Better Auth owns application authentication/session state and deployment-level `admin`/`member` roles. The initial access model is installation-wide for ordinary product data; Phase 0 does not create connection/entity/workspace ACL relations.
@@ -331,7 +331,7 @@ Does **not** own:
 
 - credential material. Provider API tokens, keys, and generated mailbox passwords are shared-foundation `connections` / `connection_credentials` / `application_secrets` records reached through the credential service, exactly as every other provider's are. Infrastructure stores the *reference* and the *scope intent*, never ciphertext of its own;
 - the scheduling mechanism. Due-work discovery, claim, backoff, and cadence remain the shared scheduling foundation described above; Infrastructure registers target types against it rather than building a second scheduler;
-- container orchestration, host metrics, or uptime probing. Those remain independently deployed companion applications; Infrastructure may hold links and health state for them under the generic external-resource and integration-health models, and must not grow into a reimplementation of them;
+- container orchestration, host metrics, or uptime probing. Those remain independently deployed companion applications; Infrastructure may hold links and health state for them under the generic external-resource and integration-health models, and must not grow into a reimplementation of them. The observe-and-link layer that does this is designed in [Fleet Observability Design (Phase 8)](../fleet-observability-design/), and it draws two rules that make the boundary checkable: Loxep stores the latest observed status of a subject and never a metric sample, and Loxep never calls a mutating endpoint on a fleet tool;
 - anything commercial. There are no prices, no invoices, and no cost attribution here. A hosting bill is an Expense, attributed like any other expense, and it reaches this domain's records — if ever — as a reference, not as a column.
 
 **Infrastructure records are installation-scoped and carry no economic-entity attribution.** A server, a zone, or a nameserver delegation is a fact about the installation, not about which operating identity's activity it supports; several entities' work commonly runs on one host, and inventing a per-record owner would create exactly the entity-as-container semantics ADR-0017 forbids. If cross-entity cost allocation for infrastructure is ever wanted, it belongs to the Costs and Expenses domain's allocation model, which already exists for that purpose.
@@ -352,3 +352,4 @@ Provider protocol shapes stop at the Integrations boundary as usual: DNS, mail, 
 10. Application users, provider connections, economic entities, counterparties, and accounting books are distinct concepts.
 11. Economic entities classify owned/operated activity; they do not define who may access data in the installation.
 12. Records describing the installation's own operational estate are installation-scoped. They take no economic-entity attribution and are never a substitute for an expense, a counterparty, or an accounting fact.
+13. Loxep links and observes mature companion tooling; it does not reimplement it. A companion's latest observed status may be stored; its metric history may not, and no Loxep code may call a companion's mutating endpoints.
