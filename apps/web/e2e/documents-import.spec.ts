@@ -117,6 +117,23 @@ test('CSV import: upload, map, preview, stage, and confirm a row into a recorded
 });
 
 test('a document with no confirmed lines can be discarded', async ({ page }) => {
+  // Receipt upload (unlike inline CSV staging) writes a media object, which
+  // needs a registered storage backend — the harness DB starts with none
+  // (`/api/documents/upload` answers 409 no-storage-backend otherwise).
+  // Register a local backend through the real settings flow, idempotently.
+  await page.goto('/settings/storage');
+  const registerButton = page.getByRole('button', { name: 'Register backend' });
+  await expect(registerButton.first()).toBeVisible();
+  if ((await page.getByText('No storage backends').count()) > 0) {
+    await registerButton.first().click();
+    const storageDialog = page.getByRole('dialog');
+    await storageDialog.getByLabel('Name *').fill('e2e-media');
+    await storageDialog.getByLabel('Root directory *').fill('/tmp/loxep-e2e-media');
+    await storageDialog.getByLabel('Make default backend').click();
+    await storageDialog.getByRole('button', { name: 'Register backend' }).click();
+    await expect(storageDialog).toBeHidden();
+  }
+
   await page.goto('/finance/import');
   await page.getByRole('tab', { name: 'Receipt / invoice' }).click();
 
