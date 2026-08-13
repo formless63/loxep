@@ -44,13 +44,20 @@
  *    is the one deliberate door in that wall, and its entire purpose is that
  *    the door is visible — see the column's own note.
  *
- * ## Tables from the design deliberately NOT created here
+ * ## `counterparty_sites` ships here now
+ *
+ * Migration 0011 (`loxep-nw0`) adds `counterparty_sites`: projects now exist
+ * as a consumer (`./projects.ts`), so the table this comment used to defer is
+ * shipped alongside them. It lives in THIS domain file rather than
+ * `projects.ts`, matching the design's own placement — see the design's
+ * "A site is owned by the counterparty, not by a project, and a project
+ * points at it" and contradiction 7 — and `counterparty_entity_roles` now
+ * carries `billing_site_id` alongside `billing_contact_id`, resolving the
+ * divergence this comment used to record.
+ *
+ * ## Tables from the design deliberately still NOT created here
  *
  * ```text
- * counterparty_sites        an address model whose only Phase 6 consumers are
- *                           projects and invoices; neither ships in this slice.
- *                           counterparty_entity_roles therefore carries
- *                           billing_contact_id and NOT billing_site_id.
  * counterparty_identifiers  the matching-evidence table. Its whole purpose is
  *                           backfilling orders.counterparty_id, which is an
  *                           ALTER on a Phase 3 table this slice does not make.
@@ -78,6 +85,7 @@ import {
   foreignKey,
   index,
   integer,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -190,8 +198,25 @@ export const TAX_TREATMENTS = [
 ] as const;
 export type TaxTreatment = (typeof TAX_TREATMENTS)[number];
 
+/**
+ * `counterparty_sites.site_kind` — closed, `CHECK`ed.
+ *
+ * Addresses and places where work happens: the customer's warehouse, a
+ * billing-only address, a remote/no-site row for pure remote work.
+ */
+export const COUNTERPARTY_SITE_KINDS = [
+  "billing",
+  "shipping",
+  "service",
+  "remote",
+  "other",
+] as const;
+export type CounterpartySiteKind = (typeof COUNTERPARTY_SITE_KINDS)[number];
+
 /** `media_links.resource_type` value for media attached to a counterparty. */
 export const COUNTERPARTY_RESOURCE_TYPE = "counterparty";
+/** `media_links.resource_type` value for media attached to a counterparty site. */
+export const COUNTERPARTY_SITE_RESOURCE_TYPE = "counterparty_site";
 
 /* ----------------------------------------------------------------- tables */
 
@@ -472,6 +497,71 @@ export const contactChannels = pgTable(
 );
 
 /**
+ * Addresses and places where work happens. Owned by the counterparty, not by
+ * a project — a project POINTS at a site, so the customer's warehouse
+ * survives the job. This is deliberately smaller than Phase 3's and Phase 4's
+ * deferred address model implied: free text lines plus `country`/`region`,
+ * consistent with Phase 4's shipping analysis and Phase 5's tax context. No
+ * address validation, normalization, or geocoding — `latitude`/`longitude`
+ * are operator-entered or absent, per `check((latitude is null) = (longitude
+ * is null))`.
+ */
+export const counterpartySites = pgTable(
+  "counterparty_sites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    counterpartyId: uuid("counterparty_id")
+      .notNull()
+      .references(() => counterparties.id, { onDelete: "cascade" }),
+    /** `ST-2026-0042`. People label things and a UUID is not a label. */
+    siteCode: text("site_code").notNull(),
+    name: text("name").notNull(),
+    siteKind: text("site_kind").notNull(),
+    addressLine1: text("address_line1"),
+    addressLine2: text("address_line2"),
+    locality: text("locality"),
+    region: text("region"),
+    postalCode: text("postal_code"),
+    country: char("country", { length: 2 }),
+    latitude: numeric("latitude", { precision: 9, scale: 6 }),
+    longitude: numeric("longitude", { precision: 9, scale: 6 }),
+    accessNotes: text("access_notes"),
+    primaryContactId: uuid("primary_contact_id"),
+    active: boolean("active").notNull().default(true),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    /** Explicitly named: the derived name (65 bytes) exceeds the 63-byte limit. */
+    foreignKey({
+      name: "counterparty_sites_primary_contact_fk",
+      columns: [table.primaryContactId],
+      foreignColumns: [counterpartyContacts.id],
+    }),
+
+    unique("counterparty_sites_site_code_uq").on(table.siteCode),
+
+    check(
+      "counterparty_sites_kind_check",
+      sql`${table.siteKind} in ('billing', 'shipping', 'service', 'remote', 'other')`,
+    ),
+    check(
+      "counterparty_sites_latlong_pair_check",
+      sql`(${table.latitude} is null) = (${table.longitude} is null)`,
+    ),
+
+    index("counterparty_sites_counterparty_id_idx")
+      .on(table.counterpartyId)
+      .where(sql`${table.active}`),
+  ],
+);
+
+/**
  * How a counterparty becomes a *customer of one of our entities*.
  *
  * There is no `is_customer` / `is_vendor` pair and no `kind = 'customer'`
@@ -498,6 +588,12 @@ export const contactChannels = pgTable(
  * The role is **not** effective-dated the way `book_entity_links` is:
  * `since_on`/`until_on` are descriptive and there is no exclusion constraint,
  * because nothing ROUTES on a role the way postings route on a book link.
+ *
+ * `billing_site_id` was deliberately absent through migration 0006, because
+ * `counterparty_sites` did not exist yet and "a column pointing at a table
+ * that does not exist is worse than no column" — Phase 5's rule, reused.
+ * Migration 0011 ships the site table, so it ships here too, alongside
+ * `billing_contact_id`.
  */
 export const counterpartyEntityRoles = pgTable(
   "counterparty_entity_roles",
@@ -514,6 +610,8 @@ export const counterpartyEntityRoles = pgTable(
     /** Open set: TS union, no `CHECK`. Records; never calculates. */
     taxTreatment: text("tax_treatment"),
     billingContactId: uuid("billing_contact_id"),
+    /** Added migration 0011, alongside `counterparty_sites`. */
+    billingSiteId: uuid("billing_site_id"),
     note: text("note"),
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
@@ -526,7 +624,7 @@ export const counterpartyEntityRoles = pgTable(
       .defaultNow(),
   },
   (table) => [
-    /** All three explicitly named: every derived name is 64–72 bytes. */
+    /** All four explicitly named: every derived name is 64–75 bytes. */
     foreignKey({
       name: "counterparty_entity_roles_party_fk",
       columns: [table.counterpartyId],
@@ -541,6 +639,11 @@ export const counterpartyEntityRoles = pgTable(
       name: "counterparty_entity_roles_billing_contact_fk",
       columns: [table.billingContactId],
       foreignColumns: [counterpartyContacts.id],
+    }),
+    foreignKey({
+      name: "counterparty_entity_roles_billing_site_fk",
+      columns: [table.billingSiteId],
+      foreignColumns: [counterpartySites.id],
     }),
 
     unique("counterparty_entity_roles_party_entity_role_uq")

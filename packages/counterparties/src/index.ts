@@ -22,13 +22,22 @@
  *
  * ## This package is the counterparty QUARTER of Phase 6
  *
- * The Phase 6 design specifies nineteen tables across four domains. Four ship
- * here. **Projects, time entries, billing rates, material uses, service plans,
- * subscriptions, service periods, invoices, invoice lines, invoice sources, and
- * payments are all absent**, and so are `counterparty_sites` and
- * `counterparty_identifiers`. The reason is the design's own first open
- * question: where the own-versus-integrate line for invoicing falls decides
- * whether most of those tables should exist at all, and it is unresolved.
+ * The Phase 6 design specifies nineteen tables across four domains. Five ship
+ * here as of migration 0011: the original four (`counterparties`,
+ * `counterparty_contacts`, `contact_channels`, `counterparty_entity_roles`)
+ * plus `counterparty_sites`, whose first consumer (`projects`) now exists.
+ * **Projects, time entries, billing rates, material uses, service plans,
+ * subscriptions, service periods, invoices, invoice lines, invoice sources,
+ * and payments are all absent from THIS package** — `projects`,
+ * `billing_rates`, `time_entries`, and `project_material_uses` are physical
+ * tables (migration 0011) with no service package yet, because open question
+ * 14's own recommendation maps them to a NEW `@loxep/work` package, and new
+ * package scaffolding is orchestrator-only. See `bd show loxep-nw0` and the
+ * design's "Provisional implementation decisions" for the full account. The
+ * own-versus-integrate line for invoicing (open question 1) is answered —
+ * Invoice Ninja first-class, nothing native ships yet — but that only bounds
+ * how much of the billing/services milestones exist; it does not change where
+ * Projects-and-Work code lives.
  *
  * Counterparties are separable in a way the rest of Phase 6 is not — the
  * design says so explicitly: *"Migration A depends on nothing beyond the
@@ -56,10 +65,13 @@
  *
  * ## What this package does NOT do
  *
- * No CRM pipeline, leads, stages, or campaigns. No projects, jobs, time, rates,
- * or materials. No invoices, quotes, AR aging, dunning, PDFs, email, portals,
- * or payment collection. No address validation, normalization, or geocoding —
- * and no address table at all in this slice. No personal tax identifiers, ever.
+ * No CRM pipeline, leads, stages, or campaigns. No project CRUD, time-entry
+ * recording, rate resolution, or material-use linking — `sites.ts` is the one
+ * Projects-and-Work-adjacent capability here, because sites are a
+ * Counterparties-domain table (see its own header). No invoices, quotes, AR
+ * aging, dunning, PDFs, email, portals, or payment collection. No address
+ * validation, normalization, or geocoding — `sites.ts` stores free text plus
+ * `country`/`region` and nothing richer. No personal tax identifiers, ever.
  * No fuzzy matching and no automatic merge: `dedupe.ts` produces candidates and
  * a human decides. No harvesting of names or emails out of retained provider
  * payloads — a marketplace buyer becomes a counterparty only when an operator
@@ -79,6 +91,7 @@ export { normalizeChannelValue, normalizeName } from "./normalize.ts";
 
 export {
   counterpartyReferenceCode,
+  counterpartySiteCode,
   isUniqueViolation,
   withCodeRetry,
 } from "./codes.ts";
@@ -122,3 +135,11 @@ export type {
   DuplicateCandidateMember,
   DuplicateMatchKind,
 } from "./dedupe.ts";
+
+export { createSitesService } from "./sites.ts";
+export type {
+  CounterpartySiteRow,
+  CreateSiteInput,
+  SitesService,
+  UpdateSiteInput,
+} from "./sites.ts";

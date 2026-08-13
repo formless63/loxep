@@ -6,9 +6,9 @@ This document is the physical schema design for [Phase 6 — Customers, projects
 
 It **extends** the foundation and all three prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently.
 
-**Implementation status: ONE MILESTONE of this design is implemented, PROVISIONALLY — the counterparty core, and nothing else.** Migration `0006_expenses_and_counterparties.sql`, `packages/db/src/schema/counterparties.ts`, and `packages/counterparties` exist and create **four of this document's nineteen tables**. Projects, time entries, billing rates, material uses, service plans, subscriptions, service periods, invoices, invoice lines, invoice sources, and payments remain **design only** — as do `counterparty_sites` and `counterparty_identifiers` — because the first [OWNER-REVIEW-CRITICAL open question](#open-questions) decides whether most of them should exist at all. **No table this document does not own was altered**: `orders` gains no `counterparty_id` in this slice. See [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial).
+**Implementation status: TWO MILESTONES of this design are implemented, PROVISIONALLY — the counterparty core, then projects/time/rates/materials/sites.** Migration `0006_expenses_and_counterparties.sql` shipped `packages/db/src/schema/counterparties.ts` and `packages/counterparties`; migration `0011_projects_time_and_sites.sql` (`loxep-nw0`) added `packages/db/src/schema/projects.ts`, `counterparty_sites` (in `counterparties.ts`), and `packages/counterparties/src/sites.ts`. Together they create **nine of this document's nineteen tables**. `service_plans`, `subscriptions`, `service_periods`, `invoices`, `invoice_lines`, `invoice_line_sources`, `invoice_payments`, and `counterparty_identifiers` remain **design only**, because the first [OWNER-REVIEW-CRITICAL open question](#open-questions) — now answered Ninja-first, but with nothing native shipping yet — bounds how much of the billing/services model has a consumer. Separately, `projects`, `billing_rates`, `time_entries`, and `project_material_uses` exist as PHYSICAL SCHEMA ONLY: [open question 14](#open-questions)'s own recommendation maps them to a new `@loxep/work` package that does not exist, and new package scaffolding is an orchestrator decision. **No table this document does not own was altered**: `orders` gains no `counterparty_id`, and `expenses`/`expense_allocations` gain none of the columns this document plans for them. See [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial).
 
-This milestone was separable exactly as this document predicted: *"Migration A depends on nothing beyond the foundation and Phase 3, which means the counterparty milestone can ship even if Phases 4 and 5 slip."*
+The counterparty-core milestone was separable exactly as this document predicted: *"Migration A depends on nothing beyond the foundation and Phase 3, which means the counterparty milestone can ship even if Phases 4 and 5 slip."* Migration B needed Phase 4 (for `project_material_uses`'s inventory foreign keys), which had shipped by the time `loxep-nw0` was implemented.
 
 The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or projects/billing service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
@@ -1448,9 +1448,9 @@ Not indexed on purpose: `counterparties.kind` and `status` (two and three values
 
 Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
 
-This section is **scoped to the counterparty milestone**. It says nothing about projects, services, or billing, because none of them was built.
+This section now covers **two** milestones: the counterparty core (migration 0006) and Migration B — projects, time, rates, materials, and sites (migration 0011, `loxep-nw0`). It still says nothing about services, subscriptions, service periods, or billing, because none of them is built.
 
-### What shipped
+### What shipped — counterparty core (migration 0006)
 
 ```text
 migration      packages/db/migrations/0006_expenses_and_counterparties.sql
@@ -1464,19 +1464,45 @@ services       packages/counterparties/src/               (@loxep/counterparties
   contacts.ts        contacts and channels, primaries, opt-out
   roles.ts           relationship rows, terms, the entity-scoped pickers
   dedupe.ts          exact-normalized candidates by name and by channel
-tests          packages/counterparties/test/              (123 tests, real PostgreSQL)
+tests          packages/counterparties/test/              (real PostgreSQL)
                packages/db/test/schema.test.ts            (boundary + deferred tables)
 ```
 
-### What is still design-only
-
-**Fifteen of this document's nineteen tables**, plus every alteration it planned to other phases' tables:
+### What shipped — Migration B: projects, time, materials, and sites (migration 0011)
 
 ```text
-counterparty_sites          its only consumers are projects and invoices
+migration      packages/db/migrations/0011_projects_time_and_sites.sql
+schema         packages/db/src/schema/projects.ts          (projects, billing_rates,
+                                                            time_entries,
+                                                            project_material_uses;
+                                                            0 altered outside this file)
+               packages/db/src/schema/counterparties.ts    (+ counterparty_sites;
+                                                            + counterparty_entity_roles
+                                                              .billing_site_id)
+services       packages/counterparties/src/sites.ts         (@loxep/counterparties)
+                 create/update/deactivate/reactivate/list — counterparty_sites ONLY
+               packages/counterparties/src/roles.ts         billingSiteId wired into
+                                                            the existing grant() upsert
+tests          packages/db/test/schema-projects.test.ts    (constraint tests for all
+                                                            five tables, real PostgreSQL)
+               packages/counterparties/test/sites.test.ts  (site service + audit trail)
+```
+
+**No `@loxep/work` package exists, and none of `projects`, `billing_rates`, `time_entries`, or `project_material_uses` has a service.** Open question 14 (below) recommends mapping the Projects-and-Work domain to a NEW package, and new package scaffolding is an orchestrator decision, not something a single implementation slice does unilaterally. So this milestone ships:
+
+- the four Work-domain tables exactly as this document sketches them, with every `CHECK`, FK, and index the design names;
+- `packages/db`-level tests exercising those constraints directly (there is no service to test them through);
+- **no** project CRUD, time-entry recording, rate-resolution service, material-use linking, or unbilled-work read model. The read model additionally needs `invoice_line_sources`, a Migration-D (billing) table this slice does not create.
+
+`counterparty_sites` is the one table in this milestone WITH a shipped service, because sites are a Counterparties-domain table under OQ14's own rule (see the design's "A site is owned by the counterparty, not by a project" and contradiction 7) and `@loxep/counterparties` already exists — OQ14 does not block it the way it blocks Work.
+
+### What is still design-only
+
+**Ten of this document's nineteen tables**, plus every alteration it planned to other phases' tables:
+
+```text
 counterparty_identifiers    its purpose is backfilling orders.counterparty_id,
                             which is an ALTER this slice does not make
-projects, time_entries, billing_rates, project_material_uses
 service_plans, subscriptions, subscription_items,
   service_periods, service_period_charges
 invoices, invoice_lines, invoice_line_sources, invoice_payments
@@ -1488,25 +1514,25 @@ ALTERs not made: orders.counterparty_id / .counterparty_match_source;
   the resource_links unique + index
 ```
 
-`packages/db/test/schema.test.ts` asserts each deferred table name is absent. Note in particular that **`expenses` and `counterparties` ship in the same migration and are still not linked**: `expenses.payee_name` remains denormalized text, because the column that names a payee belongs to a Phase 6 milestone with a matching table, and adding an unbackfillable FK just because both tables happen to exist would be the opposite of the discipline that kept them apart for three phases.
+`packages/db/test/schema.test.ts` asserts each deferred table name is absent (and now asserts the five migration-0011 tables are present). Note in particular that **`expenses` and `counterparties` still are not linked**: `expenses.payee_name` remains denormalized text, because the column that names a payee belongs to a Phase 6 milestone with a matching table, and adding an unbackfillable FK just because both tables happen to exist would be the opposite of the discipline that kept them apart across three migrations now.
 
-The `resource_links` integrity gap recorded as [tension 1](#contradictions-and-tensions-found-in-existing-documentation) is **not** fixed here; migration 0004 already gave `media_links` and `resource_links` their natural keys and indexes, so what remains of that item is only the counterparty-specific link usage, which does not exist yet.
+The `resource_links` integrity gap recorded as [tension 1](#contradictions-and-tensions-found-in-existing-documentation) is **not** fixed here; migration 0004 already gave `media_links` and `resource_links` their natural keys and indexes, so what remains of that item is only the counterparty/project-specific link usage, which does not exist yet.
 
 ### The open questions this milestone touched, as implemented
 
-Only OQ2, OQ3, OQ12, OQ13, and OQ14. **OQ1 and OQ4–OQ11 and OQ15 are untouched and still open** — every one of them is about invoicing, projects, rates, or service periods, none of which was built.
+The counterparty-core milestone touched OQ2, OQ3, OQ12, OQ13, and OQ14 (unchanged from the account below). Migration B (loxep-nw0) touches only **OQ14 again** — the general rule was applied a second time, to a second domain, and produced a different answer than the first application did. **OQ1 and OQ4–OQ11 and OQ15 remain untouched and open** — every one of them is about services, subscriptions, rates as a resolution *service* (the rate CARD ships; the resolution ladder is a service this slice does not build), service periods, or billing.
 
 - **OQ2 — the role model, implemented as recommended.** `counterparty_entity_roles(counterparty_id, economic_entity_id nullable, role, terms…)` with `unique nulls not distinct`, and **no role column on `counterparties` at all**. There is no `is_customer`/`is_vendor` pair, and `kind` has exactly two members. The nullable entity is the contestable half and it is nullable: a party may hold one installation-wide `customer` row, and the `NULLS NOT DISTINCT` unique is what stops it holding two. A test asserts that null case specifically, because without `NULLS NOT DISTINCT` the constraint would be silently inert for exactly the rows an early unattributed installation creates.
 - **OQ3 — merge, implemented as recommended, with one addition.** Survivor pointer, never a delete, never a foreign-key rewrite, one resolver, merged rows excluded from every picker, unmerge is a one-column update. See the divergence below for the addition.
 - **OQ12 — the declared mirror, implemented as recommended.** `counterparties.mirrors_economic_entity_id` exists, `declareMirror()` is the only API that relates the two concepts, it is audited as its own act, and `mirrors()` is the read model that makes intercompany revenue a query instead of a surprise.
 - **OQ13 — data minimization, held as recommended.** Nothing harvests names, emails, or addresses out of retained `provider_objects`; a marketplace buyer becomes a counterparty only when an operator says so. There is no automatic order-to-counterparty match, partly because that is the policy and partly because the identifier table it would need is deferred.
-- **OQ14 — the proposed domain-to-package rule, adopted for the two packages this slice creates.** `@loxep/counterparties` passes all three tests cleanly. Expenses landed in `@loxep/accounting` rather than `@loxep/domain`, which is the divergence from Phase 5's own recommendation that this document said would be the first thing to test the rule against.
+- **OQ14 — the proposed domain-to-package rule, adopted twice, with two different results.** First application (counterparty core): `@loxep/counterparties` passes all three tests cleanly; expenses landed in `@loxep/accounting` rather than `@loxep/domain`, diverging from Phase 5's own recommendation, as this document predicted would be the first thing to test the rule against. Second application (this milestone, loxep-nw0): the rule's own worked example already names the answer — **`@loxep/work` for projects, time, rates, materials, services, subscriptions, and periods** — and that package does not exist. Per the standing directive that new package scaffolding is orchestrator-only, this slice does NOT create it; it ships the physical tables the package would eventually own and reports the manifest need instead of scaffolding one unilaterally. This is the rule doing exactly what OQ14 said it should: deciding a package boundary BEFORE code goes in, rather than after — the code that goes in now is confined to `packages/db` (nobody's domain package) and `@loxep/counterparties` (the one table this milestone's tables reference that the rule assigns elsewhere).
 
 ### Divergences from the draft
 
 - **Merge COMPRESSES pointers, and refuses two shapes the DDL would allow.** The draft states resolution as `coalesce(merged_into_counterparty_id, id)` — a single hop — and nothing in the DDL keeps the graph one level deep. `A → B` then `B → C` would leave `A` resolving to a row that is itself merged, and every read using the documented formula would silently under-count. Implementation keeps the formula true two ways: merging an already-merged row and merging *into* an already-merged row are both **refused** (which also makes a cycle unconstructible), and when a survivor is later merged on, the rows pointing at it are **re-pointed in the same transaction**. The honest cost: after `A → C` and `C → D`, row `A` stores `D` and no longer stores that it was once merged into `C`. The evidence is not lost — a `counterparty.merge_pointer_compressed` audit event carries the before and after pointer for every row moved — but it lives in the audit trail rather than in the column, and unmerging `C` therefore leaves `A` pointing at `D`.
 - **`counterparty_contacts` ships although it is not part of the counterparty "core" as scoped.** `contact_channels` is physically undefined without it: its `num_nonnulls(counterparty_id, counterparty_contact_id) = 1` discriminator and both of its uniques reference the contact. Dropping the contact column instead would have silently changed the draft's channel model.
-- **`counterparty_entity_roles` carries `billing_contact_id` but NOT `billing_site_id`.** `counterparty_sites` is deferred, and a column pointing at a table that does not exist is worse than no column — the rule Phase 5 states and this slice reuses. It is additive.
+- **`counterparty_entity_roles` now carries `billing_site_id` alongside `billing_contact_id` (migration 0011).** It was deferred out of migration 0006 for exactly the stated reason — `counterparty_sites` did not exist — and shipped the moment its target table did, per the same "additive" note that predicted it.
 - **The partial primary-channel unique uses a `coalesce()` expression index.** Drizzle's `uniqueIndex` has no `nullsNotDistinct()` (only the constraint form does) and this one must be partial, so it uses the portable fallback this document itself names for exactly this case. The `num_nonnulls = 1` check guarantees `coalesce(counterparty_id, counterparty_contact_id)` is a total key, so nothing is weakened. The non-partial value unique is a real `UNIQUE … NULLS NOT DISTINCT`.
 - **Five foreign keys are named explicitly.** Their derived names run 64–72 bytes and PostgreSQL silently truncates at 63: the `counterparties` self-reference and mirror, the `contact_channels` contact reference, and all three long references on `counterparty_entity_roles`. A test asserts no constraint or index name on the new tables exceeds the limit.
 - **`normalized_name` follows the LEGAL name when one exists**, falling back to the display name, and is recomputed on every write so it cannot drift from the name it is derived from.
@@ -1515,9 +1541,20 @@ Only OQ2, OQ3, OQ12, OQ13, and OQ14. **OQ1 and OQ4–OQ11 and OQ15 are untouched
 - **A channel's VALUE never enters an audit snapshot.** An audit row is not the place to duplicate a contact's email address; the events record the channel id, kind, and primacy. A test asserts the address does not appear.
 - **Dedupe is exact-normalized only, and the gaps are tested.** No trigram, no edit distance, no phonetic key, no scoring — the same "ship the state, not the matcher" posture Phase 5 took for reconciliation, and for the same reason: this finder feeds an operation that is expensive to undo, and a candidate list that is right most of the time trains an operator to accept it without reading. Tests assert both what it catches (`The Acme Roofing Co., Inc.` groups with `acme roofing company incorporated`) and what it deliberately does not (`Acme Roofing` vs `Acme Roofing LLC`; any misspelling; a local phone number vs its E.164 form). Adding `pg_trgm` later needs no schema change and no change to the return shape; removing a fuzzy matcher after operators have merged on its suggestions is not symmetrical.
 
+Migration B (loxep-nw0) adds these divergences:
+
+- **`counterparty_sites` ships in migration 0011, not a standalone "Migration A" migration.** The design's own ordering sketch put sites in Migration A; `bd show loxep-nw0`'s design note pulled it into this slice instead, since projects (its first real consumer) ship here. Every column, `CHECK`, and FK matches the design's sketch exactly — this is a sequencing choice, not a schema change.
+- **`projects.project_kind` is an OPEN set (text + TS union, no `CHECK`), even though this document's own "conventions inherited" section names only `projects.status`, `time_entries.activity_code`, and `service_plans.plan_kind` as the `CHECK`-density exceptions.** The `projects` table's own sketch has no `CHECK` for `project_kind` — followed literally, matching the treatment `service_plans.plan_kind` gets a few sections later for the identical reason (a classification that grows with practice). The prose and the sketch disagree; this is flagged rather than silently resolved either way.
+- **`project_material_uses_movement_uq` is a PARTIAL unique index (`where inventory_movement_id is not null`), not `NULLS NOT DISTINCT`.** Most material uses have no backing movement at all (`manual`/`purchased_for_job`/`none` cost basis), and those `NULL`s must stay distinct from one another — a plain default `UNIQUE` on the column already has this property (PostgreSQL treats `NULL`s as distinct by default), so the partial index is purely an indexing-cost optimization over a semantically-already-correct constraint, matching the design's own phrasing (`unique(inventory_movement_id) where ... is not null`) rather than the `NULLS NOT DISTINCT` shape used elsewhere in this same document for genuinely different reasons.
+- **Six foreign keys on `project_material_uses`, `projects`, and `counterparty_sites` are named explicitly**, for the same 63-byte reason as the counterparty-core milestone: `project_material_uses_item_fk` / `_allocation_fk` / `_movement_fk` (61–73-byte derived names), `projects_parent_project_fk` / `_counterparty_site_fk`, and `counterparty_sites_primary_contact_fk`. A test asserts no constraint or index name on the five new tables — or the new `counterparty_entity_roles.billing_site_id` FK — exceeds the limit.
+- **No overlap-prevention constraint on `billing_rates` across effective-dated rows at the same scope**, exactly as the design recommends: an exclusion constraint over a six-shape nullable tuple is hard to write and easy to get wrong for a problem a report solves. Resolution order (which row wins) is deliberately a SERVICE concern this slice does not build.
+- **54 new tests** (`packages/db/test/schema-projects.test.ts`, 41 tests; `packages/counterparties/test/sites.test.ts`, 13 tests), all against real PostgreSQL, covering every `CHECK` and the one partial-unique idempotency probe named above.
+
 ### Verified at implementation time
 
 Against drizzle-kit 0.31.10 and `timescale/timescaledb-ha:pg18.4-ts2.29.1-all`, everything generated correctly from the Drizzle schema and **nothing needed hand-written SQL or was weakened**: `UNIQUE … NULLS NOT DISTINCT` on both `contact_channels` and `counterparty_entity_roles`, `num_nonnulls` `CHECK`s, partial unique indexes with boolean predicates, a unique index over a `coalesce()` expression, and `date` columns in `{ mode: "string" }`. The `EXCLUDE USING gist` and `btree_gist` items on the pre-implementation checklist were not needed, because the constraint that requires them is on `service_periods`.
+
+Migration B (loxep-nw0) generated cleanly against the same drizzle-kit/PostgreSQL pair with the same result — nothing hand-written, nothing weakened — including the six-scope `billing_rates` discriminator checks, the `num_nonnulls` checks on `time_entries` and `billing_rates`, and the partial unique index on `project_material_uses.inventory_movement_id`.
 
 ### What a reviewer should push back on first
 
@@ -1527,7 +1564,7 @@ In rough order of how expensive each is to reverse after data exists:
 2. **The nullable entity on a role.** Making it `not null` later means inventing an entity for every existing row.
 3. **The declared mirror.** A door in a wall ADR-0017 built deliberately. Dropping the column and declaring intercompany billing unsupported is a defensible answer that should be written down rather than assumed.
 4. **Exact-only dedupe.** Cheap to extend, and the gaps are real today.
-5. **Shipping `counterparty_contacts` while deferring `counterparty_sites`.** Both are "shallow" tables; only one was forced by a constraint.
+5. **`@loxep/work` not existing yet.** Migration B (loxep-nw0) ships `projects`, `billing_rates`, `time_entries`, and `project_material_uses` as tables with no service, per OQ14's own recommendation and the standing orchestrator-only-scaffolding rule. This is cheap to reverse in one direction (creating the package is additive) and cheap in the other only if no service code was ever written against an ad hoc alternative location — which is exactly what this slice avoided by stopping at the schema.
 
 ## Open questions
 

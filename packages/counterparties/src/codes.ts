@@ -25,6 +25,11 @@ export function counterpartyReferenceCode(
   return `CP-${year}-${String(sequence).padStart(4, "0")}`;
 }
 
+/** `ST-2026-0042`. Same shape as {@link counterpartyReferenceCode}, for sites. */
+export function counterpartySiteCode(year: number, sequence: number): string {
+  return `ST-${year}-${String(sequence).padStart(4, "0")}`;
+}
+
 /**
  * Run `attempt` until it succeeds or the retry budget is exhausted.
  *

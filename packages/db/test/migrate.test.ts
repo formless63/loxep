@@ -17,9 +17,10 @@ import {
  * 0005 inventory, acquisition, and shipments,
  * 0006 expenses and counterparties, 0007 order-payload retention,
  * 0008 user display name, 0009 accounting books, chart, and journal,
- * 0010 posting rules and journal source links.
+ * 0010 posting rules and journal source links,
+ * 0011 projects, time entries, billing rates, material uses, and sites.
  */
-const MIGRATION_FILE_COUNT = 11;
+const MIGRATION_FILE_COUNT = 12;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

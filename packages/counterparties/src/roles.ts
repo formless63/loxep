@@ -51,6 +51,15 @@
  * because nothing ROUTES on a role the way postings route on a book link. A
  * lapsed customer relationship does not make historical invoices
  * unexplainable; the invoice carries its own counterparty and entity.
+ *
+ * ## `billingSiteId`
+ *
+ * Added to `counterparty_entity_roles` in migration 0011, alongside
+ * `billingContactId` — `counterparty_sites` did not exist when this table
+ * first shipped (migration 0006), so the column was deferred rather than
+ * pointing at a table that did not exist. `grant()` treats it exactly like
+ * `billingContactId`: an optional field on the upsert, cleared explicitly with
+ * `null`.
  */
 import { createAuditService } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
@@ -98,6 +107,7 @@ const grantSchema = z
     /** Open set: recorded, never calculated. */
     taxTreatment: z.string().trim().min(1).nullish(),
     billingContactId: z.uuid().nullish(),
+    billingSiteId: z.uuid().nullish(),
     note: z.string().trim().min(1).nullish(),
     createdByUserId: z.string().min(1).nullish(),
     requestId: z.string().min(1).nullish(),
@@ -196,6 +206,7 @@ export function createRolesService(options: { db: LoxepDb }): RolesService {
       defaultCurrency: (row["default_currency"] as string | null) ?? null,
       taxTreatment: (row["tax_treatment"] as string | null) ?? null,
       billingContactId: (row["billing_contact_id"] as string | null) ?? null,
+      billingSiteId: (row["billing_site_id"] as string | null) ?? null,
       note: (row["note"] as string | null) ?? null,
       createdByUserId: (row["created_by_user_id"] as string | null) ?? null,
       createdAt: toDate(row["created_at"]),
@@ -274,6 +285,11 @@ export function createRolesService(options: { db: LoxepDb }): RolesService {
             `billing_contact_id = ${value.billingContactId === null ? "null" : uuidLiteral(value.billingContactId)}`,
           );
         }
+        if (value.billingSiteId !== undefined) {
+          assignments.push(
+            `billing_site_id = ${value.billingSiteId === null ? "null" : uuidLiteral(value.billingSiteId)}`,
+          );
+        }
         if (value.note !== undefined) {
           assignments.push(
             `note = ${value.note === null ? "null" : textLiteral(value.note)}`,
@@ -296,6 +312,7 @@ export function createRolesService(options: { db: LoxepDb }): RolesService {
               defaultCurrency: value.defaultCurrency?.toUpperCase() ?? null,
               taxTreatment: value.taxTreatment ?? null,
               billingContactId: value.billingContactId ?? null,
+              billingSiteId: value.billingSiteId ?? null,
               note: value.note ?? null,
               createdByUserId: value.createdByUserId ?? null,
             })

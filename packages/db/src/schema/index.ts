@@ -23,3 +23,4 @@ export * from "./inventory.ts";
 export * from "./expenses.ts";
 export * from "./counterparties.ts";
 export * from "./accounting.ts";
+export * from "./projects.ts";

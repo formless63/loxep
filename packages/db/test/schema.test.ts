@@ -207,11 +207,14 @@ describe("foundation schema", () => {
     // Migration 0006 shipped two PARTIAL slices — expenses out of Phase 5 and
     // counterparties out of Phase 6 — migration 0009 added Phase 5's financial
     // core (9 more of that design's 22 tables) once the owner answered its
-    // three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and migration 0010
+    // three OWNER-REVIEW-CRITICAL questions on 2026-08-12, migration 0010
     // added the declarative posting-rule model and multi-fact provenance (4
-    // more). The still-absent names are asserted because each belongs to a
-    // milestone whose decisions have not been made: an accidental `payouts`
-    // would mean the settlement model was chosen by an implementer.
+    // more), and migration 0011 added Phase 6's "Migration B" — projects,
+    // time entries, billing rates, project material uses, and
+    // counterparty_sites (5 more of the Phase 6 design's 19). The still-absent
+    // names are asserted because each belongs to a milestone whose decisions
+    // have not been made: an accidental `payouts` would mean the settlement
+    // model was chosen by an implementer.
     const result = await handle.pool.query<{ table_name: string }>(
       `select table_name from information_schema.tables
         where table_schema = 'public'`,
@@ -224,6 +227,7 @@ describe("foundation schema", () => {
       "counterparty_contacts",
       "contact_channels",
       "counterparty_entity_roles",
+      "counterparty_sites",
       "accounting_books",
       "book_entity_links",
       "ledger_accounts",
@@ -237,6 +241,10 @@ describe("foundation schema", () => {
       "posting_rule_versions",
       "posting_rule_lines",
       "journal_entry_source_links",
+      "projects",
+      "billing_rates",
+      "time_entries",
+      "project_material_uses",
     ]) {
       expect(tables).toContain(shipped);
     }
@@ -248,11 +256,7 @@ describe("foundation schema", () => {
       "bank_transactions",
       "reconciliation_matches",
       "sales_tax_facts",
-      "counterparty_sites",
       "counterparty_identifiers",
-      "projects",
-      "time_entries",
-      "billing_rates",
       "service_plans",
       "subscriptions",
       "service_periods",
