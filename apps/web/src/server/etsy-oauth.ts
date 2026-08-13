@@ -36,10 +36,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
-import type {
-  EtsyConsentTier,
-  EtsyErrorKind
-} from '@loxep/integration-etsy';
+import type { EtsyConsentTier, EtsyErrorKind } from '@loxep/integration-etsy';
 import type { EtsyKeyset, EtsyKeysetSource } from '@/server/etsy-oauth-internal';
 
 /** Application-secret key holding the Etsy application keyset. */
