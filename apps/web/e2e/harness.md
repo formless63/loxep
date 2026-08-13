@@ -77,3 +77,28 @@ truly clean slate (then rerun `node bin/loxep.ts migrate`).
 psql postgres://postgres:loxep-dev@localhost:5433/postgres \
   -c 'DROP DATABASE loxep_e2e'
 ```
+
+## QA sessions against a live deployment (loxep-kw3)
+
+`signInWithMagicLink` (`helpers/auth.ts`) needs a Mailpit this suite can
+read; once a deployment's SMTP is a real provider (e.g. Purelymail on
+`dev.loxep.com`), magic-link emails land in a real inbox instead, and that
+sign-in path stops working there. `helpers/qa-session.ts`'s
+`applyQaSession(context, sessionFilePath, origin)` is the alternative for
+that case: it adds a Better Auth session cookie straight into the browser
+context, skipping sign-in entirely. It never mints anything itself — it only
+replays `{cookieName, cookieValue, expiresAt}` JSON produced by
+`scripts/mint-qa-session.mjs`, a container-run one-off script (see the
+`one-off-scripts-against-the-live-loxep-stack` bd memory) that inserts a
+real `session` row for an already-existing user and signs the cookie value
+with better-auth's/better-call's own exported cookie functions
+(`better-auth/cookies` `getCookies`, `better-call` `serializeSignedCookie`)
+rather than reimplementing the HMAC. Both halves are gated hard: the mint
+script refuses to run without `--i-know-this-mints-a-session` and refuses
+any email that isn't an existing user; the session it creates is
+short-lived (2h), stamped `ipAddress`/`userAgent` `qa-mint` so it is trivial
+to find and delete afterward, and the JSON file it writes (mode 600) must
+live only in a scratch/temp directory and be deleted the moment the run
+that consumes it finishes — it is a live, valid session credential. This
+path is for one-off interactive/orchestrator QA against a real deployment,
+not a checked-in spec: no spec in this suite calls `applyQaSession`.
