@@ -22,14 +22,14 @@
  *
  * 2. **`fulfillment_status` gains `unknown`, and Woo uses it.** Woo's
  *    `refunded` status REPLACES whatever came before, so a fully refunded
- *    order no longer says whether it shipped. The adapter (correctly, given
- *    the union it was written against) degrades that to `unfulfilled`, which
- *    asserts a fact nobody observed. This translator re-maps it — and any
- *    status the adapter did not recognize — to `unknown`.
+ *    order no longer says whether it shipped. The adapter's `WOO_STATUS_MAP`
+ *    (and `WOO_UNKNOWN_STATUS_MAPPING`, for statuses it does not recognize)
+ *    degrade that to `unknown` rather than asserting a fact nobody observed —
+ *    this translator now simply reads `fact.fulfillmentStatus` verbatim.
  *
- *    This re-mapping lives HERE rather than in the adapter only because
- *    `packages/integrations/woo` was outside this change's write fence; the
- *    correct long-term home is `WOO_STATUS_MAP`. See the filed follow-up bead.
+ *    That projection used to live HERE, only because `packages/integrations/woo`
+ *    was outside the change's write fence at the time. loxep-xh9.7.3 moved it
+ *    into `WOO_STATUS_MAP`, its correct long-term home.
  *
  * 3. **A `completed` order yields one synthesized fulfillment.** Woo has no
  *    fulfillment objects, but `completed` IS the channel stating the order
@@ -183,17 +183,6 @@ function translateRefund(
 }
 
 /**
- * PROVISIONAL #2: project the adapter's four-member fulfillment status onto
- * the five-member union, so "Woo stopped telling us" stops being reported as
- * "we know it did not ship".
- */
-export function resolveWooFulfillmentStatus(fact: WooOrderFact): string {
-  if (!fact.statusRecognized) return "unknown";
-  if (fact.providerStatusRaw === "refunded") return "unknown";
-  return fact.fulfillmentStatus;
-}
-
-/**
  * PROVISIONAL #3: the fulfillment a `completed` Woo order implies, or none.
  *
  * `destination_country` / `destination_region` are read from the payload's
@@ -206,7 +195,7 @@ function translateFulfillments(
   fact: WooOrderFact,
   lines: readonly CommerceOrderLineFact[],
 ): CommerceOrderFulfillmentFact[] {
-  if (resolveWooFulfillmentStatus(fact) !== "fulfilled") return [];
+  if (fact.fulfillmentStatus !== "fulfilled") return [];
   const shipping = asRecord(fact.raw["shipping"]);
   const country = shipping === null ? null : asText(shipping["country"]);
   const region = shipping === null ? null : asText(shipping["state"]);
@@ -249,7 +238,7 @@ export function wooOrderFactToCommerceFact(
     externalOrderNumber: fact.orderNumber,
     status: fact.status,
     paymentStatus: fact.paymentStatus,
-    fulfillmentStatus: resolveWooFulfillmentStatus(fact),
+    fulfillmentStatus: fact.fulfillmentStatus,
     providerStatusRaw: fact.providerStatusRaw,
     currency,
     // PROVISIONAL #5 — derived by exact summation at the adapter boundary.

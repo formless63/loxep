@@ -55,14 +55,24 @@
  *   `unfulfilled`. `partially_fulfilled` is UNREACHABLE from Woo core.
  * - Woo's `refunded` status REPLACES the previous status, so a fully refunded
  *   order no longer says whether it shipped. It maps to
- *   `fulfillment_status = 'unfulfilled'` — the design's union has no
- *   `unknown` member, and claiming `fulfilled` would invent a fact.
+ *   `fulfillment_status = 'unknown'` — the design's union gained an `unknown`
+ *   member (Commerce Schema Design open question 3) for exactly this case, so
+ *   claiming `fulfilled` — or `unfulfilled`, which is just as much an invented
+ *   fact — is no longer necessary.
  * - `partially_refunded` is not a Woo status. It is derived: a non-empty
  *   `refunds` array on an order whose status is not `refunded`.
  * - Unknown statuses (plugins register custom ones freely) map to the
- *   pending/unpaid/unfulfilled floor and set `statusRecognized: false`.
- *   `providerStatusRaw` is the diagnosable evidence, exactly as the design
- *   intends `provider_status_raw` to be used.
+ *   pending/unpaid floor, `fulfillment_status = 'unknown'`, and set
+ *   `statusRecognized: false`. `providerStatusRaw` is the diagnosable
+ *   evidence, exactly as the design intends `provider_status_raw` to be used.
+ *
+ * This projection — including the `unknown` degradation — lives entirely in
+ * `WOO_STATUS_MAP` / {@link WOO_UNKNOWN_STATUS_MAPPING}, in this adapter. An
+ * earlier pass put the `refunded`/unrecognized re-mapping in
+ * `@loxep/commerce`'s translator instead, only because `packages/integrations/woo`
+ * was outside that change's write fence (loxep-xh9.7.3 moved it here, its
+ * prescribed correct home for new code — see how `packages/integrations/ebay`
+ * documents the same `unknown` member for the mirrored pattern).
  */
 import type { WooAdapter, WooQuery } from "./adapter.ts";
 import { WOO_MAX_PER_PAGE, WOO_DEFAULT_PER_PAGE } from "./adapter.ts";
@@ -99,12 +109,17 @@ export const WOO_PAYMENT_STATUSES = [
 ] as const;
 export type WooPaymentStatus = (typeof WOO_PAYMENT_STATUSES)[number];
 
-/** Design candidate union for `orders.fulfillment_status`. */
+/**
+ * Design union for `orders.fulfillment_status`, INCLUDING the `unknown`
+ * member added by the Phase 3 implementation (Commerce Schema Design open
+ * question 3). Produced here, not downstream — see the module doc.
+ */
 export const WOO_FULFILLMENT_STATUSES = [
   "unfulfilled",
   "partially_fulfilled",
   "fulfilled",
   "cancelled",
+  "unknown",
 ] as const;
 export type WooFulfillmentStatus = (typeof WOO_FULFILLMENT_STATUSES)[number];
 
@@ -282,10 +297,11 @@ export const WOO_STATUS_MAP: Readonly<Record<string, WooStatusMapping>> = {
   },
   refunded: {
     // Fully refunded. Woo overwrote whatever came before, so shipment is
-    // unknowable; the design's union has no `unknown`, so it degrades down.
+    // unknowable — `unknown` says exactly that, instead of asserting
+    // `unfulfilled` and claiming a fact nobody observed.
     status: "completed",
     paymentStatus: "refunded",
-    fulfillmentStatus: "unfulfilled",
+    fulfillmentStatus: "unknown",
   },
   cancelled: {
     status: "cancelled",
@@ -305,11 +321,15 @@ export const WOO_STATUS_MAP: Readonly<Record<string, WooStatusMapping>> = {
   },
 };
 
-/** Floor for statuses a plugin invented. `providerStatusRaw` keeps the truth. */
+/**
+ * Floor for statuses a plugin invented. `providerStatusRaw` keeps the truth;
+ * `fulfillmentStatus` degrades to `unknown` rather than claiming the order
+ * did not ship, which is the whole reason that member exists.
+ */
 export const WOO_UNKNOWN_STATUS_MAPPING: WooStatusMapping = {
   status: "pending",
   paymentStatus: "unpaid",
-  fulfillmentStatus: "unfulfilled",
+  fulfillmentStatus: "unknown",
 };
 
 /** Strip WooCommerce's internal `wc-` post-status prefix if a caller sends it. */

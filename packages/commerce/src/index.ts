@@ -85,7 +85,6 @@ export {
   WOO_DEFAULT_CHANNEL,
   WOO_ORDER_OBJECT_TYPE,
   WOO_PROVIDER,
-  resolveWooFulfillmentStatus,
   wooOrderFactToCommerceFact,
 } from "./woo.ts";
 export type { WooTranslationOptions } from "./woo.ts";

@@ -516,8 +516,9 @@ describe("order ingestion", () => {
         }),
         { sourceAccountKey: SOURCE_ACCOUNT_KEY },
       );
-      // The adapter's own union has no `unknown`; the translator adds it.
-      expect(fact.fulfillmentStatus).toBe("unfulfilled");
+      // The adapter itself degrades a refunded order to `unknown` — Woo
+      // overwrote whatever status came before, so shipment is unknowable.
+      expect(fact.fulfillmentStatus).toBe("unknown");
       const translated = wooOrderFactToCommerceFact(fact);
       expect(translated.fulfillmentStatus).toBe("unknown");
 

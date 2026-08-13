@@ -120,7 +120,7 @@ describe("mapWooOrder — status matrix (one Woo lifecycle → three design ones
     ["on-hold", "pending", "unpaid", "unfulfilled"],
     ["processing", "open", "paid", "unfulfilled"],
     ["completed", "completed", "paid", "fulfilled"],
-    ["refunded", "completed", "refunded", "unfulfilled"],
+    ["refunded", "completed", "refunded", "unknown"],
     ["cancelled", "cancelled", "unpaid", "cancelled"],
     ["failed", "cancelled", "failed", "unfulfilled"],
     ["trash", "cancelled", "unpaid", "cancelled"],
@@ -167,10 +167,18 @@ describe("mapWooOrder — status matrix (one Woo lifecycle → three design ones
     const fact = map(completedOrderFixture({ status: "awaiting-shipment" }));
     expect(fact.status).toBe("pending");
     expect(fact.paymentStatus).toBe("unpaid");
-    expect(fact.fulfillmentStatus).toBe("unfulfilled");
+    // Unrecognized statuses degrade to `unknown` fulfillment IN THE ADAPTER
+    // (WOO_UNKNOWN_STATUS_MAPPING) rather than asserting `unfulfilled`.
+    expect(fact.fulfillmentStatus).toBe("unknown");
     expect(fact.statusRecognized).toBe(false);
     // The truth survives for diagnosis (design: `provider_status_raw`).
     expect(fact.providerStatusRaw).toBe("awaiting-shipment");
+  });
+
+  it("maps 'refunded' to 'unknown' fulfillment IN THE ADAPTER, not downstream", () => {
+    const fact = map(completedOrderFixture({ status: "refunded" }));
+    expect(fact.fulfillmentStatus).toBe("unknown");
+    expect(fact.statusRecognized).toBe(true);
   });
 
   it("strips WooCommerce's internal wc- post-status prefix", () => {
