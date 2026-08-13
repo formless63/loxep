@@ -1,0 +1,20 @@
+-- Purchase-ingestion idempotency (flipping-lifecycle-design.md section 2a,
+-- loxep-k5p — the follow-up flagged when loxep-dgf.5 shipped an
+-- application-level look-then-insert dedup because its fence forbade
+-- migrations).
+--
+-- One index, on the one Phase 4 table this design touches with DDL:
+-- `acquisitions` had exactly one unique constraint
+-- (`acquisitions_reference_code_uq`, on a Loxep-minted code) and no way for
+-- a re-poll to recognize a connector-sourced purchase it already ingested.
+--
+-- Partial, so the many hand-entered acquisitions with neither
+-- `connection_id` nor `external_reference` are unaffected. Unique rather
+-- than merely detected: unlike a cross-connection order duplicate, this key
+-- is not adapter-guessed — it is the connection Loxep chose and the id the
+-- provider assigned, both always present together for a connector-sourced
+-- purchase. Closes the race the module doc for
+-- `packages/inventory/src/purchase-sync.ts` documents: sequential re-polls
+-- were already safe via the look-then-insert; two genuinely concurrent syncs
+-- of the same connection were not, until this constraint.
+CREATE UNIQUE INDEX "acquisitions_connection_external_ref_uq" ON "acquisitions" USING btree ("connection_id","external_reference") WHERE "acquisitions"."connection_id" is not null and "acquisitions"."external_reference" is not null;

@@ -46,35 +46,37 @@
  * Cadence is measured in HOURS (`DEFAULT_PURCHASE_SYNC_INTERVAL_SECONDS`),
  * not the 60-second monitor baseline — purchase history is not a price feed.
  *
- * ## KNOWN GAP: `@loxep/app` has no route for `ebay_purchases` yet
+ * ## `@loxep/app` route: RESOLVED
  *
- * The design's scheduling item calls for a poll executor in `@loxep/app`
- * routing `ebay_purchases` to this module's `syncConnection`, mirroring
- * `commerce-ebay.ts`'s `ebay_orders` branch exactly. `@loxep/app`'s
- * `package.json` does not currently declare `@loxep/inventory` as a
- * dependency — unlike `@loxep/commerce`, which it already depends on — so
- * that executor cannot be added without a `package.json` edit (and a
- * `bun install` to relink the workspace symlink), which is outside this
- * change's write fence. Nothing here is broken by the gap: `ensureTarget`,
- * the cursor helpers, and `syncConnection` all work today via direct
- * invocation (a script, a test, a future on-demand task); what does NOT yet
- * work is SCHEDULED polling through `market.poll-target`, because no route
- * claims an `ebay_purchases` target. Filed as a follow-up; see this
- * package's `purchase-sync.test.ts` module doc and the bd notes on
- * loxep-dgf.5.
+ * The design's scheduling item — a poll executor in `@loxep/app` routing
+ * `ebay_purchases` to this module's `syncConnection`, mirroring
+ * `commerce-ebay.ts`'s `ebay_orders` branch — shipped as
+ * `packages/app/src/inventory-ebay.ts`'s `createEbayPurchasePollExecutor`,
+ * joined in `registry.ts`'s poll-routing table alongside
+ * `inventory.sync-ebay-purchases` (the on-demand task sharing the same sync
+ * service). `@loxep/app` now depends on `@loxep/inventory`. This section
+ * previously flagged the dependency as a blocker; it no longer is, and
+ * SCHEDULED polling through `market.poll-target` works the same way
+ * `ebay_orders`'/`woo_orders`' does.
  *
- * ## Idempotency: an application-level check, not a constraint — ALSO A GAP
+ * ## Idempotency: a database constraint (loxep-k5p, migration 0018)
  *
- * The design calls for one migration: a partial unique index on
- * `acquisitions (connection_id, external_reference)`. Adding a migration is
- * outside this change's write fence (no `packages/db/migrations/**` edits).
- * {@link ingestEbayPurchase} instead looks for an existing acquisition with
- * the same `(connection_id, external_reference)` before inserting one. This
- * is idempotent against SEQUENTIAL re-polls (the normal case — a connection's
- * `ebay_purchases` target is claimed by one dispatcher at a time) but NOT
- * against two truly concurrent syncs of the same connection racing the
- * look-then-insert, which only the missing unique index would close. Flagged
- * for the orchestrator the same way the missing `@loxep/app` route is.
+ * The design's `acquisitions_connection_external_ref_uq` partial unique
+ * index — `on acquisitions (connection_id, external_reference) where
+ * connection_id is not null and external_reference is not null` — now
+ * exists (`packages/db/migrations/0018_purchase_idempotency.sql`).
+ * {@link ingestEbayPurchase} INSERTS FIRST and only falls back to a lookup
+ * when that insert violates the constraint, which the constraint itself
+ * guarantees means a row with this `(connection_id, external_reference)` is
+ * already committed. This closes the gap the look-then-insert version had:
+ * two truly concurrent syncs of the same connection now both succeed from
+ * the caller's point of view (one creates, one observes `skipped: true`)
+ * instead of racing a SELECT that could miss an in-flight INSERT. The
+ * `acquisitionsService.create` insert this calls through routes any OTHER
+ * unique violation (a colliding generated `reference_code`) through its own
+ * `withCodeRetry`, narrowed via `onConstraint` to
+ * `acquisitions_reference_code_uq` so it never mistakes this constraint's
+ * violation for a code collision worth retrying — see `codes.ts`'s doc.
  */
 import { createHash } from "node:crypto";
 import type { LoxepDb } from "@loxep/db";
@@ -82,8 +84,17 @@ import { monitorTargets, providerObjects } from "@loxep/db/schema";
 import { z } from "zod";
 import { createAcquisitionsService } from "./acquisitions.ts";
 import type { AcquisitionRow } from "./acquisitions.ts";
+import { uniqueViolationConstraint } from "./codes.ts";
 import { InventoryNotFoundError, InventoryValidationError } from "./errors.ts";
 import { jsonbLiteral, textLiteral, uuidLiteral } from "./sql.ts";
+
+/**
+ * `acquisitions_connection_external_ref_uq` (migration 0018, loxep-k5p): the
+ * partial unique index on `acquisitions (connection_id, external_reference)`
+ * this module's idempotency now relies on. See {@link ingestEbayPurchase}.
+ */
+const PURCHASE_IDEMPOTENCY_CONSTRAINT =
+  "acquisitions_connection_external_ref_uq";
 
 /** `monitor_targets.target_type` for eBay purchase-history polling. */
 export const EBAY_PURCHASES_TARGET_TYPE = "ebay_purchases";
@@ -381,7 +392,8 @@ export interface IngestEbayPurchaseResult {
   created: boolean;
   /**
    * True when an acquisition with this `(connectionId, externalReference)`
-   * already existed — see the module doc's idempotency-gap note.
+   * already existed — see the module doc's idempotency section
+   * (`acquisitions_connection_external_ref_uq`).
    */
   skipped: boolean;
   acquisition: AcquisitionRow;
@@ -453,34 +465,58 @@ export function createPurchaseIngestionService(options: {
       const fact = parsed.data;
       const now = input.now ?? new Date();
 
-      // Idempotency gap: see the module doc — this is a look-then-insert,
-      // not a constraint, pending the design's `acquisitions_connection_
-      // external_ref_uq` migration.
-      const existing = await db.query.acquisitions.findFirst({
-        where: (table, { and, eq }) =>
-          and(
-            eq(table.connectionId, input.connectionId),
-            eq(table.externalReference, fact.externalOrderId),
-          ),
-      });
-      if (existing !== undefined) {
+      // Idempotency: insert first, rely on
+      // `acquisitions_connection_external_ref_uq` (migration 0018) to reject
+      // a repeat, and only THEN look — see the module doc's idempotency
+      // section for why this ordering is what closes the concurrent-sync
+      // race a look-then-insert could not.
+      let acquisition: AcquisitionRow;
+      let created: boolean;
+      try {
+        acquisition = await acquisitionsService.create({
+          title: fact.title,
+          sourceKind: "online_marketplace",
+          currency: fact.currency,
+          connectionId: input.connectionId,
+          vendorName: fact.sellerExternalId,
+          externalReference: fact.externalOrderId,
+          status: "draft",
+          acquiredAt: new Date(fact.purchasedAt),
+          createdByUserId: input.actorUserId ?? null,
+        });
+        created = true;
+      } catch (error) {
+        if (uniqueViolationConstraint(error) !== PURCHASE_IDEMPOTENCY_CONSTRAINT) {
+          throw error;
+        }
+        const existing = await db.query.acquisitions.findFirst({
+          where: (table, { and, eq }) =>
+            and(
+              eq(table.connectionId, input.connectionId),
+              eq(table.externalReference, fact.externalOrderId),
+            ),
+        });
+        if (existing === undefined) {
+          // The constraint just told us a matching row is committed; not
+          // finding it here would mean the constraint lied, which is a bug
+          // worth surfacing loudly rather than silently re-creating.
+          throw new InventoryNotFoundError(
+            `"${PURCHASE_IDEMPOTENCY_CONSTRAINT}" rejected the insert but no ` +
+              `matching acquisition was found for connection ` +
+              `"${input.connectionId}" / external reference ` +
+              `"${fact.externalOrderId}"`,
+          );
+        }
+        acquisition = existing;
+        created = false;
+      }
+
+      if (!created) {
         if (input.retainProvenance !== false) {
           await retainProvenance({ connectionId: input.connectionId, fact, now });
         }
-        return { created: false, skipped: true, acquisition: existing };
+        return { created: false, skipped: true, acquisition };
       }
-
-      const acquisition = await acquisitionsService.create({
-        title: fact.title,
-        sourceKind: "online_marketplace",
-        currency: fact.currency,
-        connectionId: input.connectionId,
-        vendorName: fact.sellerExternalId,
-        externalReference: fact.externalOrderId,
-        status: "draft",
-        acquiredAt: new Date(fact.purchasedAt),
-        createdByUserId: input.actorUserId ?? null,
-      });
 
       const costs: { key: keyof typeof COST_MAPPING; amount: string }[] = [
         { key: "goods", amount: fact.itemPriceAmount },

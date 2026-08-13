@@ -50,10 +50,22 @@ export function acquisitionReferenceCode(year: number, sequence: number): string
  * error to surface: it means two operators created stock in the same
  * millisecond. Anything else propagates immediately, because swallowing a real
  * failure inside a retry loop is how a bug becomes a mystery.
+ *
+ * `onConstraint` narrows which unique violation counts as "the code
+ * collided, try another" — the table this inserts into may carry OTHER
+ * unique constraints (e.g. `acquisitions_connection_external_ref_uq`) whose
+ * violation is a real, deterministic conflict that regenerating the code
+ * will never resolve; retrying that one five times just burns round trips
+ * before failing anyway with the collision's own signal buried in a wrapped
+ * message. When omitted, any unique violation is treated as a code collision
+ * (the historical behavior, kept for callers with only one unique
+ * constraint on the row they insert).
  */
 export async function withCodeRetry<T>(
   attempt: (attemptIndex: number) => Promise<T>,
-  options: { attempts?: number; label: string } = { label: "code" },
+  options: { attempts?: number; label: string; onConstraint?: string } = {
+    label: "code",
+  },
 ): Promise<T> {
   const attempts = options.attempts ?? 5;
   let lastError: unknown;
@@ -61,7 +73,7 @@ export async function withCodeRetry<T>(
     try {
       return await attempt(index);
     } catch (error) {
-      if (!isUniqueViolation(error)) throw error;
+      if (!isUniqueViolation(error, options.onConstraint)) throw error;
       lastError = error;
     }
   }
@@ -71,11 +83,40 @@ export async function withCodeRetry<T>(
   );
 }
 
-/** PostgreSQL `23505 unique_violation`, however the driver wrapped it. */
-export function isUniqueViolation(error: unknown): boolean {
+/**
+ * PostgreSQL `23505 unique_violation`, however the driver wrapped it. When
+ * `constraintName` is given, only a violation of THAT constraint counts —
+ * see `withCodeRetry`'s `onConstraint` doc for why that distinction matters.
+ */
+export function isUniqueViolation(
+  error: unknown,
+  constraintName?: string,
+): boolean {
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
-  if (code === "23505") return true;
+  if (code === "23505") {
+    if (constraintName === undefined) return true;
+    const constraint = (error as { constraint?: unknown }).constraint;
+    return constraint === constraintName;
+  }
   const cause = (error as { cause?: unknown }).cause;
-  return cause === undefined ? false : isUniqueViolation(cause);
+  return cause === undefined ? false : isUniqueViolation(cause, constraintName);
+}
+
+/**
+ * Find the PostgreSQL constraint name on a unique-violation error, however
+ * deep the driver/ORM wrapped it — `undefined` when the error is not a
+ * `23505` at all. Lets a caller distinguish "this exact constraint
+ * conflicted" from any other unique violation without re-walking the
+ * `cause` chain itself.
+ */
+export function uniqueViolationConstraint(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as { code?: unknown }).code;
+  if (code === "23505") {
+    const constraint = (error as { constraint?: unknown }).constraint;
+    return typeof constraint === "string" ? constraint : undefined;
+  }
+  const cause = (error as { cause?: unknown }).cause;
+  return cause === undefined ? undefined : uniqueViolationConstraint(cause);
 }

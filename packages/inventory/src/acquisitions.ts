@@ -317,7 +317,10 @@ export function createAcquisitionsService(options: {
           }
           return row;
         },
-        { label: "acquisition reference code" },
+        {
+          label: "acquisition reference code",
+          onConstraint: "acquisitions_reference_code_uq",
+        },
       );
     },
 

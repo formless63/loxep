@@ -180,6 +180,36 @@ describe("createPurchaseIngestionService", () => {
     expect(acquisitionRows.rows[0]?.["n"]).toBe(1);
   });
 
+  it("stays single under two truly CONCURRENT ingests of the same purchase (loxep-k5p regression)", async () => {
+    // The gap the look-then-insert version could not close: two syncs racing
+    // the same connection's SELECT, both seeing no existing row, both
+    // inserting. Migration 0018's `acquisitions_connection_external_ref_uq`
+    // closes it — this fires both ingests with NO await between them, so a
+    // look-then-insert implementation would very likely double-insert here.
+    const connectionId = await seedConnection(scratch, {
+      name: "concurrent-sync buyer",
+      provider: "ebay",
+    });
+    const ingestion = createPurchaseIngestionService({ db: scratch.handle.db });
+
+    const [first, second] = await Promise.all([
+      ingestion.ingestEbayPurchase({ connectionId, fact: fact("ORDER-RACE") }),
+      ingestion.ingestEbayPurchase({ connectionId, fact: fact("ORDER-RACE") }),
+    ]);
+
+    const outcomes = [first, second].sort((a, b) => Number(a.created) - Number(b.created));
+    expect(outcomes[0]?.created).toBe(false);
+    expect(outcomes[0]?.skipped).toBe(true);
+    expect(outcomes[1]?.created).toBe(true);
+    expect(outcomes[1]?.skipped).toBe(false);
+    expect(first.acquisition.id).toBe(second.acquisition.id);
+
+    const acquisitionRows = await scratch.handle.db.execute(
+      `select count(*)::int as n from acquisitions where connection_id = '${connectionId}' and external_reference = 'ORDER-RACE'`,
+    );
+    expect(acquisitionRows.rows[0]?.["n"]).toBe(1);
+  });
+
   it("dedups an unchanged provider_objects payload by hash", async () => {
     const connectionId = await seedConnection(scratch, { name: "dedup buyer", provider: "ebay" });
     const ingestion = createPurchaseIngestionService({ db: scratch.handle.db });
