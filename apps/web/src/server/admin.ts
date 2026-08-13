@@ -28,7 +28,12 @@ import {
   type SecretsService,
   type SettingsService
 } from '@loxep/domain';
-import { createStorageBackendsService, type StorageBackendsService } from '@loxep/storage';
+import {
+  createMediaService,
+  createStorageBackendsService,
+  type MediaService,
+  type StorageBackendsService
+} from '@loxep/storage';
 import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
 import { AuthorizationError, requireRole } from '@loxep/auth';
@@ -44,6 +49,7 @@ interface AdminRegistry {
   /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
   secrets: SecretsService;
   storageBackendsPromise?: Promise<StorageBackendsService>;
+  mediaServicePromise?: Promise<MediaService>;
   notificationsModulePromise?: Promise<typeof import('@loxep/notifications')>;
   notificationsServicePromise?: Promise<NotificationService>;
   marketModulePromise?: Promise<typeof import('@loxep/market')>;
@@ -106,6 +112,20 @@ export function getStorageBackendsService(): Promise<StorageBackendsService> {
     })
   );
   return registry.storageBackendsPromise;
+}
+
+/**
+ * Media service (uploads/serves avatars and other Loxep-stored objects
+ * through the configured default storage backend), cached on the registry.
+ * Same no-jobs-hazard reasoning as {@link getStorageBackendsService}.
+ */
+export function getMediaService(): Promise<MediaService> {
+  const registry = getAdminServices();
+  registry.mediaServicePromise ??= (async () => {
+    const backends = await getStorageBackendsService();
+    return createMediaService({ db: registry.handle.db, backends });
+  })();
+  return registry.mediaServicePromise;
 }
 
 /**

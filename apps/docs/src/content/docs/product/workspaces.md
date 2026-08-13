@@ -100,7 +100,7 @@ Self-service and administration are separate surfaces on purpose. `/account/prof
 
 Profile values arrive pre-filled where the identity provider supplies them — a generic OIDC issuer's `name` and `picture` claims become the user's name and avatar, and `nickname`/`preferred_username` seeds the display name. Provider values apply only when the account is created: an in-app edit is permanent and is never overwritten by a later sign-in. Wherever Loxep names a person it resolves display name, then full name, then email.
 
-Avatars are a URL today. Uploading an image file is a later change, once media upload and serving are wired through the storage abstraction.
+Avatars are either an absolute http(s) URL (the identity provider's `picture` claim, or one typed in by hand) or an uploaded image file, stored through `@loxep/storage`'s media service against the installation's default storage backend and served back from `/api/media/avatar/:mediaId`. Uploading replaces the previous avatar: if the prior `user.image` was itself a Loxep-stored avatar, that media object is deleted; an external URL is left untouched. There is no per-avatar ACL — `media_objects.created_by_user_id` records who uploaded it as an attribution fact, and any signed-in user may fetch any avatar by id, matching how a plain image URL already worked. Uploading is unavailable until an admin registers a storage backend under `/settings/storage`.
 
 ### Notifications and search
 

@@ -7,6 +7,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { LoxepRole } from '@loxep/auth';
+import { isValidAvatarUrl } from '@/lib/avatar';
 
 export interface SessionInfo {
   user: {
@@ -91,12 +92,14 @@ const updateProfileInput = z.strictObject({
   lastName: optionalLine(100, 'Last name'),
   displayName: optionalLine(80, 'Display name'),
   /**
-   * Avatar URL. Uploads are not wired yet — there is no media-serving route in
-   * the web app — so this is an absolute http(s) URL the user (or their OIDC
-   * issuer) supplies.
+   * Avatar URL. Either an absolute http(s) URL the user (or their OIDC
+   * issuer) supplies, or a Loxep-hosted avatar serving path written by
+   * `/api/account/avatar` (`avatarServingUrl`) — the file-picker upload path
+   * writes this field the same way the URL field always has, through this
+   * same server function's `updateUser` call.
    */
   imageUrl: optionalLine(2048, 'Avatar URL').refine(
-    (value) => value === null || /^https?:\/\/\S+$/i.test(value),
+    (value) => value === null || isValidAvatarUrl(value),
     'Avatar URL must be an http(s) URL'
   )
 });
