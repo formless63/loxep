@@ -344,6 +344,81 @@ export const inventoryDefaultSaleModeSetting = defineSetting({
   defaultValue: { saleMode: "unit" },
 });
 
+/**
+ * Gatus outward health push (Phase 8 milestone 2, loxep-ovj.2). Design:
+ * apps/docs/.../architecture/fleet-observability-design.md, "Publish Loxep's
+ * own health outward".
+ *
+ * Gatus's only write path is `POST /api/v1/endpoints/:key/external?success=
+ * &error=&duration=` against an endpoint the OPERATOR already declared in
+ * their own gatus YAML under `external-endpoints` (optionally with
+ * `heartbeat.interval`, so Gatus itself alerts when the push stops arriving —
+ * the whole point, since Loxep cannot alert on its own outage). Gatus cannot
+ * be configured remotely, so this setting carries only what an operator
+ * TYPES to point Loxep at an endpoint that already exists: whether the push
+ * runs at all, the base URL of their Gatus instance, and the
+ * `<GROUP_NAME>_<ENDPOINT_NAME>` key their YAML declared.
+ *
+ * The bearer TOKEN that endpoint's YAML requires is deliberately NOT part of
+ * this setting — it is secret, and settings are non-secret by definition
+ * (this module's own doc comment). It is stored as the application secret
+ * `infrastructure.gatus_push.default` (purpose `token`, the same generic
+ * bundle `notification_endpoints` already uses for its own bearer tokens),
+ * following the split every provider base-URL/credential pair in this
+ * codebase already uses: `connections.config`/`ebay_keyset`,
+ * `notification_endpoints.config`/`notification_endpoint:<id>`. See
+ * `@loxep/app`'s `gatus-push.ts` for the read side of that secret.
+ *
+ * `enabled` defaults to `false` and the URL/key default to `null`: an
+ * installation that has not configured a Gatus base URL, endpoint key, AND
+ * token has nothing to push to, and a push job that stays a silent no-op
+ * until all three are set is the "nothing configured must not look like
+ * everything healthy" rule applied to the outward-push side, matching
+ * `caaPolicySetting`'s "ships deliberately unreviewed rather than guessed"
+ * discipline.
+ */
+export const gatusPushSetting = defineSetting({
+  key: "infrastructure.gatus_push",
+  schema: z.strictObject({
+    /** The push task no-ops entirely while false — the shipped default. */
+    enabled: z.boolean(),
+    /** The operator's Gatus instance, e.g. `https://gatus.example.com`. */
+    baseUrl: z.url().nullable(),
+    /**
+     * `<GROUP_NAME>_<ENDPOINT_NAME>`, exactly as declared under the
+     * operator's own gatus `external-endpoints` — Loxep never derives or
+     * sanitizes this; it is copied verbatim from the operator's YAML.
+     */
+    endpointKey: z
+      .string()
+      .min(3)
+      .regex(
+        /^[A-Za-z0-9_-]+_[A-Za-z0-9_-]+$/u,
+        "must look like <GROUP_NAME>_<ENDPOINT_NAME>, matching the operator's gatus external-endpoints declaration",
+      )
+      .nullable(),
+  }),
+  description:
+    "Gatus outward health push (Phase 8 milestone 2): whether it runs, the " +
+    "base URL of the operator's Gatus instance, and the <GROUP>_<ENDPOINT> " +
+    "key of the external endpoint declared in their own gatus YAML. The " +
+    "bearer token is a secret, stored separately at " +
+    "infrastructure.gatus_push.default",
+  schemaVersion: 1,
+  defaultValue: { enabled: false, baseUrl: null, endpointKey: null },
+});
+
+/**
+ * Logical application-secret key for the Gatus push bearer token (purpose
+ * `token`) — see {@link gatusPushSetting}'s doc for why the token is not
+ * part of the setting itself. ONE key for the whole installation: there is
+ * exactly one push target, matching the setting's own single-config shape.
+ * Both `@loxep/app` (the push job, which reads it) and `apps/web` (the
+ * settings form, which writes it) import this constant rather than each
+ * hard-coding the string, so the two sides of the split can never drift.
+ */
+export const GATUS_PUSH_SECRET_KEY = "infrastructure.gatus_push.default";
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -355,4 +430,5 @@ export const registeredApplicationSettings = [
   caaPolicySetting,
   inventoryMediaLimitsSetting,
   inventoryDefaultSaleModeSetting,
+  gatusPushSetting,
 ] as const;

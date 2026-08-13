@@ -51,6 +51,8 @@ export {
   caaPolicySetting,
   cloudflareRateBudgetSetting,
   ebayRateBudgetSetting,
+  GATUS_PUSH_SECRET_KEY,
+  gatusPushSetting,
   inventoryDefaultSaleModeSetting,
   inventoryMediaLimitsSetting,
   monitorDefaultsSetting,

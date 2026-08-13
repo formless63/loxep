@@ -45,6 +45,7 @@ export default defineConfig({
             { label: 'Connecting Purelymail', slug: 'guides/connecting-purelymail' },
             { label: 'Connecting Beszel', slug: 'guides/connecting-beszel' },
             { label: 'Connecting Dockhand', slug: 'guides/connecting-dockhand' },
+            { label: 'Publishing health to Gatus', slug: 'guides/gatus-health-push' },
           ],
         },
         {

@@ -16,6 +16,10 @@ Loxep mostly observes and reads from external services. Invoice Ninja is the one
 - [Connecting Invoice Ninja](./connecting-invoice-ninja/) — issuing a company API token in a self-hosted Invoice Ninja instance.
 - [Connecting Cloudflare](./connecting-cloudflare/) — a scoped API token for the Infrastructure control plane's DNS reconciler.
 - [Connecting Purelymail](./connecting-purelymail/) — an API token for the Infrastructure control plane's mail-hosting milestone.
+- [Connecting Beszel](./connecting-beszel/) — a read-only hub user for server monitoring.
+- [Connecting Dockhand](./connecting-dockhand/) — a scoped session login for container host inventory.
+
+Loxep also pushes in one direction, the reverse of every provider above: [Publishing health to Gatus](./gatus-health-push/) sends Loxep's own overall health outward to an operator-declared Gatus endpoint every five minutes, so Gatus can raise the alert Loxep can never raise about its own outage.
 
 ## How these guides relate to the application
 

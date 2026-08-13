@@ -14,6 +14,8 @@ import {
   findRegisteredSetting,
   caaPolicySetting,
   cloudflareRateBudgetSetting,
+  GATUS_PUSH_SECRET_KEY,
+  gatusPushSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
@@ -442,5 +444,64 @@ describe("Phase 7 infrastructure settings", () => {
     expect(cloudflareRateBudgetSetting.defaultValue.refillPerSecond).toBeLessThan(
       1200 / 300,
     );
+  });
+});
+
+describe("Phase 8 milestone 2 Gatus push setting", () => {
+  // Ships disabled with no base URL/key, the same "unreviewed/unconfigured
+  // must not look like ready" discipline caaPolicySetting uses — a push job
+  // that read this setting with nothing set must have something to no-op on.
+  it("ships disabled with no base URL or endpoint key", () => {
+    expect(gatusPushSetting.key).toBe("infrastructure.gatus_push");
+    expect(gatusPushSetting.defaultValue).toEqual({
+      enabled: false,
+      baseUrl: null,
+      endpointKey: null,
+    });
+  });
+
+  it("accepts a well-formed GROUP_ENDPOINT key and rejects a malformed one", () => {
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: "https://gatus.example.com",
+        endpointKey: "core_loxep",
+      }).success,
+    ).toBe(true);
+    // No underscore separating group from endpoint.
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: "https://gatus.example.com",
+        endpointKey: "loxep",
+      }).success,
+    ).toBe(false);
+    // Not a URL.
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: "not-a-url",
+        endpointKey: "core_loxep",
+      }).success,
+    ).toBe(false);
+    // Unknown property — strictObject.
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: null,
+        endpointKey: null,
+        token: "nope",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("is registered", () => {
+    expect(registeredApplicationSettings).toContain(gatusPushSetting);
+  });
+
+  it("stores the push token under a stable, shared secret key", () => {
+    // Both @loxep/app (reads it) and apps/web (writes it) import this
+    // constant rather than each hard-coding the literal.
+    expect(GATUS_PUSH_SECRET_KEY).toBe("infrastructure.gatus_push.default");
   });
 });

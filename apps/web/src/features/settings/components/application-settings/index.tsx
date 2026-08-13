@@ -24,6 +24,7 @@ import type { RawSettingDto, RegisteredSettingDto } from '@/server/admin-functio
 import { getRegisteredColumns, registeredColumns } from './registered-columns';
 import { rawColumns } from './raw-columns';
 import SettingEditDialog from './edit-dialog';
+import GatusPushCard from './gatus-push-card';
 
 const REGISTERED_CLIENT_COLUMNS: ClientColumnSpec<RegisteredSettingDto>[] = [
   { id: 'key', accessor: (row) => row.key, filterVariant: 'text' }
@@ -100,6 +101,8 @@ export default function ApplicationSettings({ isAdmin }: { isAdmin: boolean }) {
           )}
         </CardContent>
       </Card>
+
+      <GatusPushCard isAdmin={isAdmin} />
 
       <Card>
         <CardHeader>
