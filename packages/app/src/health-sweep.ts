@@ -23,12 +23,25 @@
  * Idempotent by the primary key `(subject_type, subject_id)`: a redelivered
  * job, an overlapping run, or a retry only re-probes and re-upserts, never
  * duplicates.
+ *
+ * ## The `connection` subject is fleet-aware (loxep-rf4)
+ *
+ * `@loxep/domain`'s own registry (`createDefaultHealthSubjectRegistry`)
+ * cannot host a Beszel/Dockhand/Gatus/Tailscale/Termix probe — it takes no
+ * integration-package dependency. This module is the composition root that
+ * CAN: `createFleetHealthSubjectRegistry` (`fleet-health.ts`) wraps the
+ * default registry's `connection` entry so a fleet-provider connection gets
+ * its own adapter read while every other provider keeps the original derived
+ * `probeConnection`. Built once, here, and passed through to
+ * `runHealthSweep({ registry })` on every run — the mechanics and the
+ * provider-specific probes live in `fleet-health.ts`, not in this file.
  */
 import { defineTask, jobKeyFor } from "@loxep/jobs";
 import type { LoxepTask } from "@loxep/jobs";
 import { runHealthSweep } from "@loxep/domain";
 import type { HealthSweepResult } from "@loxep/domain";
 import { z } from "zod";
+import { createFleetHealthSubjectRegistry } from "./fleet-health.ts";
 import type { AppCronItem } from "./refresh-tokens.ts";
 import type { AppServices } from "./services.ts";
 
@@ -55,6 +68,8 @@ export function createHealthSweepTasks(options: {
   services: AppServices;
 }): HealthSweepTasks {
   const { services } = options;
+  // Built once and reused across every cron tick — see this module's doc.
+  const registry = createFleetHealthSubjectRegistry(services);
 
   const healthSweepTask = defineTask({
     name: HEALTH_SWEEP_TASK_NAME,
@@ -66,6 +81,7 @@ export function createHealthSweepTasks(options: {
     handler: async (payload, { logger }) => {
       const result: HealthSweepResult = await runHealthSweep({
         db: services.db,
+        registry,
         ...(payload.maxSubjectsPerType === undefined
           ? {}
           : { maxSubjectsPerType: payload.maxSubjectsPerType }),
