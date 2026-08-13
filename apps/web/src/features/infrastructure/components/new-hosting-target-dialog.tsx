@@ -46,6 +46,17 @@ function validateFrontingShape(values: z.infer<typeof targetFormSchema>): string
   if (values.controlSurface !== 'tunnel_client' && hasFrontingNode) {
     return 'Only a tunnel client may have a fronting node.';
   }
+  // `hosting_targets_addressable_check`: a target that is not deliberately
+  // address-less must be resolvable to something — its own address, or a
+  // fronting node's.
+  if (
+    values.controlSurface !== 'none' &&
+    !hasFrontingNode &&
+    values.addressV4.trim() === '' &&
+    values.addressV6.trim() === ''
+  ) {
+    return 'An addressable target needs an IPv4 or IPv6 address (or pick "DNS only").';
+  }
   return undefined;
 }
 

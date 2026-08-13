@@ -30,15 +30,18 @@ test('infrastructure overview renders with an empty fleet and no domains needing
   await page.goto('/infrastructure/overview');
   await expect(page.getByRole('heading', { name: 'Infrastructure' })).toBeVisible();
 
-  // The stat tiles render even with nothing declared.
-  await expect(page.getByText('Managed domains')).toBeVisible();
-  await expect(page.getByText('Hosting targets')).toBeVisible();
-  await expect(page.getByText('Unresolved drift')).toBeVisible();
+  // The stat tiles render even with nothing declared. Exact match: the
+  // fleet nav card's description also starts with "Hosting targets …".
+  await expect(page.getByText('Managed domains', { exact: true })).toBeVisible();
+  await expect(page.getByText('Hosting targets', { exact: true })).toBeVisible();
+  await expect(page.getByText('Unresolved drift', { exact: true })).toBeVisible();
 
-  // Nav cards to the three sub-surfaces.
-  await expect(page.getByRole('link', { name: /Domains/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: /^Fleet$/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: /Reconcile runs/ })).toBeVisible();
+  // Nav cards to the three sub-surfaces — scoped to the page body, since the
+  // sidebar carries links with the same accessible names.
+  const main = page.getByRole('main');
+  await expect(main.getByRole('link', { name: /Domains/ })).toBeVisible();
+  await expect(main.getByRole('link', { name: /Fleet/ })).toBeVisible();
+  await expect(main.getByRole('link', { name: /Reconcile runs/ })).toBeVisible();
 });
 
 test('domains list shows the empty state with a New domain action', async ({ page }) => {
@@ -74,6 +77,9 @@ test('creates a hosting target with no fronting node, then shows it with an empt
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('New hosting target')).toBeVisible();
   await dialog.getByLabel('Name *').fill(targetName);
+  // `hosting_targets_addressable_check`: a direct/reverse-proxy target must
+  // carry an address (or a fronting node) — the dialog refuses without one.
+  await dialog.getByLabel('IPv4 address').fill('203.0.113.77');
   await dialog.getByRole('button', { name: 'Create' }).click();
   await expect(dialog).toBeHidden();
 
