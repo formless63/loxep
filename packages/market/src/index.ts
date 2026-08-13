@@ -169,7 +169,9 @@ export type {
 
 export {
   DEFAULT_HISTORY_BUCKET_SECONDS,
+  DEFAULT_PRICE_MOVERS_LIMIT,
   availabilityHistory,
+  biggestPriceMovers,
   computePriceChangePercent,
   deriveRestockSelloutIntervals,
   itemActivitySummary,
@@ -179,10 +181,12 @@ export {
 export type {
   AvailabilityHistoryBucket,
   AvailabilityHistoryOptions,
+  BiggestPriceMoversOptions,
   ItemActivitySummary,
   ItemActivitySummaryOptions,
   PriceHistoryBucket,
   PriceHistoryOptions,
+  PriceMoverRow,
   RestockSelloutEvent,
   RestockSelloutInterval,
   RestockSelloutOptions,

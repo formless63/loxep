@@ -19,7 +19,7 @@ export const workspaces: Workspace[] = [
   {
     id: 'dashboard',
     label: 'Dashboard',
-    description: 'Loxep overview',
+    description: 'Money, market, operations, and the ledger',
     root: '/dashboard',
     defaultPath: '/dashboard/overview',
     navGroups: dashboardNavGroups

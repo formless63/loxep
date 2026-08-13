@@ -600,3 +600,142 @@ export async function itemActivitySummary(
     lastObservedAt,
   };
 }
+
+/* ------------------------------------------------------------------------ */
+/* biggestPriceMovers                                                       */
+/* ------------------------------------------------------------------------ */
+
+export const DEFAULT_PRICE_MOVERS_LIMIT = 5;
+
+export interface BiggestPriceMoversOptions {
+  /** How many movers to return; defaults to {@link DEFAULT_PRICE_MOVERS_LIMIT}. */
+  limit?: number;
+  /**
+   * Inclusive lower bound on `observed_at`. Omitting it considers an item's
+   * whole retained history, which on a long-lived hypertable means the
+   * "prior" price can be months old — pass a window (the dashboard passes
+   * days) when the caller wants a *recent* move rather than a lifetime one.
+   */
+  since?: Date;
+}
+
+const biggestPriceMoversOptionsSchema = z.strictObject({
+  limit: z.number().int().positive().max(100).optional(),
+  since: z.date().optional(),
+});
+
+export interface PriceMoverRow {
+  marketplaceItemId: string;
+  /** Item title when known; canonical identity carries no title requirement. */
+  title: string | null;
+  currentState: string;
+  /** Currency of the LATEST priced observation; null when never recorded. */
+  currency: string | null;
+  /** Decimal strings, never JS numbers — the prices themselves stay exact. */
+  latestPrice: string;
+  previousPrice: string;
+  /** Signed percent change, via {@link computePriceChangePercent}. */
+  priceChangePct: number;
+  observedAt: Date;
+  previousObservedAt: Date;
+}
+
+/**
+ * The items whose price moved most, latest priced observation vs. the one
+ * before it (loxep-jwm, the dashboard "biggest movers" tile).
+ *
+ * Deliberately NOT `itemActivitySummary` in a loop: that reads first-vs-last
+ * inside a window, per item, in three statements each. This is one statement
+ * for the whole installation, and it answers a different question — the most
+ * recent *step*, which is what a "what just moved" tile means.
+ *
+ * Choices worth knowing:
+ *
+ * - **Only priced observations count.** A poll that recorded no price is not
+ *   a $0 price and is not a step; NULL prices are filtered before ranking, so
+ *   "latest vs prior" means the last two prices we actually saw.
+ * - **Items with fewer than two priced observations are absent**, not
+ *   returned with a null change — there is no move to report yet.
+ * - **A zero change is not a mover.** An item whose last two prices are equal
+ *   is excluded rather than allowed to occupy a slot in a top-N list; with
+ *   few real movers the tile shows fewer rows instead of padding.
+ * - **A prior price of exactly 0 is excluded**: a percentage change from a
+ *   zero base is undefined (the same rule {@link computePriceChangePercent}
+ *   applies), so those items cannot be ranked here at all.
+ * - **Ranking is exact PostgreSQL `numeric` arithmetic** in the `ORDER BY`;
+ *   the returned `priceChangePct` is then computed from the decimal strings
+ *   by {@link computePriceChangePercent}'s BigInt fixed-point path, so no
+ *   money value passes through JS floating point on the way to the caller.
+ *   Ties break on `marketplace_item_id` so the ordering is total.
+ */
+export async function biggestPriceMovers(
+  db: LoxepDb,
+  options: BiggestPriceMoversOptions = {},
+): Promise<PriceMoverRow[]> {
+  const parsed = biggestPriceMoversOptionsSchema.parse(options);
+  const limit = parsed.limit ?? DEFAULT_PRICE_MOVERS_LIMIT;
+  const sinceClause =
+    parsed.since === undefined
+      ? ""
+      : `and observed_at >= ${timestamptzLiteral(parsed.since)}`;
+  const result = await db.execute(
+    `with priced as (
+        select marketplace_item_id, price, currency, observed_at,
+               row_number() over (
+                 partition by marketplace_item_id
+                 order by observed_at desc
+               ) as rn
+          from marketplace_item_observations
+         where price is not null
+           ${sinceClause}
+      ),
+      paired as (
+        select marketplace_item_id,
+               max(price) filter (where rn = 1) as latest_price,
+               max(price) filter (where rn = 2) as previous_price,
+               max(currency) filter (where rn = 1) as currency,
+               max(observed_at) filter (where rn = 1) as observed_at,
+               max(observed_at) filter (where rn = 2) as previous_observed_at
+          from priced
+         where rn <= 2
+         group by marketplace_item_id
+      )
+      select p.marketplace_item_id::text as marketplace_item_id,
+             mi.title,
+             mi.current_state,
+             p.currency,
+             p.latest_price::text as latest_price,
+             p.previous_price::text as previous_price,
+             p.observed_at,
+             p.previous_observed_at
+        from paired p
+        join marketplace_items mi on mi.id = p.marketplace_item_id
+       where p.previous_price is not null
+         and p.previous_price <> 0
+         and p.latest_price <> p.previous_price
+       order by abs((p.latest_price - p.previous_price) / p.previous_price) desc,
+                p.marketplace_item_id asc
+       limit ${intLiteral(limit)}`,
+  );
+  const movers: PriceMoverRow[] = [];
+  for (const row of result.rows) {
+    const latestPrice = row["latest_price"] as string;
+    const previousPrice = row["previous_price"] as string;
+    const priceChangePct = computePriceChangePercent(previousPrice, latestPrice);
+    // `previous_price <> 0` above already excludes the only null case; the
+    // guard keeps the row type honest rather than asserting non-null.
+    if (priceChangePct === null) continue;
+    movers.push({
+      marketplaceItemId: row["marketplace_item_id"] as string,
+      title: (row["title"] as string | null) ?? null,
+      currentState: row["current_state"] as string,
+      currency: (row["currency"] as string | null) ?? null,
+      latestPrice,
+      previousPrice,
+      priceChangePct,
+      observedAt: toDate(row["observed_at"]),
+      previousObservedAt: toDate(row["previous_observed_at"]),
+    });
+  }
+  return movers;
+}

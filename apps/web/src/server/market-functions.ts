@@ -822,7 +822,15 @@ export interface OpportunityPayloadDto {
   evaluatedAt: string | null;
 }
 
-function readOpportunityPayload(payload: Record<string, JsonValue>): OpportunityPayloadDto | null {
+/**
+ * Exported (not module-private) because `@/server/dashboard-functions`'s
+ * market-pulse band reads the same opaque `payload.opportunity` block for its
+ * top-opportunity tile. One defensive reader, not two — a second copy would
+ * drift the moment the payload shape gains a field.
+ */
+export function readOpportunityPayload(
+  payload: Record<string, JsonValue>
+): OpportunityPayloadDto | null {
   const block = payload['opportunity'];
   if (block === null || typeof block !== 'object' || Array.isArray(block)) return null;
   const record = block as Record<string, JsonValue>;
@@ -902,8 +910,20 @@ export interface MarketOverviewDto {
 const OVERVIEW_TREND_BUCKET_HOURS = 24;
 const OVERVIEW_TREND_BUCKET_MS = 60 * 60 * 1000;
 
-/** Hourly-bucketed count over a trailing window, in-process — shared by `eventsTrend` and `newListingsTrend`. */
-function bucketHourly(rows: { detectedAt: Date }[], since: Date): MarketOverviewTrendBucketDto[] {
+/**
+ * Hourly-bucketed count over a trailing window, in-process — shared by
+ * `eventsTrend`, `newListingsTrend`, and (exported for exactly this reason)
+ * `@/server/dashboard-functions`'s market-pulse band, which renders the same
+ * 24h event series wider on `/dashboard/overview`.
+ *
+ * Zero-filling every hour is honest here and is NOT the fabricated-series
+ * rule's concern: an hour with no rows genuinely had zero events, because the
+ * caller already fetched the complete window.
+ */
+export function bucketHourly(
+  rows: { detectedAt: Date }[],
+  since: Date
+): MarketOverviewTrendBucketDto[] {
   const buckets: MarketOverviewTrendBucketDto[] = Array.from(
     { length: OVERVIEW_TREND_BUCKET_HOURS },
     (_, index) => ({

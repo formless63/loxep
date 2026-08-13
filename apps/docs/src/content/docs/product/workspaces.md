@@ -11,7 +11,7 @@ A workspace is **not** a database schema, microservice, tenancy boundary, permis
 The repository already has the first workspace roots:
 
 ```text
-/dashboard/*    real Loxep dashboard workspace
+/dashboard/*    the product home — money, market, operations, and the ledger
 /market/*       market workspace — monitors, watched items, market events
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
@@ -68,7 +68,7 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 
 | Workspace | Route root | Likely contents |
 | --- | --- | --- |
-| **Dashboard** | `/dashboard` | cross-domain overview, alerts, recent activity, integration/job health, user-configured widgets |
+| **Dashboard** | `/dashboard` | cross-domain overview: money from ingested orders, market pulse, operations health, financial statements — see [Dashboard workspace](#dashboard-workspace) below; user-configured widgets remain a future addition |
 | **Market** | `/market` | monitor targets, watchlists, explicit items, saved searches, sellers, observations, market events, price/availability history, opportunity rules |
 | **Commerce** | `/commerce` | catalog/SKUs, channel listings, orders, returns, fulfillment state, channel views, shipping workflow entry points |
 | **Inventory** | `/inventory` | stock, locations, movements, acquisitions, purchasing, vendors, receiving, cost basis, landed cost |
@@ -98,6 +98,25 @@ later            container/stack management, host and container metrics, uptime 
 ```
 
 It is **not** `/settings`. `/settings` configures Loxep — its users, connections, secrets, storage, and application behavior. `/infrastructure` is a working surface over external estate that Loxep observes and reconciles, with its own tables, its own jobs, and its own daily use. The credentials that reach those external systems still live where every other provider credential lives: connections and encrypted secrets administered under `/settings`. The physical design is [Infrastructure Control Plane Design](../../architecture/infrastructure-control-design/).
+
+## Dashboard workspace
+
+`/dashboard/overview` is the product home and is now filled. It answers one question — *how is my operation doing right now* — as four bands, in the order an operator cares about them:
+
+| Band | Reads | Owning surface |
+| --- | --- | --- |
+| **Money** | ingested `orders` and `order_fees`: revenue, order count, seller-charge fees, net proceeds, refunds, a daily revenue/order series, and a 7-day-versus-prior-7-day trend | `/settings/connections` (order sync is enabled per connection) |
+| **Market pulse** | derived `market_events` over the trailing 24h, the highest-scoring rule-stamped opportunity, and the biggest price movers | `/market/*` |
+| **Operations health** | provider connections by status, the monitor fleet (enabled/erroring/backing off/overdue), order-sync freshness per target, and notification delivery success over 7 days | `/settings/*`, `/market/monitors` |
+| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts | a books surface, once one exists |
+
+Three rules the composition exists to enforce, all checkable:
+
+- **Real data only.** No band fabricates a series, a trend, or a baseline. A tile with a genuine derived series gets a sparkline; a tile without one gets a chart-token icon medallion. A missing prior period renders *no* trend badge rather than `+0.00%`, and an absent figure renders an em dash rather than a zero. This is the same rule [Frontend Standards](../../development/frontend-standards/#kpi-and-stat-cards) states for KPI cards, applied to a whole page.
+- **Each band is its own data source.** Four server functions, four queries, four `Suspense` + error boundaries. The route loader warms all four but lets any one of them fail on its own: a broken band degrades to a retryable alert in place while the other three render.
+- **Domain rules survive the trip to the UI.** The money band reports one currency and names the others rather than converting (there is no FX), labels its net figure contribution *before* cost of goods rather than margin, and excludes duplicate-marked orders. The financial band shows only `posted`/`reversed` entries and refuses to widen a missing fiscal period into an "all time" statement.
+
+The dashboard consumes existing read models wherever they exist. Where they do not, the read lives with the domain that owns it — the "biggest movers" read is in `@loxep/market` alongside the other observation analytics, not in the web app.
 
 ## Cross-cutting capabilities
 
@@ -158,7 +177,7 @@ The shared sidebar and command palette consume the active workspace's `navGroups
 
 ## Dashboard customization and state
 
-Dashboard/view customization is a legitimate future use for Zustand and drag-and-drop state, but state ownership matters:
+The shipped dashboard is a **fixed composition** — the four bands above, in that order, with no per-user layout. Customization is still a legitimate future addition, and when it arrives state ownership matters:
 
 ```text
 user edits layout/chart/table view

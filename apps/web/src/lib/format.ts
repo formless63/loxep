@@ -62,6 +62,21 @@ export function formatTimestampPrecise(value: Date | string | number | null | un
   }
 }
 
+/**
+ * Hour-of-day axis tick (`HH:mm`) for trailing-24h charts. Exists so chart
+ * axes stop reaching for `date-fns` directly at the call site — `date-fns`
+ * usage belongs in this file only (Frontend Standards, "Standard formats").
+ */
+export function formatHourLabel(value: Date | string | number | null | undefined): string {
+  const date = toDate(value);
+  if (!date) return EM_DASH;
+  try {
+    return formatDateFns(date, 'HH:mm');
+  } catch {
+    return EM_DASH;
+  }
+}
+
 const RELATIVE_TIME_DIVISIONS: { amount: number; unit: Intl.RelativeTimeFormatUnit }[] = [
   { amount: 60, unit: 'seconds' },
   { amount: 60, unit: 'minutes' },
@@ -166,6 +181,23 @@ export function formatPercent(
     signDisplay: 'exceptZero'
   }).format(value);
   return `${formatted}%`;
+}
+
+/**
+ * Unsigned percentage for a MAGNITUDE — a success rate, a share of a total —
+ * rather than a delta. `formatPercent` prints an explicit sign because a
+ * signed delta must; a delivery success rate of 98.5% is not "+98.5%".
+ */
+export function formatRate(
+  value: number | null | undefined,
+  opts: { decimals?: number } = {}
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return EM_DASH;
+  const decimals = opts.decimals ?? 1;
+  return `${new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(value)}%`;
 }
 
 /**

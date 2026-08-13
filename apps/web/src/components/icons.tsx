@@ -1,11 +1,15 @@
 import {
+  IconActivity,
   IconAdjustmentsHorizontal,
   IconAlertCircle,
   IconAlertTriangle,
   IconArrowRight,
+  IconArrowsExchange,
   IconBell,
   IconBold,
   IconBox,
+  IconBuildingBank,
+  IconCash,
   IconBrandGithub,
   IconBrandTwitter,
   IconBrightness,
@@ -67,8 +71,11 @@ import {
   IconPlus,
   IconProps,
   IconRadar,
+  IconReceipt,
+  IconReportMoney,
   IconRosetteDiscountCheck,
   IconSearch,
+  IconShoppingCart,
   IconSelector,
   IconSend,
   IconSettings,
@@ -90,6 +97,7 @@ import {
   IconUserX,
   IconUsers,
   IconVideo,
+  IconWallet,
   IconCrown,
   IconX
 } from '@tabler/icons-react';
@@ -199,6 +207,15 @@ export const Icons = {
   badgeCheck: IconRosetteDiscountCheck,
   lock: IconLock,
 
+  // Money / Ledger
+  revenue: IconCash,
+  fees: IconReceipt,
+  netProceeds: IconWallet,
+  refunds: IconArrowsExchange,
+  orders: IconShoppingCart,
+  ledger: IconBuildingBank,
+  statement: IconReportMoney,
+
   // Data / Charts
   trendingDown: IconTrendingDown,
   trendingUp: IconTrendingUp,
@@ -206,6 +223,7 @@ export const Icons = {
   eyeOff: IconEyeOff,
   adjustments: IconAdjustmentsHorizontal,
   radar: IconRadar,
+  pulse: IconActivity,
 
   // Text formatting
   bold: IconBold,
