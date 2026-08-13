@@ -132,7 +132,7 @@ export async function resolveRate(
         order by effective_from desc, id desc
         limit 1`,
     );
-    const row = result.rows[0] as RungRow | undefined;
+    const row = result.rows[0] as unknown as RungRow | undefined;
     if (row !== undefined) {
       return {
         amount: row.amount,
