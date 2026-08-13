@@ -51,6 +51,20 @@ RUN bun run build
 # ships ~575MB of unreachable code (react-dom, recharts, faker, fonts, ...).
 # apps/docs is likewise build-time only.
 #
+# --omit=peer additionally drops packages that only entered the tree to
+# satisfy an *optional* peerDependency (better-auth declares drizzle-kit,
+# @tanstack/react-start, prisma, etc. as optional peers; bun auto-installs
+# any of those it can resolve elsewhere in the lockfile — e.g. from apps/web
+# or packages/db's devDependencies — even under --production/--filter). None
+# of the survivors (pg, drizzle-orm, better-auth, graphile-worker, pino, zod,
+# ebay-api, the 18 @loxep/* workspace symlinks) are peer-only, and a grep of
+# the installed better-auth/drizzle-orm/graphile-worker/@loxep trees for
+# require()/import of typescript, tsx, drizzle-kit, prettier, lightningcss,
+# or rolldown/@rolldown found none — those are dev/build tooling, unreachable
+# at runtime. Verified end-to-end (migrate + start --mode=all + /health/ready
+# with worker ok + a cron task executing) against the pruned tree; see
+# loxep-8un notes for the full recipe. 375 -> 189 packages, ~307M -> ~97M.
+#
 # The full manifest set is still copied above so the workspace graph resolves
 # and the untouched bun.lock still satisfies --frozen-lockfile; the filter
 # selects which workspaces get *installed*, it does not rewrite any manifest.
@@ -62,7 +76,7 @@ FROM oven/bun:1.3.14 AS deps
 WORKDIR /app
 
 COPY --from=manifests /manifests ./
-RUN bun install --frozen-lockfile --production --linker=hoisted --filter '!./apps/*'
+RUN bun install --frozen-lockfile --production --omit=peer --linker=hoisted --filter '!./apps/*'
 
 # ---------------------------------------------------------------------------
 # Runtime stage: Node.js 24 runs bin/ and packages/ TypeScript natively via
