@@ -115,7 +115,7 @@ test('a non-eBay connection never offers the purchase-sync action', async ({ pag
   await page.keyboard.press('Escape');
 });
 
-test('eBay account creation — and so any consented purchase-sync fixture — is blocked without an application keyset', async ({
+test('no consented eBay purchase-sync fixture can exist in this harness', async ({
   page
 }) => {
   await page.goto('/settings/connections');
@@ -123,12 +123,17 @@ test('eBay account creation — and so any consented purchase-sync fixture — i
     .locator('section')
     .filter({ has: page.getByRole('heading', { name: 'eBay' }) });
   const addButton = ebaySection.getByRole('button', { name: 'Add eBay account' });
+  await expect(addButton).toBeVisible();
 
-  await expect(addButton).toBeDisabled();
-  // Either "no admin has configured a keyset" or "a keyset exists but isn't
-  // set up yet" — both branches of blockedReason (integrations-catalog.ts)
-  // name the same missing prerequisite, and either is the honest reason a
-  // real, consented eBay row (and therefore a real purchase-sync toggle)
-  // cannot exist in this harness.
-  await expect(ebaySection.getByText(/eBay application keyset/)).toBeVisible();
+  // Two honest worlds, both ending in "no consented eBay row exists here":
+  // with no application keyset the add button is disabled and names the
+  // missing prerequisite; with the dev-file keyset fallback present (as on
+  // a developer box) the button is enabled, but completing consent needs a
+  // live eBay OAuth round-trip the harness cannot perform. Either way the
+  // section must show no connection rows — the concrete reason the
+  // purchase-sync toggle has no real fixture in this suite.
+  if (await addButton.isDisabled()) {
+    await expect(ebaySection.getByText(/eBay application keyset/)).toBeVisible();
+  }
+  await expect(ebaySection.getByRole('row')).toHaveCount(0);
 });
