@@ -62,6 +62,7 @@ export default defineConfig({
             { label: 'Foundational Decisions', slug: 'architecture/foundational-decisions' },
             { label: 'Foundation Schema', slug: 'architecture/foundation-schema' },
             { label: 'Commerce Schema Design (Phase 3)', slug: 'architecture/commerce-schema-design' },
+            { label: 'Etsy Integration Design', slug: 'architecture/etsy-integration-design' },
             { label: 'Inventory & Acquisition Schema Design (Phase 4)', slug: 'architecture/inventory-schema-design' },
             { label: 'Financial Foundation Schema Design (Phase 5)', slug: 'architecture/financial-schema-design' },
             { label: 'Counterparty, Project, Service & Billing Schema Design (Phase 6)', slug: 'architecture/services-billing-schema-design' },
