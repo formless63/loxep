@@ -35,6 +35,14 @@ updates:
       # Nitro 3.x beta is an intentional pairing with the pinned TanStack
       # Start/Router set, re-verified together rather than bumped alone.
       - dependency-name: "nitro"
+      # TypeScript 7 (native compiler) waits for a stable programmatic API
+      # and ecosystem tooling (~7.1); revisit tracked as loxep-xc2.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      # @types/node tracks the runtime LTS choice (Node 24 today); the
+      # major moves with the runtime image (loxep-c43).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions used by .github/workflows/*.
   - package-ecosystem: "github-actions"
@@ -65,6 +73,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # The runtime pins the Node LTS line; Node 26 adopts at its LTS
+      # promotion (~Oct 2026, loxep-c43).
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
 
   # Compose image references: compose.yml + compose.override.yml at repo
   # root, docker/compose.dev.yml in docker/. `directories` (plural) lets
