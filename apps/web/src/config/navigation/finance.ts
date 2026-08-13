@@ -47,6 +47,14 @@ export const financeNavGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['g', 'n'],
         items: []
+      },
+      {
+        title: 'Import',
+        url: '/finance/import',
+        icon: 'upload',
+        isActive: false,
+        shortcut: ['g', 'i'],
+        items: []
       }
     ]
   },

@@ -35,8 +35,13 @@ import {
  *      DNS-edit credential Loxep MINTS) and dns_provider_token_zones (the
  *      zone-scope INTENT a policy sync rebuilds from). No existing table
  *      gains a column.
+ * 0017 documents (Phase 9 milestone 4, loxep-dgf.4): the Documents domain's
+ *      first two tables — documents and document_line_candidates. A parse
+ *      is never a fact: candidates carry a disposition and an unenforced
+ *      target_kind/target_id STAMP, never a foreign key into expenses,
+ *      acquisitions, or inventory_items. No existing table gains a column.
  */
-const MIGRATION_FILE_COUNT = 17;
+const MIGRATION_FILE_COUNT = 18;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
