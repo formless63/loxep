@@ -29,3 +29,7 @@ dist/
 *.db
 .beads-credential-key
 compose.override.yml
+
+# vim swap files (a .env swapfile header was once accidentally committed)
+*.swp
+*.swo
