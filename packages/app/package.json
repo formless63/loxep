@@ -22,6 +22,7 @@
     "@loxep/integration-etsy": "workspace:*",
     "@loxep/infrastructure": "workspace:*",
     "@loxep/integration-cloudflare": "workspace:*",
+    "@loxep/integration-purelymail": "workspace:*",
     "@loxep/integration-woo": "workspace:*",
     "zod": "4.4.3"
   },
