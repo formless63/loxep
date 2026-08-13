@@ -321,6 +321,7 @@ describe("order payload retention sweep", () => {
     expect([...ORDER_PROVIDER_OBJECT_TYPES]).toEqual([
       "woocommerce.order",
       "ebay.order",
+      "medusa.order",
     ]);
   });
 });

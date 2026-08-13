@@ -153,15 +153,16 @@ describe("monitor target CRUD", () => {
 /**
  * loxep-itn: `woo_orders` and `ebay_orders` are the Phase 3 COMMERCE order-
  * sync types @loxep/commerce registers against this shared scheduling
- * mechanism (see `monitors.ts`'s module doc). Both share the exact same
- * `commerceSync`/`adaptive` config shape — the whole point of the provider-
- * neutral `commerceSyncTargetConfigSchema` in @loxep/commerce that this
- * package's `commerceSyncStateSchema` structurally mirrors — so `createTarget`
- * CRUD must accept either type identically and must not corrupt the
+ * mechanism (see `monitors.ts`'s module doc). loxep-xxz adds `medusa_orders`
+ * as the third. All three share the exact same `commerceSync`/`adaptive`
+ * config shape — the whole point of the provider-neutral
+ * `commerceSyncTargetConfigSchema` in @loxep/commerce that this package's
+ * `commerceSyncStateSchema` structurally mirrors — so `createTarget` CRUD
+ * must accept any of the three identically and must not corrupt the
  * commerce-owned `commerceSync` namespace it never interprets.
  */
 describe("commerce order-sync target types", () => {
-  it.each(["woo_orders", "ebay_orders"] as const)(
+  it.each(["woo_orders", "ebay_orders", "medusa_orders"] as const)(
     "accepts the null watermark commerce writes after a zero-order sync ('%s')",
     async (targetType) => {
       // Regression: the cursor writer records `modifiedAfter: null` after a
@@ -182,7 +183,7 @@ describe("commerce order-sync target types", () => {
     },
   );
 
-  it.each(["woo_orders", "ebay_orders"] as const)(
+  it.each(["woo_orders", "ebay_orders", "medusa_orders"] as const)(
     "creates, reads, and updates a '%s' target with a commerceSync-shaped config",
     async (targetType) => {
       const created = await service.createTarget({
@@ -214,7 +215,7 @@ describe("commerce order-sync target types", () => {
     },
   );
 
-  it.each(["woo_orders", "ebay_orders"] as const)(
+  it.each(["woo_orders", "ebay_orders", "medusa_orders"] as const)(
     "rejects an unrecognized key in a '%s' config",
     async (targetType) => {
       await expect(
@@ -246,6 +247,33 @@ describe("commerce order-sync target types", () => {
 
     await service.deleteTarget(woo.id);
     await service.deleteTarget(ebay.id);
+  });
+
+  it("lists targets filtered by the 'medusa_orders' type without disturbing 'woo_orders'/'ebay_orders' rows", async () => {
+    const woo = await service.createTarget({
+      targetType: "woo_orders",
+      name: "woo filter probe (medusa)",
+      intervalSeconds: 900,
+    });
+    const ebay = await service.createTarget({
+      targetType: "ebay_orders",
+      name: "ebay filter probe (medusa)",
+      intervalSeconds: 900,
+    });
+    const medusa = await service.createTarget({
+      targetType: "medusa_orders",
+      name: "medusa filter probe",
+      intervalSeconds: 900,
+    });
+    const medusaOnly = await service.listTargets({ targetType: "medusa_orders" });
+    const ids = medusaOnly.map((row) => row.id);
+    expect(ids).toContain(medusa.id);
+    expect(ids).not.toContain(woo.id);
+    expect(ids).not.toContain(ebay.id);
+
+    await service.deleteTarget(woo.id);
+    await service.deleteTarget(ebay.id);
+    await service.deleteTarget(medusa.id);
   });
 });
 

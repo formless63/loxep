@@ -139,6 +139,18 @@ import {
  * the routing gap has no live consequence until both land together. See
  * `@loxep/inventory`'s `purchase-sync.ts` module doc for the full account.
  */
+/**
+ * MEDUSA-TARGET-TYPE(loxep-xxz): `medusa_orders` is the Phase 3 COMMERCE
+ * order-sync type for a self-hosted Medusa store — the third provider to
+ * share `woo_orders`/`ebay_orders`' exact shape (same `commerceSync` cursor
+ * namespace, same provider-neutral `commerceSyncTargetConfigSchema` in
+ * @loxep/commerce, because the cursor's fields — a watermark, a last-run
+ * stamp, a page budget — are provider-neutral facts regardless of which
+ * adapter produced them). Registered in this closed list AND
+ * `monitorTargetConfigSchemas` TOGETHER, in the same change, per the
+ * discipline this module's doc states above — the `ebay_orders`
+ * split-registration gap must not recur a third time.
+ */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
   "ebay_item",
@@ -146,6 +158,7 @@ export const MONITOR_TARGET_TYPES = [
   "ebay_seller",
   "woo_orders",
   "ebay_orders",
+  "medusa_orders",
   "etsy_listing",
   "etsy_shop",
   "reverb_listing",
@@ -460,6 +473,20 @@ export const monitorTargetConfigSchemas = {
    * by the target's connection, so the config carries no identity of its own.
    */
   ebay_orders: z.strictObject({
+    [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One self-hosted Medusa store's incremental ORDER SYNC (Phase 3,
+   * PROVISIONAL, loxep-xxz). Registered by Commerce, executed by Commerce —
+   * structurally identical to `woo_orders`/`ebay_orders` above (same
+   * `commerceSync` cursor shape, referencing {@link commerceSyncStateSchema}
+   * rather than re-typing its fields, so `modifiedAfter`'s
+   * `z.iso.datetime().nullable().optional()` stays defined in exactly one
+   * place). The store itself is identified by the target's connection, so
+   * the config carries no identity of its own.
+   */
+  medusa_orders: z.strictObject({
     [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),

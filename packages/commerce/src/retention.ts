@@ -74,6 +74,7 @@ import type { SettingsService } from "@loxep/domain";
 import type { JobsLogger } from "@loxep/jobs";
 import { EBAY_ORDER_OBJECT_TYPE } from "./ebay.ts";
 import { CommerceValidationError } from "./errors.ts";
+import { MEDUSA_ORDER_OBJECT_TYPE } from "./medusa.ts";
 import {
   jsonbLiteral,
   textLiteral,
@@ -95,6 +96,7 @@ import { WOO_ORDER_OBJECT_TYPE } from "./woo.ts";
 export const ORDER_PROVIDER_OBJECT_TYPES = [
   WOO_ORDER_OBJECT_TYPE,
   EBAY_ORDER_OBJECT_TYPE,
+  MEDUSA_ORDER_OBJECT_TYPE,
 ] as const;
 
 /**

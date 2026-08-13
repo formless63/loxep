@@ -30,16 +30,19 @@
  * ## Providers
  *
  * ```text
- * woo.ts        WooOrderFact  → CommerceOrderFact   (live-verified)
- * ebay.ts       EbayOrderFact → CommerceOrderFact   (fixture-verified;
+ * woo.ts        WooOrderFact    → CommerceOrderFact   (live-verified)
+ * ebay.ts       EbayOrderFact   → CommerceOrderFact   (fixture-verified;
  *                 the Sell Fulfillment status vocabularies are design-derived
  *                 until the live sandbox leg runs)
+ * medusa.ts     MedusaOrderFact → CommerceOrderFact   (live-verified against
+ *                 Medusa 2.18.0, loxep-xxz)
  * ```
  *
- * Adding the second provider touched `orders.ts` only to add a four-line
- * entry point — idempotency, attachment rewriting, attribution, provenance,
- * and duplicate detection are written and tested exactly once, which is the
- * claim `facts.ts` makes and this is the evidence for it.
+ * Adding the second and third providers touched `orders.ts` only to add a
+ * four-line entry point each — idempotency, attachment rewriting,
+ * attribution, provenance, and duplicate detection are written and tested
+ * exactly once, which is the claim `facts.ts` makes and this is the evidence
+ * for it.
  *
  * ## What this package does NOT do
  *
@@ -98,6 +101,7 @@ export {
 export type {
   DuplicateOrderCandidate,
   IngestEbayOrderInput,
+  IngestMedusaOrderInput,
   IngestOrderFactInput,
   IngestOrderResult,
   IngestWooOrderInput,
@@ -206,6 +210,38 @@ export type {
 } from "./ebay-sync.ts";
 
 export {
+  MEDUSA_DEFAULT_CHANNEL,
+  MEDUSA_ORDER_OBJECT_TYPE,
+  MEDUSA_PROVIDER,
+  medusaOrderFactToCommerceFact,
+} from "./medusa.ts";
+export type {
+  MedusaFulfillmentFactLike,
+  MedusaOrderFactLike,
+  MedusaOrderLineFactLike,
+  MedusaOrderTotalsLike,
+  MedusaRefundFactLike,
+  MedusaTranslationOptions,
+} from "./medusa.ts";
+
+export {
+  DEFAULT_MEDUSA_SYNC_PER_PAGE,
+  MEDUSA_ORDERS_TARGET_TYPE,
+  createMedusaOrderSync,
+  ensureMedusaOrderSyncTarget,
+  medusaOrdersTargetConfigSchema,
+  readMedusaOrderSyncCursor,
+} from "./medusa-sync.ts";
+export type {
+  MedusaOrderPageIterator,
+  MedusaOrderPageLike,
+  MedusaOrderSyncService,
+  MedusaOrdersTargetConfig,
+  SyncMedusaOrdersInput,
+  SyncMedusaOrdersResult,
+} from "./medusa-sync.ts";
+
+export {
   DEFAULT_REDACTION_BATCH_SIZE,
   DEFAULT_REDACTION_MAX_BATCHES,
   ORDER_PROVIDER_OBJECT_TYPES,
@@ -222,11 +258,14 @@ export {
   REDACT_ORDER_PAYLOADS_CRON_MATCH,
   REDACT_ORDER_PAYLOADS_TASK_NAME,
   SYNC_EBAY_ORDERS_TASK_NAME,
+  SYNC_MEDUSA_ORDERS_TASK_NAME,
   SYNC_WOO_ORDERS_TASK_NAME,
   createCommerceTasks,
   ebayOrderSyncJobKey,
   enqueueEbayOrderSync,
+  enqueueMedusaOrderSync,
   enqueueWooOrderSync,
+  medusaOrderSyncJobKey,
   wooOrderSyncJobKey,
 } from "./tasks.ts";
 export type {
@@ -235,5 +274,6 @@ export type {
   RawAddJob,
   RedactOrderPayloadsTask,
   SyncEbayOrdersTask,
+  SyncMedusaOrdersTask,
   SyncWooOrdersTask,
 } from "./tasks.ts";

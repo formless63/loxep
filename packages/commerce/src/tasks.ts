@@ -1,24 +1,26 @@
 /**
  * Commerce background work (ADR-0003).
  *
- * Three tasks. `commerce.sync-woo-orders` and `commerce.sync-ebay-orders` each
- * run the incremental order sync for a single connection; the provider
- * boundary is dependency-injected in both cases — an adapter factory for
- * WooCommerce, a page-iterator function for eBay — so this module, like every
- * other task module in the repo, contains no provider API code and imports no
- * credential path.
+ * Four tasks. `commerce.sync-woo-orders`, `commerce.sync-ebay-orders`, and
+ * `commerce.sync-medusa-orders` each run the incremental order sync for a
+ * single connection; the provider boundary is dependency-injected in every
+ * case — an adapter factory for WooCommerce, a page-iterator function for
+ * eBay and Medusa — so this module, like every other task module in the
+ * repo, contains no provider API code and imports no credential path.
  *
  * `commerce.redact-order-payloads` is the ADR-0021 retention sweep and the
  * package's ONE cron-scheduled task (see `retention.ts`). Its provider seam is
  * injected on the same principle: a map of `object_type` → payload redactor,
  * built by the composition root from each adapter's redaction helper. Unlike
- * the sync pair it is not per-connection and takes no provider call at all —
+ * the sync trio it is not per-connection and takes no provider call at all —
  * it is a bounded database maintenance pass.
  *
- * The eBay pair is OPTIONAL: `createCommerceTasks` builds it only when the
- * composition root supplies `iterateEbayOrders`, because that seam is a
+ * The eBay and Medusa pairs are both OPTIONAL: `createCommerceTasks` builds
+ * each only when the composition root supplies its page-iterator seam
+ * (`iterateEbayOrders`/`iterateMedusaOrders`), because that seam is a
  * provider function this package deliberately cannot construct itself (see
- * `ebay-sync.ts` for why `@loxep/commerce` takes no eBay dependency).
+ * `ebay-sync.ts`/`medusa-sync.ts` for why `@loxep/commerce` takes no
+ * dependency on either provider's integration package).
  *
  * ## Job keys
  *
@@ -36,10 +38,10 @@
  * monitor target polls.)
  *
  * Scheduled syncs do NOT run through them. `@loxep/app` routes the
- * `woo_orders` and `ebay_orders` monitor targets into the sync services
- * directly from `market.poll-target`, so the dispatcher, the adaptive
- * cadence, and `backoff_until` own scheduled cadence exactly as they do for
- * every other target type (loxep-xh9.7.2, loxep-xh9.2).
+ * `woo_orders`, `ebay_orders`, and `medusa_orders` monitor targets into the
+ * sync services directly from `market.poll-target`, so the dispatcher, the
+ * adaptive cadence, and `backoff_until` own scheduled cadence exactly as they
+ * do for every other target type (loxep-xh9.7.2, loxep-xh9.2, loxep-xxz).
  *
  * What remains here is the on-demand entry point: a backfill, a "sync now"
  * action, a script. That is why its failure semantics differ from
@@ -67,6 +69,11 @@ import type {
   EbayOrderPageIterator,
   EbayOrderSyncService,
 } from "./ebay-sync.ts";
+import { createMedusaOrderSync } from "./medusa-sync.ts";
+import type {
+  MedusaOrderPageIterator,
+  MedusaOrderSyncService,
+} from "./medusa-sync.ts";
 import { runOrderPayloadRedactionSweep } from "./retention.ts";
 import type { OrderPayloadRedactors } from "./retention.ts";
 import { createWooOrderSync } from "./sync.ts";
@@ -74,6 +81,7 @@ import type { WooAdapterFactory, WooOrderSyncService } from "./sync.ts";
 
 export const SYNC_WOO_ORDERS_TASK_NAME = "commerce.sync-woo-orders";
 export const SYNC_EBAY_ORDERS_TASK_NAME = "commerce.sync-ebay-orders";
+export const SYNC_MEDUSA_ORDERS_TASK_NAME = "commerce.sync-medusa-orders";
 export const REDACT_ORDER_PAYLOADS_TASK_NAME = "commerce.redact-order-payloads";
 
 /** Daily at 03:17 — off-peak, and off the hour so it shares no tick. */
@@ -102,6 +110,27 @@ const syncEbayOrdersPayloadSchema = z.object({
 });
 
 export type SyncEbayOrdersTask = LoxepTask<typeof syncEbayOrdersPayloadSchema>;
+
+/**
+ * Woo's payload shape (no `includeFulfillments` — Medusa's adapter always
+ * requests fulfillments as part of its default field list, so there is no
+ * per-call toggle to carry through). The `perPage` ceiling is 200, matching
+ * `@loxep/integration-medusa`'s own `MEDUSA_MAX_LIMIT` — re-declared as a
+ * literal here rather than imported, the same discipline `medusa.ts`/
+ * `medusa-sync.ts` apply: `@loxep/commerce` takes no dependency on
+ * `@loxep/integration-medusa`.
+ */
+const syncMedusaOrdersPayloadSchema = z.object({
+  connectionId: z.uuid(),
+  maxPages: z.number().int().min(1).max(100).optional(),
+  perPage: z.number().int().min(1).max(200).optional(),
+  economicEntityId: z.uuid().nullish(),
+  correlationId: z.string().optional(),
+});
+
+export type SyncMedusaOrdersTask = LoxepTask<
+  typeof syncMedusaOrdersPayloadSchema
+>;
 
 const redactOrderPayloadsPayloadSchema = z.object({
   /** Rows read (and at most rewritten) per batch. */
@@ -148,10 +177,18 @@ export interface CommerceTasks {
   ebaySync: EbayOrderSyncService | null;
   syncEbayOrdersTask: SyncEbayOrdersTask | null;
   /**
-   * The ADR-0021 retention sweep. Unlike the eBay pair this is NEVER null: the
-   * policy it enforces is on by default, so a composition that forgot to
-   * inject redactors must still run the job and report what it could not
-   * redact rather than silently ship an installation with no retention at all.
+   * The Medusa order-sync service and its on-demand task, or null when the
+   * composition root supplied no Medusa page iterator. Same optionality
+   * reasoning as `ebaySync` above — see `medusa-sync.ts`.
+   */
+  medusaSync: MedusaOrderSyncService | null;
+  syncMedusaOrdersTask: SyncMedusaOrdersTask | null;
+  /**
+   * The ADR-0021 retention sweep. Unlike the eBay/Medusa pairs this is NEVER
+   * null: the policy it enforces is on by default, so a composition that
+   * forgot to inject redactors must still run the job and report what it
+   * could not redact rather than silently ship an installation with no
+   * retention at all.
    */
   redactOrderPayloadsTask: RedactOrderPayloadsTask;
   /** Cron: once daily; jobKey-replace collapses overlapping ticks. */
@@ -183,6 +220,11 @@ export function ebayOrderSyncJobKey(connectionId: string): string {
   return jobKeyFor(SYNC_EBAY_ORDERS_TASK_NAME, connectionId);
 }
 
+/** The canonical job key for one connection's Medusa order sync. */
+export function medusaOrderSyncJobKey(connectionId: string): string {
+  return jobKeyFor(SYNC_MEDUSA_ORDERS_TASK_NAME, connectionId);
+}
+
 /** Enqueue (or replace) one connection's eBay order sync. */
 export async function enqueueEbayOrderSync(
   addJob: RawAddJob,
@@ -201,6 +243,30 @@ export async function enqueueEbayOrderSync(
     { connectionId, ...payload },
     {
       jobKey: ebayOrderSyncJobKey(connectionId),
+      jobKeyMode: "replace",
+      ...(priority === undefined ? {} : { priority }),
+      ...(runAt === undefined ? {} : { runAt }),
+    },
+  );
+}
+
+/** Enqueue (or replace) one connection's Medusa order sync. */
+export async function enqueueMedusaOrderSync(
+  addJob: RawAddJob,
+  input: {
+    connectionId: string;
+    maxPages?: number;
+    perPage?: number;
+    priority?: number;
+    runAt?: Date;
+  },
+): Promise<void> {
+  const { connectionId, priority, runAt, ...payload } = input;
+  await addJob(
+    SYNC_MEDUSA_ORDERS_TASK_NAME,
+    { connectionId, ...payload },
+    {
+      jobKey: medusaOrderSyncJobKey(connectionId),
       jobKeyMode: "replace",
       ...(priority === undefined ? {} : { priority }),
       ...(runAt === undefined ? {} : { runAt }),
@@ -244,6 +310,14 @@ export function createCommerceTasks(options: {
   iterateEbayOrders?: EbayOrderPageIterator;
   /** Reuse an already-built eBay sync service. */
   ebaySync?: EbayOrderSyncService;
+  /**
+   * The Medusa provider seam — see `medusa-sync.ts`. Omitting it builds a
+   * composition with no Medusa sync task, the same optionality
+   * `iterateEbayOrders` has.
+   */
+  iterateMedusaOrders?: MedusaOrderPageIterator;
+  /** Reuse an already-built Medusa sync service. */
+  medusaSync?: MedusaOrderSyncService;
   /**
    * ADR-0021 redaction seam: `object_type` → the provider's payload redactor.
    * Injected for the same reason `iterateEbayOrders` is — this package must
@@ -350,6 +424,57 @@ export function createCommerceTasks(options: {
           },
         });
 
+  const medusaSync =
+    options.medusaSync ??
+    (options.iterateMedusaOrders === undefined
+      ? null
+      : createMedusaOrderSync({
+          db: options.db,
+          iterateOrders: options.iterateMedusaOrders,
+        }));
+
+  const syncMedusaOrdersTask =
+    medusaSync === null
+      ? null
+      : defineTask({
+          name: SYNC_MEDUSA_ORDERS_TASK_NAME,
+          payloadSchema: syncMedusaOrdersPayloadSchema,
+          // Same reasoning as the Woo/eBay tasks: an on-demand backfill, not
+          // the terminal step of a dispatcher that owns retry cadence.
+          maxAttempts: 3,
+          handler: async (payload, { logger }) => {
+            const result = await medusaSync.syncConnection({
+              connectionId: payload.connectionId,
+              ...(payload.maxPages === undefined
+                ? {}
+                : { maxPages: payload.maxPages }),
+              ...(payload.perPage === undefined
+                ? {}
+                : { perPage: payload.perPage }),
+              ...(payload.economicEntityId === undefined ||
+              payload.economicEntityId === null
+                ? {}
+                : { economicEntityId: payload.economicEntityId }),
+            });
+            logger.info(
+              {
+                connectionId: result.connectionId,
+                pages: result.pages,
+                ordersSeen: result.ordersSeen,
+                created: result.created,
+                updated: result.updated,
+                unchanged: result.unchanged,
+                duplicatesMarked: result.duplicatesMarked,
+                currencies: result.currencies,
+                nextModifiedAfter:
+                  result.nextModifiedAfter?.toISOString() ?? null,
+              },
+              "medusa order sync completed",
+            );
+            return result;
+          },
+        });
+
   const redactOrderPayloadsTask = defineTask({
     name: REDACT_ORDER_PAYLOADS_TASK_NAME,
     payloadSchema: redactOrderPayloadsPayloadSchema,
@@ -414,11 +539,21 @@ export function createCommerceTasks(options: {
     sync,
     ebaySync,
     syncEbayOrdersTask,
+    medusaSync,
+    syncMedusaOrdersTask,
     redactOrderPayloadsTask,
     redactOrderPayloadsCronItem,
-    tasks:
-      syncEbayOrdersTask === null
-        ? [syncWooOrdersTask, redactOrderPayloadsTask]
-        : [syncWooOrdersTask, syncEbayOrdersTask, redactOrderPayloadsTask],
+    // A two-way ternary does not scale past a second optional leg: with
+    // eBay's and Medusa's sync tasks both optional, the list is built by
+    // filtering out whichever legs the composition root did not bind, rather
+    // than branching on every combination by hand.
+    tasks: (
+      [
+        syncWooOrdersTask,
+        syncEbayOrdersTask,
+        syncMedusaOrdersTask,
+        redactOrderPayloadsTask,
+      ] as const
+    ).filter((task): task is AnyLoxepTask => task !== null),
   };
 }
