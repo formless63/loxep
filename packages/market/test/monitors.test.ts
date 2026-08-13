@@ -162,6 +162,27 @@ describe("monitor target CRUD", () => {
  */
 describe("commerce order-sync target types", () => {
   it.each(["woo_orders", "ebay_orders"] as const)(
+    "accepts the null watermark commerce writes after a zero-order sync ('%s')",
+    async (targetType) => {
+      // Regression: the cursor writer records `modifiedAfter: null` after a
+      // sync that saw no orders; rejecting null here poisoned the target's
+      // own config on its next poll (live eBay orders, 2026-08-13).
+      const created = await service.createTarget({
+        targetType,
+        name: `${targetType} null-watermark`,
+        intervalSeconds: 900,
+      });
+      const updated = await service.updateTarget(created.id, {
+        config: { commerceSync: { modifiedAfter: null, lastOrderCount: 0 } },
+      });
+      expect(
+        (updated.config as { commerceSync?: { modifiedAfter?: string | null } })
+          .commerceSync?.modifiedAfter,
+      ).toBeNull();
+    },
+  );
+
+  it.each(["woo_orders", "ebay_orders"] as const)(
     "creates, reads, and updates a '%s' target with a commerceSync-shaped config",
     async (targetType) => {
       const created = await service.createTarget({
@@ -225,6 +246,119 @@ describe("commerce order-sync target types", () => {
 
     await service.deleteTarget(woo.id);
     await service.deleteTarget(ebay.id);
+  });
+});
+
+/**
+ * loxep-g4t.1: `etsy_listing`/`etsy_shop` are the Etsy observation types,
+ * registered in `MONITOR_TARGET_TYPES` AND `monitorTargetConfigSchemas`
+ * TOGETHER in the same change — deliberately not repeating the
+ * `ebay_orders` split-registration gap `loxep-itn` closed (see this file's
+ * "commerce order-sync target types" describe block above, and
+ * `monitors.ts`'s module doc).
+ */
+describe("Etsy observation target types", () => {
+  it("creates, reads, and updates an 'etsy_listing' target", async () => {
+    const created = await service.createTarget({
+      targetType: "etsy_listing",
+      name: "watch one Etsy listing",
+      intervalSeconds: 300,
+      config: { externalItemId: "987654321" },
+    });
+    expect(created.config).toEqual({ externalItemId: "987654321" });
+
+    const fetched = await service.getTarget(created.id);
+    expect(fetched.targetType).toBe("etsy_listing");
+
+    const updated = await service.updateTarget(created.id, {
+      config: { externalItemId: "111222333" },
+    });
+    expect(updated.config).toEqual({ externalItemId: "111222333" });
+
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects an 'etsy_listing' target with no externalItemId", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "etsy_listing",
+        name: "missing external id",
+        intervalSeconds: 300,
+        config: {},
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("creates, reads, and updates an 'etsy_shop' target, with maxItems", async () => {
+    const created = await service.createTarget({
+      targetType: "etsy_shop",
+      name: "watch one Etsy shop",
+      intervalSeconds: 900,
+      config: { shopExternalId: "55555", maxItems: 100 },
+    });
+    expect(created.config).toEqual({ shopExternalId: "55555", maxItems: 100 });
+
+    const fetched = await service.getTarget(created.id);
+    expect(fetched.targetType).toBe("etsy_shop");
+
+    const updated = await service.updateTarget(created.id, {
+      config: { shopExternalId: "55555" },
+    });
+    expect(updated.config).toEqual({ shopExternalId: "55555" });
+
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects an 'etsy_shop' target with no shopExternalId", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "etsy_shop",
+        name: "missing shop id",
+        intervalSeconds: 900,
+        config: {},
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("rejects an unrecognized key in either config (strict schemas)", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "etsy_listing",
+        name: "bad etsy_listing config",
+        intervalSeconds: 300,
+        config: { externalItemId: "1", commerceSync: {} },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+    await expect(
+      service.createTarget({
+        targetType: "etsy_shop",
+        name: "bad etsy_shop config",
+        intervalSeconds: 900,
+        config: { shopExternalId: "1", sellerUsername: "not-an-ebay-field" },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("lists targets filtered by 'etsy_shop' without disturbing 'etsy_listing' rows", async () => {
+    const listing = await service.createTarget({
+      targetType: "etsy_listing",
+      name: "etsy_listing filter probe",
+      intervalSeconds: 300,
+      config: { externalItemId: "1" },
+    });
+    const shop = await service.createTarget({
+      targetType: "etsy_shop",
+      name: "etsy_shop filter probe",
+      intervalSeconds: 900,
+      config: { shopExternalId: "1" },
+    });
+    const shopOnly = await service.listTargets({ targetType: "etsy_shop" });
+    const ids = shopOnly.map((row) => row.id);
+    expect(ids).toContain(shop.id);
+    expect(ids).not.toContain(listing.id);
+
+    await service.deleteTarget(listing.id);
+    await service.deleteTarget(shop.id);
   });
 });
 

@@ -96,6 +96,15 @@ import {
  * closing a gap where `ensureEbayOrderSyncTarget`'s direct insert worked but
  * `createMonitorService` CRUD did not.)
  */
+/**
+ * `etsy_listing`/`etsy_shop` (loxep-g4t.1) are the Etsy observation types —
+ * both public-auth, the Etsy analogues of `ebay_item`/`ebay_seller`. They
+ * are registered in this closed list AND `monitorTargetConfigSchemas`
+ * TOGETHER, in the same change, deliberately learning from the
+ * `ebay_orders` split-registration gap this module's doc calls out above
+ * (and again in `packages/app/src/registry.ts`'s module doc) rather than
+ * repeating it.
+ */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
   "ebay_item",
@@ -103,6 +112,8 @@ export const MONITOR_TARGET_TYPES = [
   "ebay_seller",
   "woo_orders",
   "ebay_orders",
+  "etsy_listing",
+  "etsy_shop",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
 
@@ -209,8 +220,14 @@ export const COMMERCE_SYNC_CONFIG_KEY = "commerceSync";
  * rather than an error.
  */
 export const commerceSyncStateSchema = z.strictObject({
-  /** Watermark handed to WooCommerce's `modified_after` on the next poll. */
-  modifiedAfter: z.iso.datetime().optional(),
+  /**
+   * Watermark handed to the provider's modified-after filter on the next
+   * poll. `null` is a legitimate stored value — commerce's cursor writer
+   * records it explicitly after a sync that saw zero orders ("no watermark
+   * yet"), and rejecting it here poisoned a target's own config after its
+   * first empty sync (found live, eBay orders, 2026-08-13).
+   */
+  modifiedAfter: z.iso.datetime().nullable().optional(),
   /** When the last successful sync finished. */
   lastSyncedAt: z.iso.datetime().optional(),
   /** Orders ingested by the last sync (diagnostic only). */
@@ -306,6 +323,28 @@ export const monitorTargetConfigSchemas = {
    */
   ebay_orders: z.strictObject({
     [COMMERCE_SYNC_CONFIG_KEY]: commerceSyncStateSchema.optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * A single Etsy listing, identified by its external listing id
+   * (loxep-g4t.1). Public auth — the Etsy analogue of `ebay_item`.
+   */
+  etsy_listing: z.strictObject({
+    externalItemId: z.string().min(1),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One Etsy shop's active listings, identified by the shop's external id
+   * (loxep-g4t.1). Public auth by default — the Etsy analogue of
+   * `ebay_seller`. Observing a shop the connection does not own is
+   * mechanically identical but is the ToS-flagged case the design document
+   * raises (`etsy-integration-design.md`, "ToS caution"); `maxItems` bounds
+   * how far one poll pages the shop's listings, the same cost knob
+   * `ebay_seller`/`ebay_search` use.
+   */
+  etsy_shop: z.strictObject({
+    shopExternalId: z.string().min(1),
+    maxItems: z.number().int().positive().max(1000).optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
 } as const satisfies Record<MonitorTargetType, z.ZodType>;
