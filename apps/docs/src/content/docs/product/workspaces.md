@@ -13,6 +13,9 @@ The repository already has the first workspace roots:
 ```text
 /dashboard/*    the product home — money, market, operations, and the ledger
 /market/*       market workspace — monitors, watched items, market events
+/inventory/*    inventory workspace — stock, acquisitions, intake, cost basis (arriving through Phase 9)
+/commerce/*     commerce workspace — catalog, channel listings, orders (arriving through Phase 9)
+/finance/*      finance workspace — expenses, receipts, imports (arriving through Phase 9)
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
 ```
@@ -80,6 +83,17 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 | **Starter Reference** | `/starter` | preserved donor demos and UI patterns; development/reference use rather than product data |
 
 Not every proposed workspace needs to be implemented during Phase 0. The value of defining the map now is to keep route structure and future deep links from assuming that Dashboard owns everything.
+
+### The three workspaces Phase 9 fills
+
+`/inventory`, `/commerce`, and `/finance` were reserved in the map above long before anything rendered in them. [Phase 9](../roadmap/#phase-9--the-flipping-loop) fills them, and the reason they arrive together is that they are three views of one loop rather than three unrelated areas: an acquisition in `/inventory` is caused by spend recorded in `/finance` and produces a listing in `/commerce`.
+
+Two placements are worth stating because they are easy to get wrong:
+
+- **Expenses live in `/finance`, not `/inventory`**, even though a reseller records most spend while standing next to a lot they just bought. The workspace map already composes billing, expenses, payments, banking, accounting, and tax there; expenses are its first tenant, not its definition. Quick entry is reachable from the command palette and from acquisition detail so the operator never has to navigate to record a spend.
+- **Intake review lives in `/inventory`**, and it is one surface serving three producers — hand entry, an ingested marketplace purchase, and a parsed receipt. Unifying them means the operator learns one review screen rather than three.
+
+`/dashboard` gains nothing from this phase, deliberately. Expenses already reach it through the Financial band, which reads the ledger; acquisitions reach neither band, because COGS posting does not exist yet. A spend tile on the Money band would show an incomplete number, so it waits.
 
 ### Infrastructure is a future peer root, and it is about the installation itself
 

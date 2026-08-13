@@ -251,3 +251,21 @@ The phase's central argument is that Loxep runs on the fleet it would observe, s
 - Read-only adapters only where an API genuinely merits one, each with the standard error taxonomy, rate budget, and Loxep-owned fact types; link-and-probe everywhere else; and alert evidence ingestion only if the installation is to expose an inbound webhook surface at all.
 
 The verdict for each candidate tool, the upstream evidence behind it, and the questions that must be answered before any of it starts are in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/). Five of its open questions are marked OWNER-REVIEW-CRITICAL.
+
+## Phase 9 — The flipping loop
+
+Goal: close the operator's core loop — money out, goods in, goods described, goods listed — over the domain layer phases 3 through 6 already built.
+
+This phase is different in kind from those before it. Phases 3, 4, 5, and 6 shipped **headless**: schema, services, and tests, with no product surface. There is no `/inventory`, `/commerce`, or `/finance` workspace, `@loxep/inventory` has no runtime consumer, and `channel_listings` is fully constrained and never written. Phase 9 is therefore roughly 70% first product surfaces over services that already exist and are tested, 20% additive schema, and 10% one new provider ingestion path. Its first milestone writes no migration.
+
+- Expense capture from anywhere: quick entry, receipt attachment, and CSV import. Bank/OFX ingestion stays Phase 5 — a bank transaction is a settlement fact, not an expense.
+- The acquisition seam: money spent on goods becomes an `acquisition_costs` row and cost basis, never an `expenses` row. Recording both would deduct the same dollar twice.
+- Acquisition import from a connector: eBay buy-side purchase history through Trading `GetMyeBayBuying`'s `WonList` container. It needs no new OAuth scope, no re-consent, and no adapter change, because the traditional Trading APIs authorize on the IAF token rather than on scopes and `tradingCall` is already generic. It cannot be sandbox-verified — the sandbox returns no `GetMyeBayBuying` container at all — so the mapping ships marked unverified until a production account runs it, exactly as the watchlist vertical did.
+- Receipt and invoice parsing as a defined **parser interface** with pluggable backends, shipping manual-assisted only. No parse ever becomes a domain record without a human confirming it, enforced structurally rather than by convention.
+- The **Documents** domain gains its first tables and its package, serving both the receipt parser and the CSV importer through one review queue.
+- Inventory enrichment: images through the media layer, how-it's-sold, package dimensions and weight, description, and typed product specifics — every field chosen because a listing needs it.
+- Offline and local listings (Facebook Marketplace, Craigslist, in person) as first-class `channel_listings` with no connection, and the declared bridge to Loxep-managed listing authoring. Per-provider publish stays with each integration.
+
+The physical design — the expense-to-acquisition seam, the Documents tables and the parser contract, the `inventory_items` enrichment columns and the specifics table, the `channel_listings` relaxations, and the full map of how the surfaces meet — is in [Flipping Lifecycle Design (Phase 9)](../../architecture/flipping-lifecycle-design/). That document is **design only**, and three of its open questions are marked OWNER-REVIEW-CRITICAL.
+
+Two things this phase deliberately does not close. **COGS posting from inventory depletion remains Phase 5 work**, so money spent on goods still does not reach the ledger — `posting_rules.source_fact_type` already admits `acquisition_cost` and `inventory_movement`, and the readers are the missing half. And **a manual listing cannot yet record its sale**, because `orders.connection_id` is `not null` and Phase 3 declined to create the manual-order path; that decision is the design's open question 7.

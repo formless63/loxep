@@ -68,6 +68,7 @@ export default defineConfig({
             { label: 'Counterparty, Project, Service & Billing Schema Design (Phase 6)', slug: 'architecture/services-billing-schema-design' },
             { label: 'Infrastructure Control Plane Design (Phase 7)', slug: 'architecture/infrastructure-control-design' },
             { label: 'Fleet Observability Design (Phase 8)', slug: 'architecture/fleet-observability-design' },
+            { label: 'Flipping Lifecycle Design (Phase 9)', slug: 'architecture/flipping-lifecycle-design' },
           ],
         },
         {

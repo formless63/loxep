@@ -117,6 +117,8 @@ Owns:
 
 The storage foundation does not own the business meaning of an attachment. Accounting may know that an image is receipt evidence; Media knows how that file is identified, stored, verified, and retrieved.
 
+Attachment is a `media_links` row keyed `(media_object_id, resource_type, resource_id, purpose)`. Where a resource holds several ordered objects — an item's listing gallery, a lot's photographs — the ordering is `sort_order`, and the primary object is the lowest `sort_order`, **not** a distinct `purpose` value. `purpose` is in the unique key and `sort_order` deliberately is not, so a `primary` purpose would let one object be both primary and gallery as two rows for one fact, and re-choosing a primary would become a purpose rewrite rather than a reorder.
+
 RustFS is an initial deployment recommendation, not a domain dependency. Storage semantics remain generic local/S3.
 
 ## Catalog and Listings
@@ -145,6 +147,8 @@ Commerce does not directly create journal lines or mutate inventory quantities. 
 
 Commerce facts that represent owned activity should carry explicit economic-entity attribution rather than inferring it from the logged-in user or workspace.
 
+A channel listing does not require a provider connection. Selling on a surface Loxep has no integration with — Facebook Marketplace, Craigslist, in person — is an ordinary owned publication and is recorded as one, with `provider = 'manual'`, a null `connection_id`, and a Loxep-minted listing code in place of a provider identifier. A synthetic "manual connection" is not an acceptable alternative: a connection has a credential, a health state, and a synchronization posture, and a manual listing has none of the three, so the synthetic row would sit permanently unknown in every connection diagnostic. A listing Loxep authored but has not yet published to a channel has the same shape, which is a good sign the shape is right.
+
 ## Inventory and Acquisition
 
 Owns physical ownership and movement of goods:
@@ -162,6 +166,10 @@ Owns physical ownership and movement of goods:
 An order line can reference inventory, but Commerce does not own stock state.
 
 Inventory ownership/location design must allow entity attribution where required rather than assuming all stock in an installation belongs to one business.
+
+Inventory also owns the **physical description of a held unit** — its condition, its free-text description, its package weight and dimensions, its images, its typed product specifics, and how it is intended to be sold (as a unit, as a lot, as a set, or parted out). These are facts about a physical thing, not about a SKU: a catalog item describing a model cannot have one condition, one weight, or one photograph, and `inventory_items.catalog_item_id` is nullable precisely because intake usually precedes identification. Catalog may later hold SKU-level *defaults* for the same attributes; the unit's own values remain Inventory's.
+
+Package weight and dimensions on a stock unit are the operator's own measurement of the thing as it will ship. They are distinct from what the outbound package actually weighed, which is a Shipping fact on `shipments` and legitimately differs.
 
 ## Purchasing
 
@@ -304,6 +312,10 @@ Owns **document semantics and extracted content**, while the shared Media founda
 Examples include receipts, bills, customer POs, contracts, quotes, invoices, packing slips, shipping documents, and tax records.
 
 Documents may own OCR text, structured extraction, matching status, document type, and business relationships while referencing one or more shared media objects.
+
+Documents owns the **candidate** stage of extraction and nothing beyond it. A parsed receipt, an uploaded invoice, and an imported CSV all produce candidate lines with a disposition and, where a parser produced them, a confidence — and Documents may never write an expense, an acquisition, or an inventory item. Confirmation is inverted: each consuming domain owns a confirm function that takes candidates and writes its own records, and Documents only stamps which record a confirmation produced. That inversion is what keeps the dependency edges acyclic, and it is also the enforcement mechanism for the rule that **no extraction becomes a fact without a human**: a confirm function requires an actor, and a background job has none.
+
+The parser itself is a pluggable backend behind one interface, selected by application setting. A backend that reaches an external service is an ordinary provider integration with an encrypted credential reached through the credential service, never an environment variable, and never on by default.
 
 ## Reporting and Analytics
 
