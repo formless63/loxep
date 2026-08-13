@@ -594,12 +594,22 @@ export const fetchHostingTargets = createServerFn({ method: 'GET' }).handler(
   }
 );
 
+/**
+ * One `resource_links` attachment, joined with the `external_resources` row
+ * it points at (loxep-v5r.3's generic companion-link service). `id` is the
+ * `external_resources` row id; `resourceId`/`purpose` are carried too so the
+ * panel can address this exact attachment (the natural key includes both,
+ * per `resource_links_resource_purpose_uq`) when removing it.
+ */
 export interface CompanionLinkDto {
   id: string;
   provider: string;
   externalType: string;
   url: string;
   title: string | null;
+  resourceId: string;
+  purpose: string;
+  createdAt: string;
 }
 
 export interface DnsProviderTokenDto {
@@ -623,8 +633,12 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
 export const fetchHostingTarget = createServerFn({ method: 'GET' })
   .inputValidator(z.strictObject({ name: z.string().trim().min(1) }))
   .handler(async ({ data }): Promise<HostingTargetDetailDto> => {
-    const { requireSession, getAdminServices, getDnsProviderTokensService } =
-      await import('@/server/admin');
+    const {
+      requireSession,
+      getAdminServices,
+      getDnsProviderTokensService,
+      getResourceLinksService
+    } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
     const target = await handle.db.query.hostingTargets.findFirst({
@@ -634,7 +648,7 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       throw new Error(`Hosting target "${data.name}" not found`);
     }
 
-    const [frontedTargets, domains, tokens, tokenZoneRows, companionLinkRows, frontingNode] =
+    const [frontedTargets, domains, tokens, tokenZoneRows, companionLinks, frontingNode] =
       await Promise.all([
         handle.db.query.hostingTargets.findMany({
           where: (table, { eq }) => eq(table.frontedByTargetId, target.id),
@@ -646,10 +660,10 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
         }),
         getDnsProviderTokensService().listForTarget(target.id),
         handle.db.query.dnsProviderTokenZones.findMany(),
-        handle.db.query.resourceLinks.findMany({
-          where: (table, { and, eq }) =>
-            and(eq(table.resourceType, 'hosting_target'), eq(table.resourceId, target.id))
-        }),
+        // loxep-v5r.3's generic companion-link service — the SINGLE owner of
+        // `external_resources`/`resource_links` reads/writes; this handler
+        // no longer queries those two tables directly.
+        getResourceLinksService().listLinksFor('hosting_target', target.id),
         target.frontedByTargetId
           ? handle.db.query.hostingTargets.findFirst({
               where: (table, { eq }) => eq(table.id, target.frontedByTargetId as string),
@@ -664,15 +678,6 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       list.push(row.domainId);
       zonesByToken.set(row.tokenId, list);
     }
-
-    const externalResourceIds = companionLinkRows.map((link) => link.externalResourceId);
-    const externalResources =
-      externalResourceIds.length > 0
-        ? await handle.db.query.externalResources.findMany({
-            where: (table, { inArray }) => inArray(table.id, externalResourceIds)
-          })
-        : [];
-    const resourceById = new Map(externalResources.map((resource) => [resource.id, resource]));
 
     return {
       id: target.id,
@@ -700,17 +705,81 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
         domainIds: zonesByToken.get(token.id) ?? [],
         createdAt: iso(token.createdAt)
       })),
-      companionLinks: companionLinkRows
-        .map((link) => resourceById.get(link.externalResourceId))
-        .filter((resource) => resource !== undefined)
-        .map((resource) => ({
-          id: resource.id,
-          provider: resource.provider,
-          externalType: resource.externalType,
-          url: resource.url,
-          title: resource.title
-        }))
+      companionLinks: companionLinks.map((link) => ({
+        id: link.externalResourceId,
+        provider: link.provider,
+        externalType: link.externalType,
+        url: link.url,
+        title: link.title,
+        resourceId: link.resourceId,
+        purpose: link.purpose,
+        createdAt: iso(link.createdAt)
+      }))
     };
+  });
+
+const addCompanionLinkInput = z.strictObject({
+  hostingTargetId: z.uuid(),
+  provider: z.string().trim().min(1).max(100),
+  externalType: z.string().trim().min(1).max(100),
+  url: z.url(),
+  title: z.string().trim().min(1).max(200).nullish(),
+  /** Free text (loxep-v5r.3's generic tier-1 mechanism, no closed vocabulary yet). */
+  purpose: z.string().trim().min(1).max(100)
+});
+
+/**
+ * Adds one companion-tool link to a hosting target — the "Add tool link"
+ * form the fleet detail page's `CompanionLinksPanel` renders. Writes through
+ * `@loxep/domain`'s generic `resourceLinks.createLink` (loxep-v5r.3), the
+ * single owner of `external_resources`/`resource_links` writes; this handler
+ * does not touch either table directly.
+ */
+export const addCompanionLink = createServerFn({ method: 'POST' })
+  .inputValidator(addCompanionLinkInput)
+  .handler(async ({ data }): Promise<CompanionLinkDto> => {
+    const { requireAdmin, getResourceLinksService } = await import('@/server/admin');
+    await requireAdmin();
+    const link = await getResourceLinksService().createLink({
+      provider: data.provider,
+      externalType: data.externalType,
+      url: data.url,
+      title: data.title ?? null,
+      resourceType: 'hosting_target',
+      resourceId: data.hostingTargetId,
+      purpose: data.purpose
+    });
+    return {
+      id: link.externalResourceId,
+      provider: link.provider,
+      externalType: link.externalType,
+      url: link.url,
+      title: link.title,
+      resourceId: link.resourceId,
+      purpose: link.purpose,
+      createdAt: iso(link.createdAt)
+    };
+  });
+
+const removeCompanionLinkInput = z.strictObject({
+  externalResourceId: z.uuid(),
+  hostingTargetId: z.uuid(),
+  purpose: z.string().trim().min(1).max(100)
+});
+
+/** Removes one companion-tool link (loxep-v5r.3's generic `detachLink`, idempotent). */
+export const removeCompanionLink = createServerFn({ method: 'POST' })
+  .inputValidator(removeCompanionLinkInput)
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireAdmin, getResourceLinksService } = await import('@/server/admin');
+    await requireAdmin();
+    await getResourceLinksService().detachLink({
+      externalResourceId: data.externalResourceId,
+      resourceType: 'hosting_target',
+      resourceId: data.hostingTargetId,
+      purpose: data.purpose
+    });
+    return { ok: true };
   });
 
 const createHostingTargetInput = z.strictObject({

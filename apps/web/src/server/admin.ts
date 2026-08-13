@@ -36,11 +36,13 @@ import {
   createConnectionsService,
   createEconomicEntitiesService,
   createHealthService,
+  createResourceLinksService,
   createSecretsService,
   createSettingsService,
   type ConnectionsService,
   type EconomicEntitiesService,
   type HealthService,
+  type ResourceLinksService,
   type SecretsService,
   type SettingsService
 } from '@loxep/domain';
@@ -152,6 +154,16 @@ interface AdminRegistry {
   dnsProviderTokens: DnsProviderTokensService;
   /** Transactional `graphile_worker.add_job`, for ad hoc "sync now" actions. */
   infrastructureEnqueue: TransactionalEnqueue;
+  /**
+   * The generic external-resource companion-link service (loxep-v5r.3):
+   * register/attach/list/detach `external_resources`/`resource_links` rows
+   * for any registered `resourceType`. Depends only on `db`, so it is built
+   * eagerly like `entities`/`connections`/`health` above. SINGLE owner —
+   * Phase 8 milestone 3 (loxep-ovj.3) and the knowledge/tasks companion
+   * designs (loxep-p1j, loxep-juk) consume this same instance rather than
+   * building their own.
+   */
+  resourceLinks: ResourceLinksService;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -249,7 +261,8 @@ function buildRegistry(): AdminRegistry {
       enqueue: createTransactionalEnqueue(),
       providerName: 'cloudflare'
     }),
-    infrastructureEnqueue: createTransactionalEnqueue()
+    infrastructureEnqueue: createTransactionalEnqueue(),
+    resourceLinks: createResourceLinksService({ db: handle.db })
   };
 }
 
@@ -347,6 +360,11 @@ export function getDnsProviderTokensService(): DnsProviderTokensService {
 /** Transactional `graphile_worker.add_job`, for a manual "sync now" action. */
 export function getInfrastructureEnqueue(): TransactionalEnqueue {
   return getAdminServices().infrastructureEnqueue;
+}
+
+/** The generic external-resource companion-link service (loxep-v5r.3). */
+export function getResourceLinksService(): ResourceLinksService {
+  return getAdminServices().resourceLinks;
 }
 
 /**

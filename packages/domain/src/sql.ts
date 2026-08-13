@@ -22,3 +22,15 @@ export function uuidLiteral(value: string): string {
   }
   return `'${parsed.data}'`;
 }
+
+/**
+ * Returns a standard single-quoted SQL text literal with embedded quotes
+ * doubled. Rejects NUL bytes (PostgreSQL cannot store them in text anyway).
+ * Following the `@loxep/market` precedent (`packages/market/src/sql.ts`).
+ */
+export function textLiteral(value: string): string {
+  if (value.includes("\u0000")) {
+    throw new DomainValidationError("text values must not contain NUL bytes");
+  }
+  return `'${value.replaceAll("'", "''")}'`;
+}

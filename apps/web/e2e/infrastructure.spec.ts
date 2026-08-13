@@ -90,6 +90,33 @@ test('creates a hosting target with no fronting node, then shows it with an empt
   await expect(page.getByText('No tokens minted for this host')).toBeVisible();
   await expect(page.getByText('No companion tool linked yet')).toBeVisible();
   await expect(page.getByText('None yet.')).toBeVisible(); // "Domains pointing here (0)"
+
+  // loxep-v5r.3: the generic companion-link service, exercised end to end —
+  // "Add tool link" writes external_resources + resource_links (no
+  // credential, no adapter). Scoped to `main` and exact-matched throughout:
+  // this file has been bitten by strict-mode ambiguity before (sidebar nav
+  // vs. page body sharing accessible names).
+  const main = page.getByRole('main');
+  const linkLabel = `e2e-link-${Date.now()}`;
+  await main.getByRole('button', { name: 'Add tool link' }).click();
+  const linkDialog = page.getByRole('dialog');
+  await expect(linkDialog.getByText('Add a companion link')).toBeVisible();
+  await linkDialog.getByLabel('Provider *').fill('gatus');
+  await linkDialog.getByLabel('Kind *').fill('dashboard');
+  await linkDialog.getByLabel('URL *').fill('https://gatus.example.test/status');
+  await linkDialog.getByLabel('Label').fill(linkLabel);
+  await linkDialog.getByLabel('Purpose *').fill('status_page');
+  await linkDialog.getByRole('button', { name: 'Add link' }).click();
+  await expect(linkDialog).toBeHidden();
+
+  await expect(main.getByText('No companion tool linked yet')).toHaveCount(0);
+  await expect(main.getByText(linkLabel, { exact: true })).toBeVisible();
+  await expect(main.getByText('gatus · dashboard · status_page', { exact: false })).toBeVisible();
+
+  // Removing the link restores the honest empty state.
+  await main.getByRole('button', { name: `Remove ${linkLabel} link` }).click();
+  await expect(main.getByText('No companion tool linked yet')).toBeVisible();
+  await expect(main.getByText(linkLabel, { exact: true })).toHaveCount(0);
 });
 
 test('reconcile runs list shows the empty state', async ({ page }) => {

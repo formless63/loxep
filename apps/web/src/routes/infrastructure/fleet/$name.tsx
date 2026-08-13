@@ -162,7 +162,11 @@ function FleetDetailData({ name }: { name: string }) {
           hostingTargetName={data.name}
           tokens={data.tokens}
         />
-        <CompanionLinksPanel links={data.companionLinks} />
+        <CompanionLinksPanel
+          hostingTargetId={data.id}
+          hostingTargetName={data.name}
+          links={data.companionLinks}
+        />
       </div>
     </div>
   );
