@@ -1,0 +1,713 @@
+/**
+ * Migration 0012's Phase 7 milestone-1 DDL against real PostgreSQL:
+ * `hosting_targets`, `managed_domains`, `dns_records`, `reconcile_runs`,
+ * `reconcile_run_steps`, `dns_drift_findings`, and `provider_operations`.
+ *
+ * These write through the pool rather than through a service, because the
+ * constraints below are the ones that must hold even when a service forgets
+ * to. Three of them are load-bearing enough that the design says so explicitly:
+ *
+ *   * `dns_records_mail_not_proxied_check` — "belt and braces, and both belts
+ *     are load-bearing". A proxied mail CNAME breaks signature alignment
+ *     silently, weeks later.
+ *   * `dns_drift_findings_unexpected_record_check` + the unresolved partial
+ *     unique — what makes a recurring sweep idempotent instead of a row
+ *     accumulator, and what lets `unexpected` drift exist at all.
+ *   * `hosting_targets_*` — the fronting-chain shape whose failure mode is a
+ *     published, unreachable address that looks like a propagation problem.
+ *
+ * `@loxep/infrastructure`'s own tests cover the SERVICE rules (never
+ * auto-delete an unexpected record, resurrect a soft-deleted row, refuse a
+ * fronting cycle). This file covers only what PostgreSQL itself enforces.
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { closeDb, createDb, runMigrations } from "../src/migrate.ts";
+import type { DbHandle } from "../src/migrate.ts";
+import { connections } from "../src/schema/index.ts";
+import {
+  createScratchDb,
+  dropScratchDb,
+  scratchDbName,
+  silentLogger,
+} from "./helpers.ts";
+
+describe("infrastructure control plane schema (migration 0012)", () => {
+  const dbName = scratchDbName("loxep_test_infra_schema");
+  let handle: DbHandle;
+  let dnsConnectionId: string;
+
+  beforeAll(async () => {
+    const databaseUrl = await createScratchDb(dbName);
+    await runMigrations({ databaseUrl, logger: silentLogger });
+    handle = createDb(databaseUrl);
+
+    const [connection] = await handle.db
+      .insert(connections)
+      .values({
+        provider: "cloudflare",
+        kind: "dns",
+        name: "Cloudflare (test)",
+        status: "active",
+        config: { accountId: "acct_test" },
+      })
+      .returning();
+    if (connection === undefined) {
+      throw new Error("connection insert returned no row");
+    }
+    dnsConnectionId = connection.id;
+  }, 120_000);
+
+  afterAll(async () => {
+    await closeDb(handle);
+    await dropScratchDb(dbName);
+  });
+
+  let seq = 0;
+  function nextSeq(): number {
+    seq += 1;
+    return seq;
+  }
+
+  async function insertRow(
+    table: string,
+    columns: Record<string, string>,
+  ): Promise<string> {
+    const result = await handle.pool.query<{ id: string }>(
+      `insert into ${table} (${Object.keys(columns).join(", ")})
+       values (${Object.values(columns).join(", ")}) returning id`,
+    );
+    const id = result.rows[0]?.id;
+    if (id === undefined) throw new Error(`${table} insert returned no row`);
+    return id;
+  }
+
+  async function insertTarget(
+    overrides: Record<string, string> = {},
+  ): Promise<string> {
+    const n = nextSeq();
+    return insertRow("hosting_targets", {
+      name: `'target-${n}'`,
+      control_surface: `'direct_reverse_proxy'`,
+      address_v4: `'203.0.113.${n % 200}'`,
+      ...overrides,
+    });
+  }
+
+  async function insertDomain(
+    overrides: Record<string, string> = {},
+  ): Promise<string> {
+    const n = nextSeq();
+    return insertRow("managed_domains", {
+      name: `'example-${n}.test'`,
+      dns_connection_id: `'${dnsConnectionId}'`,
+      ...overrides,
+    });
+  }
+
+  async function insertRun(
+    overrides: Record<string, string> = {},
+  ): Promise<string> {
+    const subjectId = await insertDomain();
+    return insertRow("reconcile_runs", {
+      kind: `'sync-records'`,
+      subject_type: `'domain'`,
+      subject_id: `'${subjectId}'`,
+      mode: `'check'`,
+      trigger: `'sweep'`,
+      ...overrides,
+    });
+  }
+
+  /* ------------------------------------------------------- hosting_targets */
+
+  describe("hosting_targets", () => {
+    it("accepts a direct reverse proxy with an address", async () => {
+      await expect(insertTarget()).resolves.toBeTypeOf("string");
+    });
+
+    it("validates addresses through inet, so a malformed one never reaches DNS", async () => {
+      // inet preserves the netmask it was given (this is `inet`, not `cidr`),
+      // so the materializer must publish host(address), not address::text.
+      const id = await insertTarget({ address_v4: `'203.0.113.7/32'` });
+      const row = await handle.pool.query<{ addr: string; host: string }>(
+        `select address_v4::text as addr, host(address_v4) as host
+           from hosting_targets where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.addr).toBe("203.0.113.7/32");
+      expect(row.rows[0]?.host).toBe("203.0.113.7");
+
+      // The whole reason the column is inet rather than text: PostgreSQL
+      // refuses the malformed value that would otherwise become a published,
+      // unresolvable record.
+      await expect(
+        insertTarget({ address_v4: `'not-an-address'` }),
+      ).rejects.toThrow(/invalid input syntax|inet/i);
+      await expect(
+        insertTarget({ address_v4: `'203.0.113.300'` }),
+      ).rejects.toThrow(/invalid input syntax|inet/i);
+    });
+
+    it("accepts an IPv6 address", async () => {
+      const id = await insertTarget({
+        address_v4: `null`,
+        address_v6: `'2001:db8::1'`,
+      });
+      const row = await handle.pool.query<{ host: string }>(
+        `select host(address_v6) as host from hosting_targets where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.host).toBe("2001:db8::1");
+    });
+
+    it("rejects an unknown control surface", async () => {
+      await expect(
+        insertTarget({ control_surface: `'kubernetes'` }),
+      ).rejects.toThrow(/hosting_targets_control_surface_check/);
+    });
+
+    it("requires a name to be unique installation-wide", async () => {
+      await insertTarget({ name: `'shared-name'` });
+      await expect(insertTarget({ name: `'shared-name'` })).rejects.toThrow(
+        /hosting_targets_name_uq/,
+      );
+    });
+
+    it("requires an addressable target unless control_surface is 'none'", async () => {
+      await expect(
+        insertTarget({ address_v4: `null` }),
+      ).rejects.toThrow(/hosting_targets_addressable_check/);
+
+      await expect(
+        insertTarget({ control_surface: `'none'`, address_v4: `null` }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("ties control_surface = 'tunnel_client' to fronted_by_target_id, both ways", async () => {
+      const node = await insertTarget({ control_surface: `'proxy_node'` });
+
+      // tunnel_client without a fronting node
+      await expect(
+        insertTarget({ control_surface: `'tunnel_client'` }),
+      ).rejects.toThrow(/hosting_targets_tunnel_client_check/);
+
+      // a fronting node on a non-tunnel target
+      await expect(
+        insertTarget({ fronted_by_target_id: `'${node}'` }),
+      ).rejects.toThrow(/hosting_targets_tunnel_client_check/);
+
+      // the shape that is allowed: a tunnel client with no address of its own
+      await expect(
+        insertTarget({
+          control_surface: `'tunnel_client'`,
+          address_v4: `null`,
+          fronted_by_target_id: `'${node}'`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("blocks the trivial self-loop but NOT a longer cycle", async () => {
+      const a = await insertTarget({ control_surface: `'proxy_node'` });
+      await expect(
+        handle.pool.query(
+          `update hosting_targets set fronted_by_target_id = id where id = $1`,
+          [a],
+        ),
+      ).rejects.toThrow(/hosting_targets_no_self_front_check/);
+
+      // Two-hop chains are NOT constrained declaratively — the design says so
+      // and puts the guard in the domain service. This test exists so the next
+      // reader does not assume the CHECK covers it.
+      const b = await insertTarget({
+        control_surface: `'tunnel_client'`,
+        address_v4: `null`,
+        fronted_by_target_id: `'${a}'`,
+      });
+      const c = await insertTarget({
+        control_surface: `'tunnel_client'`,
+        address_v4: `null`,
+        fronted_by_target_id: `'${b}'`,
+      });
+      expect(c).toBeTypeOf("string");
+    });
+  });
+
+  /* ------------------------------------------------------- managed_domains */
+
+  describe("managed_domains", () => {
+    it("defaults to the 'draft' state with proxying and mail intent on", async () => {
+      const id = await insertDomain();
+      const row = await handle.pool.query<{
+        state: string;
+        apex_proxied: boolean;
+        wildcard_proxied: boolean;
+        mail_enabled: boolean;
+        consecutive_errors: number;
+      }>(`select * from managed_domains where id = $1`, [id]);
+      expect(row.rows[0]?.state).toBe("draft");
+      expect(row.rows[0]?.apex_proxied).toBe(true);
+      expect(row.rows[0]?.wildcard_proxied).toBe(true);
+      expect(row.rows[0]?.mail_enabled).toBe(true);
+      expect(row.rows[0]?.consecutive_errors).toBe(0);
+    });
+
+    it("rejects a state outside the provisioning chain", async () => {
+      await expect(insertDomain({ state: `'degraded'` })).rejects.toThrow(
+        /managed_domains_state_check/,
+      );
+    });
+
+    it("requires the name to be globally unique", async () => {
+      await insertDomain({ name: `'dup.test'` });
+      await expect(insertDomain({ name: `'dup.test'` })).rejects.toThrow(
+        /managed_domains_name_uq/,
+      );
+    });
+
+    it("allows many draft domains with no zone but one zone per connection", async () => {
+      await insertDomain();
+      await insertDomain();
+
+      await insertDomain({ external_zone_id: `'zone-abc'` });
+      await expect(
+        insertDomain({ external_zone_id: `'zone-abc'` }),
+      ).rejects.toThrow(/managed_domains_connection_zone_uq/);
+    });
+
+    it("supports the mail-only shape: no apex target, mail enabled", async () => {
+      const id = await insertDomain({
+        apex_target_id: `null`,
+        mail_enabled: `true`,
+      });
+      const row = await handle.pool.query<{
+        apex_target_id: string | null;
+        mail_enabled: boolean;
+      }>(`select apex_target_id, mail_enabled from managed_domains where id = $1`, [
+        id,
+      ]);
+      expect(row.rows[0]?.apex_target_id).toBeNull();
+      expect(row.rows[0]?.mail_enabled).toBe(true);
+    });
+
+    it("stores zone_nameservers as an ordered array read back verbatim", async () => {
+      const id = await insertDomain({
+        zone_nameservers: `array['ns1.example.test', 'ns2.example.test']`,
+      });
+      const row = await handle.pool.query<{ zone_nameservers: string[] }>(
+        `select zone_nameservers from managed_domains where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.zone_nameservers).toEqual([
+        "ns1.example.test",
+        "ns2.example.test",
+      ]);
+    });
+
+    it("references a monitor_targets row for recurring cadence (open question 5)", async () => {
+      const target = await handle.pool.query<{ id: string }>(
+        `insert into monitor_targets (target_type, name, interval_seconds)
+         values ('infrastructure_domain_reconcile', 'example.test reconcile', 3600)
+         returning id`,
+      );
+      const targetId = target.rows[0]?.id;
+      expect(targetId).toBeTypeOf("string");
+
+      const id = await insertDomain({ reconcile_target_id: `'${targetId}'` });
+      expect(id).toBeTypeOf("string");
+
+      await expect(
+        insertDomain({
+          reconcile_target_id: `'00000000-0000-0000-0000-000000000000'`,
+        }),
+      ).rejects.toThrow(/managed_domains_reconcile_target_id/);
+    });
+  });
+
+  /* ----------------------------------------------------------- dns_records */
+
+  describe("dns_records", () => {
+    async function insertRecord(
+      domainId: string,
+      overrides: Record<string, string> = {},
+    ): Promise<string> {
+      return insertRow("dns_records", {
+        domain_id: `'${domainId}'`,
+        type: `'A'`,
+        name: `'@'`,
+        content: `'203.0.113.10'`,
+        owner: `'apex'`,
+        ...overrides,
+      });
+    }
+
+    it("accepts any IANA record type — there is deliberately NO check", async () => {
+      const domainId = await insertDomain();
+      for (const type of ["A", "HTTPS", "TLSA", "SVCB", "NAPTR"]) {
+        await expect(
+          insertRecord(domainId, {
+            type: `'${type}'`,
+            name: `'${type.toLowerCase()}.example'`,
+          }),
+        ).resolves.toBeTypeOf("string");
+      }
+    });
+
+    it("rejects an owner outside the closed set", async () => {
+      const domainId = await insertDomain();
+      await expect(
+        insertRecord(domainId, { owner: `'automatic'` }),
+      ).rejects.toThrow(/dns_records_owner_check/);
+    });
+
+    it("makes a proxied mail record impossible to insert", async () => {
+      const domainId = await insertDomain();
+      await expect(
+        insertRecord(domainId, {
+          owner: `'mail'`,
+          type: `'CNAME'`,
+          name: `'key1._domainkey'`,
+          content: `'key1.mailprovider.test'`,
+          proxied: `true`,
+        }),
+      ).rejects.toThrow(/dns_records_mail_not_proxied_check/);
+
+      // The same record unproxied is fine, which is the only shape the
+      // materializer may ever emit for owner = 'mail'.
+      await expect(
+        insertRecord(domainId, {
+          owner: `'mail'`,
+          type: `'CNAME'`,
+          name: `'key1._domainkey'`,
+          content: `'key1.mailprovider.test'`,
+          proxied: `false`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("treats ttl_seconds as seconds, with NULL meaning provider default", async () => {
+      const domainId = await insertDomain();
+      await expect(
+        insertRecord(domainId, { ttl_seconds: `null` }),
+      ).resolves.toBeTypeOf("string");
+      await expect(
+        insertRecord(domainId, { name: `'a'`, ttl_seconds: `300` }),
+      ).resolves.toBeTypeOf("string");
+
+      // 1 is one provider's "automatic" sentinel and must never reach a Loxep
+      // column — the range check makes that a hard failure, not a silent
+      // one-second TTL.
+      await expect(
+        insertRecord(domainId, { name: `'b'`, ttl_seconds: `1` }),
+      ).rejects.toThrow(/dns_records_ttl_seconds_check/);
+      await expect(
+        insertRecord(domainId, { name: `'c'`, ttl_seconds: `604801` }),
+      ).rejects.toThrow(/dns_records_ttl_seconds_check/);
+    });
+
+    it("uses (domain_id, type, name, content) as the natural key", async () => {
+      const domainId = await insertDomain();
+      await insertRecord(domainId);
+      await expect(insertRecord(domainId)).rejects.toThrow(
+        /dns_records_natural_key_uq/,
+      );
+
+      // Different content is a different record, not a conflict — which is
+      // what makes the diff recomputable from either side.
+      await expect(
+        insertRecord(domainId, { content: `'203.0.113.11'` }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("keeps tombstones inside the natural key (open question 7)", async () => {
+      const domainId = await insertDomain();
+      const id = await insertRecord(domainId);
+      await handle.pool.query(
+        `update dns_records set desired_deleted_at = now() where id = $1`,
+        [id],
+      );
+
+      // Re-declaring the same record collides with its own tombstone, which is
+      // exactly why the materializer must RESURRECT rather than insert.
+      await expect(insertRecord(domainId)).rejects.toThrow(
+        /dns_records_natural_key_uq/,
+      );
+    });
+
+    it("cascades from its domain", async () => {
+      const domainId = await insertDomain();
+      await insertRecord(domainId);
+      await handle.pool.query(`delete from managed_domains where id = $1`, [
+        domainId,
+      ]);
+      const rows = await handle.pool.query(
+        `select 1 from dns_records where domain_id = $1`,
+        [domainId],
+      );
+      expect(rows.rowCount).toBe(0);
+    });
+  });
+
+  /* ------------------------------------- reconcile_runs / _run_steps */
+
+  describe("reconcile_runs and reconcile_run_steps", () => {
+    it("stores the apply/check mode as a fact, not a parameter", async () => {
+      await expect(insertRun({ mode: `'apply'` })).resolves.toBeTypeOf("string");
+      await expect(insertRun({ mode: `'dry-run'` })).rejects.toThrow(
+        /reconcile_runs_mode_check/,
+      );
+    });
+
+    it("rejects unknown status, subject_type, and trigger values", async () => {
+      await expect(insertRun({ status: `'queued'` })).rejects.toThrow(
+        /reconcile_runs_status_check/,
+      );
+      await expect(insertRun({ subject_type: `'mailbox'` })).rejects.toThrow(
+        /reconcile_runs_subject_type_check/,
+      );
+      await expect(insertRun({ trigger: `'webhook'` })).rejects.toThrow(
+        /reconcile_runs_trigger_check/,
+      );
+    });
+
+    it("keeps a run whose subject was deleted — subject_id is not an FK", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRow("reconcile_runs", {
+        kind: `'sync-records'`,
+        subject_type: `'domain'`,
+        subject_id: `'${domainId}'`,
+        mode: `'apply'`,
+        trigger: `'manual'`,
+      });
+      await handle.pool.query(`delete from managed_domains where id = $1`, [
+        domainId,
+      ]);
+      const rows = await handle.pool.query(
+        `select 1 from reconcile_runs where id = $1`,
+        [runId],
+      );
+      expect(rows.rowCount).toBe(1);
+    });
+
+    it("orders steps uniquely within a run and cascades with it", async () => {
+      const runId = await insertRun();
+      await handle.pool.query(
+        `insert into reconcile_run_steps (run_id, sequence, step, status)
+         values ($1, 0, 'read-records', 'succeeded')`,
+        [runId],
+      );
+      await expect(
+        handle.pool.query(
+          `insert into reconcile_run_steps (run_id, sequence, step, status)
+           values ($1, 0, 'read-records', 'succeeded')`,
+          [runId],
+        ),
+      ).rejects.toThrow(/reconcile_run_steps_run_sequence_uq/);
+
+      await handle.pool.query(`delete from reconcile_runs where id = $1`, [
+        runId,
+      ]);
+      const rows = await handle.pool.query(
+        `select 1 from reconcile_run_steps where run_id = $1`,
+        [runId],
+      );
+      expect(rows.rowCount).toBe(0);
+    });
+  });
+
+  /* --------------------------------------------------- dns_drift_findings */
+
+  describe("dns_drift_findings", () => {
+    async function insertFinding(
+      domainId: string,
+      runId: string,
+      overrides: Record<string, string> = {},
+    ): Promise<string> {
+      return insertRow("dns_drift_findings", {
+        domain_id: `'${domainId}'`,
+        kind: `'unexpected'`,
+        record_type: `'TXT'`,
+        record_name: `'_acme-challenge'`,
+        observed_content: `'token'`,
+        first_seen_run_id: `'${runId}'`,
+        last_seen_run_id: `'${runId}'`,
+        ...overrides,
+      });
+    }
+
+    it("represents an 'unexpected' record, which has no intent row at all", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      await expect(insertFinding(domainId, runId)).resolves.toBeTypeOf(
+        "string",
+      );
+    });
+
+    it("ties dns_record_id to the kind, both ways", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      const recordId = await insertRow("dns_records", {
+        domain_id: `'${domainId}'`,
+        type: `'A'`,
+        name: `'@'`,
+        content: `'203.0.113.20'`,
+        owner: `'apex'`,
+      });
+
+      // 'unexpected' with an intent row
+      await expect(
+        insertFinding(domainId, runId, { dns_record_id: `'${recordId}'` }),
+      ).rejects.toThrow(/dns_drift_findings_unexpected_record_check/);
+
+      // 'missing' without one
+      await expect(
+        insertFinding(domainId, runId, {
+          kind: `'missing'`,
+          record_name: `'@'`,
+        }),
+      ).rejects.toThrow(/dns_drift_findings_unexpected_record_check/);
+
+      await expect(
+        insertFinding(domainId, runId, {
+          kind: `'missing'`,
+          record_name: `'@'`,
+          dns_record_id: `'${recordId}'`,
+          desired_content: `'203.0.113.20'`,
+          observed_content: `null`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("rejects an unknown kind or resolution and requires the resolution pair", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      await expect(
+        insertFinding(domainId, runId, { kind: `'suspicious'` }),
+      ).rejects.toThrow(/dns_drift_findings_kind_check/);
+      await expect(
+        insertFinding(domainId, runId, {
+          resolution: `'deleted'`,
+          resolved_at: `now()`,
+        }),
+      ).rejects.toThrow(/dns_drift_findings_resolution_check/);
+      await expect(
+        insertFinding(domainId, runId, { resolution: `'dismissed'` }),
+      ).rejects.toThrow(/dns_drift_findings_resolution_pair_check/);
+      await expect(
+        insertFinding(domainId, runId, { resolved_at: `now()` }),
+      ).rejects.toThrow(/dns_drift_findings_resolution_pair_check/);
+    });
+
+    it("permits ONE unresolved finding per (domain, kind, type, name, observed) — the sweep's upsert probe", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      await insertFinding(domainId, runId);
+      await expect(insertFinding(domainId, runId)).rejects.toThrow(
+        /dns_drift_findings_unresolved_uq/,
+      );
+    });
+
+    it("collides NULL observed_content through coalesce, so 'missing' findings do not accumulate", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      const recordId = await insertRow("dns_records", {
+        domain_id: `'${domainId}'`,
+        type: `'A'`,
+        name: `'@'`,
+        content: `'203.0.113.30'`,
+        owner: `'apex'`,
+      });
+      const shape = {
+        kind: `'missing'`,
+        record_type: `'A'`,
+        record_name: `'@'`,
+        dns_record_id: `'${recordId}'`,
+        desired_content: `'203.0.113.30'`,
+        observed_content: `null`,
+      };
+      await insertFinding(domainId, runId, shape);
+      // Without the coalesce, two NULLs would not collide and an hourly sweep
+      // would insert a row per sweep forever.
+      await expect(insertFinding(domainId, runId, shape)).rejects.toThrow(
+        /dns_drift_findings_unresolved_uq/,
+      );
+    });
+
+    it("allows a resolved finding to coexist with a new unresolved one", async () => {
+      const domainId = await insertDomain();
+      const runId = await insertRun();
+      const id = await insertFinding(domainId, runId);
+      await handle.pool.query(
+        `update dns_drift_findings
+            set resolved_at = now(), resolution = 'disappeared'
+          where id = $1`,
+        [id],
+      );
+      await expect(insertFinding(domainId, runId)).resolves.toBeTypeOf(
+        "string",
+      );
+    });
+  });
+
+  /* -------------------------------------------------- provider_operations */
+
+  describe("provider_operations", () => {
+    it("keys on a deterministic idempotency string", async () => {
+      await handle.pool.query(
+        `insert into provider_operations (idempotency_key, provider, operation)
+         values ('cloudflare:zone-create:example.test', 'cloudflare', 'zone-create')`,
+      );
+      await expect(
+        handle.pool.query(
+          `insert into provider_operations (idempotency_key, provider, operation)
+           values ('cloudflare:zone-create:example.test', 'cloudflare', 'zone-create')`,
+        ),
+      ).rejects.toThrow(/provider_operations_pkey/);
+    });
+
+    it("starts pending with no completion instant and pairs the two", async () => {
+      const key = "cloudflare:zone-create:pairing.test";
+      await handle.pool.query(
+        `insert into provider_operations (idempotency_key, provider, operation)
+         values ($1, 'cloudflare', 'zone-create')`,
+        [key],
+      );
+      const row = await handle.pool.query<{
+        status: string;
+        attempts: number;
+        completed_at: string | null;
+      }>(`select status, attempts, completed_at from provider_operations where idempotency_key = $1`, [
+        key,
+      ]);
+      expect(row.rows[0]?.status).toBe("pending");
+      expect(row.rows[0]?.attempts).toBe(1);
+      expect(row.rows[0]?.completed_at).toBeNull();
+
+      // A terminal status without a completion instant is the shape that would
+      // make "did this ever succeed" unanswerable.
+      await expect(
+        handle.pool.query(
+          `update provider_operations set status = 'succeeded' where idempotency_key = $1`,
+          [key],
+        ),
+      ).rejects.toThrow(/provider_operations_completed_at_check/);
+
+      await expect(
+        handle.pool.query(
+          `update provider_operations
+              set status = 'succeeded', completed_at = now()
+            where idempotency_key = $1`,
+          [key],
+        ),
+      ).resolves.toBeTruthy();
+    });
+
+    it("rejects an unknown status", async () => {
+      await expect(
+        handle.pool.query(
+          `insert into provider_operations (idempotency_key, provider, operation, status, completed_at)
+           values ('k:unknown', 'cloudflare', 'zone-create', 'in_flight', now())`,
+        ),
+      ).rejects.toThrow(/provider_operations_status_check/);
+    });
+  });
+});

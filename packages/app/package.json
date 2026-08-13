@@ -20,6 +20,8 @@
     "@loxep/notifications": "workspace:*",
     "@loxep/integration-ebay": "workspace:*",
     "@loxep/integration-etsy": "workspace:*",
+    "@loxep/infrastructure": "workspace:*",
+    "@loxep/integration-cloudflare": "workspace:*",
     "@loxep/integration-woo": "workspace:*",
     "zod": "4.4.3"
   },

@@ -200,12 +200,14 @@ It also runs against an explicit non-goal — the [Master Domain Map](../master-
 
 ### Milestone 1 — schema, Cloudflare DNS reconciler, and drift detection
 
+**Implemented and PROVISIONAL (loxep-lmy.1).** Migration `0012` creates the seven milestone-1 tables and no existing table gained a column; `@loxep/integration-cloudflare` covers zones and DNS records, verified against Cloudflare's current documentation and published OpenAPI schema; `@loxep/infrastructure` carries the materializer, the pure diff, the reconcile run, drift persistence, and the idempotency ledger. Two gaps remain: that package's workspace manifest and aggregate registration are still owed, which blocks the `@loxep/app` executor wiring, and **no Cloudflare token exists yet**, so every live verification is owner-gated. The owner-review gates (CAA policy content, never auto-deleting unexpected records, pending-operation recovery, and cadence ownership) are resolved provisionally per each recommendation — the CAA setting ships deliberately empty and materializes nothing until an operator reviews it. Divergences and corrected provider assumptions are recorded in the [design document's implementation-status header](../../architecture/infrastructure-control-design/).
+
 - The infrastructure tables: domains and their provisioning state, DNS desired state with ownership markers, hosting targets, provider-operation idempotency, and the reconciler run/step ledger.
 - A DNS-provider adapter at the integration boundary, with the same error taxonomy and per-connection rate-budget shapes the commerce adapters use, and its credential held as an ordinary encrypted connection credential created in-app.
 - The record materializer as a pure, separately tested function from intent to desired records.
 - The diff-and-apply reconciler as idempotent worker tasks registered against the shared scheduling model, with transactional enqueue so an intent change and its sync job commit together.
 - Drift detection as the **same code path with apply disabled**, its findings persisted so a drifted record is a durable, reviewable row rather than a log line.
-- Delegation polling with bounded backoff, and an explicit give-up state that surfaces in the UI instead of retrying forever.
+- Delegation polling with bounded backoff, and an explicit give-up state that surfaces in the UI instead of retrying forever. *Deferred within the milestone:* zone creation and delegation polling need the `provider_operations` read-back path against a live account, so they ship with the token the owner has yet to create.
 
 ### Milestone 2 — mail hosting
 

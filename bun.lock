@@ -144,6 +144,8 @@
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",
         "@loxep/domain": "workspace:*",
+        "@loxep/infrastructure": "workspace:*",
+        "@loxep/integration-cloudflare": "workspace:*",
         "@loxep/integration-ebay": "workspace:*",
         "@loxep/integration-etsy": "workspace:*",
         "@loxep/integration-woo": "workspace:*",
@@ -248,6 +250,24 @@
       "devDependencies": {
         "@types/node": "24.13.3",
         "@types/pg": "8.21.0",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/infrastructure": {
+      "name": "@loxep/infrastructure",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
+        "drizzle-orm": "0.45.2",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/pg": "8.21.0",
+        "graphile-worker": "0.17.3",
+        "pg": "8.23.0",
         "typescript": "5.9.3",
         "vitest": "4.1.10",
       },
@@ -852,6 +872,8 @@
     "@loxep/docs": ["@loxep/docs@workspace:apps/docs"],
 
     "@loxep/domain": ["@loxep/domain@workspace:packages/domain"],
+
+    "@loxep/infrastructure": ["@loxep/infrastructure@workspace:packages/infrastructure"],
 
     "@loxep/integration-cloudflare": ["@loxep/integration-cloudflare@workspace:packages/integrations/cloudflare"],
 
