@@ -100,8 +100,12 @@ export default function ConnectionAddDialog({
           <TailscaleAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'termix-api' ? (
           <TermixAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'gatus-api' ? (
           <GatusAccountForm entities={entities} onDone={onOpenChange} />
+        ) : accounts.form === 'beszel-login' ? (
+          <BeszelAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <DockhandAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -1415,52 +1419,154 @@ function PurelymailAccountForm({
   );
 }
 
-const tailscaleAccountSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required'),
-  tailnet: z.string().trim(),
-  apiAccessToken: z.string().trim().min(1, 'API access token is required'),
-  economicEntityId: z.string()
-});
+const TAILSCALE_CREDENTIAL_MODES = ['oauth_client', 'api_access_token'] as const;
+type TailscaleCredentialMode = (typeof TAILSCALE_CREDENTIAL_MODES)[number];
+
+const TAILSCALE_MODE_OPTIONS: { value: TailscaleCredentialMode; label: string }[] = [
+  {
+    value: 'oauth_client',
+    label: 'OAuth client — recommended. Does not expire; Loxep renews it hourly on its own.'
+  },
+  {
+    value: 'api_access_token',
+    label: 'API access token — expires in at most 90 days, with no renewal.'
+  }
+];
+
+const tailscaleAccountSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name is required'),
+    tailnet: z.string().trim(),
+    mode: z.enum(TAILSCALE_CREDENTIAL_MODES),
+    clientId: z.string().trim(),
+    clientSecret: z.string().trim(),
+    apiAccessToken: z.string().trim(),
+    // `.or(z.undefined())` rather than `.optional()`: the latter makes the
+    // KEY optional in the inferred type, which mismatches `useAppForm`'s
+    // `defaultValues` (a required key whose VALUE is `Date | undefined`, the
+    // shape `DatePickerField`'s `useFieldContext<Date | undefined>()` wants).
+    expiresOn: z.date().or(z.undefined()),
+    economicEntityId: z.string()
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode === 'oauth_client') {
+      if (value.clientId === '') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['clientId'],
+          message: 'OAuth client id is required'
+        });
+      }
+      if (value.clientSecret === '') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['clientSecret'],
+          message: 'OAuth client secret is required'
+        });
+      }
+    } else if (value.apiAccessToken === '') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['apiAccessToken'],
+        message: 'API access token is required'
+      });
+    }
+  });
+
+/** `Date` from the picker → `YYYY-MM-DD` in the browser's own local calendar, not UTC. */
+function toDateOnlyString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 /**
- * Tailscale (loxep-4su): a personal API access token, the simplest of the
- * two documented auth modes (an OAuth client is the better fit for
- * unattended long-lived polling and is a follow-up — see the adapter
- * package). Verified against
+ * Tailscale (loxep-4su, extended by loxep-50t §2.2): two documented
+ * credential modes, verified against
  * https://tailscale.com/docs/reference/tailscale-api and
- * https://tailscale.com/docs/features/oauth-clients, 2026-08-13.
+ * https://tailscale.com/docs/features/oauth-clients, 2026-08-13. The OAuth
+ * client is the DEFAULT and RECOMMENDED branch — it never expires because
+ * Loxep re-exchanges the short-lived minted token automatically — because
+ * shipping only the API-access-token branch (as this form did before
+ * loxep-50t) makes an unattended credential that WILL silently die the only
+ * option.
  */
-function TailscaleSetupGuidance() {
+function TailscaleSetupGuidance({ mode }: { mode: TailscaleCredentialMode }) {
   return (
     <SetupGuidance>
-      <GuidanceSteps>
-        <GuidanceStep>
-          Sign in to the Tailscale admin console as an Owner, Admin, IT admin, or Network admin of
-          the tailnet.
-        </GuidanceStep>
-        <GuidanceStep>
-          Open the <strong>Keys</strong> page and generate a new API access token.
-          <GuidanceNote>
-            Choose an expiry of up to 90 days — Tailscale does not offer a longer or auto-renewing
-            option for this credential.
-          </GuidanceNote>
-        </GuidanceStep>
-        <GuidanceStep>
-          Copy the token before leaving the page; Tailscale will not show it again.
-        </GuidanceStep>
-      </GuidanceSteps>
-      <GuidanceCallout>
-        <p>
-          This token <strong>expires</strong> on the schedule you chose — there is no auto-renewal.
-          When it does, Loxep reports the connection as unable to authenticate; come back here and
-          paste a freshly generated token.
-        </p>
-        <p>
-          Leave the tailnet field blank to use <code>-</code>, Tailscale&apos;s shorthand for
-          &ldquo;the default tailnet of this token&rdquo; — the right choice unless the account
-          belongs to more than one tailnet.
-        </p>
-      </GuidanceCallout>
+      {mode === 'oauth_client' ? (
+        <>
+          <GuidanceSteps>
+            <GuidanceStep>
+              Sign in to the Tailscale admin console as an Owner, Admin, IT admin, or Network admin
+              of the tailnet.
+            </GuidanceStep>
+            <GuidanceStep>
+              Open <strong>Settings</strong> → <strong>OAuth clients</strong> and generate a new
+              client.
+            </GuidanceStep>
+            <GuidanceStep>
+              Grant it exactly the <code className='font-mono'>devices:core:read</code> scope.
+              <GuidanceNote>
+                <code className='font-mono'>devices:core</code> without the{' '}
+                <code className='font-mono'>read</code> suffix also grants write access.
+                Loxep&apos;s read-only-ness is enforced in its own adapter code, not by this scope —
+                but the narrower scope is still the right default, and there is no reason to grant
+                more.
+              </GuidanceNote>
+            </GuidanceStep>
+            <GuidanceStep>
+              Copy the client ID and client secret into the fields below; Tailscale shows the secret
+              once.
+            </GuidanceStep>
+          </GuidanceSteps>
+          <GuidanceCallout>
+            <p>
+              An OAuth client&apos;s minted access token lives one hour; Loxep re-exchanges it
+              automatically on every poll, so there is nothing to renew by hand and nothing that
+              silently expires.
+            </p>
+            <p>
+              Leave the tailnet field blank to use <code>-</code>, Tailscale&apos;s shorthand for
+              &ldquo;the default tailnet of this credential&rdquo; — the right choice unless the
+              account belongs to more than one tailnet.
+            </p>
+          </GuidanceCallout>
+        </>
+      ) : (
+        <>
+          <GuidanceSteps>
+            <GuidanceStep>
+              Sign in to the Tailscale admin console as an Owner, Admin, IT admin, or Network admin
+              of the tailnet.
+            </GuidanceStep>
+            <GuidanceStep>
+              Open the <strong>Keys</strong> page and generate a new API access token.
+              <GuidanceNote>
+                Choose an expiry of up to 90 days — Tailscale does not offer a longer or
+                auto-renewing option for this credential, which is exactly why the OAuth client
+                branch above is the recommended default.
+              </GuidanceNote>
+            </GuidanceStep>
+            <GuidanceStep>
+              Copy the token before leaving the page; Tailscale will not show it again.
+            </GuidanceStep>
+          </GuidanceSteps>
+          <GuidanceCallout>
+            <p>
+              This token <strong>expires</strong> on the schedule you chose — there is no
+              auto-renewal. When it does, Loxep reports the connection as unable to authenticate;
+              come back here and paste a freshly generated token.
+            </p>
+            <p>
+              Leave the tailnet field blank to use <code>-</code>, Tailscale&apos;s shorthand for
+              &ldquo;the default tailnet of this token&rdquo; — the right choice unless the account
+              belongs to more than one tailnet.
+            </p>
+          </GuidanceCallout>
+        </>
+      )}
     </SetupGuidance>
   );
 }
@@ -1475,16 +1581,35 @@ function TailscaleAccountForm({
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
-    mutationFn: (values: z.infer<typeof tailscaleAccountSchema>) =>
-      createStoreConnection({
-        data: {
-          service: 'tailscale',
-          name: values.name,
-          apiAccessToken: values.apiAccessToken,
-          ...(values.tailnet === '' ? {} : { tailnet: values.tailnet }),
-          economicEntityId: entityIdFrom(values.economicEntityId)
-        }
-      }),
+    mutationFn: (values: z.infer<typeof tailscaleAccountSchema>) => {
+      const tailnet = values.tailnet === '' ? {} : { tailnet: values.tailnet };
+      const economicEntityId = entityIdFrom(values.economicEntityId);
+      return values.mode === 'oauth_client'
+        ? createStoreConnection({
+            data: {
+              service: 'tailscale',
+              mode: 'oauth_client',
+              name: values.name,
+              ...tailnet,
+              clientId: values.clientId,
+              clientSecret: values.clientSecret,
+              economicEntityId
+            }
+          })
+        : createStoreConnection({
+            data: {
+              service: 'tailscale',
+              mode: 'api_access_token',
+              name: values.name,
+              ...tailnet,
+              apiAccessToken: values.apiAccessToken,
+              ...(values.expiresOn === undefined
+                ? {}
+                : { credentialExpiresAt: toDateOnlyString(values.expiresOn) }),
+              economicEntityId
+            }
+          });
+    },
     onSuccess: () => {
       toast.success('Tailscale tailnet connected');
       queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
@@ -1497,7 +1622,11 @@ function TailscaleAccountForm({
     defaultValues: {
       name: '',
       tailnet: '',
+      mode: 'oauth_client' as TailscaleCredentialMode,
+      clientId: '',
+      clientSecret: '',
       apiAccessToken: '',
+      expiresOn: undefined as Date | undefined,
       economicEntityId: NO_ENTITY_VALUE
     },
     validators: { onSubmit: tailscaleAccountSchema },
@@ -1512,7 +1641,9 @@ function TailscaleAccountForm({
 
   return (
     <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
-      <TailscaleSetupGuidance />
+      <form.Subscribe selector={(state) => state.values.mode}>
+        {(mode) => <TailscaleSetupGuidance mode={mode} />}
+      </form.Subscribe>
       <FieldGroup>
         <form.AppField
           name='name'
@@ -1530,23 +1661,76 @@ function TailscaleAccountForm({
           children={(field) => (
             <field.TextField
               label='Tailnet'
-              placeholder='- (default tailnet of the token)'
+              placeholder='- (default tailnet of the credential)'
               description='Non-secret; kept as ordinary connection configuration. Leave blank for “-”.'
             />
           )}
         />
         <form.AppField
-          name='apiAccessToken'
+          name='mode'
           children={(field) => (
-            <field.TextField
-              label='API access token'
+            <field.RadioGroupField
+              label='Credential type'
               required
-              type='password'
-              autoComplete='new-password'
-              description='Write-only: stored encrypted, never displayed again. Expires on the schedule chosen when it was generated.'
+              options={TAILSCALE_MODE_OPTIONS}
             />
           )}
         />
+        <form.Subscribe selector={(state) => state.values.mode}>
+          {(mode) =>
+            mode === 'oauth_client' ? (
+              <>
+                <form.AppField
+                  name='clientId'
+                  children={(field) => (
+                    <field.TextField
+                      label='OAuth client ID'
+                      required
+                      autoComplete='off'
+                      description='Write-only: stored encrypted, never displayed again.'
+                    />
+                  )}
+                />
+                <form.AppField
+                  name='clientSecret'
+                  children={(field) => (
+                    <field.TextField
+                      label='OAuth client secret'
+                      required
+                      type='password'
+                      autoComplete='new-password'
+                      description='Write-only: stored encrypted, never displayed again.'
+                    />
+                  )}
+                />
+              </>
+            ) : (
+              <>
+                <form.AppField
+                  name='apiAccessToken'
+                  children={(field) => (
+                    <field.TextField
+                      label='API access token'
+                      required
+                      type='password'
+                      autoComplete='new-password'
+                      description='Write-only: stored encrypted, never displayed again. Expires on the schedule chosen when it was generated.'
+                    />
+                  )}
+                />
+                <form.AppField
+                  name='expiresOn'
+                  children={(field) => (
+                    <field.DatePickerField
+                      label='Recorded expiry (optional)'
+                      description="Tailscale showed an expiry when you generated this token. Record it and Loxep will warn you before it dies. Leave blank if you don't know."
+                    />
+                  )}
+                />
+              </>
+            )
+          }
+        </form.Subscribe>
         <form.AppField
           name='economicEntityId'
           children={(field) => (
@@ -1879,6 +2063,341 @@ function GatusAccountForm({
               autoComplete='new-password'
               placeholder='Optional — Basic auth only'
               description='Write-only: stored encrypted, never displayed again. Provide together with username, or leave both blank.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect instance</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const beszelAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  baseUrl: z.url(),
+  email: z.string().trim().min(1, 'Email is required'),
+  password: z.string().trim().min(1, 'Password is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Beszel (loxep-rf4 scope (b), loxep-y64 §7 slice 1): a dedicated READONLY
+ * user, not an API token — Beszel issues none. Verified against upstream's
+ * own documentation of the `users` collection's roles
+ * (`beszel_credentials` in `@loxep/domain` records the full citation): the
+ * lowest role can view only the systems an admin has shared with it and
+ * cannot create or delete systems. This form must never describe the
+ * credential as a token of any kind — see that bundle doc for the
+ * correction this label exists to make.
+ */
+function BeszelSetupGuidance() {
+  return (
+    <SetupGuidance title='Beszel readonly user'>
+      <GuidanceSteps>
+        <GuidanceStep>Sign in to the Beszel hub as an admin or superuser.</GuidanceStep>
+        <GuidanceStep>
+          In the hub&apos;s Users collection, create a new user and give it its own email — a
+          dedicated account, not the one you sign in with day to day.
+        </GuidanceStep>
+        <GuidanceStep>
+          Set its role to the lowest one Beszel offers for the Users collection.
+          <GuidanceNote>
+            That role can view any system an admin has shared with it, but cannot create or delete
+            systems. It is deliberately not the admin or superuser role.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Share the systems this account should observe with it — or share all of them, if that is
+          the intent — then enter its email and password below.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Beszel issues no scoped key of any kind for this purpose; the readonly login itself is the
+          whole credential, exchanged for a short-lived session on every read. The password is
+          write-only here: stored encrypted, never displayed again.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function BeszelAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof beszelAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'beszel',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          email: values.email,
+          password: values.password,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Beszel hub connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the hub')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      email: '',
+      password: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: beszelAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <BeszelSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Hub name'
+              required
+              placeholder='Main Beszel hub'
+              description='How this hub is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Hub base URL'
+              required
+              placeholder='https://beszel.example.com'
+              description='The hub root, including https:// and the port if non-standard.'
+            />
+          )}
+        />
+        <form.AppField
+          name='email'
+          children={(field) => (
+            <field.TextField
+              label='Email'
+              required
+              type='email'
+              autoComplete='off'
+              description='The dedicated Beszel readonly user’s email.'
+            />
+          )}
+        />
+        <form.AppField
+          name='password'
+          children={(field) => (
+            <field.TextField
+              label='Password'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect hub</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const dockhandAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  baseUrl: z.url(),
+  username: z.string().trim().min(1, 'Username is required'),
+  password: z.string().trim().min(1, 'Password is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Dockhand (loxep-rf4 scope (b), loxep-hb7 §1.7): an ordinary session login
+ * — Dockhand's published API reference documents exactly one machine-usable
+ * authentication mode, an HTTP-only session cookie from `POST
+ * /api/auth/login`, and no API key or personal access token anywhere
+ * (`dockhand_credentials` in `@loxep/domain` records the full citation).
+ * This form must say "Dockhand username and password", never describe the
+ * credential as a token of any kind.
+ */
+function DockhandSetupGuidance() {
+  return (
+    <SetupGuidance title='Dockhand username and password'>
+      <GuidanceSteps>
+        <GuidanceStep>Sign in to the Dockhand instance as an admin.</GuidanceStep>
+        <GuidanceStep>
+          Create a new user for Loxep to sign in as — not the admin account you use yourself.
+        </GuidanceStep>
+        <GuidanceStep>
+          Grant it exactly these four permissions:{' '}
+          <code className='font-mono'>environments:view</code>,{' '}
+          <code className='font-mono'>environments:edit</code>,{' '}
+          <code className='font-mono'>containers:view</code>, and{' '}
+          <code className='font-mono'>stacks:view</code>.
+          <GuidanceNote>
+            The same session that can read a container list can, at Dockhand&apos;s own API, start
+            and stop containers. Loxep never does — that restraint is enforced in Loxep&apos;s own
+            adapter code, not by anything this account&apos;s permissions withhold — but a
+            dedicated, narrowly-permissioned account is still the right account to hand over.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>Enter that account&apos;s username and password below.</GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Dockhand issues no scoped key of any kind — this login is the whole credential. The
+          password is write-only here: stored encrypted, never displayed again, and re-exchanged for
+          a session on each poll.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function DockhandAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof dockhandAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'dockhand',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          username: values.username,
+          password: values.password,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Dockhand instance connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the instance')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      username: '',
+      password: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: dockhandAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <DockhandSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Instance name'
+              required
+              placeholder='Main Dockhand instance'
+              description='How this instance is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Instance URL'
+              required
+              placeholder='https://dockhand.example.com'
+              description='The instance root, including https:// and the port if non-standard. A pasted API URL is normalized automatically.'
+            />
+          )}
+        />
+        <form.AppField
+          name='username'
+          children={(field) => <field.TextField label='Username' required autoComplete='off' />}
+        />
+        <form.AppField
+          name='password'
+          children={(field) => (
+            <field.TextField
+              label='Password'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again.'
             />
           )}
         />

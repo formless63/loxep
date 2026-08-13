@@ -34,6 +34,8 @@ export type IntegrationServiceId =
   | 'tailscale'
   | 'termix'
   | 'gatus'
+  | 'beszel'
+  | 'dockhand'
   | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
@@ -91,7 +93,9 @@ export type IntegrationAccountForm =
   | 'purelymail-api'
   | 'tailscale-api'
   | 'termix-api'
-  | 'gatus-api';
+  | 'gatus-api'
+  | 'beszel-login'
+  | 'dockhand-login';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -157,6 +161,53 @@ const DEV_FILE_KEYSET_WARNING = {
   title:
     'Resolved from the local ~/.config/loxep/ebay-sandbox.env development fallback, not a stored application secret. A stored secret always takes precedence over this file; it exists for local sandbox development only and does not carry to another install or a fresh database.'
 };
+
+/**
+ * Days-remaining threshold for the Tailscale token-expiry warning badge
+ * (loxep-50t §2.2d). A constant, deliberately not a per-connection setting —
+ * a "how early to warn" knob is the kind nobody tunes and everybody reads
+ * past. If this ever needs to be configurable it belongs in the installation
+ * settings service as one shared value, not a per-connection field.
+ */
+const TAILSCALE_EXPIRY_WARNING_DAYS = 14;
+
+/**
+ * Reads the non-secret `connections.config.tailscale` half written by
+ * `createStoreConnection` (`apps/web/src/server/admin-functions.ts`):
+ * `credentialMode` (which of the two `tailscale_credentials` bundle shapes
+ * this connection uses) and, token-mode only, the operator-recorded
+ * `credentialExpiresAt`. Neither is secret — the credential values
+ * themselves stay in the encrypted bundle and never reach this module.
+ */
+function tailscaleConfig(connection: ConnectionDto): {
+  credentialMode: unknown;
+  credentialExpiresAt: unknown;
+} {
+  const raw = connection.config.tailscale;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { credentialMode: undefined, credentialExpiresAt: undefined };
+  }
+  const record = raw as Record<string, unknown>;
+  return { credentialMode: record.credentialMode, credentialExpiresAt: record.credentialExpiresAt };
+}
+
+function tailscaleCredentialMode(
+  connection: ConnectionDto
+): 'oauth_client' | 'api_access_token' | null {
+  const { credentialMode } = tailscaleConfig(connection);
+  return credentialMode === 'oauth_client' || credentialMode === 'api_access_token'
+    ? credentialMode
+    : null;
+}
+
+/** Whole days remaining until the recorded expiry, or `null` if none was recorded / unparsable. */
+function tailscaleDaysUntilExpiry(connection: ConnectionDto): number | null {
+  const { credentialExpiresAt } = tailscaleConfig(connection);
+  if (typeof credentialExpiresAt !== 'string') return null;
+  const expiresAt = new Date(credentialExpiresAt);
+  if (Number.isNaN(expiresAt.getTime())) return null;
+  return Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+}
 
 export const integrationServices: IntegrationService[] = [
   {
@@ -411,14 +462,47 @@ export const integrationServices: IntegrationService[] = [
       form: 'tailscale-api',
       addLabel: 'Add Tailscale tailnet',
       formHint:
-        'A personal API access token is stored encrypted and never shown again. It expires on the schedule you chose when generating it (up to 90 days) and must be replaced manually — Loxep surfaces the expiry as an ordinary authentication error when it happens.',
+        'Two credential shapes are supported: an OAuth client, which never expires because Loxep renews it hourly on its own, or a personal API access token, which expires in at most 90 days with no auto-renewal. Both are stored encrypted and never shown again.',
       blockedReason: () => null
     },
     status: ({ connections }) => {
-      const count = accountsFor(connections, 'tailscale').length;
-      return count > 0
-        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
-        : { tone: 'unconfigured', label: 'No tailnets connected', details: [] };
+      const accounts = accountsFor(connections, 'tailscale');
+      const count = accounts.length;
+      if (count === 0) {
+        return { tone: 'unconfigured', label: 'No tailnets connected', details: [] };
+      }
+      const details = [accountCountDetail(count)];
+      // Token-mode connections carry an expiry hazard OAuth-mode ones do not
+      // (loxep-50t §2.2). An OAuth-mode account gets an ordinary "auto-renewing"
+      // chip; the soonest token-mode expiry across every live account drives the
+      // one warning badge a card can show.
+      let anyOAuth = false;
+      let soonestDaysRemaining: number | null = null;
+      for (const connection of accounts) {
+        const mode = tailscaleCredentialMode(connection);
+        if (mode === 'oauth_client') {
+          anyOAuth = true;
+          continue;
+        }
+        const daysRemaining = tailscaleDaysUntilExpiry(connection);
+        if (daysRemaining === null) continue;
+        if (soonestDaysRemaining === null || daysRemaining < soonestDaysRemaining) {
+          soonestDaysRemaining = daysRemaining;
+        }
+      }
+      if (anyOAuth) details.push('auto-renewing');
+      const warning =
+        soonestDaysRemaining !== null && soonestDaysRemaining <= TAILSCALE_EXPIRY_WARNING_DAYS
+          ? {
+              label:
+                soonestDaysRemaining <= 0
+                  ? 'Token expiry passed'
+                  : `Token expires in ${soonestDaysRemaining} day${soonestDaysRemaining === 1 ? '' : 's'}`,
+              title:
+                'Generate a fresh API access token from the Tailscale admin console’s Keys page and paste it into the connection, or switch this connection to an OAuth client, which renews itself automatically and never needs this warning.'
+            }
+          : undefined;
+      return { tone: 'ready', label: 'Connected', details, ...(warning && { warning }) };
     }
   },
   {
@@ -462,6 +546,52 @@ export const integrationServices: IntegrationService[] = [
     },
     status: ({ connections }) => {
       const count = accountsFor(connections, 'gatus').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No instances connected', details: [] };
+    }
+  },
+  {
+    id: 'beszel',
+    name: 'Beszel',
+    category: 'Infrastructure',
+    description:
+      'Read a Beszel hub’s system inventory and each system’s reported status for the fleet view. Loxep signs in as a dedicated readonly account — it can view only the systems an admin has shared with it, and can never create, edit, or acknowledge anything in Beszel. Each Beszel hub is one connection.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage hubs' },
+    accounts: {
+      provider: 'beszel',
+      kind: 'fleet_observability',
+      form: 'beszel-login',
+      addLabel: 'Add Beszel hub',
+      formHint:
+        'The hub base URL is kept as ordinary connection configuration. Email and password are for a dedicated Beszel readonly user — stored encrypted and never shown again. Beszel issues no scoped key of any kind; this readonly login is the whole credential.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'beszel').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No hubs connected', details: [] };
+    }
+  },
+  {
+    id: 'dockhand',
+    name: 'Dockhand',
+    category: 'Infrastructure',
+    description:
+      'Read a Dockhand instance’s registered hosts, containers, and stacks for the fleet view. Read-only: Loxep never starts, stops, restarts, execs into, or otherwise manages a container through Dockhand. Each Dockhand instance is one connection.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage instances' },
+    accounts: {
+      provider: 'dockhand',
+      kind: 'fleet_observability',
+      form: 'dockhand-login',
+      addLabel: 'Add Dockhand instance',
+      formHint:
+        'The instance URL is kept as ordinary connection configuration. Dockhand username and password are stored encrypted and never shown again — Dockhand issues no scoped key of any kind, only a session login.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'dockhand').length;
       return count > 0
         ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
         : { tone: 'unconfigured', label: 'No instances connected', details: [] };

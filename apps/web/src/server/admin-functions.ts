@@ -584,20 +584,36 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     apiToken: z.string().trim().min(1)
   }),
   /**
-   * Tailscale and Termix (loxep-4su/loxep-g3f): read-only fleet-observability
-   * connections. Neither carries a `baseUrl` field named that way in the
-   * `woocommerce`/`medusa` sense of "the one non-secret config value" —
-   * Tailscale's `tailnet` plays that role instead (defaulting to `-`, its own
-   * "default tailnet of this token" shorthand, when the operator leaves it
-   * blank), while Termix genuinely does need a base URL, being self-hosted
-   * like Beszel/Dockhand.
+   * Tailscale and Termix (loxep-4su/loxep-g3f, Tailscale extended by
+   * loxep-50t §2.2): read-only fleet-observability connections. Neither
+   * carries a `baseUrl` field named that way in the `woocommerce`/`medusa`
+   * sense of "the one non-secret config value" — Tailscale's `tailnet` plays
+   * that role instead (defaulting to `-`, its own "default tailnet of this
+   * credential" shorthand, when the operator leaves it blank), while Termix
+   * genuinely does need a base URL, being self-hosted like Beszel/Dockhand.
+   *
+   * Tailscale carries BOTH of its documented credential modes
+   * (`tailscale_credentials` in `@loxep/domain`) rather than picking one, per
+   * loxep-50t's finding that shipping only the API-access-token branch made
+   * an unattended credential that WILL silently expire the only option. The
+   * fields for the branch not chosen stay optional here and are validated for
+   * presence in the handler below (the same posture the Gatus branch already
+   * uses for its own optional pair) rather than in the schema, because a
+   * discriminated union nested inside this outer `service` union would need
+   * every branch to repeat the `service` literal for no benefit. `mode ===
+   * 'api_access_token'` is the only branch `credentialExpiresAt` applies to —
+   * an OAuth client renews itself and has no expiry to record.
    */
   z.strictObject({
     service: z.literal('tailscale'),
     name: z.string().trim().min(1),
     tailnet: z.string().trim().min(1).optional(),
     economicEntityId: z.uuid().nullable(),
-    apiAccessToken: z.string().trim().min(1)
+    mode: z.enum(['oauth_client', 'api_access_token']),
+    apiAccessToken: z.string().trim().min(1).optional(),
+    credentialExpiresAt: z.iso.date().optional(),
+    clientId: z.string().trim().min(1).optional(),
+    clientSecret: z.string().trim().min(1).optional()
   }),
   z.strictObject({
     service: z.literal('termix'),
@@ -624,8 +640,55 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     economicEntityId: z.uuid().nullable(),
     username: z.string().trim().min(1).optional(),
     password: z.string().trim().min(1).optional()
+  }),
+  /**
+   * Beszel and Dockhand (loxep-rf4 scope (b), loxep-y64 §7 slice 1,
+   * loxep-hb7 §1.7): the last two fleet-observability providers with shipped
+   * adapters but no catalog entry until now. Both are login-shaped, like
+   * Termix, and both `baseUrl`s are normalized to their ORIGIN
+   * (`normalizeFleetBaseUrl` below) rather than only trimmed like every
+   * sibling above — Dockhand's is the case that matters (a pasted
+   * `.../api` URL must not double into `.../api/api` once the adapter
+   * appends its own API path), and Beszel gets the same treatment for
+   * consistency since both are "the instance root" in the operator's head.
+   *
+   * Beszel's pair is `email`/`password` (PocketBase's own field name is
+   * `identity`, but Beszel accounts are emails) for a dedicated READONLY
+   * user — never call this an API token in copy anywhere on this path;
+   * Beszel issues none (see `beszel_credentials` in `@loxep/domain`).
+   * Dockhand's pair is an ordinary `username`/`password` session login for
+   * the same reason (see `dockhand_credentials`).
+   */
+  z.strictObject({
+    service: z.literal('beszel'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    email: z.string().trim().min(1),
+    password: z.string().trim().min(1)
+  }),
+  z.strictObject({
+    service: z.literal('dockhand'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    username: z.string().trim().min(1),
+    password: z.string().trim().min(1)
   })
 ]);
+
+/**
+ * Normalizes a self-hosted fleet instance's pasted URL down to its origin —
+ * protocol, host, and port, dropping any path. Used by the Beszel and
+ * Dockhand branches below (loxep-hb7 §1.7's normalization rule): an operator
+ * who pastes the instance's API root (Dockhand: `.../api`) rather than its
+ * site root must not end up with that path doubled once the adapter appends
+ * its own API path onto `connections.config`. `data.baseUrl` is already a
+ * validated absolute URL (`z.url()`), so `new URL` here cannot throw.
+ */
+export function normalizeFleetBaseUrl(rawUrl: string): string {
+  return new URL(rawUrl).origin;
+}
 
 /**
  * Create a store/billing/marketplace/infrastructure connection plus its
@@ -697,14 +760,37 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
       config = {};
     } else if (data.service === 'tailscale') {
       kind = 'fleet_observability';
-      config = data.tailnet === undefined ? {} : { tailscale: { tailnet: data.tailnet } };
+      // Both credential modes are non-secret in `credentialMode` itself — it
+      // names a SHAPE, not a value — so the catalog card (loxep-50t §2.2d) can
+      // tell an auto-renewing OAuth connection from a token connection without
+      // a decryption round-trip. `credentialExpiresAt` is the operator-recorded
+      // date from the token branch only; an OAuth client has no expiry to
+      // record.
+      config = {
+        tailscale: {
+          ...(data.tailnet === undefined ? {} : { tailnet: data.tailnet }),
+          credentialMode: data.mode,
+          ...(data.mode === 'api_access_token' && data.credentialExpiresAt !== undefined
+            ? { credentialExpiresAt: data.credentialExpiresAt }
+            : {})
+        }
+      };
     } else if (data.service === 'termix') {
       kind = 'fleet_observability';
       config = { termix: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
-    } else {
-      // Gatus (loxep-ovj.4): same shape as Termix's config half.
+    } else if (data.service === 'gatus') {
       kind = 'fleet_observability';
       config = { gatus: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else if (data.service === 'beszel') {
+      // Beszel (loxep-y64 §7 slice 1): origin-normalized, per this union's
+      // Beszel/Dockhand doc comment.
+      kind = 'fleet_observability';
+      config = { beszel: { baseUrl: normalizeFleetBaseUrl(data.baseUrl) } };
+    } else {
+      // Dockhand (loxep-hb7 §1.7): origin-normalized so a pasted `.../api`
+      // URL never doubles once the adapter appends its own API path.
+      kind = 'fleet_observability';
+      config = { dockhand: { baseUrl: normalizeFleetBaseUrl(data.baseUrl) } };
     }
 
     const created = await connections.createConnection(
@@ -760,12 +846,31 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { actorUserId: session.user.id }
       );
     } else if (data.service === 'tailscale') {
-      await connections.setConnectionCredential(
-        created.id,
-        'tailscale_credentials',
-        { mode: 'api_access_token', apiAccessToken: data.apiAccessToken },
-        { actorUserId: session.user.id }
-      );
+      // Two shapes of `tailscale_credentials` (loxep-50t §2.2a): the form
+      // never sends fields for the branch not chosen, but the handler still
+      // checks presence rather than trusting `mode` alone, matching the
+      // Gatus branch's own posture below.
+      if (data.mode === 'oauth_client') {
+        if (data.clientId === undefined || data.clientSecret === undefined) {
+          throw new Error('Tailscale OAuth client id and client secret are both required');
+        }
+        await connections.setConnectionCredential(
+          created.id,
+          'tailscale_credentials',
+          { mode: 'oauth_client', clientId: data.clientId, clientSecret: data.clientSecret },
+          { actorUserId: session.user.id }
+        );
+      } else {
+        if (data.apiAccessToken === undefined) {
+          throw new Error('Tailscale API access token is required');
+        }
+        await connections.setConnectionCredential(
+          created.id,
+          'tailscale_credentials',
+          { mode: 'api_access_token', apiAccessToken: data.apiAccessToken },
+          { actorUserId: session.user.id }
+        );
+      }
     } else if (data.service === 'termix') {
       await connections.setConnectionCredential(
         created.id,
@@ -773,7 +878,7 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { username: data.username, password: data.password },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'gatus') {
       // Gatus (loxep-ovj.4): the pair is OPTIONAL — a legitimate Gatus
       // instance may be fully open or OIDC-secured, with no Basic credential
       // to store at all. `gatus_credentials` keeps the pair atomic when it IS
@@ -792,6 +897,24 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         );
       }
       // else: no credential row at all — the instance is open or OIDC-secured.
+    } else if (data.service === 'beszel') {
+      // Beszel readonly user (loxep-y64 §7 slice 1) — email/password, never
+      // called an API token anywhere on this path; Beszel issues none.
+      await connections.setConnectionCredential(
+        created.id,
+        'beszel_credentials',
+        { email: data.email, password: data.password },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      // Dockhand (loxep-hb7 §1.7) — an ordinary session login, not an API
+      // token; Dockhand publishes none.
+      await connections.setConnectionCredential(
+        created.id,
+        'dockhand_credentials',
+        { username: data.username, password: data.password },
+        { actorUserId: session.user.id }
+      );
     }
     if (data.economicEntityId !== null) {
       await connections.attributeConnection(created.id, data.economicEntityId, {
