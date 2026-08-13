@@ -159,6 +159,8 @@
         "zod": "4.4.3",
       },
       "devDependencies": {
+        "@loxep/integration-beszel": "workspace:*",
+        "@loxep/integration-dockhand": "workspace:*",
         "@types/node": "24.13.3",
         "@types/pg": "8.21.0",
         "typescript": "5.9.3",
@@ -239,6 +241,20 @@
         "@types/node": "24.13.3",
         "@types/pg": "8.21.0",
         "drizzle-kit": "0.31.10",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/documents": {
+      "name": "@loxep/documents",
+      "version": "0.0.0",
+      "dependencies": {
+        "@loxep/db": "workspace:*",
+        "@loxep/domain": "workspace:*",
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
         "typescript": "5.9.3",
         "vitest": "4.1.10",
       },
@@ -922,6 +938,8 @@
     "@loxep/db": ["@loxep/db@workspace:packages/db"],
 
     "@loxep/docs": ["@loxep/docs@workspace:apps/docs"],
+
+    "@loxep/documents": ["@loxep/documents@workspace:packages/documents"],
 
     "@loxep/domain": ["@loxep/domain@workspace:packages/domain"],
 
