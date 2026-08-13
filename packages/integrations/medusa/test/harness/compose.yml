@@ -1,0 +1,79 @@
+# Throwaway Medusa v2 backend for Loxep's Medusa live-verification suites
+# (`packages/integrations/medusa/test/live-store.test.ts` and
+# `packages/app/test/live-medusa-sync.test.ts`).
+#
+# Deliberately isolated from the Loxep dev stack: its own compose project
+# (`medusa-verify`), its own PostgreSQL, loopback-only published ports
+# (5439 / 9000 / 9443) so nothing here is reachable off this machine.
+#
+# Container names are explicit, matching the repo-wide rule that every
+# container is named and no one-shot containers exist.
+#
+# See ./harness.md (one level up) for the full provisioning walkthrough,
+# including the two paths this file cannot check in: the scaffolded Medusa
+# application directory and the self-signed TLS material.
+name: medusa-verify
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: medusa-verify-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medusa
+      POSTGRES_PASSWORD: medusa_verify_pw
+      POSTGRES_DB: medusa
+    ports:
+      - "127.0.0.1:5439:5432"
+    volumes:
+      - medusa-verify-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medusa -d medusa"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # `npx medusa develop` over a scaffolded app on a bind mount, rather than a
+  # published Medusa image: Medusa v2 ships no first-party backend image, and
+  # the application is generated per-project by `create-medusa-app`. The
+  # directory therefore cannot live in this repo — MEDUSA_VERIFY_APP_DIR points
+  # at wherever you scaffolded it (harness.md step 1).
+  medusa:
+    image: node:24-bookworm-slim
+    container_name: medusa-verify-app
+    restart: unless-stopped
+    user: "1000:1000"
+    working_dir: /app/apps/backend
+    command: ["npx", "medusa", "develop"]
+    environment:
+      NODE_ENV: development
+      NODE_OPTIONS: --max-old-space-size=3072
+      PORT: "9000"
+      DATABASE_URL: postgres://medusa:medusa_verify_pw@db:5432/medusa
+    volumes:
+      - ${MEDUSA_VERIFY_APP_DIR:?set MEDUSA_VERIFY_APP_DIR to the scaffolded Medusa app directory — see harness.md}:/app
+    ports:
+      - "127.0.0.1:9000:9000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The Loxep Medusa adapter refuses a non-https baseUrl by design
+  # (`packages/integrations/medusa/src/config.ts`), and that rule is
+  # production-correct and must NOT be relaxed for a test. So the live suites
+  # talk to this TLS terminator rather than to :9000 directly. The certificate
+  # is self-signed and generated locally (harness.md step 2); the live tests
+  # trust that one certificate explicitly and nothing else.
+  proxy:
+    image: nginx:alpine
+    container_name: medusa-verify-proxy
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tls:/tls:ro
+    ports:
+      - "127.0.0.1:9443:9443"
+    depends_on:
+      - medusa
+
+volumes:
+  medusa-verify-pgdata:

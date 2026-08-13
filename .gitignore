@@ -33,3 +33,7 @@ compose.override.yml
 # vim swap files (a .env swapfile header was once accidentally committed)
 *.swp
 *.swo
+
+# Medusa live-verification harness TLS material (generated locally; a private
+# key never belongs in the repo — see packages/integrations/medusa/test/harness.md)
+packages/integrations/medusa/test/harness/tls/
