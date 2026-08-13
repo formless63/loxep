@@ -106,7 +106,7 @@ Two placements are worth stating because they are easy to get wrong:
 - **Expenses live in `/finance`, not `/inventory`**, even though a reseller records most spend while standing next to a lot they just bought. The workspace map already composes billing, expenses, payments, banking, accounting, and tax there; expenses are its first tenant, not its definition. Quick entry is reachable from the command palette and from acquisition detail so the operator never has to navigate to record a spend.
 - **Intake review lives in `/inventory`**, and it is one surface serving three producers — hand entry, an ingested marketplace purchase, and a parsed receipt. Unifying them means the operator learns one review screen rather than three.
 
-`/dashboard` gains nothing from this phase, deliberately. Expenses already reach it through the Financial band, which reads the ledger; acquisitions reach neither band, because COGS posting does not exist yet. A spend tile on the Money band would show an incomplete number, so it waits.
+`/dashboard` gains nothing from this phase, deliberately — Phase 9 built the three workspaces above and left the dashboard untouched on purpose. Expenses already reach it through the Financial band, which reads the ledger. *(Update: COGS posting from inventory depletion has since shipped, outside this phase's own scope — see [Phase 5](../roadmap/#phase-5--financial-foundation) — so acquisitions now reach the ledger too. The dashboard itself still does not read any of the six domains that shipped after it, including this one; that gap and its fix are tracked in `loxep-9m2`, not here.)*
 
 ### Infrastructure is a future peer root, and it is about the installation itself
 

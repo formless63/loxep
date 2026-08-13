@@ -2,6 +2,10 @@
 title: Connecting Termix
 ---
 
+:::note[Connectable today; the read below does not run yet]
+The catalog card and connection form described here exist and work. What does not exist yet is anything that *calls* the adapter: no scheduled probe and no on-demand validate action construct `createTermixAdapter` in production, so a saved connection's health shows "unknown (never succeeded)" indefinitely rather than the host reads this page describes. Tracked as `loxep-rf4`. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
+:::
+
 [Termix](https://termix.site) is a self-hosted SSH host and remote-desktop manager. Loxep reads **its SSH host inventory and active terminal sessions**, so the fleet view can show which hosts Termix knows about and terminal-access evidence for them alongside everything else Loxep knows about the same machines.
 
 Loxep never opens a terminal, manages Docker, controls a systemd service, sends a process signal, or touches a file through Termix. Termix's own surface is large — it covers all of those — and Loxep's restraint is enforced entirely in Loxep's own code: no function it exports is capable of any of them, not "capable but unused."

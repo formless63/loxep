@@ -2,6 +2,10 @@
 title: Connecting Dockhand
 ---
 
+:::note[Not yet available in the running product]
+This guide describes the intended flow. `@loxep/integration-dockhand` (the read + host-intent adapter) has shipped, but `/settings/integrations` has no Dockhand catalog card and `/settings/connections` has no "Add Dockhand instance" form yet — a Dockhand credential cannot be pasted into Loxep today, and `planContainerHostOperations` has no runtime caller. Tracked as `loxep-rf4`. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
+:::
+
 [Dockhand](https://finsys-dockhand.mintlify.app) manages Docker hosts, containers, and Compose stacks. Loxep connects to it for two things, and the difference between them is the whole design:
 
 - **Reading.** Which hosts Dockhand manages, what containers are on them, and which stacks are running. This appears in Loxep's fleet view alongside everything else it knows about the same machine.

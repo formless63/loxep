@@ -2,6 +2,10 @@
 title: Connecting Tailscale
 ---
 
+:::note[Connectable today; the read below does not run yet]
+The catalog card and connection form described here exist and work. What does not exist yet is anything that *calls* the adapter: no scheduled probe and no on-demand validate action construct `createTailscaleAdapter` in production, so a saved connection's health shows "unknown (never succeeded)" indefinitely rather than the device reads this page describes. Tracked as `loxep-rf4`. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
+:::
+
 [Tailscale](https://tailscale.com) is a mesh VPN. Loxep reads **one row per device in your tailnet — its name, its addresses, and whether it is currently connected** — so the fleet view can show a machine's private-network address and reachability evidence alongside everything else Loxep knows about it.
 
 Loxep never authorizes, removes, tags, or otherwise changes a device. There is no path in the product that touches your tailnet's membership or configuration; it only reads the device list Tailscale's API already exposes to a credential with the right access.

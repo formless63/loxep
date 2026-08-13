@@ -58,6 +58,7 @@ export default defineConfig({
             { label: 'Workspaces & Navigation', slug: 'product/workspaces' },
             { label: 'Roadmap', slug: 'product/roadmap' },
             { label: 'Companion Services', slug: 'product/companion-services' },
+            { label: 'Integrations Status', slug: 'product/integrations-status' },
             { label: 'Weave Audit (2026-08)', slug: 'product/weave-audit-2026-08' },
           ],
         },

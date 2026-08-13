@@ -2,6 +2,10 @@
 title: Connecting Beszel
 ---
 
+:::note[Not yet available in the running product]
+This guide describes the intended flow. `@loxep/integration-beszel` (the read-only adapter) has shipped, but `/settings/integrations` has no Beszel catalog card and `/settings/connections` has no "Add Beszel hub" form yet — a Beszel credential cannot be pasted into Loxep today. Tracked as `loxep-rf4` (catalog entry + guided form) and `loxep-ovj.5` (registry entry, tier-2 probe). See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
+:::
+
 [Beszel](https://beszel.dev) is a lightweight server-monitoring hub. Loxep reads **one line per machine — is it up, and how fresh is that claim** — and links out to Beszel for everything else.
 
 That boundary is deliberate and permanent. Loxep does not store, chart, or retain CPU, memory, disk, or network history; Beszel already does that well, and duplicating it would make two systems authoritative about the same numbers. Loxep also never writes to Beszel: there is no path in the product that pauses a system, edits a record, or changes an alert.

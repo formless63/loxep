@@ -2,6 +2,10 @@
 title: Connecting Gatus
 ---
 
+:::note[Connectable today; the read below does not run yet]
+The catalog card and connection form described here exist, and the read adapter (`createGatusAdapter`) shipped. What does not exist yet is anything that *calls* it: no scheduled probe and no on-demand validate action construct it in production, so a saved connection's health shows "unknown (never succeeded)" indefinitely rather than the endpoint-status reads this page describes. Tracked as `loxep-rf4`. This is the opposite direction from [Publishing health to Gatus](../gatus-health-push/), which already runs on a schedule. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
+:::
+
 [Gatus](https://github.com/TwiN/gatus) is a self-hosted status/uptime monitor. Loxep reads **one line per endpoint Gatus is already watching — is it up, and how fresh is that claim** — and links out to Gatus for everything else, the same discipline it applies to [Beszel](../connecting-beszel/).
 
 Loxep never writes to a Gatus instance's configuration. Gatus's endpoints, conditions, and alerting are files the operator authors and Gatus itself hot-reloads every 30 seconds; Loxep only ever reads what is already declared. The one Gatus write path that exists — publishing Loxep's own health outward — is a separate, deliberate feature covered in [Publishing health to Gatus](../gatus-health-push/), not this guide.
