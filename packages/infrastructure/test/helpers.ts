@@ -5,6 +5,7 @@
  * Each test file creates its own scratch database so files run in parallel and
  * never depend on leftover state.
  */
+import { sql } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import type {
@@ -12,6 +13,9 @@ import type {
   DnsApplyResult,
   DnsProviderCapabilities,
   DnsProviderPort,
+  DnsTokenMintResult,
+  DnsTokenProviderPort,
+  DnsTokenRollResult,
   MailDnsRecord,
   MailDnsSummary,
   MailDomainState,
@@ -21,6 +25,7 @@ import type {
   MailboxSecretWriter,
   ObservedDnsRecord,
   ProviderZone,
+  TransactionalDnsTokenSecretWriter,
 } from "../src/index.ts";
 
 const DEFAULT_TEST_DATABASE_URL =
@@ -576,6 +581,158 @@ export function createStubMailProvider(
       return passwords.get(fullAddress);
     },
   };
+}
+
+/* -------------------------------------------- stub DNS token provider --- */
+
+export interface StubTokenProviderOptions {
+  /** Fails the NEXT mint call. Cleared after it fires once. */
+  failMintOnce?: { kind: string; message: string };
+  /** Fails the NEXT roll call. Cleared after it fires once. */
+  failRollOnce?: { kind: string; message: string };
+  /** Fails EVERY updatePolicy call, for testing the failure path repeatedly. */
+  failUpdatePolicy?: { kind: string; message: string };
+}
+
+export interface StubTokenProvider extends DnsTokenProviderPort {
+  readonly mintCalls: ReadonlyArray<{
+    name: string;
+    permissionScope: string;
+    zoneExternalIds: readonly string[];
+  }>;
+  readonly rollCalls: readonly string[];
+  readonly updatePolicyCalls: ReadonlyArray<{
+    externalTokenId: string;
+    zoneExternalIds: readonly string[];
+  }>;
+}
+
+class StubProviderCallError extends Error {
+  readonly kind: string;
+  constructor(kind: string, message: string) {
+    super(message);
+    this.kind = kind;
+  }
+}
+
+let stubTokenSeq = 0;
+
+export function createStubTokenProvider(
+  options: StubTokenProviderOptions = {},
+): StubTokenProvider {
+  const mintCalls: Array<{
+    name: string;
+    permissionScope: string;
+    zoneExternalIds: readonly string[];
+  }> = [];
+  const rollCalls: string[] = [];
+  const updatePolicyCalls: Array<{
+    externalTokenId: string;
+    zoneExternalIds: readonly string[];
+  }> = [];
+  const created = new Set<string>();
+  let failMintOnce = options.failMintOnce;
+  let failRollOnce = options.failRollOnce;
+
+  return {
+    async mintToken(input): Promise<DnsTokenMintResult> {
+      mintCalls.push({ ...input });
+      if (failMintOnce !== undefined) {
+        const failure = failMintOnce;
+        failMintOnce = undefined;
+        throw new StubProviderCallError(failure.kind, failure.message);
+      }
+      stubTokenSeq += 1;
+      const externalTokenId = `stub-token-${stubTokenSeq}`;
+      created.add(externalTokenId);
+      return { externalTokenId, value: `stub-value-${stubTokenSeq}` };
+    },
+
+    async rollToken(externalTokenId): Promise<DnsTokenRollResult> {
+      rollCalls.push(externalTokenId);
+      if (failRollOnce !== undefined) {
+        const failure = failRollOnce;
+        failRollOnce = undefined;
+        throw new StubProviderCallError(failure.kind, failure.message);
+      }
+      stubTokenSeq += 1;
+      return { value: `stub-rolled-value-${stubTokenSeq}` };
+    },
+
+    async updatePolicy(externalTokenId, zoneExternalIds): Promise<void> {
+      updatePolicyCalls.push({ externalTokenId, zoneExternalIds });
+      if (options.failUpdatePolicy !== undefined) {
+        throw new StubProviderCallError(
+          options.failUpdatePolicy.kind,
+          options.failUpdatePolicy.message,
+        );
+      }
+    },
+
+    async findTokenById(externalTokenId): Promise<{ exists: boolean }> {
+      return { exists: created.has(externalTokenId) };
+    },
+
+    get mintCalls() {
+      return mintCalls;
+    },
+    get rollCalls() {
+      return rollCalls;
+    },
+    get updatePolicyCalls() {
+      return updatePolicyCalls;
+    },
+  };
+}
+
+/**
+ * A {@link TransactionalDnsTokenSecretWriter} that writes through WHATEVER
+ * transaction handle it is given — the property the atomicity tests exist to
+ * exercise — and records what was stored, never a value in an assertion
+ * message.
+ *
+ * Raw SQL against `application_secrets` rather than the real
+ * `@loxep/domain` secrets service, for the same reason `helpers.ts` already
+ * makes that choice for mailbox passwords: this suite is testing `tokens.ts`'s
+ * transaction shape, not `@loxep/domain`'s encryption, and a real service
+ * would need a keyring this package deliberately has no dependency on.
+ */
+export function createRecordingDnsTokenSecretWriter(): TransactionalDnsTokenSecretWriter & {
+  readonly writes: ReadonlyArray<{ secretKey: string; purpose: "dns_edit_token" }>;
+  writeCountFor(secretKey: string): number;
+  storedValueContains(marker: string): boolean;
+} {
+  const writes: Array<{ secretKey: string; purpose: "dns_edit_token" }> = [];
+  const stored: string[] = [];
+
+  const writer = (async (tx, input) => {
+    writes.push({ secretKey: input.secretKey, purpose: input.purpose });
+    stored.push(input.payload.token);
+    const result = await tx.execute<{ id: string }>(sql`
+      insert into application_secrets (secret_key, purpose, current_version)
+      values (${input.secretKey}, ${input.purpose}, 1)
+      on conflict (secret_key)
+        do update set current_version = application_secrets.current_version + 1,
+                      updated_at = now()
+      returning id
+    `);
+    const rows = (result as unknown as { rows?: Array<{ id: string }> }).rows;
+    const id = rows?.[0]?.id;
+    if (id === undefined) throw new Error("secret upsert returned no row");
+    return { id };
+  }) as TransactionalDnsTokenSecretWriter & {
+    writes: typeof writes;
+    writeCountFor(secretKey: string): number;
+    storedValueContains(marker: string): boolean;
+  };
+
+  Object.defineProperty(writer, "writes", { value: writes, enumerable: true });
+  writer.writeCountFor = (secretKey) =>
+    writes.filter((entry) => entry.secretKey === secretKey).length;
+  writer.storedValueContains = (marker) =>
+    stored.some((value) => value.includes(marker));
+
+  return writer;
 }
 
 /* ------------------------------------------------ recording secret writer */

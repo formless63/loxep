@@ -30,8 +30,13 @@ import {
  *      inventory_items gains six nullable/defaulted columns (description,
  *      sale_mode, package weight/dimensions) and inventory_item_specifics
  *      is new. No DDL for images — media_links (0004) already covers them.
+ * 0016 infrastructure tokens (Phase 7 milestone 3, loxep-lmy.3): the
+ *      design's last two tables — dns_provider_tokens (a narrow per-host
+ *      DNS-edit credential Loxep MINTS) and dns_provider_token_zones (the
+ *      zone-scope INTENT a policy sync rebuilds from). No existing table
+ *      gains a column.
  */
-const MIGRATION_FILE_COUNT = 16;
+const MIGRATION_FILE_COUNT = 17;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

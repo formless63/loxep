@@ -2,7 +2,7 @@
  * The Infrastructure worker tasks, and the transactional enqueue that makes
  * intent changes and jobs atomic.
  *
- * Milestones 1 and 2 ship five of the design's ten tasks:
+ * Milestones 1 through 3 ship six of the design's ten tasks:
  *
  * ```text
  * infrastructure.materialize-records  intent change      key domain:{id}:materialize
@@ -11,12 +11,27 @@
  * infrastructure.poll-mail-ownership  GATED ON DELEGATION
  *                                                        key domain:{id}:mailverify
  * infrastructure.sync-mailboxes       after verified     key domain:{id}:mailboxes
+ * infrastructure.sync-token-policy    scope change        key token:{id}:policy
  * ```
  *
- * Deferred with their milestones, listed so the gap is visible rather than
- * forgotten: `provision-domain`, `ensure-zone`, `poll-delegation` (needs the
- * zone-create ledger path), `sync-token-policy` and `sync-proxy-resource`
- * (milestone 3).
+ * Deferred, listed so the gap is visible rather than forgotten:
+ * `provision-domain`, `ensure-zone`, `poll-delegation` (need the zone-create
+ * ledger path — milestone 1 territory, not reached yet), and
+ * `infrastructure.sync-proxy-resource`. The last of these gets its task name
+ * and payload SHAPE below (`SYNC_PROXY_RESOURCE_TASK`,
+ * `SyncProxyResourcePayload`) so the design's job graph has a fixed contract
+ * to land into, but no SERVICE calls it here: driving it needs a
+ * `ProxyProviderPort` against `@loxep/integration-pangolin`'s org/site/resource
+ * model, which is a concurrently-developed sibling package this milestone's
+ * scope does not include. Wiring the executor is follow-up work once that
+ * package lands.
+ *
+ * ## Minting a token is DELIBERATELY ABSENT from this file
+ *
+ * `tokens.ts`'s `mint` and `roll` are request-scoped admin actions, never
+ * worker tasks — see that module's header for the HARD CONSTRAINT (ADR-0022's
+ * reveal-once channel does not reach a job). Only `syncPolicy`, the
+ * idempotent half, is enqueued here.
  *
  * ## `ensure-mail-domain` and `poll-mail-ownership` run the SAME function
  *
@@ -65,6 +80,23 @@ export {
   POLL_MAIL_OWNERSHIP_TASK,
   SYNC_MAILBOXES_TASK,
 } from "./mail.ts";
+export {
+  SYNC_TOKEN_POLICY_TASK,
+  SYNC_TOKEN_POLICY_RUN_KIND,
+  tokenJobKey,
+} from "./tokens.ts";
+
+/**
+ * The design's job graph names this task with key `domain:{id}:proxy` —
+ * triggered by a HOSTING change (a domain's apex target, or a target's
+ * `proxy_connection_id`/`external_site_id`), not a token scope change. Name
+ * and payload shape only; see the module doc for why no service is wired to
+ * it yet.
+ */
+export const SYNC_PROXY_RESOURCE_TASK = "infrastructure.sync-proxy-resource";
+export interface SyncProxyResourcePayload {
+  domainId: string;
+}
 
 /** Payload shapes. `domainId` and nothing else — see rule 1 above. */
 export interface MaterializeRecordsPayload {
@@ -92,6 +124,14 @@ export interface PollMailOwnershipPayload {
 }
 export interface SyncMailboxesPayload {
   domainId: string;
+}
+/**
+ * `tokenId` and nothing else — the credential itself is never in this
+ * payload. `syncPolicy` resolves the token's provider connection and zone
+ * scope from the database inside the task.
+ */
+export interface SyncTokenPolicyPayload {
+  tokenId: string;
 }
 
 /**

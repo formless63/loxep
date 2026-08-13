@@ -113,6 +113,13 @@
       "when": 1786611038408,
       "tag": "0015_inventory_enrichment",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786614137621,
+      "tag": "0016_infrastructure_tokens",
+      "breakpoints": true
     }
   ]
 }

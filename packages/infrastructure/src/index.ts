@@ -180,13 +180,23 @@ export {
   createRecordingEnqueue,
   createTransactionalEnqueue,
   jobKeysInQueue,
+  SYNC_PROXY_RESOURCE_TASK,
 } from "./tasks.ts";
+// SYNC_TOKEN_POLICY_TASK / SYNC_TOKEN_POLICY_RUN_KIND / tokenJobKey are
+// re-exported by tasks.ts internally too (so a caller who only imports
+// tasks.ts gets the full task-name set), but the package's own public
+// surface takes them from tokens.ts, their defining module — see the
+// "tokens (milestone 3)" section below, matching how MATERIALIZE_RECORDS_TASK
+// and ENSURE_MAIL_DOMAIN_TASK are taken from domains.ts / mail.ts rather than
+// from tasks.ts.
 export type {
   EnsureMailDomainPayload,
   MaterializeRecordsPayload,
   PollMailOwnershipPayload,
   SyncMailboxesPayload,
+  SyncProxyResourcePayload,
   SyncRecordsPayload,
+  SyncTokenPolicyPayload,
 } from "./tasks.ts";
 
 /* ------------------------------------------------- mail (milestone 2) ---- */
@@ -256,6 +266,33 @@ export type {
   MailboxSyncResult,
   RunMailSyncInput,
 } from "./mail-sync.ts";
+
+/* ------------------------------------------------- tokens (milestone 3) --- */
+
+export {
+  DNS_PROVIDER_TOKEN_RESOURCE_TYPE,
+  SYNC_TOKEN_POLICY_RUN_KIND,
+  SYNC_TOKEN_POLICY_TASK,
+  createDnsProviderTokensService,
+  dnsProviderTokenSecretKey,
+  tokenJobKey,
+} from "./tokens.ts";
+export type {
+  DnsProviderTokenRow,
+  DnsProviderTokensService,
+  MintDnsProviderTokenInput,
+  RevealedDnsProviderToken,
+  SetDnsProviderTokenZonesInput,
+  SyncTokenPolicyResult,
+} from "./tokens.ts";
+
+export type {
+  DnsTokenMintInput,
+  DnsTokenMintResult,
+  DnsTokenProviderPort,
+  DnsTokenRollResult,
+  TransactionalDnsTokenSecretWriter,
+} from "./token-port.ts";
 
 /**
  * The monitor target type this domain registers against the SHARED scheduling

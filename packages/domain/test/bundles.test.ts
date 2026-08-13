@@ -19,6 +19,7 @@ describe("secret bundle registry", () => {
     expect([...secretPurposes].sort()).toEqual([
       "beszel_credentials",
       "cloudflare_credentials",
+      "dns_edit_token",
       "dockhand_credentials",
       "ebay_keyset",
       "etsy_keyset",
@@ -540,6 +541,59 @@ describe("mailbox_password bundle (a credential Loxep MINTS)", () => {
       const message = (error as Error).message;
       expect(message).toContain("password");
       expect(message).not.toContain(FAKE_PASSWORD);
+    }
+  });
+});
+
+describe("dns_edit_token bundle (a credential Loxep MINTS, reveal-once)", () => {
+  const FAKE_TOKEN = "fake-minted-dns-edit-token-0000000000";
+
+  it("accepts a lone token", () => {
+    expect(
+      validateBundle("dns_edit_token", { token: FAKE_TOKEN }),
+    ).toEqual({ token: FAKE_TOKEN });
+  });
+
+  it("rejects an empty or missing token", () => {
+    expect(() => validateBundle("dns_edit_token", {})).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("dns_edit_token", { token: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("carries no host, zone, or provider identity", () => {
+    // The bundle is the SECRET and nothing else, matching mailbox_password's
+    // rule: identity lives on the dns_provider_tokens row and in the secret
+    // key infrastructure.dns_token.<id>.
+    expect(() =>
+      validateBundle("dns_edit_token", {
+        token: FAKE_TOKEN,
+        hostingTargetId: "11111111-1111-1111-1111-111111111111",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("is a SEPARATE purpose from cloudflare_credentials, which Loxep consumes", () => {
+    // cloudflare_credentials is the high-privilege account token Loxep's own
+    // adapter authenticates with; dns_edit_token is a narrow token Loxep
+    // MINTS for a host to use, and no Loxep adapter ever authenticates with
+    // it. Collapsing the two would blur exactly the distinction the design
+    // insists on stating flatly.
+    expect(secretPurposes).toContain("dns_edit_token");
+    expect(secretPurposes).toContain("cloudflare_credentials");
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("dns_edit_token", { token: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("token");
+      expect(message).not.toContain(FAKE_TOKEN);
     }
   });
 });

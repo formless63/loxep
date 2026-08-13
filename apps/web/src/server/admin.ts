@@ -52,6 +52,22 @@ import {
 } from '@loxep/storage';
 import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
+import {
+  ProviderCallError,
+  createDnsProviderTokensService,
+  createDriftService,
+  createHostingTargetsService,
+  createMailDomainsService,
+  createManagedDomainsService,
+  createTransactionalEnqueue,
+  type DnsProviderTokensService,
+  type DnsTokenProviderPort,
+  type DriftService,
+  type HostingTargetsService,
+  type MailDomainsService,
+  type ManagedDomainsService,
+  type TransactionalEnqueue
+} from '@loxep/infrastructure';
 import type {
   AcquisitionsService,
   InventoryMediaService,
@@ -114,11 +130,74 @@ interface AdminRegistry {
   specificsServicePromise?: Promise<SpecificsService>;
   /** Item image gallery links over `media_links` (loxep-dgf.3). */
   inventoryMediaServicePromise?: Promise<InventoryMediaService>;
+  /**
+   * `/infrastructure` (Phase 7 milestone 3, loxep-lmy.3). `@loxep/infrastructure`
+   * depends only on `@loxep/db` + `@loxep/domain` (verified against its own
+   * `package.json` — no `graphile-worker`), so these are built eagerly like
+   * `entities`/`connections`/`health` above, not through the `@vite-ignore`
+   * dynamic-module pattern `@loxep/market`/`@loxep/notifications`/
+   * `@loxep/inventory` need.
+   */
+  managedDomains: ManagedDomainsService;
+  hostingTargets: HostingTargetsService;
+  infraMail: MailDomainsService;
+  drift: DriftService;
+  /**
+   * Token mint/roll/scope. `provider` is a STUB until a live DNS adapter
+   * exposes token-minting endpoints — see {@link buildDnsTokenProviderPort}.
+   * `setZones`/`listForTarget`/`get` work fully today; `mint`/`roll`/
+   * `syncPolicy` surface a clear `provider_unavailable` error until that
+   * adapter work lands.
+   */
+  dnsProviderTokens: DnsProviderTokensService;
+  /** Transactional `graphile_worker.add_job`, for ad hoc "sync now" actions. */
+  infrastructureEnqueue: TransactionalEnqueue;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
 
 type GlobalWithAdminRegistry = typeof globalThis & { [REGISTRY_KEY]?: AdminRegistry };
+
+/**
+ * A minted per-host DNS token is created by calling the DNS provider's OWN
+ * token-issuance endpoint (Cloudflare's, today) — `@loxep/integration-cloudflare`
+ * has no such client yet (only zone/record/read endpoints are implemented;
+ * see the design's implementation-status header). Rather than block the
+ * whole `/infrastructure` workspace on that adapter work, `mint`/`roll`/
+ * `syncPolicy` are wired to this STUB, which fails honestly with the same
+ * `provider_unavailable` taxonomy kind a real outage would produce —
+ * `tokens.ts` already treats that as a `ProviderCallError`, so the mint
+ * dialog's error toast reads exactly like "the provider is unreachable"
+ * rather than a crash. `setZones`/`listForTarget`/`get`/`listZones` do NOT
+ * go through this port and work fully against real data today.
+ *
+ * Replacing this with a real adapter is follow-up work, not a design gap:
+ * once `@loxep/integration-cloudflare` (or another DNS provider adapter)
+ * exposes token create/roll/policy endpoints, this function is the one
+ * place that needs to change.
+ */
+function dnsTokenProviderUnavailable(operation: string): never {
+  throw new ProviderCallError(
+    'provider_unavailable',
+    `DNS token ${operation} has no live provider adapter wired up yet`
+  );
+}
+
+function buildDnsTokenProviderPort(): DnsTokenProviderPort {
+  return {
+    // `async` is load-bearing here, not stylistic: `() =>
+    // Promise.reject(fn())` evaluates `fn()` EAGERLY, so a `fn` that THROWS
+    // (rather than returns a value to reject with) throws synchronously at
+    // the call site instead of producing a rejected Promise. Every caller
+    // today happens to sit inside a `try`/`await`, so the bug was silent,
+    // but it broke the declared Promise-returning contract. `async` turns
+    // the synchronous throw into a proper rejection.
+    mintToken: async () => dnsTokenProviderUnavailable('minting'),
+    rollToken: async () => dnsTokenProviderUnavailable('rolling'),
+    updatePolicy: async () => dnsTokenProviderUnavailable('policy sync'),
+    findTokenById: () => Promise.resolve({ exists: false })
+  };
+}
 
 function buildRegistry(): AdminRegistry {
   let config: BootstrapConfig;
@@ -149,7 +228,28 @@ function buildRegistry(): AdminRegistry {
     expenseReports: createExpenseReports({ db: handle.db }),
     books: createBooksService({ db: handle.db }),
     fiscalPeriods: createFiscalPeriodsService({ db: handle.db }),
-    ledgerReports: createLedgerReports({ db: handle.db })
+    ledgerReports: createLedgerReports({ db: handle.db }),
+    managedDomains: createManagedDomainsService({
+      db: handle.db,
+      enqueue: createTransactionalEnqueue()
+    }),
+    hostingTargets: createHostingTargetsService({ db: handle.db }),
+    infraMail: createMailDomainsService({
+      db: handle.db,
+      enqueue: createTransactionalEnqueue()
+    }),
+    drift: createDriftService({ db: handle.db }),
+    dnsProviderTokens: createDnsProviderTokensService({
+      db: handle.db,
+      provider: buildDnsTokenProviderPort(),
+      // Nested savepoint inside tokens.ts's own transaction — see
+      // TransactionalDnsTokenSecretWriter's doc in `@loxep/infrastructure`.
+      secrets: (tx, input) =>
+        createSecretsService({ db: tx, keyring: config.keyring }).setSecret(input),
+      enqueue: createTransactionalEnqueue(),
+      providerName: 'cloudflare'
+    }),
+    infrastructureEnqueue: createTransactionalEnqueue()
   };
 }
 
@@ -217,6 +317,36 @@ export function getFiscalPeriodsService(): FiscalPeriodsService {
 /** Trial balance and the other ledger read models (`/finance/books`), loxep-cmo. */
 export function getLedgerReports(): LedgerReports {
   return getAdminServices().ledgerReports;
+}
+
+/** Managed domains, desired DNS records, and the transactional-enqueue intent path (`/infrastructure/domains`). */
+export function getManagedDomainsService(): ManagedDomainsService {
+  return getAdminServices().managedDomains;
+}
+
+/** Hosting targets and the fronting-chain guard (`/infrastructure/fleet`). */
+export function getHostingTargetsService(): HostingTargetsService {
+  return getAdminServices().hostingTargets;
+}
+
+/** Mail registration/verification/mailbox intent (`/infrastructure/domains/$name`'s mail panel). */
+export function getInfrastructureMailService(): MailDomainsService {
+  return getAdminServices().infraMail;
+}
+
+/** Persisted DNS drift findings — the desired-vs-observed diff panel. */
+export function getDriftService(): DriftService {
+  return getAdminServices().drift;
+}
+
+/** Minted per-host DNS tokens: mint (reveal-once), roll, and zone-scope intent. */
+export function getDnsProviderTokensService(): DnsProviderTokensService {
+  return getAdminServices().dnsProviderTokens;
+}
+
+/** Transactional `graphile_worker.add_job`, for a manual "sync now" action. */
+export function getInfrastructureEnqueue(): TransactionalEnqueue {
+  return getAdminServices().infrastructureEnqueue;
 }
 
 /**

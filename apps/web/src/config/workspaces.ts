@@ -1,12 +1,20 @@
 import type { NavGroup } from '@/types';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
 import { financeNavGroups } from '@/config/navigation/finance';
+import { infrastructureNavGroups } from '@/config/navigation/infrastructure';
 import { inventoryNavGroups } from '@/config/navigation/inventory';
 import { marketNavGroups } from '@/config/navigation/market';
 import { settingsNavGroups } from '@/config/navigation/settings';
 import { starterNavGroups } from '@/config/navigation/starter';
 
-export type WorkspaceId = 'dashboard' | 'market' | 'finance' | 'inventory' | 'settings' | 'starter';
+export type WorkspaceId =
+  | 'dashboard'
+  | 'market'
+  | 'finance'
+  | 'inventory'
+  | 'infrastructure'
+  | 'settings'
+  | 'starter';
 
 export type Workspace = {
   id: WorkspaceId;
@@ -49,6 +57,14 @@ export const workspaces: Workspace[] = [
     root: '/inventory',
     defaultPath: '/inventory/overview',
     navGroups: inventoryNavGroups
+  },
+  {
+    id: 'infrastructure',
+    label: 'Infrastructure',
+    description: 'Managed domains, DNS, mail, and the hosting fleet',
+    root: '/infrastructure',
+    defaultPath: '/infrastructure/overview',
+    navGroups: infrastructureNavGroups
   },
   {
     id: 'settings',

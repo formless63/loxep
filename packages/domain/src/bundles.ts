@@ -258,6 +258,41 @@ export const secretBundleSchemas = {
     password: z.string().min(1),
   }),
   /**
+   * A minted per-host DNS-edit token (ADR-0019, loxep-lmy.3), stored as the
+   * application secret `infrastructure.dns_token.<dns_provider_tokens.id>`
+   * and referenced by `dns_provider_tokens.secret_id`.
+   *
+   * **This is a credential Loxep MINTS, not one it consumes** — the same
+   * class as `mailbox_password` above and the design's own contrast: *"the
+   * credentials Loxep USES live in `connections`/`connection_credentials`;
+   * the credentials Loxep MINTS live in `application_secrets`, and no Loxep
+   * adapter ever authenticates with them."* A per-host token exists so a
+   * process on THAT host can edit its own DNS zones directly; Loxep's own DNS
+   * calls authenticate with `cloudflare_credentials`, never with this.
+   *
+   * ## Reveal-once, and this purpose is where ADR-0022's job-mint gap gets
+   * closed
+   *
+   * `mailbox_password` above is write-only from birth because its mint runs
+   * inside a Graphile Worker job with no admin waiting on it — ADR-0022's
+   * clause 1 has nothing to fire into there. This purpose is different BY
+   * CONSTRUCTION: milestone 3's mint is a request-scoped admin server action
+   * (`mintDnsProviderToken` in `@loxep/infrastructure`'s `tokens.ts`) that
+   * returns the plaintext in its own response, exactly once, before the
+   * caller ever sees the stored row. After that response, this value is
+   * write-only forever — no server function, route, or UI reads it back — and
+   * a lost value is a ROTATION (ADR-0022 clause 4), never a recovery.
+   *
+   * The `/infrastructure` fleet UI must present the mint response as the
+   * one-time reveal (copy button, "you will not see this again") and must
+   * never offer a control that looks like it re-fetches this value — reading
+   * a stored secret back later is precisely what ADR-0022 clause 2 forbids,
+   * and the two produce identical pixels.
+   */
+  dns_edit_token: z.strictObject({
+    token: z.string().min(1),
+  }),
+  /**
    * A Beszel hub login (ADR-0019, loxep-9j6): the credential
    * `@loxep/integration-beszel` exchanges for a PocketBase auth token before
    * every read of the fleet's system status.

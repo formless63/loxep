@@ -1,10 +1,10 @@
 /**
- * Phase 7 Infrastructure control plane — milestones 1 (loxep-lmy.1) and 2
- * (loxep-lmy.2).
+ * Phase 7 Infrastructure control plane — milestones 1 (loxep-lmy.1), 2
+ * (loxep-lmy.2), and 3 (loxep-lmy.3).
  *
  * Physical realization of
  * `apps/docs/src/content/docs/architecture/infrastructure-control-design.md`.
- * That design lists twelve tables; this file now ships **eleven** of them.
+ * That design lists twelve tables; this file now ships all **twelve**.
  *
  * Milestone 1 (`0012_infrastructure_control_plane`), ordering steps 1, 2, 4, 5,
  * 6, 7:
@@ -20,10 +20,9 @@
  * `managed_domains.mailbox_template_id` gains its foreign key, exactly as that
  * migration's header promised.
  *
- * Deliberately NOT here, and why:
+ * Milestone 3 (`0016_infrastructure_tokens`), ordering step 8:
  *
  *   dns_provider_tokens, dns_provider_token_zones
- *                              milestone 3 (design ordering step 8)
  *
  * **No existing table gains a column** — the design's own rule. `connections`,
  * `application_secrets`, `monitor_targets`, `audit_events`, and every
@@ -93,6 +92,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -309,6 +309,38 @@ export const INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE =
  */
 export const MAILBOX_KINDS = ["mailbox", "alias", "catchall"] as const;
 export type MailboxKind = (typeof MAILBOX_KINDS)[number];
+
+/**
+ * `dns_provider_tokens.permission_scope` — CLOSED and `CHECK`ed (milestone 3,
+ * loxep-lmy.3).
+ *
+ * A Loxep-owned LABEL, deliberately not a stored array of provider
+ * permission-group identifiers — those are provider constants that belong in
+ * the adapter, the same reason provider filter grammar never appears in a
+ * `monitor_targets` config. The design states there is exactly one value
+ * "initially"; widening this set is a migration, which is the appropriate
+ * ceremony for a scope vocabulary that decides what a live host credential
+ * may edit.
+ */
+export const DNS_PROVIDER_TOKEN_SCOPES = ["dns_edit"] as const;
+export type DnsProviderTokenScope = (typeof DNS_PROVIDER_TOKEN_SCOPES)[number];
+
+/** `audit_events.resource_type` values this domain writes (milestone 3). */
+export const DNS_PROVIDER_TOKEN_RESOURCE_TYPE = "dns_provider_token";
+
+/**
+ * `application_secrets.secret_key` for a minted per-host DNS token, following
+ * the design's stated convention `infrastructure.dns_token.<dns_provider_tokens.id>`.
+ *
+ * Per ADR-0022, the plaintext is shown to the requesting admin exactly once,
+ * in the response to the request-scoped mint action — never inside a worker
+ * job, which is the gap milestone 2 found and named for this milestone to
+ * avoid. After that response, the stored ciphertext is write-only forever;
+ * there is no read-back path in any API, server function, or UI.
+ */
+export function dnsProviderTokenSecretKey(tokenId: string): string {
+  return `infrastructure.dns_token.${tokenId}`;
+}
 
 /** `audit_events.resource_type` values this domain writes. */
 export const MANAGED_DOMAIN_RESOURCE_TYPE = "managed_domain";
@@ -1164,5 +1196,149 @@ export const mailboxes = pgTable(
     index("mailboxes_domain_id_live_idx")
       .on(table.domainId)
       .where(sql`${table.desiredDeletedAt} is null`),
+  ],
+);
+
+/* ------------------------------------------------ tokens (milestone 3) --- */
+
+/**
+ * A narrow, per-host DNS-edit credential the control plane MINTS — design
+ * ordering step 8 (milestone 3, loxep-lmy.3).
+ *
+ * The distinction the design insists is stated flatly: this is not a
+ * credential Loxep authenticates with. It is an artifact Loxep PRODUCES, at a
+ * host's request, so a process on that host can edit its own zones directly.
+ * The high-privilege account credential Loxep itself uses lives in
+ * `connections` + `connection_credentials` (`dns_connection_id`, here, is that
+ * connection); this table's `secret_id` points at the narrow token instead.
+ *
+ * **Deliberately NO `created_by_user_id`.** The design's own inherited-
+ * conventions section names exactly two tables in this schema that need an
+ * ADR-0020 user reference — `managed_domains` and `hosting_targets` — and this
+ * is not one of them. Who minted a token is `audit_events`' fact (the mint
+ * action's actor), not a column that would duplicate it.
+ *
+ * ## The value is returned EXACTLY ONCE, and that is a transaction property
+ *
+ * The provider returns the token's plaintext value only at creation; every
+ * subsequent read omits it. `secret_id` must be captured into an
+ * `application_secrets` version in the SAME database transaction that writes
+ * this row, or the value is unrecoverable and the only remedy is rolling the
+ * token — `@loxep/infrastructure`'s `tokens.ts` enforces this with a test.
+ * `secret_id` is nullable only for the instant between "the row exists" and
+ * "the secret write committed" inside that one transaction; no code outside
+ * `tokens.ts` should observe it null.
+ *
+ * ADR-0022 governs what a human ever sees of that value: reveal-once, in the
+ * response to the request-scoped mint action, never from a worker job and
+ * never read back afterward. See {@link dnsProviderTokenSecretKey}.
+ *
+ * ## A policy update REPLACES the whole array — `dns_provider_token_zones` is
+ * intent, not a mirror
+ *
+ * There is no provider call to "add one zone" to an existing token's policy.
+ * `dns_provider_token_zones` therefore holds the desired zone SET, and the
+ * `infrastructure.sync-token-policy` task rebuilds the provider's policy from
+ * it every time — the desired-state pattern applied one level down.
+ * `policy_synced_at` records when that rebuild last reached the provider;
+ * `dns_provider_token_zones` itself carries no sync timestamp of its own,
+ * because the unit of sync is the whole policy, not one row.
+ *
+ * **Changing scope does not change the value.** Granting a host another zone
+ * needs no redeployment; rolling the token does. `last_rolled_at` exists so
+ * the UI can show "which hosts would need updating" and style a roll as the
+ * destructive, deliberate action it is — the design's explicit instruction
+ * that scope editing and token rolling must not be presented as neighbours.
+ */
+export const dnsProviderTokens = pgTable(
+  "dns_provider_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    hostingTargetId: uuid("hosting_target_id")
+      .notNull()
+      .references(() => hostingTargets.id),
+    dnsConnectionId: uuid("dns_connection_id")
+      .notNull()
+      .references(() => connections.id),
+    /** The provider's own token id — never Loxep's primary key. */
+    externalTokenId: text("external_token_id").notNull(),
+    name: text("name").notNull(),
+    /** Closed set: see {@link DNS_PROVIDER_TOKEN_SCOPES}. */
+    permissionScope: text("permission_scope").notNull(),
+    /**
+     * LOGICAL `application_secrets` id (ADR-0019), never a version row — the
+     * same shape `mailboxes.secret_id` uses. Write-only from the caller's
+     * perspective; see the table note on the one-time reveal.
+     */
+    secretId: uuid("secret_id").references(() => applicationSecrets.id),
+    policySyncedAt: timestamp("policy_synced_at", { withTimezone: true }),
+    lastRolledAt: timestamp("last_rolled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // A provider token id is unique per DNS account, not globally — the same
+    // "provider identifiers never become Loxep keys" discipline every other
+    // table here follows.
+    unique("dns_provider_tokens_connection_external_token_uq").on(
+      table.dnsConnectionId,
+      table.externalTokenId,
+    ),
+
+    check(
+      "dns_provider_tokens_permission_scope_check",
+      sql`${table.permissionScope} in ('dns_edit')`,
+    ),
+
+    // "Which host owns which token" — the fleet detail read.
+    index("dns_provider_tokens_hosting_target_id_idx").on(
+      table.hostingTargetId,
+    ),
+  ],
+);
+
+/**
+ * The zone-scope INTENT for a minted token — design ordering step 8.
+ *
+ * A pure join, and deliberately not a mirror of the provider's policy: the
+ * provider's "update policy" call replaces the entire array in one shot, so
+ * this table is what the sync task reads to REBUILD that array, not a cache
+ * of what it last pushed. No `synced_at` of its own for that reason —
+ * `dns_provider_tokens.policy_synced_at` is the one timestamp that means
+ * anything, because the unit of sync is the whole set.
+ *
+ * ## Explicit foreign-key names
+ *
+ * The design names this table by name as one of the two candidates for
+ * exceeding PostgreSQL's 63-byte identifier limit (the other,
+ * `mailbox_template_entries`, shipped in milestone 2). Measured against the
+ * live catalog by `test/schema-infrastructure.test.ts` rather than assumed —
+ * PostgreSQL truncates silently, which is exactly the failure mode hand
+ * arithmetic misses.
+ */
+export const dnsProviderTokenZones = pgTable(
+  "dns_provider_token_zones",
+  {
+    tokenId: uuid("token_id").notNull(),
+    domainId: uuid("domain_id").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      name: "dns_provider_token_zones_token_fk",
+      columns: [table.tokenId],
+      foreignColumns: [dnsProviderTokens.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "dns_provider_token_zones_domain_fk",
+      columns: [table.domainId],
+      foreignColumns: [managedDomains.id],
+    }).onDelete("cascade"),
+
+    // The pair IS the primary key: one row per (token, zone) intent.
+    primaryKey({ columns: [table.tokenId, table.domainId] }),
   ],
 );

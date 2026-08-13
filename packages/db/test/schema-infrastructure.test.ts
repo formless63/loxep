@@ -1043,6 +1043,143 @@ describe("infrastructure control plane schema (migration 0012)", () => {
     });
   });
 
+  /* --------------------------------------------- dns_provider_tokens (M3) */
+
+  describe("dns_provider_tokens and dns_provider_token_zones (migration 0016)", () => {
+    async function insertToken(
+      overrides: Record<string, string> = {},
+    ): Promise<{ id: string; hostingTargetId: string }> {
+      const hostingTargetId = await insertTarget();
+      const n = nextSeq();
+      const id = await insertRow("dns_provider_tokens", {
+        hosting_target_id: `'${hostingTargetId}'`,
+        dns_connection_id: `'${dnsConnectionId}'`,
+        external_token_id: `'ext-token-${n}'`,
+        name: `'token-${n}'`,
+        permission_scope: `'dns_edit'`,
+        ...overrides,
+      });
+      return { id, hostingTargetId };
+    }
+
+    it("mints a token scoped to a hosting target and a DNS connection", async () => {
+      const { id } = await insertToken();
+      expect(id).toBeTypeOf("string");
+    });
+
+    it("rejects a permission_scope outside the closed set", async () => {
+      await expect(
+        insertToken({ permission_scope: `'dns_admin'` }),
+      ).rejects.toThrow(/dns_provider_tokens_permission_scope_check/);
+    });
+
+    it("requires external_token_id to be unique per DNS connection, not globally", async () => {
+      await insertToken({ external_token_id: `'shared-ext-id'` });
+      // Same connection, same provider id: rejected.
+      await expect(
+        insertToken({ external_token_id: `'shared-ext-id'` }),
+      ).rejects.toThrow(/dns_provider_tokens_connection_external_token_uq/);
+    });
+
+    it("references a LOGICAL application_secrets row for the minted value, never a version row", async () => {
+      // ADR-0019: the same shape mailboxes.secret_id uses. secret_id is
+      // nullable only for the instant between "row exists" and "secret write
+      // committed" inside the mint's one transaction (tokens.ts, not this
+      // schema) — a bogus id is still rejected by the FK.
+      const secret = await handle.pool.query<{ id: string }>(
+        `insert into application_secrets (secret_key, purpose, current_version)
+         values ($1, 'dns_edit_token', 1) returning id`,
+        [`infrastructure.dns_token.test-${nextSeq()}`],
+      );
+      const secretId = secret.rows[0]?.id;
+      expect(secretId).toBeTypeOf("string");
+
+      const { id } = await insertToken({ secret_id: `'${secretId}'` });
+      expect(id).toBeTypeOf("string");
+
+      await expect(
+        insertToken({
+          secret_id: `'00000000-0000-0000-0000-000000000000'`,
+        }),
+      ).rejects.toThrow(/dns_provider_tokens_secret_id/);
+    });
+
+    it("carries no created_by_user_id column — the design names only two tables that need one", async () => {
+      const columns = await handle.pool.query<{ column_name: string }>(
+        `select column_name from information_schema.columns
+          where table_name = 'dns_provider_tokens'`,
+      );
+      expect(
+        columns.rows.map((row) => row.column_name),
+      ).not.toContain("created_by_user_id");
+    });
+
+    it("scopes a token to a zone via the (token_id, domain_id) intent pair", async () => {
+      const { id: tokenId } = await insertToken();
+      const domainId = await insertDomain();
+
+      await handle.pool.query(
+        `insert into dns_provider_token_zones (token_id, domain_id) values ($1, $2)`,
+        [tokenId, domainId],
+      );
+
+      const rows = await handle.pool.query(
+        `select * from dns_provider_token_zones where token_id = $1`,
+        [tokenId],
+      );
+      expect(rows.rowCount).toBe(1);
+    });
+
+    it("rejects a duplicate (token_id, domain_id) pair — the pair IS the primary key", async () => {
+      const { id: tokenId } = await insertToken();
+      const domainId = await insertDomain();
+      await handle.pool.query(
+        `insert into dns_provider_token_zones (token_id, domain_id) values ($1, $2)`,
+        [tokenId, domainId],
+      );
+      await expect(
+        handle.pool.query(
+          `insert into dns_provider_token_zones (token_id, domain_id) values ($1, $2)`,
+          [tokenId, domainId],
+        ),
+      ).rejects.toThrow(/dns_provider_token_zones_token_id_domain_id_pk/);
+    });
+
+    it("cascades zone scope when the token is deleted", async () => {
+      const { id: tokenId } = await insertToken();
+      const domainId = await insertDomain();
+      await handle.pool.query(
+        `insert into dns_provider_token_zones (token_id, domain_id) values ($1, $2)`,
+        [tokenId, domainId],
+      );
+      await handle.pool.query(`delete from dns_provider_tokens where id = $1`, [
+        tokenId,
+      ]);
+      const remaining = await handle.pool.query(
+        `select 1 from dns_provider_token_zones where token_id = $1`,
+        [tokenId],
+      );
+      expect(remaining.rowCount).toBe(0);
+    });
+
+    it("cascades zone scope when the domain is deleted", async () => {
+      const { id: tokenId } = await insertToken();
+      const domainId = await insertDomain();
+      await handle.pool.query(
+        `insert into dns_provider_token_zones (token_id, domain_id) values ($1, $2)`,
+        [tokenId, domainId],
+      );
+      await handle.pool.query(`delete from managed_domains where id = $1`, [
+        domainId,
+      ]);
+      const remaining = await handle.pool.query(
+        `select 1 from dns_provider_token_zones where domain_id = $1`,
+        [domainId],
+      );
+      expect(remaining.rowCount).toBe(0);
+    });
+  });
+
   describe("identifier length", () => {
     it("keeps every infrastructure constraint and index name inside PostgreSQL's 63-byte limit", async () => {
       // PostgreSQL TRUNCATES silently at 63 bytes, so two long generated names
@@ -1055,14 +1192,16 @@ describe("infrastructure control plane schema (migration 0012)", () => {
           where conrelid::regclass::text in (
             'hosting_targets','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
-            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes')
+            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
+            'dns_provider_tokens','dns_provider_token_zones')
          union all
          select indexname as name, length(indexname) as len
            from pg_indexes
           where tablename in (
             'hosting_targets','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
-            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes')`,
+            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
+            'dns_provider_tokens','dns_provider_token_zones')`,
       );
       expect(rows.rowCount).toBeGreaterThan(40);
       const overlong = rows.rows.filter((row) => row.len > 63);
