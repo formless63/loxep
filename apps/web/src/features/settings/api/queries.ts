@@ -5,6 +5,7 @@ import {
   fetchEntities,
   fetchFirstAdminBootstrap,
   fetchHealthReport,
+  fetchIntegrationHealth,
   fetchMonitorTargetOptions,
   fetchNotificationDeliveries,
   fetchNotificationEndpoints,
@@ -18,6 +19,13 @@ import { fetchEtsyCallbackUrl, fetchEtsyKeysetStatus } from '@/server/etsy-oauth
 export const healthReportQuery = queryOptions({
   queryKey: ['settings', 'health'],
   queryFn: () => fetchHealthReport(),
+  refetchInterval: 30_000
+});
+
+/** Phase 8 milestone 1 (loxep-ovj.1): subjects by status, from `integration_health`. */
+export const integrationHealthQuery = queryOptions({
+  queryKey: ['settings', 'integration-health'],
+  queryFn: () => fetchIntegrationHealth(),
   refetchInterval: 30_000
 });
 

@@ -512,7 +512,7 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
     const admin = getAdminServices();
     const { handle } = admin;
 
-    const [connections, targets, deliveries] = await Promise.all([
+    const [connections, targets, deliveries, connectionHealth] = await Promise.all([
       admin.connections.listConnections(),
       handle.db.query.monitorTargets.findMany(),
       handle.db.execute(
@@ -520,8 +520,20 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
            from notification_deliveries
           where created_at >= now() - interval '${intLiteral(NOTIFICATION_WINDOW_DAYS)} days'
           group by status`
-      )
+      ),
+      // Phase 8 milestone 1 (loxep-ovj.1): integration_health is the shared-
+      // foundation rollup for the one subject type this band already covers
+      // (connections). It never drives retry/backoff — connections.status
+      // stays authoritative for that — so this is a READ only, and a
+      // connection the sweep has not reached yet (no row) is deliberately
+      // NOT counted as errored: "nothing configured" must not read as
+      // "broken" any more than it may read as "healthy".
+      admin.health.listHealth({ subjectType: 'connection' })
     ]);
+
+    const healthStatusByConnectionId = new Map(
+      connectionHealth.map((row) => [row.subjectId, row.status])
+    );
 
     const byProvider = new Map<string, DashboardProviderHealthDto>();
     for (const connection of connections) {
@@ -537,13 +549,7 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
       if (connection.status === 'active') bucket.active += 1;
       else if (connection.status === 'disabled') bucket.disabled += 1;
       else if (connection.status === 'archived') bucket.archived += 1;
-      // "Most recent outcome was an error": an error with no later success.
-      // A connection that has errored once and recovered is healthy.
-      if (
-        connection.lastErrorAt !== null &&
-        (connection.lastSuccessAt === null ||
-          connection.lastErrorAt.getTime() > connection.lastSuccessAt.getTime())
-      ) {
+      if (healthStatusByConnectionId.get(connection.id) === 'failing') {
         bucket.errored += 1;
       }
       byProvider.set(connection.provider, bucket);
