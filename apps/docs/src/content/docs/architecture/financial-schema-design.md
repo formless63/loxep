@@ -6,7 +6,7 @@ This document is the physical schema design for [Phase 5 — Financial foundatio
 
 It **extends** the foundation and both prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table, and nothing here alters a table Phase 3 or Phase 4 designed — every reference into an earlier phase is an outbound foreign key or an unenforced provenance stamp added by Phase 5.
 
-**Implementation status: THREE MILESTONES of this design are implemented, PROVISIONALLY — expenses and receipts, the financial core, and now posting rules and statements.** Migration `0006_expenses_and_counterparties.sql` created expenses and their allocations; migration `0009_accounting_books_chart_and_journal.sql` created **books, the effective-dated book-to-entity link, the chart of accounts, dimensions, fiscal periods, and the double-entry journal**; migration `0010_posting_rules_and_source_links.sql` created **the declarative rule model and multi-fact provenance**, and activated the three columns its two predecessors deferred — thirteen of this document's twenty-two tables in total. The second milestone was unblocked by the [owner's answers](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved) to all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and not one day before. The remaining nine tables — payouts, banking, reconciliation, and sales-tax facts — are **design only**. See [Provisional implementation decisions](#provisional-implementation-decisions) for exactly what shipped, what diverged, and what is still on paper.
+**Implementation status: FOUR MILESTONES of this design are implemented, PROVISIONALLY — expenses and receipts, the financial core, posting rules and statements, and now COGS posting.** Migration `0006_expenses_and_counterparties.sql` created expenses and their allocations; migration `0009_accounting_books_chart_and_journal.sql` created **books, the effective-dated book-to-entity link, the chart of accounts, dimensions, fiscal periods, and the double-entry journal**; migration `0010_posting_rules_and_source_links.sql` created **the declarative rule model and multi-fact provenance**, and activated the three columns its two predecessors deferred — thirteen of this document's twenty-two tables in total. The second milestone was unblocked by the [owner's answers](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved) to all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and not one day before. The fourth milestone added **no tables at all**: COGS posting from inventory depletion needed only the two source-fact readers the rule model's `CHECK` had been carrying a place for since migration 0010, so money spent on goods now reaches the ledger without a migration. The remaining nine tables — payouts, banking, reconciliation, and sales-tax facts — are **design only**. See [Provisional implementation decisions](#provisional-implementation-decisions) for exactly what shipped, what diverged, and what is still on paper.
 
 The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or accounting service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
@@ -1319,12 +1319,14 @@ Not indexed on purpose: `journal_entries.status` (low cardinality, always filter
 
 Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
 
-Three milestones are recorded, in the order they shipped:
+Four milestones are recorded, in the order they shipped:
 
 ```text
 milestone 1  expenses and receipts            2 tables, migration 0006
 milestone 2  books, chart, journal            9 tables, migration 0009
 milestone 3  posting rules and statements     2 tables + 2, migration 0010
+milestone 4  COGS posting                     NO migration — two readers over
+                                              tables Phase 4 already shipped
 still design only                             9 tables
 ```
 
@@ -1550,6 +1552,82 @@ clearing invariant end to end  order + fees + surcharge + refund + expense,
 4. **The engine's allocation split**, which is behaviour the declarative model cannot express and therefore lives in code.
 5. **Whether a cancelled order should post nothing, or post and be reversed** when it was cancelled after payment.
 
+## Milestone 4 — COGS posting, and the acquisition seam
+
+### Milestone 4 — what shipped
+
+**No migration.** The rule model's `CHECK` already admitted both fact types and `posting_rule_lines.amount_source` already carried `cost_basis` and `quantity_times_basis`; the chart template already seeded `inventory` and `cogs`. Everything this milestone needed was activated by earlier ones, which is what the `CHECK`-carries-every-fact-type decision was for.
+
+```text
+services       packages/accounting/src/
+  source-facts.ts           TWO NEW READERS: acquisition_cost and
+                            inventory_movement, plus the per-kind ineligibility
+                            rules that make the double-count seam explicit
+  posting-rules-template.ts FOUR NEW RULES: acquisition_cost_capitalized,
+                            acquisition_cost_expensed, cogs_on_depletion,
+                            cogs_depletion_reversed
+  posting-rules.ts          the symbolic balance basis for both fact types
+  posting-engine.ts         a fact that became INELIGIBLE after posting now has
+                            its entry reversed rather than left standing
+  decimal.ts                proRataShare(), the one division this package has
+tests          packages/accounting/test/              (264 tests total, +14)
+                 cogs-posting.test.ts     13  the buy side, the sell side, the
+                                              partial-depletion arithmetic, and
+                                              the acquisition seam
+                 statements.test.ts       10  (+1: the buy -> hold -> sell
+                                              reconciliation)
+```
+
+The two readers close the gap [the flipping-lifecycle design](../flipping-lifecycle-design/#acquisitions-to-accounting--the-gap) called the biggest hole in the loop: money spent on goods now reaches the ledger.
+
+### Milestone 4 — the shape, stated once
+
+```text
+BUY    acquisition_cost, capitalize = true
+         DR inventory                 an ASSET; never touches the P&L
+         CR opening_balance_equity    the same funding side an expense uses
+
+       acquisition_cost, capitalize = false
+         DR suspense                  posted where it sits, never copied into
+         CR opening_balance_equity    `expenses` (this document's own rule)
+
+HOLD   inventory_movement, receipt    NOTHING. The dollar is already in
+                                      inventory; posting the intake as well
+                                      would debit the asset twice.
+
+SELL   inventory_movement, depletion_sale
+         DR cogs                      the FROZEN basis, apportioned exactly
+         CR inventory                 the asset returns to zero, not to a residue
+
+UNDO   inventory_movement, reversal of a depletion_sale
+         DR inventory / CR cogs       at the basis the reversed depletion carried
+```
+
+Every other movement kind is deliberately **unposted and says why**, which is the backlog model applied to a fact type most of whose rows are not accounting events at all: a transfer changes no value; a `return_in` has no writer in the product yet and no stated basis policy; and `adjustment_out` / `shrinkage` / `disposal` / `consumption` are write-offs, whose value is exactly the valuation judgement [this phase does not form](#what-phase-5-does-not-create).
+
+### Milestone 4 — contradiction 2, resolved PROVISIONAL
+
+[Contradiction 2](#contradictions-and-tensions-found-in-existing-documentation) asked for a decision: the roadmap's Phase 5 bullets said nothing about COGS posting while this design posts it, and the contradiction offered two ways out — add the bullet, or move the assignment. **Taken per this document's own recommendation, and marked PROVISIONAL: COGS posting from inventory depletion is Phase 5, the roadmap bullets now say so, and the rules above are the implementation.** What is emphatically *not* taken with it is inventory *valuation*: revaluation, lower-of-cost-or-market, and write-down policy remain unformed, which is why a `disposal` movement posts nothing rather than debiting an invented loss account.
+
+### Milestone 4 — divergences and decisions the draft did not sketch
+
+- **PROVISIONAL: a capitalized acquisition cost credits `opening_balance_equity`.** The same choice and the same reasoning as the expense rules — `financial_accounts` does not exist, so a purchase paid from an unmodeled account is owner-funded. Splitting the two (expenses to equity, purchases to suspense) would make the plug account permanently non-zero for the single largest category of a reseller's ordinary, correct spend, which is the failure the expense decision already refused.
+- **PROVISIONAL: a NON-capitalized acquisition cost posts to `suspense`.** This document says such a row is posted "directly from where they already are" and does not say to what. The rule model cannot route it well: the predicate set specified for this fact type has no `cost_type`, so a declarative rule genuinely cannot tell mileage from a non-capitalized repair part. It therefore takes the same answer the unmapped-expense catch-all already ships — visible in a named report, replaced the moment an operator writes a rule naming their own account.
+- **The COGS amount is apportioned by CUMULATIVE-SHARE DIFFERENCING.** A movement's basis is `share(L, depleted-through-this-movement, Q) − share(L, depleted-before-it, Q)`, where `share` is the two-bucket case of the same largest-remainder distribution `@loxep/inventory` uses. Apportioning each movement independently would leave a fully depleted item's shares summing to slightly less than its landed cost, and `inventory` holding a micro-unit forever. Differencing makes the last depletion take the residue, so the asset returns to exactly zero — asserted by a test that depletes a 100.000000 basis across three units.
+- **A `reversal` movement posts the inverse, and only when it reverses a `depletion_sale`.** `@loxep/inventory` corrects an append-only ledger with reversal rows, and a depletion that did not happen must not leave COGS overstated while the stock comes back. The basis a reversal carries is the *reversed* movement's, fixed by that movement's place in the depletion sequence.
+- **Earlier depletions count toward the sequence whether or not they were later reversed.** Renumbering them would change the fingerprint of every LATER movement, cascading one reversal into a chain of reposts for facts that did not change.
+- **A foreign-currency CAPITALIZED cost is ineligible, not converted.** `@loxep/inventory` excludes such a cost from landed cost rather than converting it (its open question 8), so that money is in no item's basis and no depletion would ever relieve it. Debiting `inventory` for it would create an asset that can only grow. It enters the backlog with the reason named.
+- **A fact that became INELIGIBLE after posting now has its entry reversed.** This is a behaviour change to the shipped engine and it is what makes the acquisition seam hold: an expense that was recorded, posted, and then voided because the money really bought goods must not leave its expense entry standing while the promoted `acquisition_cost` debits inventory. It is the same event as "the fact changed after posting" and gets the same treatment. It also, incidentally, corrects an order cancelled after it posted.
+- **`expenses.acquisition_cost_id` gains its first reader.** The `acquisition_cost` reader links the expense that names it as a `journal_entry_source_links` row with role `evidence`, which is [the flipping design's OQ2 recommendation (a)](../flipping-lifecycle-design/#open-questions) — the supersession pointer — made visible from the ledger side. Nothing yet *writes* the column; the void-and-promote UI that will is that design's work, and this milestone tests the seam by writing the pointer the way that path would.
+- **`decimal.ts` gains its second and last rounding function**, `proRataShare`, exactly as that file predicted it would when a posting engine needed largest-remainder distribution. It lives here rather than being imported from `@loxep/inventory`, because this package must not acquire a package edge to reach one function.
+
+### Milestone 4 — what a reviewer should push back on first
+
+1. **`suspense` as the account for non-capitalized acquisition costs.** It is defensible and it is a guess about what those rows mean.
+2. **Reversing on ineligibility.** It makes `evaluateFact` write to the ledger on a path that reports `unpostable`, which reads oddly until you see the double-count it prevents.
+3. **Posting nothing for `disposal` and `shrinkage`**, which leaves inventory overstated for genuinely lost stock until a valuation milestone exists. The alternative is inventing a loss account this phase declined to form a policy for.
+4. **Cumulative-share differencing**, whose per-event numbers can differ by one micro-unit from `profitability.ts`'s when an item depletes partially across several events. The totals always agree; the per-event split is order-dependent by construction, because the engine sees one movement at a time.
+
 ### What is still design-only
 
 **Nine of this document's twenty-two tables**, and every capability that depends on them:
@@ -1561,7 +1639,9 @@ bank_statement_imports, bank_transactions,
 sales_tax_facts
 ```
 
-Consequently there is still **no payout or clearing settlement, no bank import, no reconciliation, and no tax fact**. There is also **no COGS-on-depletion rule**: the rule model carries `inventory_movement` and `acquisition_cost` in its `CHECK`, and neither has a source-fact reader, because assigning inventory valuation and COGS posting to a phase is [contradiction 2](#contradictions-and-tensions-found-in-existing-documentation) and still open. A rule naming a fact type nothing can read is refused at save time with the missing reader named. `packages/db/test/schema.test.ts` asserts each absent table name, so an accidental `payouts` fails a test rather than quietly deciding the settlement model.
+Consequently there is still **no payout or clearing settlement, no bank import, no reconciliation, and no tax fact**. `shipment` also remains a `CHECK` member with no reader, and a rule naming a fact type nothing can read is refused at save time with the missing reader named. `packages/db/test/schema.test.ts` asserts each absent table name, so an accidental `payouts` fails a test rather than quietly deciding the settlement model.
+
+**COGS-on-depletion is no longer among them.** Milestone 4 built the `acquisition_cost` and `inventory_movement` readers and the four rules that consume them, resolving [contradiction 2](#contradictions-and-tensions-found-in-existing-documentation) provisionally in favour of "COGS posting is Phase 5". Inventory **valuation** — revaluation, lower-of-cost-or-market, write-down policy — is still unformed and is why several movement kinds deliberately post nothing.
 
 The clearing-account pattern was **already proven by hand** in milestone 2 — `ledger-reports.test.ts` posts an order, its fees, a refund, a depletion, a payout, and a bank deposit and asserts that `marketplace_clearing`, `facilitator_tax_clearing`, and `undeposited_funds` all return to exactly zero. Milestone 3 proves the same shape **through the rules**: `statements.test.ts` seeds an order, a seller fee, a buyer surcharge, a refund, and an expense, posts all five through the engine, and asserts that suspense returns to zero, that the balance sheet balances to the micro-unit, that its current earnings equal the income statement's net income, and that re-running every fact changes nothing.
 
@@ -1613,7 +1693,7 @@ Recorded here for a human to resolve; this document does not attempt to fix them
 
 1. **The natural name `accounts` is taken by Better Auth.** ADR-0020 makes Better Auth's generated tables — including `account` — Loxep-owned checked-in schema that Loxep does not rename. The chart of accounts therefore cannot be `accounts`, and this design uses `ledger_accounts`. No existing document mentions the collision, and an implementer reading "chart of accounts" in the roadmap and the domain map would reasonably create `accounts` and discover the conflict at migration time. Worth one sentence in ADR-0020's consequences or the implementation contract.
 
-2. **Roadmap Phase 5 says nothing about inventory valuation or COGS posting, and this design posts both.** [Phase 4's tension 5](../inventory-schema-design/#contradictions-and-tensions-found-in-existing-documentation) already flagged that valuation is unscheduled — Phase 4 says "cost basis", Phase 5's bullet list says nothing about inventory. This design adds a COGS-on-depletion posting rule and an `inventory` system account, which is the only way per-item realized profitability and the P&L can agree. The Phase 5 roadmap bullets should gain "COGS posting from inventory depletion" explicitly, or the assignment should be corrected here. Seen from the Phase 5 side, this is the same gap Phase 4 recorded, still open.
+2. **Roadmap Phase 5 says nothing about inventory valuation or COGS posting, and this design posts both.** *(**RESOLVED PROVISIONAL** in milestone 4, per this item's own first recommendation — see [contradiction 2, resolved](#milestone-4--contradiction-2-resolved-provisional). COGS posting from inventory depletion is Phase 5 work, the roadmap bullets now say so explicitly, and the `acquisition_cost` / `inventory_movement` readers and their four rules are shipped. Inventory **valuation** is NOT resolved with it and remains unscheduled, which is why a `disposal` or `shrinkage` movement posts nothing. The original text follows.)* [Phase 4's tension 5](../inventory-schema-design/#contradictions-and-tensions-found-in-existing-documentation) already flagged that valuation is unscheduled — Phase 4 says "cost basis", Phase 5's bullet list says nothing about inventory. This design adds a COGS-on-depletion posting rule and an `inventory` system account, which is the only way per-item realized profitability and the P&L can agree. The Phase 5 roadmap bullets should gain "COGS posting from inventory depletion" explicitly, or the assignment should be corrected here. Seen from the Phase 5 side, this is the same gap Phase 4 recorded, still open.
 
 3. **"Replay/rebuild of derived accounting where controls permit" invites a destructive implementation.** [Master Domain Map section 10](../../product/master-domain-map/#10-accounting-and-tax) lists it under Accounting DESIGN-FOR, and read literally it means regenerating the ledger from source facts. This design implements reversal-and-repost instead, because a rebuild that deletes posted entries in a closed period destroys the audit trail and violates the period model. The two are not the same capability and the map wording does not distinguish them. It should say "re-post corrections as reversing entries" or explicitly scope rebuild to draft/unposted state.
 

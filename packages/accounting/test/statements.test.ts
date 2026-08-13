@@ -1,11 +1,13 @@
 /**
  * Income statement and balance sheet, and the reconciliation between them.
  *
- * The last test in this file is the milestone's strongest evidence: a book
- * seeded end-to-end through the RULE ENGINE — an order, a seller fee, a buyer
- * surcharge, a refund, and an expense — where the income statement's net income
- * and the balance sheet's current earnings are the same number, the balance
- * sheet balances to the micro-unit, and the trial balance is still zero.
+ * The last two tests in this file are the strongest evidence each milestone
+ * has: a book seeded end-to-end through the RULE ENGINE — an order, a seller
+ * fee, a buyer surcharge, a refund, and an expense — and then a whole buy ->
+ * hold -> sell life where a lot is capitalized, its intake posts nothing, and
+ * the depletion turns the asset into COGS. In both, the income statement's net
+ * income and the balance sheet's current earnings are the same number, the
+ * balance sheet balances to the micro-unit, and the trial balance is zero.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -21,8 +23,11 @@ import {
   createMigratedScratchDb,
   seedConnection,
   seedEntity,
+  seedLotWithItem,
+  seedMovement,
   seedOrder,
   seedOrderFee,
+  seedOrderLine,
   seedOrderRefund,
 } from "./helpers.ts";
 import type { ScratchDb } from "./helpers.ts";
@@ -581,6 +586,136 @@ describe("statements", () => {
       });
       expect(afterRerun.assets.total).toBe(sheet.assets.total);
       expect(afterRerun.difference).toBe("0.000000");
+    });
+
+    it("reconciles a whole buy -> hold -> sell life, with COGS in net income", async () => {
+      const { book, entityId } = await newBook();
+
+      /*
+       * BUY   120 of goods, capitalized. An ASSET, not an expense.
+       * HOLD  the receipt movement posts NOTHING — the same dollar again.
+       * SELL  320 gross (300 goods + 20 shipping), a 40 seller fee, and the
+       *       depletion that turns the 120 asset into 120 of COGS.
+       */
+      const lot = await seedLotWithItem(scratch, {
+        referenceCode: `ACQ-LIFE-${counter}`,
+        itemCode: `IT-LIFE-${counter}`,
+        goodsAmount: "120.000000",
+        economicEntityId: entityId,
+        acquiredAt: "2025-09-02T12:00:00Z",
+      });
+      const receiptId = await seedMovement(scratch, {
+        inventoryItemId: lot.inventoryItemId,
+        movementKind: "receipt",
+        quantity: "1",
+        occurredAt: "2025-09-03T12:00:00Z",
+      });
+      const orderId = await seedOrder(scratch, {
+        connectionId,
+        economicEntityId: entityId,
+        externalOrderId: `LIFE-${counter}`,
+        placedAt: "2025-09-10T10:00:00Z",
+        subtotal: "300",
+        shipping: "20",
+        fee: "40",
+        total: "320",
+      });
+      const orderLineId = await seedOrderLine(scratch, {
+        orderId,
+        unitPrice: "300",
+        lineTotal: "300",
+      });
+      const feeId = await seedOrderFee(scratch, {
+        orderId,
+        feeDirection: "seller_charge",
+        feeType: "final_value",
+        amount: "40",
+        chargedAt: "2025-09-11T10:00:00Z",
+      });
+      const depletionId = await seedMovement(scratch, {
+        inventoryItemId: lot.inventoryItemId,
+        movementKind: "depletion_sale",
+        quantity: "-1",
+        occurredAt: "2025-09-10T12:00:00Z",
+        orderLineId,
+      });
+
+      const facts = [
+        { sourceFactType: "acquisition_cost", sourceFactId: lot.goodsCostId },
+        { sourceFactType: "inventory_movement", sourceFactId: receiptId },
+        { sourceFactType: "order", sourceFactId: orderId },
+        { sourceFactType: "order_fee", sourceFactId: feeId },
+        { sourceFactType: "inventory_movement", sourceFactId: depletionId },
+      ];
+      const outcomes = await engine.evaluateFacts(facts);
+      expect(outcomes.map((outcome) => outcome.status)).toEqual([
+        "posted",
+        // The intake, deliberately: its dollar is already in inventory.
+        "unpostable",
+        "posted",
+        "posted",
+        "posted",
+      ]);
+      expect(outcomes[1]?.reason).toBe("fact_ineligible");
+
+      /*
+       * revenue   sales 300 + shipping 20                =  320
+       * expense   marketplace fees 40 + COGS 120         =  160
+       * net income                                       =  160
+       */
+      const income = await statements.incomeStatement({
+        accountingBookId: book.id,
+        from: "2025-09-01",
+        to: "2025-09-30",
+      });
+      expect(income.revenue.total).toBe("320.000000");
+      expect(income.expense.total).toBe("160.000000");
+      expect(income.netIncome).toBe("160.000000");
+
+      const cogs = await reports.accountBalance({
+        accountingBookId: book.id,
+        systemKey: "cogs",
+      });
+      expect(cogs.balance).toBe("120.000000");
+      // The asset came and went, to the micro-unit, through the two facts.
+      const inventory = await reports.accountBalance({
+        accountingBookId: book.id,
+        systemKey: "inventory",
+      });
+      expect(inventory.balance).toBe("0.000000");
+
+      const sheet = await statements.balanceSheet({
+        accountingBookId: book.id,
+        asOf: "2025-09-30",
+      });
+      // Assets: clearing 320 − 40 fee = 280, and no inventory left.
+      expect(sheet.assets.total).toBe("280.000000");
+      expect(sheet.liabilities.total).toBe("0.000000");
+      // Equity: 120 of owner-funded goods, plus the year's earnings.
+      expect(sheet.equityAccounts.total).toBe("120.000000");
+      expect(sheet.currentEarnings).toBe("160.000000");
+      expect(sheet.totalEquity).toBe("280.000000");
+      expect(sheet.difference).toBe("0.000000");
+      expect(sheet.balanced).toBe(true);
+      expect(sheet.currentEarnings).toBe(income.netIncome);
+
+      const trial = await reports.trialBalance(book.id);
+      expect(trial.difference).toBe("0.000000");
+
+      const again = await engine.evaluateFacts(facts);
+      expect(again.map((outcome) => outcome.status)).toEqual([
+        "unchanged",
+        "unpostable",
+        "unchanged",
+        "unchanged",
+        "unchanged",
+      ]);
+      const afterRerun = await statements.balanceSheet({
+        accountingBookId: book.id,
+        asOf: "2025-09-30",
+      });
+      expect(afterRerun.difference).toBe("0.000000");
+      expect(afterRerun.currentEarnings).toBe("160.000000");
     });
   });
 });

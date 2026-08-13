@@ -16,19 +16,51 @@
  * ## Which fact types have a reader today
  *
  * ```text
- * order          orders                       (Phase 3)
- * order_fee      order_fees + its order       (Phase 3)
- * order_refund   order_refunds + its order    (Phase 3)
- * expense        expenses                     (Phase 5, milestone 1)
+ * order               orders                          (Phase 3)
+ * order_fee           order_fees + its order          (Phase 3)
+ * order_refund        order_refunds + its order       (Phase 3)
+ * expense             expenses                        (Phase 5, milestone 1)
+ * acquisition_cost    acquisition_costs + its lot     (Phase 5, milestone 4)
+ * inventory_movement  inventory_movements + its item  (Phase 5, milestone 4)
  * ```
  *
- * `inventory_movement`, `acquisition_cost`, `shipment`, `payout`, `payout_line`,
- * `bank_transaction`, and `sales_tax_fact` are members of the rule model's
- * `CHECK` and have **no reader**: the first three because COGS-on-depletion is
- * its own decision the roadmap has not scheduled (design contradiction 2), the
- * rest because their tables do not exist. A rule naming one is refused at save
- * time with the reader named, rather than accepted and then silently never
- * firing.
+ * `shipment`, `payout`, `payout_line`, `bank_transaction`, and `sales_tax_fact`
+ * are members of the rule model's `CHECK` and have **no reader**, because their
+ * tables do not exist. A rule naming one is refused at save time with the
+ * reader named, rather than accepted and then silently never firing.
+ *
+ * ## The seam: one dollar of goods enters the ledger exactly once
+ *
+ * The flipping-lifecycle design states the central rule — *"Money spent on
+ * goods is not an expense. It is an `acquisition_costs` row that becomes cost
+ * basis and reaches the ledger as COGS at depletion. Recording it as both would
+ * report the same dollar twice"* — and these two readers are where it becomes
+ * arithmetic rather than prose:
+ *
+ * ```text
+ * acquisition_cost, capitalize   the dollar ENTERS the ledger, as an asset
+ * inventory_movement, receipt    NOT POSTED. The intake carries no dollar of
+ *                                its own; the acquisition cost above already
+ *                                capitalized it, and posting the receipt too
+ *                                would debit inventory twice for one purchase.
+ * inventory_movement, depletion  the dollar LEAVES the asset, as COGS, at the
+ *                                basis frozen on the item — never recomputed.
+ * ```
+ *
+ * Every other movement kind is deliberately UNPOSTED and says why (see
+ * {@link movementIneligibility}), because a write-down policy is a judgement
+ * Phase 5 does not form and an unposted fact is a visible backlog rather than
+ * an invented number.
+ *
+ * ## The basis is FROZEN, and this reader only ever reads it
+ *
+ * `inventory_items.landed_cost_amount` is frozen at the first `depletion_sale`
+ * by `@loxep/inventory` (`cost_basis_locked_at`, its design open question 5).
+ * The COGS amount is that number apportioned to the movement, computed the same
+ * largest-remainder way `profitability.ts` apportions it, and it is never
+ * recomputed from `acquisition_costs` here. A basis that moves before it froze
+ * changes the fact's fingerprint, which reverses and re-posts — the ordinary
+ * correction path — rather than silently disagreeing with a reported margin.
  *
  * ## Dates: a fact's instant becomes a calendar date, in UTC, deliberately
  *
@@ -45,7 +77,13 @@ import type {
   PostingAmountSource,
   PostingRuleSourceFactType,
 } from "@loxep/db/schema";
-import { subtractDecimals, toMoneyString } from "./decimal.ts";
+import {
+  absDecimal,
+  proRataShare,
+  subtractDecimals,
+  sumDecimals,
+  toMoneyString,
+} from "./decimal.ts";
 import { AccountingValidationError } from "./errors.ts";
 import { textLiteral, uuidLiteral } from "./sql.ts";
 
@@ -55,6 +93,8 @@ export const READABLE_SOURCE_FACT_TYPES = [
   "order_fee",
   "order_refund",
   "expense",
+  "acquisition_cost",
+  "inventory_movement",
 ] as const;
 export type ReadableSourceFactType = (typeof READABLE_SOURCE_FACT_TYPES)[number];
 
@@ -83,6 +123,19 @@ export const AMOUNT_SOURCES_BY_FACT_TYPE: Record<
   order_fee: ["fee", "total", "net", "remainder"],
   order_refund: ["refund", "total", "net", "remainder"],
   expense: ["total", "tax", "net", "remainder"],
+  acquisition_cost: ["total", "net", "remainder"],
+  // One number under the two names the model reserved for it. `cost_basis` is
+  // what the rule-line enum calls it and `quantity_times_basis` is what the
+  // design's worked example calls it ("quantity x frozen landed cost basis"),
+  // and they are the SAME amount here on purpose: exposing a per-unit basis
+  // beside a quantity would invite a template to multiply them and re-derive,
+  // with its own rounding, a number the reader already apportioned exactly.
+  inventory_movement: [
+    "cost_basis",
+    "quantity_times_basis",
+    "total",
+    "remainder",
+  ],
 };
 
 /** Which predicates each readable fact type can be selected on. */
@@ -102,6 +155,20 @@ export const PREDICATES_BY_FACT_TYPE: Record<
   ],
   order_refund: ["provider", "channel", "economicEntity", "currency", "amount"],
   expense: ["economicEntity", "currency", "amount", "expenseCategory"],
+  acquisition_cost: [
+    "economicEntity",
+    "currency",
+    "amount",
+    "capitalize",
+    "sourceKind",
+  ],
+  inventory_movement: [
+    "economicEntity",
+    "currency",
+    "amount",
+    "movementKind",
+    "sourceKind",
+  ],
 };
 
 /**
@@ -119,6 +186,8 @@ export const PLACEHOLDERS_BY_FACT_TYPE: Record<
   order_fee: ["external_order_number", "fee_type", "provider", "channel"],
   order_refund: ["external_order_number", "provider", "channel"],
   expense: ["reference_code", "payee_name", "category"],
+  acquisition_cost: ["reference_code", "cost_type", "vendor_name"],
+  inventory_movement: ["item_code", "movement_kind", "reference_code"],
 };
 
 export type SourceFactPredicate =
@@ -204,6 +273,104 @@ function money(row: Record<string, unknown>, column: string): string {
   if (typeof value === "string") return toMoneyString(value);
   if (typeof value === "number") return toMoneyString(String(value));
   return "0.000000";
+}
+
+/** Lot states whose costs are still being typed, or were recorded in error. */
+const UNPOSTABLE_LOT_STATUSES = new Set(["draft", "void", "cancelled"]);
+
+/**
+ * Why an acquisition cost must not post — a recorded state, never an error.
+ *
+ * The foreign-currency case is the interesting one and it is not a currency
+ * limitation: `@loxep/inventory`'s allocation engine EXCLUDES a capitalized
+ * cost denominated in another currency from the lot's landed cost rather than
+ * converting it (its design open question 8). So that dollar is in no item's
+ * basis, no depletion will ever relieve it, and debiting `inventory` for it
+ * would create an asset that can only ever grow. It belongs in the backlog,
+ * named, until either the cost is restated in the lot's currency or a
+ * conversion policy exists.
+ */
+export function acquisitionCostIneligibility(input: {
+  lotStatus: string | null;
+  capitalize: boolean;
+  currency: string;
+  lotCurrency: string;
+}): string | null {
+  if (input.lotStatus !== null && UNPOSTABLE_LOT_STATUSES.has(input.lotStatus)) {
+    return `the acquisition is ${input.lotStatus}: only a recorded lot's costs post`;
+  }
+  if (
+    input.capitalize &&
+    input.currency.toUpperCase() !== input.lotCurrency.toUpperCase()
+  ) {
+    return (
+      `this capitalized cost is in ${input.currency} while the lot is in ` +
+      `${input.lotCurrency}. @loxep/inventory excludes a foreign-currency ` +
+      "capitalized cost from landed cost rather than converting it, so no " +
+      "item's basis carries this money and no depletion would ever relieve " +
+      "it — posting it to inventory would create an asset that only grows."
+    );
+  }
+  return null;
+}
+
+/**
+ * Which movement kinds post, and — for the eight that do not — why.
+ *
+ * Two of these reasons are the seam this milestone exists to hold, and the rest
+ * are the honest edge of Phase 5's scope:
+ *
+ * ```text
+ * depletion_sale   POSTS: DR cogs / CR inventory at the frozen basis
+ * reversal         POSTS (inverted) when it reverses a depletion_sale, and
+ *                  nothing otherwise
+ * receipt, found   the acquisition_cost posting already capitalized this money
+ * transfer_in/out  a location change moves no value
+ * return_in        has no writer in the product yet, and what basis a returned
+ *                  unit carries is a decision nobody has made
+ * adjustment_*,    a write-off is a VALUATION judgement, and the design is
+ * shrinkage,       explicit that Phase 5 does not form one: "period-end
+ * disposal,        revaluation, lower-of-cost-or-market, and write-down policy
+ * consumption      are judgements this phase does not form"
+ * ```
+ */
+export function movementIneligibility(
+  movementKind: string,
+  reversedKind: string | null,
+): string | null {
+  switch (movementKind) {
+    case "depletion_sale":
+      return null;
+    case "reversal":
+      return reversedKind === "depletion_sale"
+        ? null
+        : `this reversal undoes a ${reversedKind ?? "missing"} movement, which ` +
+            "posted nothing: reversing it in the ledger would invent an entry " +
+            "to cancel an entry that never existed";
+    case "receipt":
+    case "found":
+      return (
+        "an intake movement carries no dollar of its own: the lot's " +
+        "capitalized acquisition_costs are what debit inventory, and posting " +
+        "the receipt as well would count the same purchase twice"
+      );
+    case "transfer_in":
+    case "transfer_out":
+      return "a transfer moves stock between locations and changes no value";
+    case "return_in":
+      return (
+        "a returned unit's basis is not a Phase 5 decision: nothing in the " +
+        "product writes a return_in movement yet, and whether the restored " +
+        "asset carries the depleted basis or a re-valuation has to be stated " +
+        "before it can post"
+      );
+    default:
+      return (
+        `a ${movementKind} movement writes stock off, and the value of a ` +
+        "write-off is a valuation judgement Phase 5 deliberately does not " +
+        "form — it is a named backlog item, not an invented loss account"
+      );
+  }
 }
 
 export interface SourceFactReader {
@@ -458,6 +625,221 @@ export function createSourceFactReader(options: {
     };
   }
 
+  /**
+   * One `acquisition_costs` row: what the operator paid toward a lot.
+   *
+   * The rule set splits on `capitalize`, which is the whole point of the
+   * predicate the design named after this column: a capitalized cost becomes an
+   * ASSET (it is already inside some item's `landed_cost_amount` and will leave
+   * as COGS), and a non-capitalized one is spend that never became basis and
+   * posts *from where it sits* — *"they are not copied into `expenses`"*.
+   */
+  async function readAcquisitionCost(id: string): Promise<SourceFact | null> {
+    const result = await db.execute(
+      `select c.id::text as id, c.cost_type, c.cost_class, c.cost_scope,
+              c.capitalize, c.currency,
+              c.amount::text as amount, c.vendor_name,
+              coalesce(((c.incurred_at at time zone 'UTC')::date),
+                       ((a.acquired_at at time zone 'UTC')::date))::text
+                as accounting_date,
+              a.reference_code, a.status as acquisition_status,
+              a.source_kind, a.currency as lot_currency,
+              a.vendor_name as lot_vendor_name,
+              a.economic_entity_id::text as economic_entity_id,
+              (select e.id::text from expenses e
+                where e.acquisition_cost_id = c.id
+                order by e.created_at limit 1) as superseded_expense_id
+         from acquisition_costs c
+         join acquisitions a on a.id = c.acquisition_id
+        where c.id = ${uuidLiteral(id)}`,
+    );
+    const row = result.rows[0];
+    if (row === undefined) return null;
+
+    const amount = money(row, "amount");
+    const costType = text(row, "cost_type") ?? "";
+    const referenceCode = text(row, "reference_code") ?? "";
+    const vendor =
+      text(row, "vendor_name") ?? text(row, "lot_vendor_name") ?? "";
+    const capitalize = row["capitalize"] === true;
+    const currency = text(row, "currency") ?? "";
+    const lotCurrency = text(row, "lot_currency") ?? "";
+    const lotStatus = text(row, "acquisition_status");
+    const supersededExpenseId = text(row, "superseded_expense_id");
+
+    return {
+      sourceFactType: "acquisition_cost",
+      sourceFactId: id,
+      accountingDate: text(row, "accounting_date") ?? "",
+      economicEntityId: text(row, "economic_entity_id"),
+      currency,
+      amounts: { total: amount, net: amount },
+      attributes: {
+        capitalize,
+        sourceKind: text(row, "source_kind"),
+      },
+      matchAmount: amount,
+      placeholders: {
+        reference_code: referenceCode,
+        cost_type: costType,
+        vendor_name: vendor,
+      },
+      description: `${costType} on ${referenceCode}`.trim(),
+      // The one shipped reader of `expenses.acquisition_cost_id`. The flipping
+      // design's open question 2 gives that column the SUPERSESSION meaning —
+      // a voided expense that was re-recorded as a capitalized cost — and this
+      // link is what makes the promotion visible from the ledger side rather
+      // than only from the expense row.
+      relatedFacts:
+        supersededExpenseId === null
+          ? []
+          : [
+              {
+                sourceFactType: "expense",
+                sourceFactId: supersededExpenseId,
+                role: "evidence" as const,
+              },
+            ],
+      accountingBookIdOverride: null,
+      ineligibleReason: acquisitionCostIneligibility({
+        lotStatus,
+        capitalize,
+        currency,
+        lotCurrency,
+      }),
+    };
+  }
+
+  /**
+   * One `inventory_movements` row, at the basis frozen on its item.
+   *
+   * The apportionment, in one place, because it is the number the whole
+   * milestone is about:
+   *
+   * ```text
+   * L   inventory_items.landed_cost_amount   the FROZEN basis
+   * Q   inventory_items.quantity             what the row held originally
+   * b   prior depleted quantity              every earlier depletion_sale
+   * q   |this movement's quantity|
+   *
+   * basis = share(L, b + q, Q) − share(L, b, Q)
+   * ```
+   *
+   * Differencing two cumulative shares rather than apportioning each movement
+   * independently is what makes the LAST depletion take the residue: the shares
+   * of a fully depleted item sum to `L` exactly, so `inventory` returns to zero
+   * instead of holding a micro-unit forever. `share` is
+   * {@link proRataShare}, the two-bucket case of the same largest-remainder
+   * distribution `@loxep/inventory` uses, so a posted COGS figure and a reported
+   * contribution's cost basis are the same number.
+   *
+   * Earlier depletions are counted whether or not they were later reversed. A
+   * reversal posts its own offsetting entry; letting it renumber the basis of
+   * every LATER movement would cascade a reversal into a chain of reposts for
+   * facts that did not change.
+   */
+  async function readInventoryMovement(id: string): Promise<SourceFact | null> {
+    const priorDepleted = (alias: string): string =>
+      `coalesce((select sum(abs(p.quantity))
+                   from inventory_movements p
+                  where p.inventory_item_id = ${alias}.inventory_item_id
+                    and p.movement_kind = 'depletion_sale'
+                    and (p.occurred_at, p.id) < (${alias}.occurred_at, ${alias}.id)),
+                0)::numeric(20, 6)::text`;
+    const result = await db.execute(
+      `select m.id::text as id, m.movement_kind,
+              m.quantity::text as quantity,
+              ((m.occurred_at at time zone 'UTC')::date)::text as accounting_date,
+              m.order_line_id::text as order_line_id,
+              m.reverses_movement_id::text as reverses_movement_id,
+              ol.order_id::text as order_id,
+              i.item_code, i.currency,
+              i.quantity::text as item_quantity,
+              i.landed_cost_amount::text as landed_cost_amount,
+              i.economic_entity_id::text as economic_entity_id,
+              (i.cost_basis_locked_at is not null) as basis_locked,
+              a.source_kind, a.reference_code,
+              rev.movement_kind as reversed_kind,
+              rev.quantity::text as reversed_quantity,
+              ${priorDepleted("m")} as prior_depleted,
+              case when rev.id is null then null
+                   else ${priorDepleted("rev")} end as reversed_prior_depleted
+         from inventory_movements m
+         join inventory_items i on i.id = m.inventory_item_id
+         left join order_lines ol on ol.id = m.order_line_id
+         left join acquisitions a on a.id = i.acquisition_id
+         left join inventory_movements rev on rev.id = m.reverses_movement_id
+        where m.id = ${uuidLiteral(id)}`,
+    );
+    const row = result.rows[0];
+    if (row === undefined) return null;
+
+    const movementKind = text(row, "movement_kind") ?? "";
+    const reversedKind = text(row, "reversed_kind");
+    const ineligibleReason = movementIneligibility(movementKind, reversedKind);
+
+    // A reversal carries the basis of the movement it undoes, which is fixed by
+    // THAT movement's place in the depletion sequence, not by the reversal's.
+    const reversing = movementKind === "reversal" && reversedKind !== null;
+    const quantity = absDecimal(
+      money(row, reversing ? "reversed_quantity" : "quantity"),
+    );
+    const priorQuantity = money(
+      row,
+      reversing ? "reversed_prior_depleted" : "prior_depleted",
+    );
+    const itemQuantity = money(row, "item_quantity");
+    const landedCost = money(row, "landed_cost_amount");
+    const basis = subtractDecimals(
+      proRataShare(landedCost, sumDecimals([priorQuantity, quantity]), itemQuantity),
+      proRataShare(landedCost, priorQuantity, itemQuantity),
+    );
+
+    const itemCode = text(row, "item_code") ?? "";
+    const orderId = text(row, "order_id");
+    return {
+      sourceFactType: "inventory_movement",
+      sourceFactId: id,
+      accountingDate: text(row, "accounting_date") ?? "",
+      economicEntityId: text(row, "economic_entity_id"),
+      currency: text(row, "currency") ?? "",
+      amounts: {
+        cost_basis: basis,
+        quantity_times_basis: basis,
+        total: basis,
+      },
+      attributes: {
+        movementKind,
+        sourceKind: text(row, "source_kind"),
+      },
+      matchAmount: basis,
+      placeholders: {
+        item_code: itemCode,
+        movement_kind: movementKind,
+        reference_code: text(row, "reference_code") ?? "",
+      },
+      description:
+        movementKind === "reversal"
+          ? `Reversed depletion of ${itemCode}`.trim()
+          : `Cost of goods sold — ${itemCode}`.trim(),
+      // The sale the depletion belongs to, as context rather than arithmetic:
+      // "which order caused this COGS line" is the question an operator asks
+      // first, and `journal_entry_source_links` is where it is answerable.
+      relatedFacts:
+        orderId === null
+          ? []
+          : [
+              {
+                sourceFactType: "order",
+                sourceFactId: orderId,
+                role: "evidence" as const,
+              },
+            ],
+      accountingBookIdOverride: null,
+      ineligibleReason,
+    };
+  }
+
   return {
     read: async (sourceFactType, sourceFactId) => {
       switch (sourceFactType) {
@@ -469,6 +851,10 @@ export function createSourceFactReader(options: {
           return readOrderRefund(sourceFactId);
         case "expense":
           return readExpense(sourceFactId);
+        case "acquisition_cost":
+          return readAcquisitionCost(sourceFactId);
+        case "inventory_movement":
+          return readInventoryMovement(sourceFactId);
         default:
           throw new AccountingValidationError(
             `no source-fact reader exists for "${sourceFactType}". The rule ` +
@@ -510,6 +896,15 @@ export async function unpostedFacts(
       "select id, 'order_refund' as source_fact_type from order_refunds",
     expense:
       "select id, 'expense' as source_fact_type from expenses where status <> 'void'",
+    acquisition_cost:
+      "select id, 'acquisition_cost' as source_fact_type from acquisition_costs",
+    // Narrowed to the kinds that CAN post. The backlog is "facts that should
+    // have an entry and do not", and a warehouse's transfers and adjustments
+    // are permanently not that: listing them would bury the one depletion
+    // whose book nobody has routed under a thousand rows nobody can act on.
+    inventory_movement:
+      "select id, 'inventory_movement' as source_fact_type from inventory_movements " +
+      "where movement_kind in ('depletion_sale', 'reversal')",
   };
   const union = types.map((type) => sources[type]).join(" union all ");
   if (union === "") return [];

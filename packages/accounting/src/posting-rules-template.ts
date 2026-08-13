@@ -10,10 +10,13 @@
  * ## The accrual shape, stated once
  *
  * ```text
- * order        revenue at SALE, into marketplace_clearing
- * order_fee    seller_charge  -> expense; buyer_surcharge -> INCOME
- * order_refund contra revenue, out of marketplace_clearing
- * expense      the operator's own cost, by category
+ * order               revenue at SALE, into marketplace_clearing
+ * order_fee           seller_charge -> expense; buyer_surcharge -> INCOME
+ * order_refund        contra revenue, out of marketplace_clearing
+ * expense             the operator's own cost, by category
+ * acquisition_cost    capitalize -> INVENTORY (an asset, not a cost);
+ *                     otherwise spend posted where it sits
+ * inventory_movement  depletion_sale -> COGS at the frozen basis
  * ```
  *
  * `accounting_books.accounting_basis` may say `cash`, and nothing here branches
@@ -75,6 +78,52 @@
  * make the plug account permanently non-zero for ordinary, correct activity and
  * train an operator to ignore it. The banking milestone reclassifies by posting
  * the real account; the expense rules become one line different.
+ *
+ * ## The goods half: one dollar, one deduction
+ *
+ * ```text
+ * BUY    acquisition_cost, capitalize = true
+ *          DR inventory                 the money becomes an ASSET
+ *          CR opening_balance_equity    the same funding side an expense uses
+ *
+ * HOLD   inventory_movement, receipt    NOTHING. The dollar is already in
+ *                                       inventory; posting the intake too would
+ *                                       debit the asset twice for one purchase.
+ *
+ * SELL   inventory_movement, depletion_sale
+ *          DR cogs                      the FROZEN basis, never recomputed
+ *          CR inventory                 the asset is relieved, to exactly zero
+ * ```
+ *
+ * This is the flipping design's central rule made into arithmetic: *"Money
+ * spent on goods is not an expense … Recording it as both would report the same
+ * dollar twice — once as an expense at purchase and once as cost of goods at
+ * sale."* The capitalized rule debits an ASSET, so it never touches the income
+ * statement, and the only path from that asset to the P&L is a depletion.
+ *
+ * ## PROVISIONAL: the capitalized funding side is `opening_balance_equity`
+ *
+ * Deliberately the SAME choice, and the same reasoning, as the expense rules
+ * above: `financial_accounts` does not exist, so a purchase paid from an
+ * account the books do not model is owner-funded. Splitting the two — expenses
+ * to equity, purchases to suspense — would make the plug account permanently
+ * non-zero for the single largest category of a reseller's ordinary, correct
+ * spend, which is exactly the failure the expense decision refused. When the
+ * banking milestone lands, both rule families change by one line.
+ *
+ * ## PROVISIONAL: a NON-capitalized acquisition cost posts to `suspense`
+ *
+ * Phase 5's answer to Phase 4's open question 10 is that such a row is *"not
+ * copied into `expenses`"* and *"a posting rule with `source_fact_type =
+ * 'acquisition_cost'` and `match_capitalize = false` posts them directly from
+ * where they already are"* — which the rule below does. Where it posts to is a
+ * choice the design does not make, and the rule model cannot make it well: the
+ * predicate set the design specified for this fact type has no `cost_type`, so
+ * a declarative rule genuinely cannot tell mileage from a non-capitalized
+ * repair part. Rather than route every one of them into `shipping_expense` and
+ * be wrong most of the time, this takes the same answer the unmapped-expense
+ * catch-all already ships: `suspense`, which is visible in a named report and
+ * is replaced the moment an operator writes a rule naming their own account.
  */
 import type { CreatePostingRuleInput } from "./posting-rules.ts";
 
@@ -342,6 +391,121 @@ export const DEFAULT_POSTING_RULES: readonly PostingRuleTemplate[] = [
         lineNumber: 2,
         accountSystemKey: "opening_balance_equity",
         amountSource: "total",
+        amountMultiplier: "-1",
+      },
+    ],
+  },
+  /* ------------------------------------------------- goods: buy, hold, sell */
+  {
+    code: "acquisition_cost_capitalized",
+    name: "Purchase of goods — capitalized into inventory",
+    sourceFactType: "acquisition_cost",
+    priority: 100,
+    activate: true,
+    matchCapitalize: true,
+    description:
+      "Money spent on goods is an ASSET, not an expense: it becomes cost " +
+      "basis on the item and reaches the income statement only as COGS when " +
+      "the item depletes. Posting it as an expense here would deduct the same " +
+      "dollar twice.",
+    lines: [
+      {
+        lineNumber: 1,
+        accountSystemKey: "inventory",
+        amountSource: "total",
+        amountMultiplier: "1",
+        descriptionTemplate: "{cost_type} on {reference_code}",
+      },
+      {
+        lineNumber: 2,
+        accountSystemKey: "opening_balance_equity",
+        amountSource: "total",
+        amountMultiplier: "-1",
+      },
+    ],
+  },
+  {
+    code: "acquisition_cost_expensed",
+    name: "Acquisition cost the operator chose not to capitalize",
+    sourceFactType: "acquisition_cost",
+    priority: 100,
+    activate: true,
+    matchCapitalize: false,
+    description:
+      "Mileage to the estate sale, a buyer's premium the operator will not " +
+      "capitalize: real spend that never became basis. It posts from where it " +
+      "sits and is never copied into `expenses`. The account is `suspense` " +
+      "because this fact type carries no cost-type predicate to route on — " +
+      "the same honest catch-all the unmapped-expense rule uses.",
+    lines: [
+      {
+        lineNumber: 1,
+        accountSystemKey: "suspense",
+        amountSource: "total",
+        amountMultiplier: "1",
+        descriptionTemplate: "{cost_type} on {reference_code}",
+      },
+      {
+        lineNumber: 2,
+        accountSystemKey: "opening_balance_equity",
+        amountSource: "total",
+        amountMultiplier: "-1",
+      },
+    ],
+  },
+  {
+    code: "cogs_on_depletion",
+    name: "Cost of goods sold, at depletion",
+    sourceFactType: "inventory_movement",
+    priority: 100,
+    activate: true,
+    matchMovementKind: "depletion_sale",
+    description:
+      "The design's own worked example: DR cogs / CR inventory at the item's " +
+      "FROZEN landed cost. This is the only way per-item realized " +
+      "contribution and the P&L can agree, because both read the same frozen " +
+      "number rather than each recomputing one.",
+    lines: [
+      {
+        lineNumber: 1,
+        accountSystemKey: "cogs",
+        amountSource: "quantity_times_basis",
+        amountMultiplier: "1",
+        descriptionTemplate: "Cost of goods sold — {item_code}",
+      },
+      {
+        lineNumber: 2,
+        accountSystemKey: "inventory",
+        amountSource: "quantity_times_basis",
+        amountMultiplier: "-1",
+      },
+    ],
+  },
+  {
+    code: "cogs_depletion_reversed",
+    name: "Reversed depletion — cost of goods sold, returned",
+    sourceFactType: "inventory_movement",
+    priority: 100,
+    activate: true,
+    matchMovementKind: "reversal",
+    description:
+      "A `reversal` movement is how @loxep/inventory corrects an append-only " +
+      "ledger, and a depletion that did not happen must not leave COGS " +
+      "overstated while the stock comes back. The reader refuses to produce a " +
+      "basis for a reversal of anything other than a depletion_sale, so this " +
+      "rule can be unconditional on the kind it reverses.",
+    lines: [
+      {
+        lineNumber: 1,
+        accountSystemKey: "inventory",
+        amountSource: "quantity_times_basis",
+        amountMultiplier: "1",
+        descriptionTemplate: "Reversed depletion — {item_code}",
+      },
+      {
+        lineNumber: 2,
+        accountSystemKey: "cogs",
+        amountSource: "quantity_times_basis",
         amountMultiplier: "-1",
       },
     ],

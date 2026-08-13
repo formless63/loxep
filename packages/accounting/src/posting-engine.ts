@@ -30,9 +30,11 @@
  *              rewritten, and "what did we believe on the 1st" has to stay
  *              answerable.
  * unpostable   no route, no rule, no period, or a fact that must not post
- *              (a cancelled order, a draft expense). NOT an error: a fact whose
- *              accounting ownership nobody has stated is a visible backlog to
- *              resolve, never a guess and never a rejected ingestion.
+ *              (a cancelled order, a draft expense, an inventory transfer). NOT
+ *              an error: a fact whose accounting ownership nobody has stated is
+ *              a visible backlog to resolve, never a guess and never a rejected
+ *              ingestion. A fact that became ineligible AFTER posting has its
+ *              entry reversed on the way to this outcome.
  * ```
  *
  * ## PROVISIONAL — the posting key carries the FINGERPRINT, which the design's
@@ -107,7 +109,9 @@ export interface PostingOutcome {
   entry?: JournalEntryRow;
   /**
    * The REVERSING entry a repost wrote — not the entry it reversed, which is
-   * `reversalEntry.reversesEntryId` and keeps its own lines untouched.
+   * `reversalEntry.reversesEntryId` and keeps its own lines untouched. Also
+   * set on an `unpostable` outcome whose fact had already posted and has since
+   * become ineligible.
    */
   reversalEntry?: JournalEntryRow;
   rule?: { code: string; version: number; postingRuleVersionId: string };
@@ -517,6 +521,35 @@ export function createPostingEngine(options: { db: LoxepDb }): PostingEngine {
       };
     }
     if (fact.ineligibleReason !== null) {
+      // A fact that BECAME ineligible after posting is the same event as a
+      // fact that changed after posting, and it gets the same treatment: the
+      // entry is reversed, never left standing. The seam this closes is the
+      // expensive one — an expense recorded, posted, then voided because the
+      // operator realized the money bought GOODS, and re-recorded as a
+      // capitalized acquisition cost. Leaving the expense entry in place while
+      // the acquisition cost debits inventory would deduct the same dollar
+      // twice, which is precisely the rule the flipping design's acquisition
+      // seam exists to hold.
+      const posted = await existingEntryFor(fact);
+      if (posted !== null) {
+        const reversal = await journal.reverseEntry({
+          journalEntryId: posted.id,
+          reason: `the source fact is no longer postable: ${fact.ineligibleReason}`,
+          entryDate: fact.accountingDate,
+          allowBackdated: input.allowBackdated ?? false,
+          actorUserId: input.actorUserId ?? null,
+          requestId: input.requestId ?? null,
+        });
+        return {
+          ...base,
+          status: "unpostable",
+          reason: "fact_ineligible",
+          reversalEntry: reversal.entry,
+          explanation:
+            `${fact.ineligibleReason}. The entry it had already produced was ` +
+            "reversed rather than left standing.",
+        };
+      }
       return {
         ...base,
         status: "unpostable",

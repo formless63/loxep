@@ -54,8 +54,9 @@ This is the first phase to give the **Documents** domain a table. It has been de
 
 ```text
 manual ORDERS (a sale with no connection)      flagged, not built — see OQ7, OWNER-REVIEW-CRITICAL
-COGS posting from inventory depletion          Phase 5 — the acquisition_cost / inventory_movement
-                                               source-fact readers are the missing half
+COGS posting from inventory depletion          SHIPPED SINCE, in Phase 5's milestone 4 — the
+                                               acquisition_cost / inventory_movement readers
+                                               exist; see the acquisition-seam gap below
 bank/OFX/QFX statement import                  Phase 5 — bank_transactions is a settlement fact,
                                                not an expense; see the import decision below
 vendors, purchase orders, AP, vendor bills     still an explicit Phase 4 non-goal; acquisitions
@@ -815,7 +816,7 @@ The owner's fifth ask, and the reason the other four are one document.
    EXPENSES  --> posting rules --> journal --> /dashboard Financial band
    (non-goods spend only)
 
-   ACQUISITION COSTS --> cost basis --> COGS --> ...NOT BUILT. See the gap below.
+   ACQUISITION COSTS --> cost basis --> COGS --> journal  (BUILT SINCE; see below)
 ```
 
 ### Handoff by handoff
@@ -832,19 +833,23 @@ The return trip closes the roadmap's Phase 4 line about connecting opportunities
 
 **Expenses to accounting.** Already wired at the back end. A recorded expense is read by the posting engine's `expense` source-fact reader, matched by a posting rule, posted to the journal, and appears in the dashboard's Financial band. **Only the front end is missing.** The first milestone therefore lights up an entire existing pipeline by shipping a form.
 
-**Acquisitions to accounting — the gap, and it is the biggest hole in the loop.**
+**Acquisitions to accounting — the hole this design named, CLOSED SINCE by Phase 5's milestone 4.**
 
 ```text
-expense              -> source fact 'expense'          -> READER EXISTS -> posts today
-acquisition_cost     -> source fact 'acquisition_cost' -> READER MISSING -> posts never
-inventory_movement   -> source fact 'inventory_movement'-> READER MISSING -> posts never
+expense              -> source fact 'expense'           -> READER EXISTS -> posts
+acquisition_cost     -> source fact 'acquisition_cost'  -> READER EXISTS -> posts
+inventory_movement   -> source fact 'inventory_movement'-> READER EXISTS -> posts
+shipment             -> source fact 'shipment'          -> READER MISSING
 ```
 
-`posting_rules.source_fact_type` already admits `acquisition_cost`, `inventory_movement`, and `shipment`; `packages/accounting/src/source-facts.ts` throws for all three, naming the readable set. Phase 5's roadmap entry says so plainly: the mechanism is decided and the reader is not built.
+When this design was written, `posting_rules.source_fact_type` already admitted `acquisition_cost`, `inventory_movement`, and `shipment` while `packages/accounting/src/source-facts.ts` threw for all three. **The first two now have readers** ([Phase 5, milestone 4](../financial-schema-design/#milestone-4--cogs-posting-and-the-acquisition-seam)): a capitalized `acquisition_cost` debits `inventory` and credits the same owner-funded side an expense uses, and a `depletion_sale` movement debits `cogs` and credits `inventory` at the item's frozen basis — the shape this design assumed and could not rely on. `shipment` still has none.
 
-The consequence must be said out loud, because it makes a literal reading of "expense capture always" false for the largest category of a reseller's spend: **money spent on goods does not reach the ledger at all today.** It becomes cost basis, it appears in inventory-on-hand-at-cost and in per-item contribution, and it is invisible to the income statement until COGS posting exists. Building COGS posting is Phase 5 work and is deliberately out of scope here — but every surface this design ships that displays a spend total must be labelled in a way that cannot be mistaken for an accounting figure, and the gap belongs in the roadmap where a reader will find it.
+The consequence this design had to state — that a literal reading of "expense capture always" was false for the largest category of a reseller's spend, because **money spent on goods did not reach the ledger at all** — no longer holds. It becomes cost basis, it now appears on the balance sheet as an inventory asset from the moment the cost is recorded, and it reaches the income statement as COGS when the item depletes. Two qualifications survive and matter:
 
-**The dashboard's Money band gains nothing, deliberately.** The ask named it, so here is the answer rather than a deferral. The Money band reads `orders` and `order_fees`; the Financial band reads the ledger. Expenses reach the dashboard through the **Financial** band automatically, the moment the first one is recorded and posted. Acquisitions reach neither, for the reason above. Adding a spend tile to the Money band would be the first time that band read anything other than orders, would need its own currency and period policy, and — decisively — **would show an incomplete number**, because the largest component of a reseller's spend is exactly the component that does not post. The right time to revisit is when COGS posting lands. Until then `/inventory/overview` owns sourcing spend and `/finance/overview` owns expense spend, each labelled for what it is.
+- **The seam this design defined is what keeps the dollar single.** A `receipt` movement posts NOTHING, deliberately, because the capitalized acquisition cost already debited inventory; posting both would count one purchase twice. That is [the acquisition seam](#the-acquisition-seam-when-an-expense-is-really-a-purchase) enforced in arithmetic rather than in prose, and it is asserted by a test.
+- **Inventory valuation is still not built.** A `disposal`, `shrinkage`, `adjustment_out`, or `consumption` movement posts nothing and enters the backlog with its reason, because the value of a write-off is a valuation judgement Phase 5 declined to form. Stock genuinely lost therefore remains on the balance sheet until that milestone exists, and a surface showing "inventory at cost" should still not be described as an audited figure.
+
+**The dashboard's Money band gains nothing, deliberately.** The ask named it, so here is the answer rather than a deferral. The Money band reads `orders` and `order_fees`; the Financial band reads the ledger. Expenses reach the dashboard through the **Financial** band automatically, the moment the first one is recorded and posted. Acquisitions reach neither, for the reason above. Adding a spend tile to the Money band would be the first time that band read anything other than orders, would need its own currency and period policy, and — decisively — **would show an incomplete number**, because the largest component of a reseller's spend is exactly the component that does not post. The right time to revisit was named as "when COGS posting lands", and it has: acquisitions now reach the **Financial** band through the ledger like everything else, which is the reason to revisit the Money band's composition rather than to add a second incomplete spend total to it. Until someone does, `/inventory/overview` owns sourcing spend and `/finance/overview` owns expense spend, each labelled for what it is.
 
 ### Where the surfaces live
 
@@ -1050,7 +1055,7 @@ Each is a genuinely unresolved decision with a recommendation, not a placeholder
 
 Recorded for a human to resolve; this document does not attempt to fix them.
 
-1. **`expenses.acquisition_cost_id` exists and Phase 5's own rule forbids its apparent purpose.** [Phase 5](../financial-schema-design/#expenses-and-receipts) states that non-capitalized acquisition costs *"are not copied into `expenses`"* and posts them where they sit — and the same design's `expenses` sketch carries a foreign key to `acquisition_costs`, which migration 0006 made real. Nothing writes it. Either the column has the supersession meaning this design proposes (OQ2), or it is a leftover from the copy the design rejected. This is the clearest live contradiction between two shipped decisions in the documentation.
+1. **`expenses.acquisition_cost_id` exists and Phase 5's own rule forbids its apparent purpose.** *(**Partly answered since**: Phase 5's milestone 4 gave the column its first READER, on reading (a). The `acquisition_cost` source-fact reader links the expense that names a cost as a `journal_entry_source_links` row with role `evidence`, so a promotion is visible from the ledger side. Nothing yet WRITES it — the void-and-promote path this design defines is still the writer that has to exist — so the contradiction is narrowed rather than closed. The original text follows.)* [Phase 5](../financial-schema-design/#expenses-and-receipts) states that non-capitalized acquisition costs *"are not copied into `expenses`"* and posts them where they sit — and the same design's `expenses` sketch carries a foreign key to `acquisition_costs`, which migration 0006 made real. Nothing writes it. Either the column has the supersession meaning this design proposes (OQ2), or it is a leftover from the copy the design rejected. This is the clearest live contradiction between two shipped decisions in the documentation.
 
 2. **Documents is a defined domain with no phase, no tables, and no owner.** [Domain Boundaries](../domain-boundaries/#documents) has specified it since the foundation — receipts, bills, POs, contracts, OCR text, structured extraction, matching status — and no roadmap phase claims it. [Master Domain Map](../../product/master-domain-map/) section 12 lists OCR and structured extraction under DESIGN-FOR. This design gives it two tables and a package because ask 2b requires them; the roadmap should say where the rest of the domain lives, or say that Documents is deliberately incremental.
 

@@ -146,6 +146,51 @@ export function multiplyDecimals(value: string, multiplier: string): string {
   return format(negative ? -rounded : rounded, MONEY_SCALE);
 }
 
+/**
+ * `total × part ÷ whole`, at money scale, as a LARGEST-REMAINDER share.
+ *
+ * The second — and, deliberately, last — rounding function in this package, and
+ * the one this file's own header predicted: *"When a posting engine needs
+ * largest-remainder distribution, it can have one — and that will be the moment
+ * to decide where the shared implementation lives."* That moment is COGS
+ * posting, and the shared implementation lives here rather than being reached
+ * for across a package edge, for the reason the header already gives: this
+ * package does not depend on `@loxep/inventory` and must not acquire the
+ * dependency to reach one function.
+ *
+ * It is the TWO-BUCKET case of `@loxep/inventory`'s `distributeByWeights`,
+ * computed identically so that a basis this package posts and a basis
+ * `profitability.ts` reports are the same number rather than two numbers that
+ * usually agree. With weights `[part, whole − part]` that function's leftover
+ * unit is zero or one and goes to the larger remainder with the earlier index
+ * winning a tie — which is exactly `round(|total| × part ÷ whole)` rounded half
+ * up on the magnitude, with the sign carried.
+ *
+ * A `part` at or beyond `whole` returns `total` unchanged, so the shares of a
+ * fully consumed quantity sum to the whole EXACTLY and the asset it relieves
+ * returns to zero rather than to a micro-unit of permanent residue.
+ */
+export function proRataShare(
+  total: string,
+  part: string,
+  whole: string,
+): string {
+  const wholeUnits = toUnits(whole);
+  const partUnits = toUnits(part);
+  if (wholeUnits <= 0n) return ZERO;
+  if (partUnits <= 0n) return ZERO;
+  if (partUnits >= wholeUnits) return toMoneyString(total);
+
+  const totalUnits = toUnits(total);
+  const negative = totalUnits < 0n;
+  const magnitude = negative ? -totalUnits : totalUnits;
+  const numerator = magnitude * partUnits;
+  const quotient = numerator / wholeUnits;
+  const remainder = numerator % wholeUnits;
+  const rounded = remainder * 2n >= wholeUnits ? quotient + 1n : quotient;
+  return format(negative ? -rounded : rounded, MONEY_SCALE);
+}
+
 export function isZeroDecimal(value: string): boolean {
   return toUnits(value) === 0n;
 }

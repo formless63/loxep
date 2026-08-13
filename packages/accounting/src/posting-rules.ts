@@ -365,6 +365,17 @@ function assertTemplateBalances(
       tax: { tax: 1 },
       net: { net: 1 },
     },
+    acquisition_cost: { total: { amount: 1 }, net: { amount: 1 } },
+    // One component under three names: the reader apportions the frozen basis
+    // once and every alias IS that number, so a template that debits COGS by
+    // `quantity_times_basis` and credits inventory by `cost_basis` balances —
+    // which it must, because those are the two names the design and the rule
+    // model each gave the same amount.
+    inventory_movement: {
+      cost_basis: { basis: 1 },
+      quantity_times_basis: { basis: 1 },
+      total: { basis: 1 },
+    },
   };
 
   const totals = new Map<string, number>();

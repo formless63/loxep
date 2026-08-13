@@ -21,13 +21,16 @@
  * posting.ts         the source-fact seam between a fact and an entry
  * ```
  *
- * ## Three of Phase 5's four milestones
+ * ## Four of Phase 5's milestones
  *
  * The [Financial Foundation Schema Design](../../../apps/docs) specifies
  * twenty-two tables across four domains. Thirteen exist: expenses and their
  * allocations, then books, the chart, dimensions, periods, and the journal,
- * then the declarative rule model and multi-fact provenance. The rest are a
- * later milestone and their absence is still a decision:
+ * then the declarative rule model and multi-fact provenance. The fourth
+ * milestone — COGS posting — needed NO table at all: the rule model's `CHECK`
+ * had carried `acquisition_cost` and `inventory_movement` since the third, and
+ * building their readers is what makes money spent on goods reach the ledger.
+ * The rest are a later milestone and their absence is still a decision:
  *
  * ```text
  * financial_accounts / payouts / banking  money movement
@@ -103,6 +106,7 @@ export {
   isZeroDecimal,
   multiplyDecimals,
   negateDecimal,
+  proRataShare,
   subtractDecimals,
   sumDecimals,
   toMoneyString,
@@ -250,8 +254,10 @@ export {
   PLACEHOLDERS_BY_FACT_TYPE,
   PREDICATES_BY_FACT_TYPE,
   READABLE_SOURCE_FACT_TYPES,
+  acquisitionCostIneligibility,
   createSourceFactReader,
   isReadableSourceFactType,
+  movementIneligibility,
   unpostedFacts,
 } from "./source-facts.ts";
 export type {
