@@ -4,9 +4,9 @@
 import type { TailscaleFetch } from "../src/index.ts";
 
 /** Distinctive markers: a containment assertion on these cannot false-positive. */
-export const TEST_API_ACCESS_TOKEN = "tskey-api-zzz-marker-zzz";
+export const TEST_API_ACCESS_TOKEN = "test-tailnet-api-token-marker-zzz";
 export const TEST_OAUTH_CLIENT_ID = "kZZZMARKERCNTRL";
-export const TEST_OAUTH_CLIENT_SECRET = "tskey-client-zzz-marker-zzz";
+export const TEST_OAUTH_CLIENT_SECRET = "test-oauth-client-secret-marker-zzz";
 export const TEST_OAUTH_ACCESS_TOKEN = "zzz-oauth-access-token-marker-zzz";
 export const TEST_BASE_URL = "https://api.tailscale.example.invalid";
 export const TEST_TAILNET = "example.com";

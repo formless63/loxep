@@ -645,8 +645,8 @@ describe("reverb_credentials bundle (a self-service Personal Access Token)", () 
 });
 
 describe("tailscale_credentials bundle (an access token OR an OAuth client)", () => {
-  const FAKE_ACCESS_TOKEN = "fake-tailscale-tskey-api-0000000000000000";
-  const FAKE_CLIENT_SECRET = "fake-tailscale-tskey-client-0000000000000";
+  const FAKE_ACCESS_TOKEN = "fake-tailscale-api-token-0000000000000000";
+  const FAKE_CLIENT_SECRET = "fake-tailscale-client-secret-0000000000000";
 
   it("accepts an api_access_token bundle", () => {
     expect(
