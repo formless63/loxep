@@ -199,6 +199,29 @@ export interface MarketItemLinkDto {
   linkedAt: string;
 }
 
+/** `inventory_item_specifics` row (M3, loxep-dgf.3) — typed key/value product specifics. */
+export interface ItemSpecificDto {
+  id: string;
+  name: string;
+  value: string;
+  valueNumeric: string | null;
+  unit: string | null;
+  sortOrder: number;
+  source: string;
+}
+
+/** One `media_links` row over the item's gallery (M3). Primary is whichever `gallery` row sorts first. */
+export interface ItemMediaDto {
+  mediaObjectId: string;
+  purpose: string;
+  sortOrder: number | null;
+  originalFilename: string | null;
+  mimeType: string | null;
+  sizeBytes: number;
+  createdAt: string;
+  servingUrl: string;
+}
+
 export interface InventoryItemDetailDto extends InventoryItemListItemDto {
   lotReference: string | null;
   serialNumber: string | null;
@@ -217,12 +240,31 @@ export interface InventoryItemDetailDto extends InventoryItemListItemDto {
   movements: InventoryMovementDto[];
   /** The reverse `/market` wire: the marketplace item(s) this unit traces back to, snapshot-frozen at link time. */
   sourcedFrom: MarketItemLinkDto[];
+  /** M3 enrichment (loxep-dgf.3): plain text/Markdown authoring source, never listing HTML. */
+  description: string | null;
+  /** M3: how this unit is going to be sold — see `ITEM_SALE_MODES`. */
+  saleMode: string;
+  packageWeightGrams: string | null;
+  packageLengthMm: string | null;
+  packageWidthMm: string | null;
+  packageHeightMm: string | null;
+  originItemId: string | null;
+  /** Typed key/value product specifics, ordered by `sort_order` then `name`. */
+  specifics: ItemSpecificDto[];
+  /** The gallery, ordered by `sort_order` — the first `gallery`-purpose row is the primary image. */
+  media: ItemMediaDto[];
 }
 
 export const fetchInventoryItem = createServerFn({ method: 'GET' })
   .inputValidator(z.strictObject({ id: z.uuid() }))
   .handler(async ({ data }): Promise<InventoryItemDetailDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const {
+      requireSession,
+      getAdminServices,
+      getSpecificsService,
+      getInventoryMediaService,
+      getMediaService
+    } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
 
@@ -233,7 +275,15 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
       throw new Error(`Inventory item "${data.id}" not found`);
     }
 
-    const [location, acquisition, movementRows, linkRows, reserved] = await Promise.all([
+    const [
+      location,
+      acquisition,
+      movementRows,
+      linkRows,
+      reserved,
+      specificsService,
+      inventoryMediaService
+    ] = await Promise.all([
       item.locationId
         ? handle.db.query.inventoryLocations.findFirst({
             where: (table, { eq }) => eq(table.id, item.locationId as string),
@@ -267,7 +317,14 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
                        group by inventory_item_id) a
                   on a.inventory_item_id = i.id
           where i.id = ${uuidLiteral(data.id)}`
-      )
+      ),
+      getSpecificsService(),
+      getInventoryMediaService()
+    ]);
+
+    const [specificRows, mediaLinkRows] = await Promise.all([
+      specificsService.list(data.id),
+      inventoryMediaService.list(data.id)
     ]);
 
     const movementLocationIds = [
@@ -298,6 +355,26 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
         : [];
     const marketItemTitleById = new Map(
       marketItems.map((row) => [row.id, row.title ?? row.externalItemId])
+    );
+
+    // Mirrors `fetchExpense`'s `receiptsService.list` + per-link
+    // `mediaService.getMediaObject` composition: the link carries no
+    // filename/mime/size of its own.
+    const mediaService = await getMediaService();
+    const mediaDtos: ItemMediaDto[] = await Promise.all(
+      mediaLinkRows.map(async (link): Promise<ItemMediaDto> => {
+        const mediaObject = await mediaService.getMediaObject(link.mediaObjectId);
+        return {
+          mediaObjectId: link.mediaObjectId,
+          purpose: link.purpose,
+          sortOrder: link.sortOrder,
+          originalFilename: mediaObject.originalFilename,
+          mimeType: mediaObject.mimeType,
+          sizeBytes: mediaObject.sizeBytes,
+          createdAt: iso(link.createdAt),
+          servingUrl: `/api/media/inventory/${link.mediaObjectId}`
+        };
+      })
     );
 
     return {
@@ -332,6 +409,23 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
       listedAt: iso(item.listedAt),
       depletedAt: iso(item.depletedAt),
       availableToSell: decimal(reserved.rows[0]?.['available']),
+      description: item.description,
+      saleMode: item.saleMode,
+      packageWeightGrams: item.packageWeightGrams,
+      packageLengthMm: item.packageLengthMm,
+      packageWidthMm: item.packageWidthMm,
+      packageHeightMm: item.packageHeightMm,
+      originItemId: item.originItemId,
+      specifics: specificRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        value: row.value,
+        valueNumeric: row.valueNumeric,
+        unit: row.unit,
+        sortOrder: row.sortOrder,
+        source: row.source
+      })),
+      media: mediaDtos,
       movements: movementRows.map((row) => ({
         id: row.id,
         movementKind: row.movementKind,
@@ -451,6 +545,225 @@ export const completeItemIntakeReview = createServerFn({ method: 'POST' })
     const itemsService = await getItemsService();
     const item = await itemsService.completeIntakeReview(data.id);
     return { id: item.id, status: item.status };
+  });
+
+// ---------------------------------------------------------------------------
+// M3 enrichment (loxep-dgf.3): description/dimensions/weight, the sale-mode
+// declaration, part-out, and typed specifics. `itemsService.update()` /
+// `.setSaleMode()` / `.partOut()` — see `packages/inventory/src/items.ts`.
+// ---------------------------------------------------------------------------
+
+const decimalInput = z
+  .string()
+  .trim()
+  .regex(/^\d+(\.\d{1,6})?$/, 'Enter a positive decimal, e.g. 850 or 850.5');
+
+const updateInventoryItemInput = z.strictObject({
+  id: z.uuid(),
+  description: z.string().trim().min(1).nullish(),
+  packageWeightGrams: decimalInput.nullish(),
+  packageLengthMm: decimalInput.nullish(),
+  packageWidthMm: decimalInput.nullish(),
+  packageHeightMm: decimalInput.nullish()
+});
+
+export const updateInventoryItem = createServerFn({ method: 'POST' })
+  .inputValidator(updateInventoryItemInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    await requireSession();
+    const itemsService = await getItemsService();
+    const item = await itemsService.update({
+      inventoryItemId: data.id,
+      description: data.description,
+      packageWeightGrams: data.packageWeightGrams,
+      packageLengthMm: data.packageLengthMm,
+      packageWidthMm: data.packageWidthMm,
+      packageHeightMm: data.packageHeightMm
+    });
+    return { id: item.id };
+  });
+
+/**
+ * The declaration only — `'parted_out'` is deliberately absent from this
+ * enum (matches `settableSaleModes`, `packages/inventory/src/items.ts`), so
+ * a caller cannot even construct a request for it. The service refuses the
+ * change again at the domain layer if the item has already been parted out.
+ */
+export const setInventoryItemSaleMode = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      id: z.uuid(),
+      saleMode: z.enum(['unit', 'lot', 'set', 'parts_donor', 'bundle_component'])
+    })
+  )
+  .handler(async ({ data }): Promise<{ id: string; saleMode: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const itemsService = await getItemsService();
+    const item = await itemsService.setSaleMode({
+      inventoryItemId: data.id,
+      saleMode: data.saleMode,
+      actorUserId: session.user.id
+    });
+    return { id: item.id, saleMode: item.saleMode };
+  });
+
+/**
+ * `itemsService.partOut(...)` — the one new inventory verb. See that
+ * function's doc: N children, basis divided by `distributeByWeights`, the
+ * parent depleted through the movement writer and marked `parted_out`.
+ */
+const partOutInput = z.strictObject({
+  id: z.uuid(),
+  children: z
+    .array(
+      z.strictObject({
+        label: z.string().trim().min(1),
+        quantity: z
+          .string()
+          .trim()
+          .regex(/^\d+(\.\d{1,6})?$/)
+          .default('1'),
+        weight: decimalInput.optional()
+      })
+    )
+    .min(1)
+    .max(200),
+  note: z.string().trim().min(1).nullish()
+});
+
+export const partOutInventoryItem = createServerFn({ method: 'POST' })
+  .inputValidator(partOutInput)
+  .handler(
+    async ({ data }): Promise<{ parentId: string; childIds: string[]; childCodes: string[] }> => {
+      const { requireSession, getItemsService } = await import('@/server/admin');
+      const session = await requireSession();
+      const itemsService = await getItemsService();
+      const result = await itemsService.partOut({
+        inventoryItemId: data.id,
+        children: data.children.map((child) => ({
+          label: child.label,
+          quantity: child.quantity,
+          ...(child.weight !== undefined ? { weight: child.weight } : {})
+        })),
+        note: data.note,
+        actorUserId: session.user.id
+      });
+      return {
+        parentId: result.parent.id,
+        childIds: result.children.map((child) => child.id),
+        childCodes: result.children.map((child) => child.itemCode)
+      };
+    }
+  );
+
+/** `specificsService.set(...)` — upserts on `(inventory_item_id, name, value)`. */
+const setSpecificInput = z.strictObject({
+  inventoryItemId: z.uuid(),
+  name: z.string().trim().min(1).max(200),
+  value: z.string().trim().min(1).max(2000),
+  unit: z.string().trim().min(1).max(32).nullish()
+});
+
+export const setInventoryItemSpecific = createServerFn({ method: 'POST' })
+  .inputValidator(setSpecificInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getSpecificsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const specificsService = await getSpecificsService();
+    const { specific } = await specificsService.set({
+      inventoryItemId: data.inventoryItemId,
+      name: data.name,
+      value: data.value,
+      unit: data.unit,
+      source: 'manual',
+      actorUserId: session.user.id
+    });
+    return { id: specific.id };
+  });
+
+export const removeInventoryItemSpecific = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      inventoryItemId: z.uuid(),
+      name: z.string().trim().min(1),
+      value: z.string().trim().min(1)
+    })
+  )
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireSession, getSpecificsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const specificsService = await getSpecificsService();
+    await specificsService.remove({
+      inventoryItemId: data.inventoryItemId,
+      name: data.name,
+      value: data.value,
+      actorUserId: session.user.id
+    });
+    return { ok: true };
+  });
+
+// ---------------------------------------------------------------------------
+// Item media gallery (loxep-dgf.3) — attach happens through the binary
+// upload route (`routes/api.inventory.image.ts`), mirroring the receipt/
+// avatar upload split. Detach and reorder are plain JSON calls.
+// ---------------------------------------------------------------------------
+
+const itemMediaPurpose = z
+  .enum(['gallery', 'condition_evidence', 'supporting_document'])
+  .default('gallery');
+
+export const detachInventoryItemMedia = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      inventoryItemId: z.uuid(),
+      mediaObjectId: z.uuid(),
+      purpose: itemMediaPurpose
+    })
+  )
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireSession, getInventoryMediaService } = await import('@/server/admin');
+    const session = await requireSession();
+    const inventoryMediaService = await getInventoryMediaService();
+    await inventoryMediaService.detach({
+      inventoryItemId: data.inventoryItemId,
+      mediaObjectId: data.mediaObjectId,
+      purpose: data.purpose,
+      actorUserId: session.user.id
+    });
+    return { ok: true };
+  });
+
+/**
+ * Simple up/down reorder (the design's sanctioned "drag-to-reorder writes
+ * sort_order only" rule, applied without DnD Kit): the caller passes the two
+ * media objects trading places and the `sort_order` each should take.
+ */
+export const reorderInventoryItemMedia = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      inventoryItemId: z.uuid(),
+      purpose: itemMediaPurpose,
+      moves: z
+        .array(z.strictObject({ mediaObjectId: z.uuid(), sortOrder: z.number().int().min(0) }))
+        .min(1)
+        .max(2)
+    })
+  )
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireSession, getInventoryMediaService } = await import('@/server/admin');
+    await requireSession();
+    const inventoryMediaService = await getInventoryMediaService();
+    for (const move of data.moves) {
+      await inventoryMediaService.reorder({
+        inventoryItemId: data.inventoryItemId,
+        purpose: data.purpose,
+        mediaObjectId: move.mediaObjectId,
+        sortOrder: move.sortOrder
+      });
+    }
+    return { ok: true };
   });
 
 // ---------------------------------------------------------------------------

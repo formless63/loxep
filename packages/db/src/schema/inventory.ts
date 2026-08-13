@@ -234,6 +234,74 @@ export const ACQUISITION_COST_TYPES = [
 ] as const;
 export type AcquisitionCostType = (typeof ACQUISITION_COST_TYPES)[number];
 
+/**
+ * `inventory_items.sale_mode` — Loxep-owned closed set, `CHECK`ed.
+ *
+ * The declaration the pre-M3 model was missing: the operator saying what a
+ * unit IS GOING TO BE before doing it, which listing authoring, pricing, and
+ * parted-out reporting all need. `parted_out` is the one member the operator
+ * never picks directly — it is written by {@link ItemsService.partOut}, not
+ * chosen at intake, and its presence on a row is what makes "which lots did
+ * we actually part out, and did it beat listing them whole" answerable.
+ *
+ * See the design's `sale_mode: how it's sold` section
+ * (`flipping-lifecycle-design.md`) for the full argument, including open
+ * question 4 (on the item, not the listing) and why a lot with
+ * `quantity = 100` and `sale_mode = 'lot'` are two different, compatible
+ * facts rather than a duplication.
+ */
+export const ITEM_SALE_MODES = [
+  "unit",
+  "lot",
+  "set",
+  "parts_donor",
+  "parted_out",
+  "bundle_component",
+] as const;
+export type ItemSaleMode = (typeof ITEM_SALE_MODES)[number];
+
+/**
+ * `media_links.resource_type` value for media attached to an inventory item,
+ * and the `purpose` values M3 adds — the M3 sibling of `EXPENSE_RESOURCE_TYPE`/
+ * `EXPENSE_MEDIA_PURPOSES` (`expenses.ts`). No new table: migration 0004's
+ * `media_links` already attaches an object to any resource by
+ * `(resource_type, resource_id, purpose)`.
+ *
+ * **`purpose` never gains a `'primary'` value.** Primary is
+ * `sort_order = 0` — see {@link inventoryItems}'s sibling doc on
+ * `inventory_item_specifics` and the design's "Images" section for why: with
+ * `purpose` in migration 0004's unique key and `sort_order` deliberately NOT
+ * in it, a `primary` purpose would let one photo be both primary and gallery
+ * as two rows for one fact, and re-ordering would become a purpose rewrite
+ * instead of a `sort_order` update.
+ */
+export const INVENTORY_ITEM_MEDIA_RESOURCE_TYPE = "inventory_item";
+export const INVENTORY_ITEM_MEDIA_PURPOSES = [
+  "gallery",
+  "condition_evidence",
+  "supporting_document",
+] as const;
+export type InventoryItemMediaPurpose =
+  (typeof INVENTORY_ITEM_MEDIA_PURPOSES)[number];
+
+/**
+ * `inventory_item_specifics.source` — closed, `CHECK`ed.
+ *
+ * Distinguishes what a human asserted (`manual`) from what a machine
+ * proposed (`parsed`, from a receipt/document parser; `channel_suggested`,
+ * from a marketplace's own aspect metadata fetched at authoring time) from a
+ * SKU-level default (`catalog_default`) that could one day populate a
+ * `catalog_item_specifics` sibling — pre-widened now for the identical reason
+ * `connection_default` was pre-widened on `acquisitions.entity_attribution_source`.
+ */
+export const ITEM_SPECIFIC_SOURCES = [
+  "manual",
+  "parsed",
+  "channel_suggested",
+  "catalog_default",
+] as const;
+export type ItemSpecificSource = (typeof ITEM_SPECIFIC_SOURCES)[number];
+
 /** `inventory_locations.kind` — closed, `CHECK`ed. */
 export const LOCATION_KINDS = [
   "site",
@@ -767,6 +835,31 @@ export const inventoryLocations = pgTable(
  * with zero basis and `source_kind = 'consignment_intake'` on their
  * acquisition. There is no `ownership` column yet; the read models exclude them
  * by an EXPLICIT predicate rather than by the accident of a zero.
+ *
+ * ## M3: six nullable/defaulted enrichment columns (loxep-dgf.3)
+ *
+ * `description`, `sale_mode`, `package_weight_grams`, and
+ * `package_{length,width,height}_mm` — the ONE deliberate exception to Phase
+ * 4's "no existing table gains a column" rule. The justification, verbatim
+ * from the design: that rule's forward-looking test is "every arrow into a
+ * future phase is a reference added later, not a rewrite of these tables",
+ * and six nullable/defaulted columns rewrite nothing — every existing row
+ * stays valid, every existing query stays correct, every existing constraint
+ * is unchanged. A 1:1 `inventory_item_details` side table was considered and
+ * rejected: a table whose parent is always joined is a table only in the
+ * sense that it has a name, and dimensions/weight are Inventory facts about a
+ * physical thing exactly as `shipments` already speaks grams and
+ * millimetres.
+ *
+ * `package_*` is named for the PACKED PARCEL, not the bare item — an operator
+ * weighing something for a listing weighs it on a shipping scale, which is
+ * the number a channel asks for and a rate quote needs. `shipments` continues
+ * to record what the actual outbound package weighed, a different fact about
+ * a different object.
+ *
+ * `num_nonnulls(length, width, height) in (0, 3)` refuses a half-entered box:
+ * two of three dimensions is not partial information, it is an error that
+ * would silently produce a wrong rate quote.
  */
 export const inventoryItems = pgTable(
   "inventory_items",
@@ -869,6 +962,18 @@ export const inventoryItems = pgTable(
     receivedAt: timestamp("received_at", { withTimezone: true }),
     listedAt: timestamp("listed_at", { withTimezone: true }),
     depletedAt: timestamp("depleted_at", { withTimezone: true }),
+    /** Plain text or Markdown, the internal authoring source of truth. NOT listing HTML — see the design's "Description" section. */
+    description: text("description"),
+    /** How the unit is going to be sold. Closed, Loxep-owned; see {@link ITEM_SALE_MODES}. */
+    saleMode: text("sale_mode").notNull().default("unit"),
+    /** The PACKED PARCEL's weight, in grams — same units `shipments` already uses. */
+    packageWeightGrams: numeric("package_weight_grams", {
+      precision: 20,
+      scale: 6,
+    }),
+    packageLengthMm: numeric("package_length_mm", { precision: 20, scale: 6 }),
+    packageWidthMm: numeric("package_width_mm", { precision: 20, scale: 6 }),
+    packageHeightMm: numeric("package_height_mm", { precision: 20, scale: 6 }),
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
@@ -903,6 +1008,19 @@ export const inventoryItems = pgTable(
       "inventory_items_grade_authority_check",
       sql`(${table.gradeLabel} is null) or (${table.gradingAuthority} is not null)`,
     ),
+    check(
+      "inventory_items_sale_mode_check",
+      sql`${table.saleMode} in ('unit', 'lot', 'set', 'parts_donor', 'parted_out', 'bundle_component')`,
+    ),
+    check(
+      "inventory_items_package_weight_check",
+      sql`${table.packageWeightGrams} is null or ${table.packageWeightGrams} > 0`,
+    ),
+    // A half-entered box is an error, not partial information.
+    check(
+      "inventory_items_package_dimensions_check",
+      sql`num_nonnulls(${table.packageLengthMm}, ${table.packageWidthMm}, ${table.packageHeightMm}) in (0, 3)`,
+    ),
     // Lot unpack and cost allocation.
     index("inventory_items_acquisition_id_idx").on(table.acquisitionId),
     index("inventory_items_catalog_item_id_idx")
@@ -925,6 +1043,109 @@ export const inventoryItems = pgTable(
     index("inventory_items_unattributed_idx")
       .on(table.economicEntityId)
       .where(sql`${table.economicEntityId} is null`),
+  ],
+);
+
+/* ---------------------------------------------------------------- specifics */
+
+/**
+ * Typed key/value product specifics attached to a physical unit (M3,
+ * loxep-dgf.3) — eBay-style aspects (`Brand: Nikon`, `Shutter Count: 4,200`),
+ * captured without Loxep ever owning a category/aspect taxonomy.
+ *
+ * ## Why typed values and not category templates
+ *
+ * A Loxep-owned taxonomy (which aspect names apply to "Film Cameras", which
+ * values are allowed, per marketplace) was rejected: eBay publishes that
+ * metadata itself and it is fetchable at authoring time
+ * (`sell.metadata.getItemAspectsForCategory`), a mirrored copy would go stale
+ * silently, and eBay aspects / Woo attributes / Facebook Marketplace's fixed
+ * fields are three genuinely different systems that a universal template
+ * would paper over. The adapter fetches the channel's own metadata when the
+ * operator is authoring for that channel and category; this table stores
+ * only what the operator (or a parser, or a channel suggestion) actually
+ * asserted about THIS unit.
+ *
+ * ## Multi-value falls out of the key, not a `text[]` column
+ *
+ * eBay aspects are `name -> string[]`; a two-value aspect is two rows sharing
+ * a `name`, ordered by `sort_order`. A `text[]` column was considered and
+ * rejected: "every item where Brand = Nikon" would become a containment query
+ * against an unindexed array where the relational form is a plain index
+ * lookup, and it edges toward the free-form attribute bag this documentation
+ * refuses everywhere else.
+ *
+ * `unique(inventory_item_id, name, value)` — asserting the identical fact
+ * twice adds nothing, and this is also the `ON CONFLICT` target an
+ * at-least-once writer needs (the `media_links` precedent, migration 0004).
+ *
+ * ## `value` is the truth; `value_numeric` is a shadow
+ *
+ * `value_numeric` is populated ONLY when `value` parses cleanly as a number,
+ * and nothing is derived from it — it exists purely so "shutter count under
+ * 5,000" is an indexed range scan instead of a cast in every `WHERE` clause.
+ * The verbatim string survives alongside it because "9.8", "PSA 9.8", and
+ * "9.8 (qualified)" are three different claims — the same argument that kept
+ * `inventory_items.grade_label` alongside `grade_numeric`. Exactly one
+ * service (`@loxep/inventory/specifics.ts`) writes this table, which is what
+ * keeps the shadow from drifting — the same single-writer argument that makes
+ * `quantity_on_hand` safe.
+ *
+ * ## Attaches to the ITEM, not the catalog item
+ *
+ * `inventory_items.catalog_item_id` is nullable and usually unresolved at
+ * intake (Phase 4 argued at length against requiring a SKU there). Attaching
+ * specifics to the physical unit means an unidentified brass lamp can
+ * accumulate "Material: Brass", "Height: 14 in" before anyone decides what it
+ * is. `source = 'catalog_default'` is pre-widened into the `CHECK` now for a
+ * possible future `catalog_item_specifics` sibling, the same pre-widening
+ * `acquisitions.entity_attribution_source` did for `connection_default`.
+ */
+export const inventoryItemSpecifics = pgTable(
+  "inventory_item_specifics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    inventoryItemId: uuid("inventory_item_id").notNull(),
+    name: text("name").notNull(),
+    value: text("value").notNull(),
+    /** Shadow of `value`, populated only on a clean numeric parse. Nothing derives from it. */
+    valueNumeric: numeric("value_numeric", { precision: 20, scale: 6 }),
+    unit: text("unit"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    source: text("source").notNull().default("manual"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // Named explicitly: the derived FK name
+    // (`inventory_item_specifics_inventory_item_id_inventory_items_id_fk`,
+    // 64 bytes) exceeds PostgreSQL's 63-byte identifier limit and would be
+    // silently truncated.
+    foreignKey({
+      name: "inventory_item_specifics_item_fk",
+      columns: [table.inventoryItemId],
+      foreignColumns: [inventoryItems.id],
+    }).onDelete("cascade"),
+    unique("inventory_item_specifics_item_name_value_uq").on(
+      table.inventoryItemId,
+      table.name,
+      table.value,
+    ),
+    check(
+      "inventory_item_specifics_source_check",
+      sql`${table.source} in ('manual', 'parsed', 'channel_suggested', 'catalog_default')`,
+    ),
+    index("inventory_item_specifics_item_id_idx").on(table.inventoryItemId),
+    // "every item where Brand = Nikon" — the relational form the design
+    // rejected a `text[]` column to keep.
+    index("inventory_item_specifics_name_value_idx").on(
+      table.name,
+      table.value,
+    ),
   ],
 );
 

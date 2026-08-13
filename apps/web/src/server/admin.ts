@@ -35,10 +35,12 @@ import { createDb, type DbHandle } from '@loxep/db';
 import {
   createConnectionsService,
   createEconomicEntitiesService,
+  createHealthService,
   createSecretsService,
   createSettingsService,
   type ConnectionsService,
   type EconomicEntitiesService,
+  type HealthService,
   type SecretsService,
   type SettingsService
 } from '@loxep/domain';
@@ -52,10 +54,12 @@ import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
 import type {
   AcquisitionsService,
+  InventoryMediaService,
   ItemsService,
   LocationsService,
   MovementsService,
-  OpportunityLinksService
+  OpportunityLinksService,
+  SpecificsService
 } from '@loxep/inventory';
 import { AuthorizationError, requireRole } from '@loxep/auth';
 import { getRequestHeaders, setResponseStatus } from '@tanstack/react-start/server';
@@ -66,6 +70,8 @@ interface AdminRegistry {
   handle: DbHandle;
   entities: EconomicEntitiesService;
   connections: ConnectionsService;
+  /** Phase 8 milestone 1 (loxep-ovj.1): the integration_health rollup, read by the dashboard Operations band and /settings/overview. */
+  health: HealthService;
   settings: SettingsService;
   /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
   secrets: SecretsService;
@@ -104,6 +110,10 @@ interface AdminRegistry {
   locationsServicePromise?: Promise<LocationsService>;
   movementsServicePromise?: Promise<MovementsService>;
   opportunityLinksServicePromise?: Promise<OpportunityLinksService>;
+  /** Typed key/value item specifics (`/inventory/stock/$id`, loxep-dgf.3). */
+  specificsServicePromise?: Promise<SpecificsService>;
+  /** Item image gallery links over `media_links` (loxep-dgf.3). */
+  inventoryMediaServicePromise?: Promise<InventoryMediaService>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -132,6 +142,7 @@ function buildRegistry(): AdminRegistry {
     handle,
     entities: createEconomicEntitiesService({ db: handle.db }),
     connections: createConnectionsService({ db: handle.db, keyring: config.keyring }),
+    health: createHealthService({ db: handle.db }),
     settings: createSettingsService({ db: handle.db }),
     secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
     expenses: createExpensesService({ db: handle.db }),
@@ -351,6 +362,32 @@ export function getOpportunityLinksService(): Promise<OpportunityLinksService> {
     return inventory.createOpportunityLinksService({ db: registry.handle.db });
   })();
   return registry.opportunityLinksServicePromise;
+}
+
+/** Typed key/value item specifics (loxep-dgf.3, M3) — `inventory_item_specifics`. */
+export function getSpecificsService(): Promise<SpecificsService> {
+  const registry = getAdminServices();
+  registry.specificsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createSpecificsService({ db: registry.handle.db });
+  })();
+  return registry.specificsServicePromise;
+}
+
+/**
+ * Item image gallery links over `media_links` (loxep-dgf.3, M3). Domain-side
+ * link bookkeeping only — upload/serve of the underlying bytes goes through
+ * {@link getMediaService}, exactly as `@/server/inventory-media.ts` composes
+ * the two, mirroring `@/server/receipt-media.ts` composing
+ * {@link getMediaService} with {@link getReceiptsService}.
+ */
+export function getInventoryMediaService(): Promise<InventoryMediaService> {
+  const registry = getAdminServices();
+  registry.inventoryMediaServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createInventoryMediaService({ db: registry.handle.db });
+  })();
+  return registry.inventoryMediaServicePromise;
 }
 
 /** Current request's Better Auth session, or `null` when unauthenticated. */

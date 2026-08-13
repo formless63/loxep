@@ -51,6 +51,8 @@ export {
   caaPolicySetting,
   cloudflareRateBudgetSetting,
   ebayRateBudgetSetting,
+  inventoryDefaultSaleModeSetting,
+  inventoryMediaLimitsSetting,
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
@@ -114,3 +116,40 @@ export type {
   ConnectionStatus,
   ConnectionsService,
 } from "./connections.ts";
+
+export {
+  createHealthService,
+  guardHealthDetail,
+  HEALTH_SOURCES,
+  HEALTH_STATUSES,
+  HEALTH_SUBJECT_TYPES,
+} from "./health.ts";
+export type {
+  HealthListFilter,
+  HealthRow,
+  HealthService,
+  HealthSource,
+  HealthStatus,
+  HealthSubjectType,
+  UpsertHealthInput,
+} from "./health.ts";
+
+export {
+  BASE_PROBE_INTERVAL_SECONDS,
+  createDefaultHealthSubjectRegistry,
+  DEFAULT_MAX_SUBJECTS_PER_TYPE,
+  isHealthCheckDue,
+  MAX_PROBE_INTERVAL_SECONDS,
+  nextHealthCheckDueAt,
+  runHealthSweep,
+} from "./health-probes.ts";
+export type {
+  CreateDefaultHealthSubjectRegistryOptions,
+  HealthFetch,
+  HealthProbeOutcome,
+  HealthSubjectCandidate,
+  HealthSubjectRegistry,
+  HealthSubjectRegistryEntry,
+  HealthSweepResult,
+  RunHealthSweepOptions,
+} from "./health-probes.ts";

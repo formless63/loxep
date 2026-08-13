@@ -150,6 +150,81 @@ const createItemSchema = z
 
 export type CreateItemInput = z.input<typeof createItemSchema>;
 
+/**
+ * M3 enrichment update (loxep-dgf.3): the descriptive fields the design adds
+ * to `inventory_items` — `description` and the four `package_*`
+ * dimension/weight columns. `sale_mode` is deliberately NOT here: it has its
+ * own verb ({@link ItemsService.setSaleMode}) because it is a declaration
+ * with its own rule (never `'parted_out'` by hand), not an ordinary
+ * descriptive edit.
+ *
+ * Every field is `undefined`-means-"leave unchanged", matching
+ * {@link ItemsService.setCondition}'s merge convention. `null` explicitly
+ * clears a field.
+ */
+const updateSchema = z.strictObject({
+  inventoryItemId: z.uuid(),
+  description: z.string().nullish(),
+  packageWeightGrams: decimalString.nullish(),
+  packageLengthMm: decimalString.nullish(),
+  packageWidthMm: decimalString.nullish(),
+  packageHeightMm: decimalString.nullish(),
+});
+
+export type UpdateItemInput = z.input<typeof updateSchema>;
+
+/**
+ * `sale_mode` — a Loxep-owned closed set of six, but the Zod enum here has
+ * only FIVE members. `'parted_out'` is excluded on purpose: it is written
+ * exclusively by {@link ItemsService.partOut}, never chosen by an operator,
+ * so the type system refuses it structurally rather than by a runtime check
+ * alone.
+ */
+const settableSaleModes = [
+  "unit",
+  "lot",
+  "set",
+  "parts_donor",
+  "bundle_component",
+] as const;
+
+const setSaleModeSchema = z.strictObject({
+  inventoryItemId: z.uuid(),
+  saleMode: z.enum(settableSaleModes),
+  actorUserId: z.string().min(1).nullish(),
+});
+
+export type SetSaleModeInput = z.input<typeof setSaleModeSchema>;
+
+const partOutChildSchema = z.strictObject({
+  label: z.string().trim().min(1),
+  quantity: positiveDecimal.default("1"),
+  conditionCode: z.enum(conditionCodes).optional(),
+  locationId: z.uuid().nullish(),
+  saleMode: z.enum(settableSaleModes).default("unit"),
+  /**
+   * The share weight for {@link distributeByWeights}. Defaults to the
+   * child's own `quantity`, so a part-out with no explicit weighting simply
+   * splits basis proportional to how many units each child represents.
+   */
+  weight: positiveDecimal.optional(),
+});
+
+const partOutSchema = z.strictObject({
+  inventoryItemId: z.uuid(),
+  children: z.array(partOutChildSchema).min(1).max(200),
+  occurredAt: z.date().optional(),
+  note: z.string().nullish(),
+  actorUserId: z.string().min(1).nullish(),
+});
+
+export type PartOutInput = z.input<typeof partOutSchema>;
+
+export interface PartOutResult {
+  parent: InventoryItemRow;
+  children: InventoryItemRow[];
+}
+
 const gradingSchema = z.strictObject({
   inventoryItemId: z.uuid(),
   conditionCode: z.enum(conditionCodes).optional(),
@@ -191,6 +266,34 @@ export interface ItemsService {
   getByCode: (code: string) => Promise<InventoryItemRow>;
   /** Condition and grading are ordinary mutable facts about the unit. */
   setCondition: (input: SetConditionInput) => Promise<InventoryItemRow>;
+  /**
+   * M3 enrichment (loxep-dgf.3): `description` and the four `package_*`
+   * dimension/weight columns. Validates the merged (existing + provided)
+   * result against the same invariants the migration's `CHECK`s enforce —
+   * `package_weight_grams > 0` when present, and length/width/height entered
+   * together or not at all — so a caller gets a descriptive
+   * `InventoryValidationError` instead of a bare constraint-violation.
+   */
+  update: (input: UpdateItemInput) => Promise<InventoryItemRow>;
+  /**
+   * The declaration: how this unit is going to be sold. Refuses
+   * `'parted_out'` at the type level (see {@link settableSaleModes}) and
+   * refuses ANY change once the current mode already IS `'parted_out'` —
+   * that fact is written once, by {@link ItemsService.partOut}, and is never
+   * hand-edited afterward.
+   */
+  setSaleMode: (input: SetSaleModeInput) => Promise<InventoryItemRow>;
+  /**
+   * The one genuinely new inventory verb this design adds: breaks a unit
+   * into N child rows (`origin_item_id` set, each a `status: 'intake'` row
+   * needing its own review), divides the parent's basis across them with
+   * {@link distributeByWeights} (the same largest-remainder engine the lot
+   * cost allocator uses), depletes the parent's ENTIRE on-hand quantity
+   * through the movement writer (`movement_kind: 'consumption'`), and sets
+   * the parent's `sale_mode = 'parted_out'`. Refuses when the parent has no
+   * stock on hand, or has already been parted out.
+   */
+  partOut: (input: PartOutInput) => Promise<PartOutResult>;
   /**
    * Move stock to another location as a `transfer_out` / `transfer_in` pair.
    * A partial quantity splits the row.
@@ -480,6 +583,201 @@ export function createItemsService(options: { db: LoxepDb }): ItemsService {
             where id = ${uuidLiteral(value.inventoryItemId)}`,
         );
         return loadItem(tx, value.inventoryItemId);
+      });
+    },
+
+    update: async (input) => {
+      const value = parse(updateSchema, input, "item enrichment update");
+      return db.transaction(async (tx) => {
+        const item = await loadItem(tx, value.inventoryItemId);
+        const description =
+          value.description === undefined ? item.description : value.description;
+        const weight =
+          value.packageWeightGrams === undefined
+            ? item.packageWeightGrams
+            : value.packageWeightGrams;
+        const length =
+          value.packageLengthMm === undefined
+            ? item.packageLengthMm
+            : value.packageLengthMm;
+        const width =
+          value.packageWidthMm === undefined
+            ? item.packageWidthMm
+            : value.packageWidthMm;
+        const height =
+          value.packageHeightMm === undefined
+            ? item.packageHeightMm
+            : value.packageHeightMm;
+
+        if (weight !== null && weight !== undefined && compareDecimals(weight, "0") <= 0) {
+          throw new InventoryValidationError(
+            "package weight must be greater than zero when present " +
+              "(inventory_items_package_weight_check)",
+          );
+        }
+        const dimsPresent = [length, width, height].filter(
+          (dimension) => dimension !== null && dimension !== undefined,
+        ).length;
+        if (dimsPresent !== 0 && dimsPresent !== 3) {
+          throw new InventoryValidationError(
+            "package length, width, and height must be entered together or " +
+              "not at all: two of three dimensions is not partial " +
+              "information, it silently produces a wrong rate quote " +
+              "(inventory_items_package_dimensions_check)",
+          );
+        }
+
+        const assignments = [
+          `description = ${nullableText(description)}`,
+          `package_weight_grams = ${weight === null || weight === undefined ? "null" : numeric(weight)}`,
+          `package_length_mm = ${length === null || length === undefined ? "null" : numeric(length)}`,
+          `package_width_mm = ${width === null || width === undefined ? "null" : numeric(width)}`,
+          `package_height_mm = ${height === null || height === undefined ? "null" : numeric(height)}`,
+          "updated_at = now()",
+        ];
+        await tx.execute(
+          `update inventory_items
+              set ${assignments.join(",\n                  ")}
+            where id = ${uuidLiteral(value.inventoryItemId)}`,
+        );
+        return loadItem(tx, value.inventoryItemId);
+      });
+    },
+
+    setSaleMode: async (input) => {
+      const value = parse(setSaleModeSchema, input, "sale mode update");
+      return db.transaction(async (tx) => {
+        const item = await loadItem(tx, value.inventoryItemId);
+        if (item.saleMode === "parted_out") {
+          throw new InventoryImmutableFactError(
+            `cannot change the sale mode of "${item.itemCode}": it has ` +
+              "already been parted out, and that fact is written once by " +
+              "partOut() — it is never chosen at intake or hand-edited " +
+              "afterward",
+          );
+        }
+        await tx.execute(
+          `update inventory_items
+              set sale_mode = ${textLiteral(value.saleMode)},
+                  updated_at = now()
+            where id = ${uuidLiteral(value.inventoryItemId)}`,
+        );
+        return loadItem(tx, value.inventoryItemId);
+      });
+    },
+
+    partOut: async (input) => {
+      const value = parse(partOutSchema, input, "part-out");
+      return db.transaction(async (tx) => {
+        const parent = await loadItem(tx, value.inventoryItemId);
+        if (parent.saleMode === "parted_out") {
+          throw new InventoryImmutableFactError(
+            `"${parent.itemCode}" has already been parted out`,
+          );
+        }
+        if (compareDecimals(parent.quantityOnHand, "0") <= 0) {
+          throw new InventoryConflictError(
+            `cannot part out "${parent.itemCode}": it has no stock on hand`,
+          );
+        }
+
+        const groupKey = randomUUID();
+        const occurredAt = value.occurredAt ?? new Date();
+        const weights = value.children.map((child) => child.weight ?? child.quantity);
+        const { shares: landedShares } = distributeByWeights(
+          parent.landedCostAmount,
+          weights,
+        );
+        const { shares: goodsShares } = distributeByWeights(
+          parent.acquisitionCostAmount,
+          weights,
+        );
+
+        const children: InventoryItemRow[] = [];
+        for (const [index, spec] of value.children.entries()) {
+          const created = await withCodeRetry(
+            async () => {
+              const rows = await tx
+                .insert(inventoryItems)
+                .values({
+                  itemCode: itemCode(),
+                  acquisitionId: parent.acquisitionId,
+                  economicEntityId: parent.economicEntityId,
+                  entityAttributionSource: parent.entityAttributionSource,
+                  entityAttributedAt: parent.entityAttributedAt,
+                  entityAttributedByUserId: parent.entityAttributedByUserId,
+                  locationId: spec.locationId ?? parent.locationId,
+                  originItemId: parent.id,
+                  label: spec.label,
+                  status: "intake",
+                  conditionCode: spec.conditionCode ?? parent.conditionCode,
+                  quantity: spec.quantity,
+                  quantityOnHand: ZERO,
+                  currency: parent.currency,
+                  acquisitionCostAmount: goodsShares[index] ?? ZERO,
+                  landedCostAmount: landedShares[index] ?? ZERO,
+                  saleMode: spec.saleMode,
+                  acquiredAt: parent.acquiredAt,
+                  createdByUserId: value.actorUserId ?? null,
+                })
+                .returning();
+              const row = rows[0];
+              if (row === undefined) {
+                throw new InventoryConflictError(
+                  "part-out child insert returned no row",
+                );
+              }
+              return row;
+            },
+            { label: "item code" },
+          );
+
+          await recordMovement(tx, {
+            inventoryItemId: created.id,
+            movementKind: "found",
+            quantity: spec.quantity,
+            locationId: spec.locationId ?? parent.locationId,
+            acquisitionId: parent.acquisitionId,
+            deduplicationKey: movementKeys.found(`partout:${groupKey}`, created.id),
+            reasonCode: "part_out",
+            note: value.note ?? null,
+            occurredAt,
+            actorUserId: value.actorUserId ?? null,
+          });
+
+          children.push(await loadItem(tx, created.id));
+        }
+
+        // Deplete the WHOLE parent — parted_out is a fact about the row, not
+        // a partial state. The basis just distributed sums exactly to what
+        // is removed here (distributeByWeights's own guarantee), so this
+        // never strands or invents a fraction of a cent.
+        await recordMovement(tx, {
+          inventoryItemId: parent.id,
+          movementKind: "consumption",
+          quantity: `-${parent.quantityOnHand}`,
+          locationId: parent.locationId,
+          deduplicationKey: movementKeys.event(
+            "consumption",
+            `partout:${groupKey}`,
+            parent.id,
+          ),
+          reasonCode: "part_out",
+          note: value.note ?? null,
+          occurredAt,
+          actorUserId: value.actorUserId ?? null,
+        });
+
+        await tx.execute(
+          `update inventory_items
+              set sale_mode = 'parted_out',
+                  landed_cost_amount = 0::numeric(20, 6),
+                  acquisition_cost_amount = 0::numeric(20, 6),
+                  updated_at = now()
+            where id = ${uuidLiteral(parent.id)}`,
+        );
+
+        return { parent: await loadItem(tx, parent.id), children };
       });
     },
 

@@ -100,4 +100,32 @@ test('creates an acquisition, adds an item to it, and the item lands in the stoc
   await page.getByRole('button', { name: 'Complete review' }).click();
   await expect(page.getByText('Available', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Complete review' })).toHaveCount(0);
+
+  // --- M3 enrichment (loxep-dgf.3): set package dimensions/weight and a
+  // typed specific on the same item, from its detail page's Enrichment
+  // panel and Specifics editor (`item-enrichment-panel.tsx`,
+  // `specifics-editor.tsx`). Image upload is intentionally NOT covered here
+  // — it needs a real file fixture and browser file-input automation the
+  // rest of this suite does not set up; the upload/serve ROUTES are covered
+  // by the package-level services and the route registration, not by e2e.
+  await page.getByLabel('Package weight (g)').fill('850');
+  await page.getByLabel('Length (mm)').fill('200');
+  await page.getByLabel('Width (mm)').fill('150');
+  await page.getByLabel('Height (mm)').fill('100');
+  await page.getByRole('button', { name: 'Save enrichment' }).click();
+
+  // Reload to prove the write round-tripped through `itemsService.update()`
+  // rather than only reflecting locally-typed form state.
+  await page.reload();
+  await expect(page.getByLabel('Package weight (g)')).toHaveValue('850.000000');
+  await expect(page.getByLabel('Length (mm)')).toHaveValue('200.000000');
+  await expect(page.getByLabel('Width (mm)')).toHaveValue('150.000000');
+  await expect(page.getByLabel('Height (mm)')).toHaveValue('100.000000');
+
+  const specificName = `Condition detail ${runId}`;
+  await page.getByLabel('Name').fill(specificName);
+  await page.getByLabel('Value').fill('Excellent');
+  await page.getByRole('button', { name: 'Add', exact: true }).click();
+  const specificRow = page.getByText(specificName).locator('..');
+  await expect(specificRow).toContainText('Excellent');
 });

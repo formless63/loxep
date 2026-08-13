@@ -286,6 +286,64 @@ export const caaPolicySetting = defineSetting({
   },
 });
 
+/**
+ * Inventory item media limits (M3, loxep-dgf.3) — the design's own contrast
+ * with the avatar path: `MAX_AVATAR_BYTES` is a hardcoded 2 MB constant
+ * because an avatar replaces ONE object per user, but an item gallery holds
+ * many photos of one physical thing (a twelve-photo camera-body listing is
+ * ordinary), and 2 MB is the wrong number for that case. So THIS cap is a
+ * registered application setting rather than a constant, the same way
+ * `EXPENSE`/receipt limits are not — receipts stayed a constant because M1
+ * shipped before this pattern existed; M3 is the first surface where the
+ * design explicitly calls for a setting instead.
+ *
+ * The MIME allowlist sits beside the size cap rather than as a separate
+ * setting: the two are always read and reasoned about together (the upload
+ * route's one 400/413 decision), and splitting them would let an operator's
+ * install carry a size cap with no matching allowlist or vice versa.
+ */
+export const inventoryMediaLimitsSetting = defineSetting({
+  key: "inventory.media_limits",
+  schema: z.strictObject({
+    /** Per-file cap, in bytes, for an item image/condition-evidence/supporting-document upload. */
+    maxBytes: z.number().int().min(1).max(200 * 1024 * 1024),
+    /** Accepted MIME types for an item media upload. */
+    allowedMimeTypes: z.array(z.string().min(1)).min(1).max(32),
+  }),
+  description:
+    "Per-file size cap and MIME allowlist for inventory item image/" +
+    "condition-evidence/supporting-document uploads (M3) — larger than the " +
+    "avatar cap on purpose: a gallery holds many photos of one physical thing",
+  schemaVersion: 1,
+  defaultValue: {
+    maxBytes: 10 * 1024 * 1024,
+    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "application/pdf"],
+  },
+});
+
+/**
+ * The `sale_mode` a newly intaken item gets when the operator does not
+ * choose one — mirrors `monitorDefaultsSetting`'s "a starting point new rows
+ * inherit" shape. `'unit'` is the dominant case per the design's own
+ * ordering of `ITEM_SALE_MODES`, and it is the column's own database
+ * `DEFAULT` too; this setting exists so an installation that deals mostly in
+ * lots (a liquidation reseller, say) can change the create-time default
+ * without every intake form re-selecting it by hand. `'parted_out'` is
+ * excluded from the schema's own enum: it is written once by `partOut()`,
+ * never chosen at intake, so it cannot be configured as a default either.
+ */
+export const inventoryDefaultSaleModeSetting = defineSetting({
+  key: "inventory.default_sale_mode",
+  schema: z.strictObject({
+    saleMode: z.enum(["unit", "lot", "set", "parts_donor", "bundle_component"]),
+  }),
+  description:
+    "The sale_mode a newly intaken inventory item gets when the operator " +
+    "does not choose one explicitly",
+  schemaVersion: 1,
+  defaultValue: { saleMode: "unit" },
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -295,4 +353,6 @@ export const registeredApplicationSettings = [
   orderPayloadRetentionSetting,
   cloudflareRateBudgetSetting,
   caaPolicySetting,
+  inventoryMediaLimitsSetting,
+  inventoryDefaultSaleModeSetting,
 ] as const;

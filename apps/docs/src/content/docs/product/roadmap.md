@@ -240,9 +240,11 @@ The phase's central argument is that Loxep runs on the fleet it would observe, s
 
 ### Milestone 1 — the shared health model
 
-- `integration_health` as shared foundation: one current-state row per subject, keyed `(subject_type, subject_id)`, covering connections, notification endpoints, and storage backends first. It is a derived rollup for display and never drives retry or backoff.
-- One recurring probe sweep, with due-ness and backoff computed from columns the row already carries — no scheduling table and no per-subject cron.
-- The Dashboard's Operations health band and a health summary surface read it.
+**Implemented (loxep-ovj.1).** Migration `0014_integration_health` creates the one table exactly as designed, with no alteration to any owning table. `@loxep/domain` owns the service (`upsertHealth`/`listHealth`/`getHealth`/`clearHealthForSubject`), the subject registry, and the sweep mechanics as shared foundation, per [open question 6](../../architecture/fleet-observability-design/#open-questions)'s resolution; `packages/app`'s `health.sweep` is the thin Graphile Worker/cron wrapper around it, on the same shape `ebay.refresh-tokens` already uses. The design's implementation-status header records what shipped and how each pre-implementation gate was resolved.
+
+- `integration_health` as shared foundation: one current-state row per subject, keyed `(subject_type, subject_id)`, covering connections, notification endpoints, and storage backends first. It is a derived rollup for display and never drives retry or backoff — tested directly against `connections`' and `monitor_targets`' own error/backoff columns.
+- One recurring probe sweep (every 5 minutes), with due-ness and backoff computed from columns the row already carries — no scheduling table and no per-subject cron. Every probe is cheap, unauthenticated, and read-only; "unreachable from Loxep" (`'unknown'`) and "failing" render as distinct statuses.
+- The Dashboard's Operations band now reads `integration_health` for its per-provider connection status, where this milestone's subjects overlap what the band already showed; a new "Integration health" table on `/settings/overview` reads the full rollup.
 
 ### Milestone 2 — publish Loxep's own health outward
 

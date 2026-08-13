@@ -16,6 +16,9 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { formatDate, formatDateTime, formatMoney, formatQuantity, formatScore } from '@/lib/format';
 import { inventoryItemQuery } from '@/features/inventory/api/queries';
+import ImageGallery from '@/features/inventory/components/image-gallery';
+import ItemEnrichmentPanel from '@/features/inventory/components/item-enrichment-panel';
+import SpecificsEditor from '@/features/inventory/components/specifics-editor';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { completeItemIntakeReview } from '@/server/inventory-functions';
 import {
@@ -142,6 +145,23 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
           {data.conditionNotes && (
             <DetailRow label='Condition notes'>{data.conditionNotes}</DetailRow>
           )}
+        </CardContent>
+      </Card>
+
+      <ItemEnrichmentPanel item={data} />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='text-base'>Specifics</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <SpecificsEditor inventoryItemId={data.id} specifics={data.specifics} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className='pt-6'>
+          <ImageGallery inventoryItemId={data.id} media={data.media} />
         </CardContent>
       </Card>
 

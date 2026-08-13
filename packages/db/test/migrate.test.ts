@@ -22,8 +22,16 @@ import {
  * 0012 infrastructure control plane (Phase 7 milestone 1): hosting targets,
  *      managed domains, DNS records, reconcile runs and steps, drift
  *      findings, and the provider-operation idempotency ledger.
+ * 0013 infrastructure mail (Phase 7 milestone 2): mailbox templates/entries,
+ *      mail domains, mailboxes, and managed_domains' mailbox_template_id FK.
+ * 0014 integration_health (Phase 8 milestone 1, loxep-ovj.1): the one shared-
+ *      foundation health-rollup table, no alterations to any other table.
+ * 0015 inventory enrichment (Flipping lifecycle M3, loxep-dgf.3):
+ *      inventory_items gains six nullable/defaulted columns (description,
+ *      sale_mode, package weight/dimensions) and inventory_item_specifics
+ *      is new. No DDL for images — media_links (0004) already covers them.
  */
-const MIGRATION_FILE_COUNT = 14;
+const MIGRATION_FILE_COUNT = 16;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

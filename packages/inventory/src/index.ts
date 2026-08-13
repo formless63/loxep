@@ -139,9 +139,27 @@ export type {
   CreateItemInput,
   InventoryItemRow,
   ItemsService,
+  PartOutInput,
+  PartOutResult,
   SetConditionInput,
+  SetSaleModeInput,
   TransferResult,
+  UpdateItemInput,
 } from "./items.ts";
+
+export { createSpecificsService } from "./specifics.ts";
+export type {
+  ItemSpecificRow,
+  SetSpecificInput,
+  SpecificsService,
+} from "./specifics.ts";
+
+export { createInventoryMediaService } from "./media.ts";
+export type {
+  AttachInventoryMediaInput,
+  InventoryMediaLinkRow,
+  InventoryMediaService,
+} from "./media.ts";
 
 export { createAllocationsService } from "./allocations.ts";
 export type {

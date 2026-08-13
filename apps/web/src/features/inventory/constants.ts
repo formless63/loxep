@@ -357,3 +357,63 @@ export type AcquisitionCostClass = 'goods' | 'ancillary';
  * exact wording to hand.
  */
 export const CONTRIBUTION_LABEL = 'contribution after goods, fees, and shipping';
+
+/**
+ * `inventory_items.sale_mode` (M3, loxep-dgf.3) — Loxep-owned closed set,
+ * `CHECK`ed. Duplicated as a local literal union rather than imported from
+ * `@loxep/db/schema`, the same reasoning as every other closed set in this
+ * file. `'parted_out'` is included here (for LABELING an already-parted-out
+ * item) but deliberately excluded from {@link SETTABLE_SALE_MODE_VALUES},
+ * the operator-choosable subset — it is written once by the part-out
+ * operation, never picked at intake or edited afterward.
+ */
+export type ItemSaleMode =
+  | 'unit'
+  | 'lot'
+  | 'set'
+  | 'parts_donor'
+  | 'parted_out'
+  | 'bundle_component';
+
+export const SETTABLE_SALE_MODE_VALUES: readonly Exclude<ItemSaleMode, 'parted_out'>[] = [
+  'unit',
+  'lot',
+  'set',
+  'parts_donor',
+  'bundle_component'
+];
+
+const ITEM_SALE_MODE_LABELS = {
+  unit: 'Unit — one thing, sold as one thing',
+  lot: 'Lot — several things, sold together',
+  set: 'Set — a matched group, parting it destroys value',
+  parts_donor: 'Parts donor — acquired to harvest from',
+  parted_out: 'Parted out',
+  bundle_component: 'Bundle component — held to combine later'
+} satisfies Record<ItemSaleMode, string>;
+
+export function itemSaleModeLabel(mode: string): string {
+  return ITEM_SALE_MODE_LABELS[mode as ItemSaleMode] ?? mode;
+}
+
+export const settableSaleModeOptions = SETTABLE_SALE_MODE_VALUES.map((value) => ({
+  value,
+  label: itemSaleModeLabel(value)
+}));
+
+/**
+ * `media_links.purpose` values for `resource_type = 'inventory_item'` (M3).
+ * `purpose` never gains a `'primary'` value — primary is whichever `gallery`
+ * row sorts first, per the design's gallery rule.
+ */
+export type ItemMediaPurpose = 'gallery' | 'condition_evidence' | 'supporting_document';
+
+const ITEM_MEDIA_PURPOSE_LABELS = {
+  gallery: 'Gallery',
+  condition_evidence: 'Condition evidence',
+  supporting_document: 'Supporting document'
+} satisfies Record<ItemMediaPurpose, string>;
+
+export function itemMediaPurposeLabel(purpose: string): string {
+  return ITEM_MEDIA_PURPOSE_LABELS[purpose as ItemMediaPurpose] ?? purpose;
+}
