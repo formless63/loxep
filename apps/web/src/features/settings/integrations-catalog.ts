@@ -33,6 +33,7 @@ export type IntegrationServiceId =
   | 'purelymail'
   | 'tailscale'
   | 'termix'
+  | 'gatus'
   | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
@@ -89,7 +90,8 @@ export type IntegrationAccountForm =
   | 'cloudflare-api'
   | 'purelymail-api'
   | 'tailscale-api'
-  | 'termix-api';
+  | 'termix-api'
+  | 'gatus-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -437,6 +439,29 @@ export const integrationServices: IntegrationService[] = [
     },
     status: ({ connections }) => {
       const count = accountsFor(connections, 'termix').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No instances connected', details: [] };
+    }
+  },
+  {
+    id: 'gatus',
+    name: 'Gatus',
+    category: 'Infrastructure',
+    description:
+      'Read endpoint statuses from a self-hosted Gatus status page for the fleet view. Loxep reads Gatus over Basic auth when configured, or over its unauthenticated per-endpoint routes when Gatus uses OIDC or no security at all — the connection always shows which mode it is in, never a silently partial view. Loxep never writes to Gatus configuration.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage instances' },
+    accounts: {
+      provider: 'gatus',
+      kind: 'fleet_observability',
+      form: 'gatus-api',
+      addLabel: 'Add Gatus instance',
+      formHint:
+        'The instance URL is kept as ordinary connection configuration. Username and password are optional — Basic auth if your Gatus uses it, left blank if it is unsecured or uses OIDC, in which case Loxep reads its unauthenticated per-endpoint routes instead.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'gatus').length;
       return count > 0
         ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
         : { tone: 'unconfigured', label: 'No instances connected', details: [] };

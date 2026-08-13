@@ -23,6 +23,7 @@ describe("secret bundle registry", () => {
       "dockhand_credentials",
       "ebay_keyset",
       "etsy_keyset",
+      "gatus_credentials",
       "invoiceninja_credentials",
       "mailbox_password",
       "medusa_credentials",
@@ -766,6 +767,54 @@ describe("termix_credentials bundle (a login, because there is no scoped API tok
       const message = (error as Error).message;
       expect(message).toContain("password");
       expect(message).not.toContain(FAKE_TERMIX_PASSWORD);
+    }
+  });
+});
+
+describe("gatus_credentials bundle (an OPTIONAL Basic-auth pair)", () => {
+  const FAKE_GATUS_PASSWORD = "fake-gatus-basic-password-0000000000000";
+
+  it("accepts a username/password pair", () => {
+    expect(
+      validateBundle("gatus_credentials", {
+        username: "loxep",
+        password: FAKE_GATUS_PASSWORD,
+      }),
+    ).toEqual({ username: "loxep", password: FAKE_GATUS_PASSWORD });
+  });
+
+  it("accepts NEITHER half — a legitimate state for an open or OIDC-secured Gatus", () => {
+    expect(validateBundle("gatus_credentials", {})).toEqual({});
+  });
+
+  it("keeps the pair atomic — one half alone is rejected", () => {
+    expect(() =>
+      validateBundle("gatus_credentials", { username: "loxep" }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("gatus_credentials", { password: FAKE_GATUS_PASSWORD }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("gatus_credentials", {
+        username: "loxep",
+        password: FAKE_GATUS_PASSWORD,
+        baseUrl: "https://gatus.example.com",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the password itself", () => {
+    try {
+      validateBundle("gatus_credentials", { username: "loxep", password: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("password");
+      expect(message).not.toContain(FAKE_GATUS_PASSWORD);
     }
   });
 });

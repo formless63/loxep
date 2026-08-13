@@ -47,6 +47,7 @@ export default defineConfig({
             { label: 'Connecting Dockhand', slug: 'guides/connecting-dockhand' },
             { label: 'Connecting Tailscale', slug: 'guides/connecting-tailscale' },
             { label: 'Connecting Termix', slug: 'guides/connecting-termix' },
+            { label: 'Connecting Gatus', slug: 'guides/connecting-gatus' },
             { label: 'Publishing health to Gatus', slug: 'guides/gatus-health-push' },
           ],
         },

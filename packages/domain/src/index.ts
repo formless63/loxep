@@ -53,6 +53,7 @@ export {
   ebayRateBudgetSetting,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
+  gatusRateBudgetSetting,
   inventoryDefaultSaleModeSetting,
   inventoryMediaLimitsSetting,
   monitorDefaultsSetting,
@@ -155,3 +156,20 @@ export type {
   HealthSweepResult,
   RunHealthSweepOptions,
 } from "./health-probes.ts";
+
+export {
+  createResourceLinksService,
+  RESOURCE_LINK_RESOURCE_TYPES,
+  resourceLinkResourceTypeConfig,
+} from "./resource-links.ts";
+export type {
+  AttachLinkInput,
+  CompanionLink,
+  CreateLinkInput,
+  DetachLinkInput,
+  ExternalResourceRow,
+  RegisterExternalResourceInput,
+  ResourceLinkResourceType,
+  ResourceLinkRow,
+  ResourceLinksService,
+} from "./resource-links.ts";

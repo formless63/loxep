@@ -98,8 +98,10 @@ export default function ConnectionAddDialog({
           <PurelymailAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'tailscale-api' ? (
           <TailscaleAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'termix-api' ? (
           <TermixAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <GatusAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -1697,6 +1699,186 @@ function TermixAccountForm({
               type='password'
               autoComplete='new-password'
               description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect instance</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const gatusAccountSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Name is required'),
+    baseUrl: z.url(),
+    username: z.string().trim(),
+    password: z.string().trim(),
+    economicEntityId: z.string()
+  })
+  .refine((value) => (value.username === '') === (value.password === ''), {
+    message: 'Provide both username and password, or leave both blank',
+    path: ['password']
+  });
+
+/**
+ * Gatus (Phase 8 milestone 4, loxep-ovj.4): unlike every other self-hosted
+ * fleet companion here, the credential pair is OPTIONAL. Verified against
+ * `github.com/TwiN/gatus` v5.36.0's own Go source (gatus.io/docs is a
+ * client-rendered SPA and unusable as a reference) — `api/api.go` only ever
+ * attaches auth middleware to the protected route group when a `security`
+ * block exists, so an instance with none configured is fully open, and
+ * `security/oidc.go` gives OIDC no server-to-server bearer path at all
+ * (session cookie only). Loxep probes which of the three states applies at
+ * read time and always shows which one it is in — see
+ * `packages/integrations/gatus/src/adapter.ts`.
+ */
+function GatusSetupGuidance() {
+  return (
+    <SetupGuidance title='Basic auth, OIDC, or nothing at all'>
+      <GuidanceSteps>
+        <GuidanceStep>
+          If your Gatus instance&apos;s YAML has a <code className='font-mono'>security.basic</code>{' '}
+          block, use that username and the matching password below — Loxep sends it as an ordinary
+          Basic auth header on every read.
+        </GuidanceStep>
+        <GuidanceStep>
+          If it has no <code className='font-mono'>security</code> block at all, its read API is
+          fully open. Leave both fields blank.
+        </GuidanceStep>
+        <GuidanceStep>
+          If it has a <code className='font-mono'>security.oidc</code> block, leave both fields
+          blank too — OIDC only ever grants a browser session cookie, and there is no credential
+          Loxep could hold for it.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Loxep probes the instance&apos;s own unauthenticated{' '}
+          <code className='font-mono'>/api/v1/config</code> endpoint on every read to find out which
+          of the three applies. Against an OIDC-secured instance it automatically falls back to
+          Gatus&apos;s unauthenticated per-endpoint routes rather than failing outright — and the
+          connection always shows which mode it is reading in, never a silently partial view.
+        </p>
+        <p>
+          Password is write-only: stored encrypted, never displayed again. Leaving both fields blank
+          is a normal, supported state — not every Gatus instance needs a credential at all.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function GatusAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof gatusAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'gatus',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          ...(values.username === '' ? {} : { username: values.username }),
+          ...(values.password === '' ? {} : { password: values.password }),
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Gatus instance connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the instance')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      username: '',
+      password: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: gatusAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <GatusSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Instance name'
+              required
+              placeholder='Main Gatus instance'
+              description='How this instance is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Instance URL'
+              required
+              placeholder='https://status.example.com'
+              description='The instance root, including https:// and the port if non-standard.'
+            />
+          )}
+        />
+        <form.AppField
+          name='username'
+          children={(field) => (
+            <field.TextField
+              label='Username'
+              placeholder='Optional — Basic auth only'
+              description='Leave blank if this Gatus instance has no security configured, or uses OIDC.'
+            />
+          )}
+        />
+        <form.AppField
+          name='password'
+          children={(field) => (
+            <field.TextField
+              label='Password'
+              type='password'
+              autoComplete='new-password'
+              placeholder='Optional — Basic auth only'
+              description='Write-only: stored encrypted, never displayed again. Provide together with username, or leave both blank.'
             />
           )}
         />

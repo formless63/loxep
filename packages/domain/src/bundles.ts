@@ -475,6 +475,44 @@ export const secretBundleSchemas = {
     username: z.string().min(1),
     password: z.string().min(1),
   }),
+  /**
+   * A Gatus Basic-auth credential (ADR-0009, loxep-ovj.4): what
+   * `@loxep/integration-gatus` sends as `Authorization: Basic
+   * base64(username:password)` when the operator's instance is
+   * Basic-secured. Verified against `github.com/TwiN/gatus` v5.36.0's own Go
+   * source (`security/config.go`'s `ApplySecurityMiddleware`, which wires
+   * `fiber`'s ordinary `basicauth` middleware) — gatus.io/docs is a
+   * client-rendered SPA and unusable as a reference.
+   *
+   * ## An OPTIONAL pair — unlike every other login-shaped bundle here
+   *
+   * Every sibling that carries a username/password pair
+   * (`beszel_credentials`, `dockhand_credentials`, `termix_credentials`)
+   * requires it, because those providers are always behind a login. Gatus is
+   * not: the fleet-observability design's verdict table states *"the API is
+   * fully open when no `security` block is configured"*, and even when
+   * `security.oidc` is configured there is no bearer credential a
+   * server-to-server reader could hold at all (`security/oidc.go` — a
+   * browser-redirect session cookie, never a header a background job can
+   * present). Both of those are legitimate, common Gatus deployments with
+   * NOTHING for this bundle to hold, so `username`/`password` are optional —
+   * present together, per the atomicity every bundle here enforces, or
+   * absent together. `@loxep/integration-gatus`'s adapter probes
+   * `GET /api/v1/config` at read time to learn which of the three states
+   * (open / Basic / OIDC) applies and never assumes a credential exists.
+   *
+   * The **base URL is deliberately NOT in this bundle**, matching every
+   * self-hosted sibling: `connections.config` carries it, so it stays
+   * readable without a decryption round-trip.
+   */
+  gatus_credentials: z
+    .strictObject({
+      username: z.string().min(1).optional(),
+      password: z.string().min(1).optional(),
+    })
+    .refine((value) => (value.username === undefined) === (value.password === undefined), {
+      message: "username and password must be provided together, or neither",
+    }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

@@ -600,6 +600,24 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     economicEntityId: z.uuid().nullable(),
     username: z.string().trim().min(1),
     password: z.string().trim().min(1)
+  }),
+  /**
+   * Gatus (Phase 8 milestone 4, loxep-ovj.4): a read-only fleet-observability
+   * connection, like Tailscale/Termix above. `username`/`password` are
+   * OPTIONAL, unlike Termix's — Gatus's read API is fully open when the
+   * operator's instance has no `security` block configured, and even an
+   * OIDC-secured instance has no bearer credential this form could collect
+   * (see `gatus_credentials` in `@loxep/domain`). Supplying exactly one half
+   * is rejected in the handler below, the same atomicity every other
+   * credential pair in this union enforces via its bundle schema.
+   */
+  z.strictObject({
+    service: z.literal('gatus'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    username: z.string().trim().min(1).optional(),
+    password: z.string().trim().min(1).optional()
   })
 ]);
 
@@ -674,9 +692,13 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
     } else if (data.service === 'tailscale') {
       kind = 'fleet_observability';
       config = data.tailnet === undefined ? {} : { tailscale: { tailnet: data.tailnet } };
-    } else {
+    } else if (data.service === 'termix') {
       kind = 'fleet_observability';
       config = { termix: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else {
+      // Gatus (loxep-ovj.4): same shape as Termix's config half.
+      kind = 'fleet_observability';
+      config = { gatus: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
     }
 
     const created = await connections.createConnection(
@@ -738,13 +760,32 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { mode: 'api_access_token', apiAccessToken: data.apiAccessToken },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'termix') {
       await connections.setConnectionCredential(
         created.id,
         'termix_credentials',
         { username: data.username, password: data.password },
         { actorUserId: session.user.id }
       );
+    } else {
+      // Gatus (loxep-ovj.4): the pair is OPTIONAL — a legitimate Gatus
+      // instance may be fully open or OIDC-secured, with no Basic credential
+      // to store at all. `gatus_credentials` keeps the pair atomic when it IS
+      // supplied; this handler enforces the same atomicity for the case a
+      // caller supplied exactly one half (the form itself never does).
+      if (data.username !== undefined && data.password !== undefined) {
+        await connections.setConnectionCredential(
+          created.id,
+          'gatus_credentials',
+          { username: data.username, password: data.password },
+          { actorUserId: session.user.id }
+        );
+      } else if (data.username !== undefined || data.password !== undefined) {
+        throw new Error(
+          'Gatus username and password must be provided together, or both left blank'
+        );
+      }
+      // else: no credential row at all — the instance is open or OIDC-secured.
     }
     if (data.economicEntityId !== null) {
       await connections.attributeConnection(created.id, data.economicEntityId, {

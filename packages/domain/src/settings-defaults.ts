@@ -409,6 +409,44 @@ export const gatusPushSetting = defineSetting({
 });
 
 /**
+ * The per-connection Gatus token bucket (Phase 8 milestone 4, loxep-ovj.4),
+ * the fleet-observability sibling of `integration.cloudflare.rate_budget`.
+ *
+ * `@loxep/integration-gatus` spends this budget on the `GET
+ * /api/v1/config` probe, the bulk `endpoints/statuses` read (direct mode),
+ * and the per-endpoint `uptimes`/`response-times` reads (the OIDC-degraded
+ * fallback — TWO calls per known endpoint key per poll, more than the direct
+ * path's one bulk call). `github.com/TwiN/gatus` v5.36.0's `api/api.go`
+ * registers no request-limiter middleware at all (only `recover`/`compress`)
+ * and documents no rate limit anywhere in its route table, so — matching
+ * `cloudflareRateBudgetSetting`'s and the adapter package's own
+ * `GATUS_SUGGESTED_CAPACITY`/`GATUS_SUGGESTED_REFILL_PER_SECOND` reasoning —
+ * this ceiling is a promise about Loxep's own politeness toward a process
+ * the operator is also using interactively, not a guess at a provider limit
+ * that does not exist.
+ *
+ * (These values mirror the adapter's own suggested default in
+ * `packages/integrations/gatus/src/rate-budget.ts`; this module cannot
+ * import an integration package, so they are duplicated as literals exactly
+ * the way `ebayRateBudgetSetting`'s and `cloudflareRateBudgetSetting`'s are.)
+ */
+export const gatusRateBudgetSetting = defineSetting({
+  key: "integration.gatus.rate_budget",
+  schema: z.strictObject({
+    /** Burst size, in provider calls. */
+    capacity: z.number().int().min(1).max(1000),
+    /** Sustained provider calls per second. */
+    refillPerSecond: z.number().positive().max(100),
+  }),
+  description:
+    "Per-connection Gatus rate budget (token-bucket capacity and refill " +
+    "per second). Gatus documents no rate limit of its own; this is Loxep's " +
+    "own politeness ceiling toward a process the operator also uses directly",
+  schemaVersion: 1,
+  defaultValue: { capacity: 10, refillPerSecond: 2 },
+});
+
+/**
  * Logical application-secret key for the Gatus push bearer token (purpose
  * `token`) — see {@link gatusPushSetting}'s doc for why the token is not
  * part of the setting itself. ONE key for the whole installation: there is
@@ -431,4 +469,5 @@ export const registeredApplicationSettings = [
   inventoryMediaLimitsSetting,
   inventoryDefaultSaleModeSetting,
   gatusPushSetting,
+  gatusRateBudgetSetting,
 ] as const;

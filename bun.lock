@@ -358,6 +358,18 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/integrations/gatus": {
+      "name": "@loxep/integration-gatus",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/integrations/invoiceninja": {
       "name": "@loxep/integration-invoiceninja",
       "version": "0.0.0",
@@ -980,6 +992,8 @@
     "@loxep/integration-ebay": ["@loxep/integration-ebay@workspace:packages/integrations/ebay"],
 
     "@loxep/integration-etsy": ["@loxep/integration-etsy@workspace:packages/integrations/etsy"],
+
+    "@loxep/integration-gatus": ["@loxep/integration-gatus@workspace:packages/integrations/gatus"],
 
     "@loxep/integration-invoiceninja": ["@loxep/integration-invoiceninja@workspace:packages/integrations/invoiceninja"],
 

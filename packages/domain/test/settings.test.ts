@@ -16,6 +16,7 @@ import {
   cloudflareRateBudgetSetting,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
+  gatusRateBudgetSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
@@ -503,5 +504,34 @@ describe("Phase 8 milestone 2 Gatus push setting", () => {
     // Both @loxep/app (reads it) and apps/web (writes it) import this
     // constant rather than each hard-coding the literal.
     expect(GATUS_PUSH_SECRET_KEY).toBe("infrastructure.gatus_push.default");
+  });
+});
+
+describe("Phase 8 milestone 4 Gatus read-adapter rate budget", () => {
+  it("mirrors the adapter's own suggested token-bucket default", () => {
+    // packages/integrations/gatus/src/rate-budget.ts's
+    // GATUS_SUGGESTED_CAPACITY/GATUS_SUGGESTED_REFILL_PER_SECOND — this
+    // module cannot import an integration package, so the values are
+    // duplicated as literals, the same way ebayRateBudgetSetting's are.
+    expect(gatusRateBudgetSetting.key).toBe("integration.gatus.rate_budget");
+    expect(gatusRateBudgetSetting.defaultValue).toEqual({
+      capacity: 10,
+      refillPerSecond: 2,
+    });
+  });
+
+  it("is registered", () => {
+    expect(registeredApplicationSettings).toContain(gatusRateBudgetSetting);
+  });
+
+  it("rejects a non-positive refill rate and an oversized capacity", () => {
+    expect(
+      gatusRateBudgetSetting.schema.safeParse({ capacity: 10, refillPerSecond: 0 })
+        .success,
+    ).toBe(false);
+    expect(
+      gatusRateBudgetSetting.schema.safeParse({ capacity: 5000, refillPerSecond: 2 })
+        .success,
+    ).toBe(false);
   });
 });
