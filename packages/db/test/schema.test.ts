@@ -205,12 +205,13 @@ describe("foundation schema", () => {
 
   it("creates the shipped Phase 5/Phase 6 tables and no more", async () => {
     // Migration 0006 shipped two PARTIAL slices — expenses out of Phase 5 and
-    // counterparties out of Phase 6 — and migration 0009 added Phase 5's
-    // financial core (9 more of that design's 22 tables) once the owner
-    // answered its three OWNER-REVIEW-CRITICAL questions on 2026-08-12. The
-    // still-absent names are asserted because each belongs to a milestone
-    // whose decisions have not been made: an accidental `posting_rules` would
-    // mean the rule-versioning model was chosen by an implementer.
+    // counterparties out of Phase 6 — migration 0009 added Phase 5's financial
+    // core (9 more of that design's 22 tables) once the owner answered its
+    // three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and migration 0010
+    // added the declarative posting-rule model and multi-fact provenance (4
+    // more). The still-absent names are asserted because each belongs to a
+    // milestone whose decisions have not been made: an accidental `payouts`
+    // would mean the settlement model was chosen by an implementer.
     const result = await handle.pool.query<{ table_name: string }>(
       `select table_name from information_schema.tables
         where table_schema = 'public'`,
@@ -232,14 +233,14 @@ describe("foundation schema", () => {
       "journal_entries",
       "journal_lines",
       "journal_line_dimensions",
-    ]) {
-      expect(tables).toContain(shipped);
-    }
-    for (const deferred of [
       "posting_rules",
       "posting_rule_versions",
       "posting_rule_lines",
       "journal_entry_source_links",
+    ]) {
+      expect(tables).toContain(shipped);
+    }
+    for (const deferred of [
       "financial_accounts",
       "payouts",
       "payout_lines",
@@ -308,6 +309,87 @@ describe("foundation schema", () => {
       "journal_lines_balanced",
       "journal_lines_immutable",
     ]);
+  });
+
+  it("activates the posting-rule column, its paired CHECK, and the rule triggers", async () => {
+    // Migration 0009 deliberately shipped without the column because
+    // `posting_rule_versions` did not exist; 0010 is the migration the design's
+    // own plan named for it, and the biconditional CHECK is what keeps
+    // "explain this number" a lookup rather than an investigation.
+    const columns = await handle.pool.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+        where table_name = 'journal_entries'
+          and column_name = 'posting_rule_version_id'`,
+    );
+    expect(columns.rows).toHaveLength(1);
+
+    const checks = await handle.pool.query<{ conname: string }>(
+      `select conname from pg_constraint
+        where conrelid = 'journal_entries'::regclass and contype = 'c'
+        order by conname`,
+    );
+    expect(checks.rows.map((row) => row.conname)).toContain(
+      "journal_entries_posting_rule_version_check",
+    );
+
+    // Owner answer 2, the RULE half: a version referenced by an entry is frozen
+    // at the database, not merely by service convention.
+    const triggers = await handle.pool.query<{ tgname: string }>(
+      `select tgname from pg_trigger
+        where tgrelid in ('posting_rule_versions'::regclass,
+                          'posting_rule_lines'::regclass)
+          and not tgisinternal
+        order by tgname`,
+    );
+    expect(triggers.rows.map((row) => row.tgname)).toEqual([
+      "posting_rule_lines_immutable",
+      "posting_rule_versions_immutable",
+    ]);
+  });
+
+  it("adds the three expense columns their milestone finally reads", async () => {
+    // 0006 omitted all four (no target table), 0009 omitted them again (no
+    // reader), and 0010 adds the three whose reader now exists. The fourth,
+    // `financial_account_id`, still has no table and therefore still no column.
+    const result = await handle.pool.query<{
+      table_name: string;
+      column_name: string;
+    }>(
+      `select table_name, column_name from information_schema.columns
+        where table_name in ('expenses', 'expense_allocations')`,
+    );
+    const columns = result.rows.map(
+      (row) => `${row.table_name}.${row.column_name}`,
+    );
+    expect(columns).toContain("expenses.accounting_book_id");
+    expect(columns).toContain("expense_allocations.ledger_account_id");
+    expect(columns).toContain("expense_allocations.dimension_value_id");
+    expect(columns).not.toContain("expenses.financial_account_id");
+    // Still no posting state on the fact: the seam is a source-fact IDENTITY.
+    expect(columns).not.toContain("expenses.journal_entry_id");
+    expect(columns).not.toContain("expenses.posting_key");
+  });
+
+  it("keeps every 0010 constraint and index name inside 63 bytes", async () => {
+    // PostgreSQL silently truncates at 63, and a truncated name collides the
+    // day a second long reference lands on the same table.
+    const result = await handle.pool.query<{ conname: string }>(
+      `select conname from pg_constraint
+        where conrelid in ('posting_rules'::regclass,
+                           'posting_rule_versions'::regclass,
+                           'posting_rule_lines'::regclass,
+                           'journal_entry_source_links'::regclass,
+                           'expense_allocations'::regclass)
+        union all
+       select indexname from pg_indexes
+        where tablename in ('posting_rules', 'posting_rule_versions',
+                            'posting_rule_lines', 'journal_entry_source_links',
+                            'expense_allocations')`,
+    );
+    expect(result.rows.length).toBeGreaterThan(0);
+    for (const row of result.rows) {
+      expect(Buffer.byteLength(row.conname, "utf8")).toBeLessThanOrEqual(63);
+    }
   });
 
   it("keeps the counterparty/economic-entity boundary physical (ADR-0017)", async () => {

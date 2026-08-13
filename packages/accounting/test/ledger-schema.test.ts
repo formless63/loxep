@@ -648,12 +648,14 @@ describe("ledger schema (migration 0009)", () => {
       );
     });
 
-    it("keeps the unreachable-but-designed CHECK members: posting_rule and the fx sources", async () => {
-      // Widening a CHECK on a table with rows should not be the first thing the
-      // posting-rule milestone has to do.
+    it("pairs entry_source = 'posting_rule' with a version, and keeps the fx sources", async () => {
+      // Migration 0009 shipped `posting_rule` as an unreachable CHECK member so
+      // that widening a constraint on a table with rows would not be the first
+      // thing this milestone had to do. 0010 activated the column AND the
+      // biconditional, so the member is now reachable only WITH a version.
       await expect(
         draftEntry({ entry_source: `'posting_rule'` }),
-      ).resolves.toEqual(expect.any(String));
+      ).rejects.toThrow(/journal_entries_posting_rule_version_check/);
       const entryId = await draftEntry();
       await expect(
         addLine(entryId, "10", {
@@ -754,7 +756,7 @@ describe("ledger schema (migration 0009)", () => {
       expect(columns).not.toContain("economic_entities.accounting_book_id");
     });
 
-    it("does NOT create the next milestones' tables", async () => {
+    it("creates migration 0010's tables and none of the later milestones'", async () => {
       const result = await scratch.handle.pool.query<{ table_name: string }>(
         `select table_name from information_schema.tables
           where table_schema = 'public'`,
@@ -773,11 +775,16 @@ describe("ledger schema (migration 0009)", () => {
       ]) {
         expect(tables).toContain(shipped);
       }
-      for (const deferred of [
+      for (const shipped of [
+        // Migration 0010, "Migration B" in the design's own plan.
         "posting_rules",
         "posting_rule_versions",
         "posting_rule_lines",
         "journal_entry_source_links",
+      ]) {
+        expect(tables).toContain(shipped);
+      }
+      for (const deferred of [
         "financial_accounts",
         "payouts",
         "payout_lines",
@@ -790,14 +797,16 @@ describe("ledger schema (migration 0009)", () => {
       }
     });
 
-    it("does NOT carry a posting_rule_version_id column yet", async () => {
+    it("carries the posting_rule_version_id column migration 0010 activated", async () => {
       const result = await scratch.handle.pool.query<{ column_name: string }>(
         `select column_name from information_schema.columns
           where table_name = 'journal_entries'`,
       );
-      expect(result.rows.map((row) => row.column_name)).not.toContain(
-        "posting_rule_version_id",
-      );
+      const columns = result.rows.map((row) => row.column_name);
+      expect(columns).toContain("posting_rule_version_id");
+      // Still absent, still deliberately: posting state belongs to the ledger's
+      // relationship with a fact, never to the fact.
+      expect(columns).not.toContain("payout_id");
     });
 
     it("declares no PostgreSQL enum type", async () => {

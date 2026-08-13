@@ -123,6 +123,29 @@ export function negateDecimal(value: string): string {
   return format(-toUnits(value), MONEY_SCALE);
 }
 
+/**
+ * `value × multiplier` at money scale, rounding half away from zero.
+ *
+ * This is the one place in the package that rounds, and it exists because a
+ * posting-rule line is `amount_source × amount_multiplier`: a `-1` multiplier
+ * (how a credit line is expressed) is exact, and a `0.5` multiplier on an odd
+ * number of micro-units genuinely is not. Refusing the inexact case would make
+ * a half-split rule unauthorable; rounding silently in several places would
+ * make two reports disagree. So it rounds, once, here, the same way PostgreSQL
+ * `numeric` rounds — and the rule engine's `remainder` line is what absorbs the
+ * residue so a rounded template still balances to the micro-unit.
+ */
+export function multiplyDecimals(value: string, multiplier: string): string {
+  const scaled = toUnits(value) * toUnits(multiplier);
+  const divisor = 10n ** BigInt(MONEY_SCALE);
+  const negative = scaled < 0n;
+  const magnitude = negative ? -scaled : scaled;
+  const quotient = magnitude / divisor;
+  const remainder = magnitude % divisor;
+  const rounded = remainder * 2n >= divisor ? quotient + 1n : quotient;
+  return format(negative ? -rounded : rounded, MONEY_SCALE);
+}
+
 export function isZeroDecimal(value: string): boolean {
   return toUnits(value) === 0n;
 }

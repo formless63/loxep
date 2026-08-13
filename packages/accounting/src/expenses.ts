@@ -135,6 +135,13 @@ const allocationSchema = z
     acquisitionId: z.uuid().nullish(),
     catalogItemId: z.uuid().nullish(),
     channel: z.string().trim().min(1).nullish(),
+    /**
+     * Added with migration 0010, and READ by the posting engine: an allocation
+     * naming an account splits the expense entry's debit side, carrying this
+     * account, this entity, and this dimension value onto its own line.
+     */
+    ledgerAccountId: z.uuid().nullish(),
+    dimensionValueId: z.uuid().nullish(),
     note: z.string().trim().min(1).nullish(),
   })
   .refine(
@@ -144,13 +151,16 @@ const allocationSchema = z
         allocation.acquisitionId,
         allocation.catalogItemId,
         allocation.channel,
+        allocation.ledgerAccountId,
+        allocation.dimensionValueId,
       ].some((target) => target !== undefined && target !== null),
     {
       message:
         "an allocation must name at least one target — entity, acquisition, " +
-        "catalog item, or channel (expense_allocations_target_check). " +
-        "Targets are orthogonal, so naming several is allowed and naming " +
-        "none is not: a split toward nothing is not an attribution.",
+        "catalog item, channel, ledger account, or dimension value " +
+        "(expense_allocations_target_check). Targets are orthogonal, so " +
+        "naming several is allowed and naming none is not: a split toward " +
+        "nothing is not an attribution.",
       path: ["economicEntityId"],
     },
   );
@@ -380,6 +390,8 @@ export function createExpensesService(options: {
       taxAmount: row["tax_amount"] as string,
       paymentMethod: row["payment_method"] as string,
       acquisitionCostId: (row["acquisition_cost_id"] as string | null) ?? null,
+      /** The nullable book OVERRIDE migration 0010 added; normally null. */
+      accountingBookId: (row["accounting_book_id"] as string | null) ?? null,
       status: row["status"] as string,
       reimbursable: row["reimbursable"] as boolean,
       recurringGroupKey: (row["recurring_group_key"] as string | null) ?? null,
@@ -460,6 +472,8 @@ export function createExpensesService(options: {
       acquisitionId: allocation.acquisitionId ?? null,
       catalogItemId: allocation.catalogItemId ?? null,
       channel: allocation.channel ?? null,
+      ledgerAccountId: allocation.ledgerAccountId ?? null,
+      dimensionValueId: allocation.dimensionValueId ?? null,
       note: allocation.note ?? null,
     }));
     return executor.insert(expenseAllocations).values(values).returning();

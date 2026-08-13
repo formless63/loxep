@@ -71,6 +71,13 @@
       "when": 1786579776941,
       "tag": "0009_accounting_books_chart_and_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786582851170,
+      "tag": "0010_posting_rules_and_source_links",
+      "breakpoints": true
     }
   ]
 }

@@ -16,9 +16,10 @@ import {
  * 0003 commerce orders and catalog, 0004 link-table constraints,
  * 0005 inventory, acquisition, and shipments,
  * 0006 expenses and counterparties, 0007 order-payload retention,
- * 0008 user display name.
+ * 0008 user display name, 0009 accounting books, chart, and journal,
+ * 0010 posting rules and journal source links.
  */
-const MIGRATION_FILE_COUNT = 10;
+const MIGRATION_FILE_COUNT = 11;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

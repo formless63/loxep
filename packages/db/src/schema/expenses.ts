@@ -4,13 +4,13 @@
  *
  * Physical realization of the "Expenses and receipts" section of
  * `apps/docs/src/content/docs/architecture/financial-schema-design.md`. **Two
- * tables out of that design's twenty-two.** This is a deliberate partial slice:
- * accounting books, the chart of accounts, dimensions, fiscal periods, the
- * double-entry journal, posting rules, payouts, banking, reconciliation, and
- * sales-tax facts are NOT created here, because all three of that document's
- * OWNER-REVIEW-CRITICAL open questions (book granularity, posting-rule
- * mutability, functional currency) are unresolved and every one of them is
- * unrecoverable after the first entry posts.
+ * tables out of that design's twenty-two**, created by migration 0006 as the
+ * first milestone of that phase — before books, the journal, or the posting
+ * rules existed, because all three of that document's OWNER-REVIEW-CRITICAL
+ * open questions were still unanswered and every one of them is unrecoverable
+ * after the first entry posts. They were answered on 2026-08-12; migrations
+ * 0009 and 0010 built the ledger and the rule engine that now READ these two
+ * tables.
  *
  * Conventions are inherited, not reinvented: uuid PKs with `defaultRandom()`,
  * `numeric(20,6)` money with a separate ISO currency code, state columns as
@@ -26,36 +26,35 @@
  * Instants that genuinely are instants (`entity_attributed_at`, `created_at`,
  * `updated_at`) stay `timestamptz` with semantic names.
  *
- * ## Columns the design sketches and migration 0006 deliberately OMITTED
+ * ## The three columns migration 0010 finally added, and the one still missing
  *
  * ```text
- * expenses.accounting_book_id       book override; TABLE NOW EXISTS (0009)
- * expenses.financial_account_id     financial_accounts still does not exist
- * expense_allocations.ledger_account_id      NOW EXISTS (0009)
- * expense_allocations.dimension_value_id     NOW EXISTS (0009)
+ * expenses.accounting_book_id             ADDED 0010  book override
+ * expense_allocations.ledger_account_id   ADDED 0010  per-split account
+ * expense_allocations.dimension_value_id  ADDED 0010  per-split dimension
+ * expenses.financial_account_id           STILL ABSENT — financial_accounts
+ *                                         does not exist until the banking
+ *                                         milestone
  * ```
  *
- * They were omitted under the design's own rule, stated in the same section it
- * states the columns: *"A column pointing at a table that does not exist is
- * worse than no column."* Migration 0009 landed books, the chart, and
- * dimensions, so three of the four now have targets — and they are STILL
- * absent, because adding them is an `ALTER` on a shipped table that belongs
- * with the posting-rule milestone that will actually read them. Each remains
- * additive; none is load-bearing for what expenses do today. The book an
- * expense posts to is routed from its entity exactly as every other fact's is.
+ * All four were omitted from 0006 under the design's own rule, stated in the
+ * same section it states the columns: *"A column pointing at a table that does
+ * not exist is worse than no column."* Migration 0009 gave three of them
+ * targets and deliberately did not add them; migration 0010 does, because it is
+ * the milestone whose rule engine READS them. The fourth waits for its table
+ * for exactly the same reason it always did.
  *
  * ## The posting seam
  *
  * There is no `journal_entry_id`, no `posting_key`, and no FK into any ledger
- * table — still true now that migration 0009 has created the ledger, and their
- * absence is the design working rather than the design missing. Phase 5 posts through **source-fact identity**: an entry carries
- * `source_fact_type` + `source_fact_id`, and its idempotency key is
+ * table — still true now that the ledger and its rule engine exist, and their
+ * absence is the design working rather than the design missing. Phase 5 posts
+ * through **source-fact identity**: an entry carries `source_fact_type` +
+ * `source_fact_id`, and its idempotency key is
  * `'pr:' || rule_code || ':v' || version || ':' || source_fact_type || ':' ||
- * source_fact_id`. The seam this table therefore owes the future ledger is a
- * STABLE IDENTITY, and it has one: `('expense', expenses.id)`. That identity is
- * expressed in code as `EXPENSE_SOURCE_FACT_TYPE` / `expenseSourceFact()` in
- * `@loxep/accounting`, and `status = 'posted'` is the state a posting engine
- * will set. Nothing but that engine may reach it.
+ * source_fact_id || ':' || fingerprint12`. The seam this table owes the ledger
+ * is a STABLE IDENTITY, and it has one: `('expense', expenses.id)`, expressed
+ * in code as `EXPENSE_SOURCE_FACT_TYPE` / `expenseSourceFact()`.
  *
  * ## PROVISIONAL DECISIONS
  *
@@ -79,6 +78,7 @@ import {
   char,
   check,
   date,
+  foreignKey,
   index,
   integer,
   numeric,
@@ -88,6 +88,11 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import {
+  accountingBooks,
+  accountingDimensionValues,
+  ledgerAccounts,
+} from "./accounting.ts";
 import { user } from "./auth.ts";
 import { catalogItems } from "./commerce.ts";
 import { economicEntities } from "./entities.ts";
@@ -270,6 +275,16 @@ export const expenses = pgTable(
       () => acquisitionCosts.id,
     ),
 
+    /**
+     * A nullable **override**, added by migration 0010 with the posting-rule
+     * milestone that reads it. Normally null: the book is routed from the
+     * entity exactly as every other fact's is. It exists for the honest case of
+     * an expense an operator wants in a specific book regardless of routing.
+     */
+    accountingBookId: uuid("accounting_book_id").references(
+      () => accountingBooks.id,
+    ),
+
     status: text("status").notNull().default("draft"),
 
     /**
@@ -343,10 +358,10 @@ export const expenses = pgTable(
  * really for.
  *
  * **Ships only the targets that exist.** Entity, acquisition, catalog item, and
- * channel all have real referents today. Ledger account and dimension value do
- * not (no chart of accounts, no dimensions); customer, project, shipment, and
- * service do not (Phase 6). Each is an additive nullable column when its table
- * lands.
+ * channel had real referents in 0006; ledger account and dimension value gained
+ * theirs in 0009 and are added here by 0010. Customer, project, shipment, and
+ * service still do not exist (Phase 6), and each is an additive nullable column
+ * when its table lands.
  *
  * The invariant `sum(amount) = expenses.amount` is a **service rule and a
  * report, not a constraint**, because a draft expense is legitimately partly
@@ -376,6 +391,17 @@ export const expenseAllocations = pgTable(
     /** Real FK: Phase 4 shipped (migration 0005). */
     acquisitionId: uuid("acquisition_id").references(() => acquisitions.id),
     catalogItemId: uuid("catalog_item_id").references(() => catalogItems.id),
+    /**
+     * Added by migration 0010, with the milestone that reads them: an operator
+     * splitting a bill may name the account and the dimension value the split
+     * belongs to. Both stay nullable — the shipped expense rule resolves an
+     * account from the expense's `category`, and an allocation that names one
+     * overrides that for its own share.
+     */
+    ledgerAccountId: uuid("ledger_account_id").references(
+      () => ledgerAccounts.id,
+    ),
+    dimensionValueId: uuid("dimension_value_id"),
     /** Free text (`ebay`, `woo`, `retail`) — open by the same rule as `category`. */
     channel: text("channel"),
     note: text("note"),
@@ -404,11 +430,29 @@ export const expenseAllocations = pgTable(
      * rows summing to $80. What the check forbids is the row that names
      * nothing: an allocation that splits an amount toward no target is not an
      * attribution, and nothing downstream could ever read it.
+     *
+     * Migration 0010 WIDENS it — strictly loosening, so no existing row can
+     * fail — to count `ledger_account_id` and `dimension_value_id`, which
+     * became real targets when the chart and the dimensions shipped. "$40 of
+     * this bill is Shipping Expense" is an attribution naming exactly one
+     * thing, and it was previously refused for naming the wrong one.
      */
     check(
       "expense_allocations_target_check",
-      sql`num_nonnulls(${table.economicEntityId}, ${table.acquisitionId}, ${table.catalogItemId}, ${table.channel}) >= 1`,
+      sql`num_nonnulls(${table.economicEntityId}, ${table.acquisitionId}, ${table.catalogItemId}, ${table.channel}, ${table.ledgerAccountId}, ${table.dimensionValueId}) >= 1`,
     ),
+
+    /**
+     * Named explicitly: drizzle's derived name for this pair
+     * (`expense_allocations_dimension_value_id_accounting_dimension_values_id_fk`)
+     * is 72 bytes, and PostgreSQL silently truncates at 63 — a truncated name
+     * collides the day a second long reference lands on this table.
+     */
+    foreignKey({
+      name: "expense_allocations_dimension_value_fk",
+      columns: [table.dimensionValueId],
+      foreignColumns: [accountingDimensionValues.id],
+    }),
 
     index("expense_allocations_expense_id_idx").on(table.expenseId),
     index("expense_allocations_acquisition_id_idx")

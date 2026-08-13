@@ -6,6 +6,10 @@
  * ```text
  * books.ts           accounting books, the effective-dated entity link, and
  *                    the routing rule (including the parent roll-up)
+ * source-facts.ts    the closed shape a posting rule may read, and its readers
+ * posting-rules.ts   rules, immutable versions, and their line templates
+ * posting-engine.ts  fact in, at most one entry out; no-op or reversal+repost
+ * statements.ts      income statement and balance sheet
  * chart.ts           the per-book chart of accounts
  * chart-template.ts  the code-owned starter chart, copied once per book
  * periods.ts         fiscal periods, generation, and the four-state close
@@ -17,16 +21,15 @@
  * posting.ts         the source-fact seam between a fact and an entry
  * ```
  *
- * ## Two of Phase 5's four milestones
+ * ## Three of Phase 5's four milestones
  *
  * The [Financial Foundation Schema Design](../../../apps/docs) specifies
- * twenty-two tables across four domains. Eleven exist: expenses and their
- * allocations, then books, the chart, dimensions, periods, and the journal.
- * The rest are later milestones and their absence is still a decision:
+ * twenty-two tables across four domains. Thirteen exist: expenses and their
+ * allocations, then books, the chart, dimensions, periods, and the journal,
+ * then the declarative rule model and multi-fact provenance. The rest are a
+ * later milestone and their absence is still a decision:
  *
  * ```text
- * posting_rules / versions / lines        the declarative rule model
- * journal_entry_source_links              multi-fact provenance
  * financial_accounts / payouts / banking  money movement
  * reconciliation_matches                  match state
  * sales_tax_facts                         the facilitator distinction
@@ -68,12 +71,13 @@
  *
  * ## What this package still does NOT do
  *
- * No declarative posting rules and therefore no automatic posting from
- * operational facts; no payouts, banking, or reconciliation; no tax
- * calculation or filing; no reimbursement workflow, vendor bills, or AP; no
- * OCR; no balance sheet or P&L statement objects (the trial balance and
- * account balances are the read models this milestone ships); no stored
- * closing entries or retained-earnings roll; and **no currency conversion
+ * No COGS posting from inventory depletion — the rule model names
+ * `inventory_movement` and `acquisition_cost` and neither has a source-fact
+ * reader, because assigning inventory valuation to a phase is an open
+ * documentation contradiction rather than an oversight. No payouts, banking, or
+ * reconciliation; no tax calculation or filing; no reimbursement workflow,
+ * vendor bills, or AP; no OCR; no stored closing entries or retained-earnings
+ * roll (the balance sheet computes both); and **no currency conversion
  * anywhere** — the seam exists, unused, and every expense total still carries
  * its own currency rather than being summed across two.
  */
@@ -97,6 +101,7 @@ export {
   isDecimalString,
   isNegative,
   isZeroDecimal,
+  multiplyDecimals,
   negateDecimal,
   subtractDecimals,
   sumDecimals,
@@ -218,6 +223,7 @@ export type {
 export { assertBalanced, createJournalService } from "./journal.ts";
 export type {
   CreateDraftInput,
+  JournalSourceLinkInput,
   JournalEntryFilter,
   JournalEntryRow,
   JournalLineInput,
@@ -236,3 +242,66 @@ export type {
   TrialBalance,
   TrialBalanceRow,
 } from "./ledger-reports.ts";
+
+/* --------------------------------------------- posting rules and statements */
+
+export {
+  AMOUNT_SOURCES_BY_FACT_TYPE,
+  PLACEHOLDERS_BY_FACT_TYPE,
+  PREDICATES_BY_FACT_TYPE,
+  READABLE_SOURCE_FACT_TYPES,
+  createSourceFactReader,
+  isReadableSourceFactType,
+  unpostedFacts,
+} from "./source-facts.ts";
+export type {
+  ReadableSourceFactType,
+  RelatedFact,
+  SourceFact,
+  SourceFactPredicate,
+  SourceFactReader,
+} from "./source-facts.ts";
+
+export {
+  createPostingRulesService,
+  placeholdersIn,
+  renderTemplate,
+  validatePostingRuleTemplate,
+  versionMatches,
+} from "./posting-rules.ts";
+export type {
+  AddPostingRuleVersionInput,
+  CreatePostingRuleInput,
+  PostingRuleFilter,
+  PostingRuleLineInput,
+  PostingRuleLineRow,
+  PostingRuleRow,
+  PostingRuleVersionRow,
+  PostingRulesService,
+  ResolvedPostingRule,
+} from "./posting-rules.ts";
+
+export { DEFAULT_POSTING_RULES } from "./posting-rules-template.ts";
+export type { PostingRuleTemplate } from "./posting-rules-template.ts";
+
+export {
+  createPostingEngine,
+  fingerprintFact,
+  postingKeyFor,
+} from "./posting-engine.ts";
+export type {
+  EvaluateFactInput,
+  PostingEngine,
+  PostingOutcome,
+  UnpostableReason,
+} from "./posting-engine.ts";
+
+export { createStatements } from "./statements.ts";
+export type {
+  BalanceSheet,
+  IncomeStatement,
+  StatementFilter,
+  StatementLine,
+  StatementSection,
+  Statements,
+} from "./statements.ts";

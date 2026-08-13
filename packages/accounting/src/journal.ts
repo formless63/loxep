@@ -32,12 +32,22 @@
  * `reused: true` rather than raising, because a retry finding its own earlier
  * work is a success and not a conflict.
  *
- * The key's CONTENT belongs to whoever mints it. When posting rules arrive the
- * shape is `'pr:' || rule_code || ':v' || version || ':' || type || ':' || id`,
- * and the rule VERSION inside it is load-bearing: without it a deliberate
- * re-post under a corrected rule is silently swallowed by the unique, and the
- * operator sees a successful job and an unchanged ledger. This module refuses
- * to guess a key for the same reason `posting.ts` refuses to build one.
+ * The key's CONTENT belongs to whoever mints it, and this module still refuses
+ * to guess one. `posting-engine.ts` mints
+ * `'pr:' || code || ':v' || version || ':' || type || ':' || id || ':' || fp12`:
+ * the rule VERSION is inside it because a deliberate re-post under a corrected
+ * rule would otherwise be swallowed by the unique, and the FINGERPRINT is
+ * inside it because a re-post of a CHANGED FACT under an unchanged rule would
+ * be swallowed exactly the same way.
+ *
+ * ## Rule-produced entries
+ *
+ * `entry_source = 'posting_rule'` and `postingRuleVersionId` travel together —
+ * the biconditional the database `CHECK`s since migration 0010 — so an entry
+ * either names the rule text that produced it or does not claim a rule at all.
+ * `sourceLinks` are written inside the same transaction as the entry, because
+ * an entry and its provenance that can be written separately are an entry and
+ * its provenance that can disagree.
  *
  * ## Reversal, and the two things it refuses
  *
@@ -60,7 +70,12 @@
  */
 import { createAuditService } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
-import { journalEntries, journalLineDimensions, journalLines } from "@loxep/db/schema";
+import {
+  journalEntries,
+  journalEntrySourceLinks,
+  journalLineDimensions,
+  journalLines,
+} from "@loxep/db/schema";
 import { z } from "zod";
 import { createBooksService } from "./books.ts";
 import type { AccountingBookRow, BookRouting } from "./books.ts";
@@ -137,6 +152,21 @@ const lineSchema = z
 
 export type JournalLineInput = z.input<typeof lineSchema>;
 
+const sourceLinkSchema = z.strictObject({
+  sourceFactType: z.string().trim().min(1),
+  sourceFactId: z.uuid(),
+  role: z
+    .enum(["primary", "settled", "allocated", "reversed_from", "evidence"])
+    .default("primary"),
+  amountContributed: decimalString.nullish(),
+  currency: z
+    .string()
+    .regex(/^[A-Za-z]{3}$/, "expected an ISO-4217 alphabetic code")
+    .nullish(),
+});
+
+export type JournalSourceLinkInput = z.input<typeof sourceLinkSchema>;
+
 const entryBaseSchema = z.strictObject({
   /** Explicit book, or omit it and let the entity route. */
   accountingBookId: z.uuid().optional(),
@@ -146,16 +176,26 @@ const entryBaseSchema = z.strictObject({
   description: z.string().trim().min(1),
   memo: z.string().trim().min(1).nullish(),
   /**
-   * `posting_rule` is refused: no rule engine exists, and an entry claiming a
-   * rule produced it would be unexplainable exactly where explainability is the
-   * product.
+   * `posting_rule` requires `postingRuleVersionId`, and nothing else may carry
+   * one — the same biconditional the database CHECKs. An entry claiming a rule
+   * produced it while naming no rule text is unexplainable exactly where
+   * explainability is the product, and a manual entry naming a version blames a
+   * rule for a human's number.
    */
-  entrySource: z.enum(["manual", "import", "opening_balance"]).default("manual"),
+  entrySource: z
+    .enum(["posting_rule", "manual", "import", "opening_balance"])
+    .default("manual"),
+  postingRuleVersionId: z.uuid().nullish(),
   postingKey: z.string().trim().min(1).nullish(),
   sourceFactType: z.string().trim().min(1).nullish(),
   sourceFactId: z.uuid().nullish(),
   sourceFactFingerprint: z.string().trim().min(1).nullish(),
   lines: z.array(lineSchema).min(1),
+  /**
+   * Which operational facts this entry touched, written INSIDE the posting
+   * transaction so an entry and its provenance can never disagree.
+   */
+  sourceLinks: z.array(sourceLinkSchema).default([]),
   createdByUserId: z.string().min(1).nullish(),
   requestId: z.string().min(1).nullish(),
 });
@@ -568,6 +608,42 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
     return inserted.sort((left, right) => left.lineNumber - right.lineNumber);
   }
 
+  /**
+   * Provenance for the many case, written in the posting transaction.
+   *
+   * `ON CONFLICT DO NOTHING` on the natural key rather than a pre-check: jobs
+   * are at-least-once, and a retry that finds its own earlier link is a success.
+   */
+  async function insertSourceLinks(
+    executor: Executor,
+    journalEntryId: string,
+    links: readonly {
+      sourceFactType: string;
+      sourceFactId: string;
+      role: string;
+      amountContributed?: string | null;
+      currency?: string | null;
+    }[],
+  ): Promise<void> {
+    if (links.length === 0) return;
+    await executor
+      .insert(journalEntrySourceLinks)
+      .values(
+        links.map((link) => ({
+          journalEntryId,
+          sourceFactType: link.sourceFactType,
+          sourceFactId: link.sourceFactId,
+          role: link.role,
+          amountContributed:
+            link.amountContributed == null
+              ? null
+              : toMoneyString(link.amountContributed),
+          currency: link.currency ?? null,
+        })),
+      )
+      .onConflictDoNothing();
+  }
+
   async function markPosted(
     executor: Executor,
     entry: JournalEntryRow,
@@ -616,6 +692,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
       description: string;
       memo?: string | null;
       entrySource: string;
+      postingRuleVersionId?: string | null;
       postingKey?: string | null;
       sourceFactType?: string | null;
       sourceFactId?: string | null;
@@ -632,6 +709,20 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           "no id names nothing, and an id with no type cannot be resolved",
       );
     }
+    // The same biconditional the database CHECKs, checked here so the ordinary
+    // mistake fails at the call site rather than as a constraint violation.
+    const hasVersion = (value.postingRuleVersionId ?? null) !== null;
+    if ((value.entrySource === "posting_rule") !== hasVersion) {
+      throw new AccountingValidationError(
+        value.entrySource === "posting_rule"
+          ? "an entry produced by a posting rule must name the rule VERSION " +
+            "that produced it: an entry posted in March is explainable by " +
+            "exactly the rule text that wrote it, and by nothing else"
+          : `an entry whose source is "${value.entrySource}" may not name a ` +
+            "posting rule version: a rule must not be blamed for a number a " +
+            "human or an import wrote",
+      );
+    }
     const inserted = await executor
       .insert(journalEntries)
       .values({
@@ -639,6 +730,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
         entryDate: value.entryDate,
         status: "draft",
         entrySource: value.entrySource,
+        postingRuleVersionId: value.postingRuleVersionId ?? null,
         postingKey: value.postingKey ?? null,
         sourceFactType: value.sourceFactType ?? null,
         sourceFactId: value.sourceFactId ?? null,
@@ -725,6 +817,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           description: value.description,
           memo: value.memo ?? null,
           entrySource: value.entrySource,
+          postingRuleVersionId: value.postingRuleVersionId ?? null,
           postingKey: value.postingKey ?? null,
           sourceFactType: value.sourceFactType ?? null,
           sourceFactId: value.sourceFactId ?? null,
@@ -732,6 +825,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           createdByUserId: value.createdByUserId ?? null,
         });
         const insertedLines = await insertLines(tx, book.id, draft.id, lines);
+        await insertSourceLinks(tx, draft.id, value.sourceLinks);
         const entry = await markPosted(tx, draft, {
           entryNumber,
           fiscalPeriodId: period.id,
@@ -891,6 +985,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           description: value.description,
           memo: value.memo ?? null,
           entrySource: value.entrySource,
+          postingRuleVersionId: value.postingRuleVersionId ?? null,
           postingKey: value.postingKey ?? null,
           sourceFactType: value.sourceFactType ?? null,
           sourceFactId: value.sourceFactId ?? null,
@@ -898,6 +993,7 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           createdByUserId: value.createdByUserId ?? null,
         });
         const insertedLines = await insertLines(tx, book.id, draft.id, lines);
+        await insertSourceLinks(tx, draft.id, value.sourceLinks);
         await createAuditService({ db: tx }).append({
           actorUserId: value.createdByUserId ?? null,
           action: "accounting.journal.drafted",
@@ -1014,6 +1110,11 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           description: `Reversal of ${original.description}`,
           memo: reason,
           entrySource: original.entrySource,
+          // The reversal is produced by the SAME rule text as the entry it
+          // reverses, and the CHECK requires the stamp anyway: a reversal whose
+          // source said `posting_rule` and named no version could not be
+          // written at all.
+          postingRuleVersionId: original.postingRuleVersionId,
           // Deterministic, so a retried reversal is idempotent even across
           // process restarts: 'rev:' || the original key.
           postingKey:
@@ -1055,6 +1156,33 @@ export function createJournalService(options: { db: LoxepDb }): JournalService {
           reversal.id,
           reversedLines,
         );
+        // Provenance travels with the correction: the reversal names the same
+        // facts, plus the entry it reverses, so "what changed and why" is one
+        // query rather than a join through two stamps.
+        const originalLinks = await tx.query.journalEntrySourceLinks.findMany({
+          where: (table, { eq }) => eq(table.journalEntryId, original.id),
+        });
+        await insertSourceLinks(
+          tx,
+          reversal.id,
+          originalLinks.map((link) => ({
+            sourceFactType: link.sourceFactType,
+            sourceFactId: link.sourceFactId,
+            role: link.role,
+            amountContributed: link.amountContributed,
+            currency: link.currency,
+          })),
+        );
+        if (original.sourceFactType !== null && original.sourceFactId !== null) {
+          await insertSourceLinks(tx, reversal.id, [
+            {
+              sourceFactType: original.sourceFactType,
+              sourceFactId: original.sourceFactId,
+              role: "reversed_from",
+            },
+          ]);
+        }
+
         const posted = await markPosted(tx, reversal, {
           entryNumber,
           fiscalPeriodId: period.id,

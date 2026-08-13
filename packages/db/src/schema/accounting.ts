@@ -1,14 +1,16 @@
 /**
  * Phase 5's financial core: accounting books, the per-book chart of accounts,
- * accounting dimensions, fiscal periods, and the double-entry journal.
+ * accounting dimensions, fiscal periods, the double-entry journal, and the
+ * declarative posting-rule model that feeds it.
  *
  * Physical realization of the "Books and entities", "Chart of accounts",
- * "Accounting dimensions", "Fiscal periods and closing semantics", and "The
- * double-entry journal" sections of
+ * "Accounting dimensions", "Fiscal periods and closing semantics", "The
+ * double-entry journal", and "Declarative posting rules" sections of
  * `apps/docs/src/content/docs/architecture/financial-schema-design.md` —
- * **nine of that design's twenty-two tables**, matching its own "Migration A"
- * in the migration plan sketch. Posting rules, payouts, banking,
- * reconciliation, and sales-tax facts are later milestones and are NOT here.
+ * **thirteen of that design's twenty-two tables**, matching its own
+ * "Migration A" (0009) and "Migration B" (0010) in the migration plan sketch.
+ * Payouts, banking, reconciliation, and sales-tax facts are later milestones
+ * and are NOT here.
  *
  * ## The three OWNER-REVIEW-CRITICAL questions were answered (2026-08-12)
  *
@@ -84,22 +86,24 @@
  * available in `timescale/timescaledb-ha:pg18.4-ts2.29.1-all` (verified,
  * version 1.8) so the design's weaker portable fallback was not needed.
  *
- * ## Columns the design sketches and this migration deliberately OMITS
+ * ## What migration 0010 added, and what it still leaves out
  *
  * ```text
- * journal_entries.posting_rule_version_id   posting_rule_versions does not
- *                                           exist until the next milestone;
- *                                           the design's own migration plan
- *                                           activates this FK in "Migration B"
+ * posting_rules / _versions / _lines        the declarative rule model
+ * journal_entry_source_links                multi-fact provenance
+ * journal_entries.posting_rule_version_id   the FK 0009 deliberately omitted,
+ *                                           with the paired
+ *                                           (entry_source = 'posting_rule') =
+ *                                           (version_id is not null) CHECK
  * ```
  *
- * `entry_source`'s `CHECK` keeps its `posting_rule` member anyway, unreachable
- * for now, following the `expenses.status = 'posted'` precedent: widening a
- * `CHECK` on a table with rows should not be the first thing the posting engine
- * has to do. The paired `(entry_source = 'posting_rule') = (…_version_id is not
- * null)` check lands with the column.
+ * `entry_source = 'posting_rule'` is therefore reachable from 0010 onward, and
+ * the rule engine in `@loxep/accounting` is the only writer permitted to use
+ * it. Still absent, still deliberately: `financial_accounts`, `payouts`,
+ * `payout_lines`, bank ingestion, `reconciliation_matches`, `sales_tax_facts`.
  */
 import { sql } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   bigint,
   boolean,
@@ -314,6 +318,102 @@ export const LEDGER_SYSTEM_KEYS = [
   "suspense",
 ] as const;
 export type LedgerSystemKey = (typeof LEDGER_SYSTEM_KEYS)[number];
+
+/** `posting_rules.status`. A `draft` rule never fires; a `disabled` one stops. */
+export const POSTING_RULE_STATUSES = ["draft", "active", "disabled"] as const;
+export type PostingRuleStatus = (typeof POSTING_RULE_STATUSES)[number];
+
+/**
+ * `posting_rule_versions.status`.
+ *
+ * ```text
+ * draft       being authored; freely edited, never fires
+ * active      the version new postings run under
+ * superseded  replaced by version N+1. Its text is FROZEN, because the entries
+ *             it produced are explained by it and by nothing else.
+ * ```
+ */
+export const POSTING_RULE_VERSION_STATUSES = [
+  "draft",
+  "active",
+  "superseded",
+] as const;
+export type PostingRuleVersionStatus =
+  (typeof POSTING_RULE_VERSION_STATUSES)[number];
+
+/**
+ * `posting_rules.source_fact_type` — the classes of operational fact a rule may
+ * read.
+ *
+ * The whole set is `CHECK`ed from this migration even though only four members
+ * have an implemented reader (`order`, `order_fee`, `order_refund`, `expense`),
+ * the same call `entry_source = 'posting_rule'` and `expenses.status = 'posted'`
+ * made before it: widening a `CHECK` on a table with rows should not be the
+ * first thing the next milestone has to do. A rule naming an unimplemented type
+ * is refused by the service, which names the reader that does not exist.
+ */
+export const POSTING_RULE_SOURCE_FACT_TYPES = [
+  "order",
+  "order_fee",
+  "order_refund",
+  "order_fulfillment",
+  "inventory_movement",
+  "acquisition_cost",
+  "shipment",
+  "expense",
+  "payout",
+  "payout_line",
+  "bank_transaction",
+  "sales_tax_fact",
+  "manual",
+] as const;
+export type PostingRuleSourceFactType =
+  (typeof POSTING_RULE_SOURCE_FACT_TYPES)[number];
+
+/**
+ * `posting_rule_lines.amount_source` — which number on the source fact a line
+ * takes, before its multiplier.
+ *
+ * `remainder` is the plug: at most one per version, and it takes whatever value
+ * makes the entry balance. Not every source applies to every fact type, and a
+ * line naming an inapplicable one is a validation error at save time rather
+ * than a silent zero.
+ */
+export const POSTING_AMOUNT_SOURCES = [
+  "total",
+  "subtotal",
+  "shipping",
+  "discount",
+  "tax",
+  "fee",
+  "refund",
+  "net",
+  "cost_basis",
+  "quantity_times_basis",
+  "remainder",
+] as const;
+export type PostingAmountSource = (typeof POSTING_AMOUNT_SOURCES)[number];
+
+/**
+ * `journal_entry_source_links.role` — how a fact relates to the entry.
+ *
+ * ```text
+ * primary       the fact the entry is ABOUT; mirrors the header stamp
+ * settled       a fact this entry settles (a payout clearing an order)
+ * allocated     a fact this entry allocates part of
+ * reversed_from the fact whose earlier entry this one reverses
+ * evidence      context, not arithmetic: a fee's parent order
+ * ```
+ */
+export const JOURNAL_ENTRY_SOURCE_LINK_ROLES = [
+  "primary",
+  "settled",
+  "allocated",
+  "reversed_from",
+  "evidence",
+] as const;
+export type JournalEntrySourceLinkRole =
+  (typeof JOURNAL_ENTRY_SOURCE_LINK_ROLES)[number];
 
 /**
  * `media_links.resource_type` for documents supporting a journal entry, and the
@@ -783,6 +883,264 @@ export const fiscalPeriods = pgTable(
 );
 
 /**
+ * The declarative posting-rule model's header: a source-fact SELECTOR, and
+ * nothing else.
+ *
+ * A rule is *a source-fact selector plus a line template*. It is not an
+ * expression language and it must not become one — the precedent is
+ * `opportunity_rules`, "a small closed set of predicates … never a
+ * general-purpose rule engine", and the restraint matters more here for a
+ * stronger reason: a rule engine that can compute arbitrary amounts is a rule
+ * engine that can produce an unbalanced entry, and debugging why last March's
+ * revenue is wrong should not require reading a stored expression.
+ *
+ * `accounting_book_id` is **nullable and normally null**: a null rule applies in
+ * every book, which is what makes one shipped rule set work for an installation
+ * with three books. Resolution is `priority` plus **first match wins**, matching
+ * the `market_events.rule_id` precedent exactly, and the version that produced
+ * an entry is stamped on it.
+ */
+export const postingRules = pgTable(
+  "posting_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    /** Which class of operational fact this rule reads. See {@link POSTING_RULE_SOURCE_FACT_TYPES}. */
+    sourceFactType: text("source_fact_type").notNull(),
+    /** Null = every book. A value narrows the rule to one book's chart. */
+    accountingBookId: uuid("accounting_book_id"),
+    priority: integer("priority").notNull().default(100),
+    status: text("status").notNull().default("draft"),
+    /**
+     * The version new postings use. Moves when a version is superseded.
+     *
+     * A lazy self-referential-style reference (`AnyPgColumn`) because the two
+     * tables point at each other: a version belongs to a rule, and a rule names
+     * its current version. Declaring it any other way would need one of the two
+     * foreign keys to live in hand-written SQL, outside the snapshot.
+     */
+    currentVersionId: uuid("current_version_id").references(
+      (): AnyPgColumn => postingRuleVersions.id,
+    ),
+    description: text("description"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "posting_rules_book_fk",
+      columns: [table.accountingBookId],
+      foreignColumns: [accountingBooks.id],
+    }),
+    unique("posting_rules_code_uq").on(table.code),
+    check(
+      "posting_rules_status_check",
+      sql`${table.status} in ('draft', 'active', 'disabled')`,
+    ),
+    check(
+      "posting_rules_source_fact_type_check",
+      sql`${table.sourceFactType} in ('order', 'order_fee', 'order_refund',
+                                     'order_fulfillment', 'inventory_movement',
+                                     'acquisition_cost', 'shipment', 'expense',
+                                     'payout', 'payout_line', 'bank_transaction',
+                                     'sales_tax_fact', 'manual')`,
+    ),
+    /** The resolution probe: candidates for one fact type, best priority first. */
+    index("posting_rules_type_status_priority_idx").on(
+      table.sourceFactType,
+      table.status,
+      table.priority,
+    ),
+  ],
+);
+
+/**
+ * An immutable version of a rule: its predicates, its effective dating, and
+ * (through {@link postingRuleLines}) its line template.
+ *
+ * **All predicates null means "every fact of this type", and every non-null
+ * predicate is an AND.** That is the entire selector semantics: no OR, no
+ * negation, no nesting, no expression column. A rule that needs OR is two rules
+ * with different priorities, which is also more legible in a list.
+ *
+ * **A version is immutable once any journal entry references it** (owner answer
+ * 2, and migration 0010's trigger). Editing an active rule creates version N+1
+ * and marks N `superseded`; `posting_rules.current_version_id` moves. This is
+ * the whole reason versions exist: an entry posted in March must be explainable
+ * by exactly the rule text that produced it, and a mutable rule makes every
+ * historical entry unexplainable.
+ *
+ * The predicate columns are deliberately typed and named after real columns on
+ * the Phase 3/Phase 4 facts (`order_fees.fee_type`, `order_fees.fee_direction`,
+ * `inventory_movements.movement_kind`, `acquisitions.source_kind`,
+ * `acquisition_costs.capitalize`). A predicate that does not apply to the rule's
+ * `source_fact_type` is a validation error at rule-save time, not a silent
+ * no-op.
+ */
+export const postingRuleVersions = pgTable(
+  "posting_rule_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postingRuleId: uuid("posting_rule_id").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    /** Calendar dates in the book's frame: which facts this text applies to. */
+    effectiveFrom: date("effective_from", { mode: "string" }),
+    effectiveTo: date("effective_to", { mode: "string" }),
+
+    matchProvider: text("match_provider"),
+    matchChannel: text("match_channel"),
+    matchEconomicEntityId: uuid("match_economic_entity_id"),
+    matchFeeType: text("match_fee_type"),
+    matchFeeDirection: text("match_fee_direction"),
+    matchMovementKind: text("match_movement_kind"),
+    matchSourceKind: text("match_source_kind"),
+    matchExpenseCategory: text("match_expense_category"),
+    matchCapitalize: boolean("match_capitalize"),
+    matchCurrency: char("match_currency", { length: 3 }),
+    matchMinAmount: numeric("match_min_amount", { precision: 20, scale: 6 }),
+    matchMaxAmount: numeric("match_max_amount", { precision: 20, scale: 6 }),
+
+    note: text("note"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "posting_rule_versions_rule_fk",
+      columns: [table.postingRuleId],
+      foreignColumns: [postingRules.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "posting_rule_versions_entity_fk",
+      columns: [table.matchEconomicEntityId],
+      foreignColumns: [economicEntities.id],
+    }),
+    unique("posting_rule_versions_rule_version_uq").on(
+      table.postingRuleId,
+      table.version,
+    ),
+    check(
+      "posting_rule_versions_status_check",
+      sql`${table.status} in ('draft', 'active', 'superseded')`,
+    ),
+    check(
+      "posting_rule_versions_effective_range_check",
+      sql`${table.effectiveTo} is null or ${table.effectiveFrom} is null
+          or ${table.effectiveTo} >= ${table.effectiveFrom}`,
+    ),
+    check(
+      "posting_rule_versions_amount_range_check",
+      sql`${table.matchMaxAmount} is null or ${table.matchMinAmount} is null
+          or ${table.matchMaxAmount} >= ${table.matchMinAmount}`,
+    ),
+    check("posting_rule_versions_version_check", sql`${table.version} > 0`),
+    index("posting_rule_versions_rule_status_idx").on(
+      table.postingRuleId,
+      table.status,
+    ),
+  ],
+);
+
+/**
+ * One line of a version's template.
+ *
+ * ```text
+ * account resolution   by system_key OR by explicit id, exactly one. A system
+ *                      key is what makes a rule book-portable: the same rule
+ *                      resolves `marketplace_clearing` to whichever account
+ *                      carries that key in whichever book the fact routed to.
+ * amount               amount_source x amount_multiplier, and debit versus
+ *                      credit falls out of the SIGN. A credit line is a
+ *                      multiplier of -1; there is no debit/credit column, for
+ *                      the same reason journal_lines has none.
+ * remainder            the plug line, at most one per version. It takes
+ *                      whatever value makes the entry balance, which is what
+ *                      makes it impossible to author a template that cannot
+ *                      balance.
+ * ```
+ *
+ * `description_template` is a small named-placeholder string
+ * (`"eBay sale {external_order_number}"`), not an expression: the placeholder
+ * set is closed per fact type and validated at save.
+ */
+export const postingRuleLines = pgTable(
+  "posting_rule_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    postingRuleVersionId: uuid("posting_rule_version_id").notNull(),
+    lineNumber: integer("line_number").notNull(),
+    /** Book-portable resolution. Exactly one of these two is set. */
+    accountSystemKey: text("account_system_key"),
+    ledgerAccountId: uuid("ledger_account_id"),
+    amountSource: text("amount_source").notNull(),
+    amountMultiplier: numeric("amount_multiplier", { precision: 20, scale: 6 })
+      .notNull()
+      .default("1"),
+    /** The line carries the source fact's entity into `journal_lines`. */
+    inheritEntity: boolean("inherit_entity").notNull().default(true),
+    dimensionValueId: uuid("dimension_value_id"),
+    descriptionTemplate: text("description_template"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "posting_rule_lines_version_fk",
+      columns: [table.postingRuleVersionId],
+      foreignColumns: [postingRuleVersions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "posting_rule_lines_account_fk",
+      columns: [table.ledgerAccountId],
+      foreignColumns: [ledgerAccounts.id],
+    }),
+    foreignKey({
+      name: "posting_rule_lines_dimension_value_fk",
+      columns: [table.dimensionValueId],
+      foreignColumns: [accountingDimensionValues.id],
+    }),
+    unique("posting_rule_lines_version_line_uq").on(
+      table.postingRuleVersionId,
+      table.lineNumber,
+    ),
+    /** At most one plug line per version. */
+    uniqueIndex("posting_rule_lines_version_remainder_uq")
+      .on(table.postingRuleVersionId)
+      .where(sql`amount_source = 'remainder'`),
+    check(
+      "posting_rule_lines_account_check",
+      sql`num_nonnulls(${table.accountSystemKey}, ${table.ledgerAccountId}) = 1`,
+    ),
+    check(
+      "posting_rule_lines_multiplier_check",
+      sql`${table.amountMultiplier} <> 0`,
+    ),
+    check("posting_rule_lines_line_number_check", sql`${table.lineNumber} > 0`),
+    check(
+      "posting_rule_lines_amount_source_check",
+      sql`${table.amountSource} in ('total', 'subtotal', 'shipping', 'discount',
+                                   'tax', 'fee', 'refund', 'net', 'cost_basis',
+                                   'quantity_times_basis', 'remainder')`,
+    ),
+    index("posting_rule_lines_version_idx").on(table.postingRuleVersionId),
+  ],
+);
+
+/**
  * The double-entry journal's header row.
  *
  * **Posted entries and their lines are immutable** (migration 0009's trigger).
@@ -814,6 +1172,18 @@ export const journalEntries = pgTable(
      * key instead of being silently swallowed by the unique.
      */
     postingKey: text("posting_key"),
+
+    /**
+     * WHICH rule text produced this entry — a real foreign key, unlike the
+     * source-fact stamp below, because a rule version is Loxep's own immutable
+     * record and is never deleted while an entry references it.
+     *
+     * Activated by migration 0010 ("Migration B" in the design's own plan)
+     * together with the paired CHECK below. An entry whose `entry_source` is
+     * `posting_rule` MUST name a version and no other entry may: that is what
+     * makes "explain this number" a lookup rather than an investigation.
+     */
+    postingRuleVersionId: uuid("posting_rule_version_id"),
 
     /**
      * Provenance, deliberately UNENFORCED: a text discriminator and a bare
@@ -870,6 +1240,11 @@ export const journalEntries = pgTable(
       columns: [table.reversesEntryId],
       foreignColumns: [table.id],
     }),
+    foreignKey({
+      name: "journal_entries_posting_rule_version_fk",
+      columns: [table.postingRuleVersionId],
+      foreignColumns: [postingRuleVersions.id],
+    }),
     /** Composite-FK target for `journal_lines`: same-book lines, structurally. */
     unique("journal_entries_book_id_uq").on(table.accountingBookId, table.id),
     uniqueIndex("journal_entries_book_entry_number_uq")
@@ -886,6 +1261,16 @@ export const journalEntries = pgTable(
     check(
       "journal_entries_entry_source_check",
       sql`${table.entrySource} in ('posting_rule', 'manual', 'import', 'opening_balance')`,
+    ),
+    /**
+     * The design's paired check, activated with the column: an entry claims a
+     * rule exactly when a rule produced it. Without the biconditional an entry
+     * could claim `posting_rule` and name nothing (unexplainable) or name a
+     * version while claiming to be manual (a rule blamed for a human's number).
+     */
+    check(
+      "journal_entries_posting_rule_version_check",
+      sql`(${table.entrySource} = 'posting_rule') = (${table.postingRuleVersionId} is not null)`,
     ),
     /** A posted entry is numbered, stamped with its period, and has an instant. */
     check(
@@ -920,6 +1305,10 @@ export const journalEntries = pgTable(
     index("journal_entries_reverses_entry_id_idx")
       .on(table.reversesEntryId)
       .where(sql`reverses_entry_id is not null`),
+    /** Rule-impact analysis: "which entries did version N produce?" */
+    index("journal_entries_posting_rule_version_idx")
+      .on(table.postingRuleVersionId)
+      .where(sql`posting_rule_version_id is not null`),
   ],
 );
 
@@ -1109,5 +1498,69 @@ export const journalLineDimensions = pgTable(
       foreignColumns: [accountingDimensionValues.id],
     }),
     index("journal_line_dimensions_value_idx").on(table.dimensionValueId),
+  ],
+);
+
+/**
+ * Which operational facts produced an entry — cross-domain rule 4, in the many
+ * case.
+ *
+ * One entry usually comes from one fact, and that case is already covered by
+ * `journal_entries.source_fact_type` / `source_fact_id`. A payout entry, by
+ * contrast, settles a batch of orders, fees, and refunds at once and needs a
+ * LIST; a fee entry names the fee it posted and the order it belongs to. The
+ * header stamp stays authoritative for "the fact this entry is about"; this
+ * table is everything the entry touched.
+ *
+ * `source_fact_id` is a plain `uuid` with **no foreign key**, and
+ * `source_fact_type` is a text discriminator — the same unenforced stamp the
+ * header carries, for the same reason: **a posted journal entry must survive
+ * the deletion of its source fact.** A ledger whose entries can be cascaded
+ * away, or whose entries block an operational delete, is not a ledger. The
+ * alternative — a dozen nullable typed FK columns — is exactly the shape
+ * cross-domain rule 5 warns against. The residual risk (a link pointing at a
+ * row that no longer exists) is made visible by the "orphan provenance" report
+ * rather than hidden by a constraint that would break the ledger to prevent it.
+ */
+export const journalEntrySourceLinks = pgTable(
+  "journal_entry_source_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    journalEntryId: uuid("journal_entry_id").notNull(),
+    sourceFactType: text("source_fact_type").notNull(),
+    sourceFactId: uuid("source_fact_id").notNull(),
+    role: text("role").notNull(),
+    /** What this fact contributed, where the entry's amount is a sum of facts. */
+    amountContributed: numeric("amount_contributed", {
+      precision: 20,
+      scale: 6,
+    }),
+    currency: char("currency", { length: 3 }),
+    linkedAt: timestamp("linked_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "journal_entry_source_links_entry_fk",
+      columns: [table.journalEntryId],
+      foreignColumns: [journalEntries.id],
+    }).onDelete("cascade"),
+    /** The at-least-once conflict target: re-linking the same pair is a no-op. */
+    unique("journal_entry_source_links_natural_uq").on(
+      table.journalEntryId,
+      table.sourceFactType,
+      table.sourceFactId,
+      table.role,
+    ),
+    check(
+      "journal_entry_source_links_role_check",
+      sql`${table.role} in ('primary', 'settled', 'allocated', 'reversed_from', 'evidence')`,
+    ),
+    /** Reverse provenance: "which entries touched this fact?" */
+    index("journal_entry_source_links_source_fact_idx").on(
+      table.sourceFactType,
+      table.sourceFactId,
+    ),
   ],
 );

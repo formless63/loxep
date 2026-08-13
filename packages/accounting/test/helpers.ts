@@ -19,7 +19,11 @@ import {
   acquisitionCosts,
   acquisitions,
   catalogItems,
+  connections,
   economicEntities,
+  orderFees,
+  orderRefunds,
+  orders,
   user,
 } from "@loxep/db/schema";
 import type { createSecretsService } from "@loxep/domain";
@@ -270,4 +274,139 @@ export async function auditEventsFor(
     after: row["after"],
     metadata: row["metadata"],
   }));
+}
+
+/* ----------------------------------------------- Phase 3 facts, for the rules */
+
+/**
+ * A provider connection, because `orders.connection_id` is `not null`: Phase 3
+ * ingestion is the only way an order can arrive, and the posting rules read
+ * real orders rather than a fixture shape of their own.
+ */
+export async function seedConnection(
+  scratch: ScratchDb,
+  provider = "ebay",
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(connections)
+    .values({
+      provider,
+      kind: "marketplace",
+      name: `${provider} test`,
+      status: "active",
+    })
+    .returning({ id: connections.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("connection insert returned no row");
+  return id;
+}
+
+export interface SeedOrderInput {
+  connectionId: string;
+  economicEntityId?: string | null;
+  externalOrderId: string;
+  placedAt?: string;
+  currency?: string;
+  subtotal: string;
+  shipping?: string;
+  discount?: string;
+  tax?: string;
+  fee?: string;
+  refunded?: string;
+  total: string;
+  status?: string;
+  provider?: string;
+  channel?: string;
+}
+
+export async function seedOrder(
+  scratch: ScratchDb,
+  input: SeedOrderInput,
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(orders)
+    .values({
+      connectionId: input.connectionId,
+      provider: input.provider ?? "ebay",
+      channel: input.channel ?? "ebay",
+      sourceAccountKey: "ebay:test-seller",
+      externalOrderId: input.externalOrderId,
+      externalOrderNumber: input.externalOrderId,
+      economicEntityId: input.economicEntityId ?? null,
+      entityAttributionSource:
+        input.economicEntityId == null ? "unattributed" : "manual",
+      status: input.status ?? "completed",
+      paymentStatus: "paid",
+      fulfillmentStatus: "fulfilled",
+      currency: input.currency ?? "USD",
+      subtotalAmount: input.subtotal,
+      shippingAmount: input.shipping ?? "0",
+      discountAmount: input.discount ?? "0",
+      taxAmount: input.tax ?? "0",
+      feeAmount: input.fee ?? "0",
+      refundedAmount: input.refunded ?? "0",
+      totalAmount: input.total,
+      placedAt: new Date(input.placedAt ?? "2026-02-10T12:00:00Z"),
+    })
+    .returning({ id: orders.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("order insert returned no row");
+  return id;
+}
+
+export async function seedOrderFee(
+  scratch: ScratchDb,
+  input: {
+    orderId: string;
+    feeDirection: "seller_charge" | "buyer_surcharge";
+    feeType: string;
+    amount: string;
+    currency?: string;
+    chargedAt?: string;
+    externalFeeId?: string;
+  },
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(orderFees)
+    .values({
+      orderId: input.orderId,
+      feeScope: "order",
+      feeDirection: input.feeDirection,
+      feeType: input.feeType,
+      externalFeeId: input.externalFeeId ?? null,
+      currency: input.currency ?? "USD",
+      amount: input.amount,
+      chargedAt: new Date(input.chargedAt ?? "2026-02-11T12:00:00Z"),
+    })
+    .returning({ id: orderFees.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("order fee insert returned no row");
+  return id;
+}
+
+export async function seedOrderRefund(
+  scratch: ScratchDb,
+  input: {
+    orderId: string;
+    amount: string;
+    status?: string;
+    kind?: string;
+    currency?: string;
+    refundedAt?: string;
+  },
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(orderRefunds)
+    .values({
+      orderId: input.orderId,
+      kind: input.kind ?? "full",
+      status: input.status ?? "completed",
+      currency: input.currency ?? "USD",
+      amount: input.amount,
+      refundedAt: new Date(input.refundedAt ?? "2026-02-15T12:00:00Z"),
+    })
+    .returning({ id: orderRefunds.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("order refund insert returned no row");
+  return id;
 }

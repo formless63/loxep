@@ -128,29 +128,37 @@ describe("expenses schema (migration 0006)", () => {
       expect(byName.get("created_at")).toBe("timestamp with time zone");
     });
 
-    it("has NO ledger, book, journal, or posting column", async () => {
-      // The seam is a source-fact identity, not a foreign key — and it stays
-      // one now that migration 0009 has created books, the chart, dimensions,
-      // and the journal. If any of these ever appears, an expense has been
-      // given a second, driftable record of where it posted.
-      const result = await scratch.handle.pool.query<{ column_name: string }>(
-        `select column_name from information_schema.columns
+    it("has NO journal or posting-state column, and never will", async () => {
+      // The seam between an expense and its entry is a source-fact IDENTITY,
+      // not a foreign key. Migration 0010 added the book override and the two
+      // allocation targets — columns the rule engine READS — and deliberately
+      // added none of these: each would be a second, driftable record of where
+      // an expense posted.
+      const result = await scratch.handle.pool.query<{
+        table_name: string;
+        column_name: string;
+      }>(
+        `select table_name, column_name from information_schema.columns
           where table_name in ('expenses', 'expense_allocations')`,
       );
       const columns = result.rows.map((row) => row.column_name);
       for (const forbidden of [
-        "accounting_book_id",
         "journal_entry_id",
         "posting_key",
         "posted_at",
-        "ledger_account_id",
-        "dimension_value_id",
+        // financial_accounts still does not exist, so neither does the column.
         "financial_account_id",
         "payee_counterparty_id",
         "project_id",
       ]) {
         expect(columns).not.toContain(forbidden);
       }
+      const qualified = result.rows.map(
+        (row) => `${row.table_name}.${row.column_name}`,
+      );
+      expect(qualified).toContain("expenses.accounting_book_id");
+      expect(qualified).toContain("expense_allocations.ledger_account_id");
+      expect(qualified).toContain("expense_allocations.dimension_value_id");
     });
 
     it("carries a REAL foreign key to acquisition_costs (Phase 4 shipped)", async () => {

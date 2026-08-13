@@ -6,7 +6,7 @@ This document is the physical schema design for [Phase 5 — Financial foundatio
 
 It **extends** the foundation and both prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table, and nothing here alters a table Phase 3 or Phase 4 designed — every reference into an earlier phase is an outbound foreign key or an unenforced provenance stamp added by Phase 5.
 
-**Implementation status: TWO MILESTONES of this design are implemented, PROVISIONALLY — expenses and receipts, and now the financial core.** Migration `0006_expenses_and_counterparties.sql` created expenses and their allocations; migration `0009_accounting_books_chart_and_journal.sql` created **books, the effective-dated book-to-entity link, the chart of accounts, dimensions, fiscal periods, and the double-entry journal** — eleven of this document's twenty-two tables in total. The second milestone was unblocked by the [owner's answers](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved) to all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and not one day before. The remaining eleven tables — posting rules, source links, payouts, banking, reconciliation, and sales-tax facts — are **design only**. See [Provisional implementation decisions](#provisional-implementation-decisions) for exactly what shipped, what diverged, and what is still on paper.
+**Implementation status: THREE MILESTONES of this design are implemented, PROVISIONALLY — expenses and receipts, the financial core, and now posting rules and statements.** Migration `0006_expenses_and_counterparties.sql` created expenses and their allocations; migration `0009_accounting_books_chart_and_journal.sql` created **books, the effective-dated book-to-entity link, the chart of accounts, dimensions, fiscal periods, and the double-entry journal**; migration `0010_posting_rules_and_source_links.sql` created **the declarative rule model and multi-fact provenance**, and activated the three columns its two predecessors deferred — thirteen of this document's twenty-two tables in total. The second milestone was unblocked by the [owner's answers](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved) to all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and not one day before. The remaining nine tables — payouts, banking, reconciliation, and sales-tax facts — are **design only**. See [Provisional implementation decisions](#provisional-implementation-decisions) for exactly what shipped, what diverged, and what is still on paper.
 
 The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or accounting service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
@@ -1319,12 +1319,13 @@ Not indexed on purpose: `journal_entries.status` (low cardinality, always filter
 
 Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
 
-Two milestones are recorded, in the order they shipped:
+Three milestones are recorded, in the order they shipped:
 
 ```text
 milestone 1  expenses and receipts            2 tables, migration 0006
 milestone 2  books, chart, journal            9 tables, migration 0009
-still design only                            11 tables
+milestone 3  posting rules and statements     2 tables + 2, migration 0010
+still design only                             9 tables
 ```
 
 Milestone 2 could not have shipped earlier: it was blocked on all three OWNER-REVIEW-CRITICAL questions, which the owner [answered on 2026-08-12](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved).
@@ -1442,7 +1443,7 @@ OQ9, OQ10, and OQ11 remain **untouched**: they belong to payouts, tax facts, and
 
 ### Milestone 2 — divergences from the draft, and decisions it did not sketch
 
-- **`journal_entries.posting_rule_version_id` is OMITTED.** `posting_rule_versions` does not exist, and a column pointing at a table that does not exist is worse than no column — this document's own rule. Its migration plan already activates that foreign key in "Migration B", together with the paired `(entry_source = 'posting_rule') = (version_id is not null)` CHECK. `entry_source`'s CHECK keeps its unreachable `posting_rule` member anyway, following the `expenses.status = 'posted'` precedent; the service refuses to write it.
+- **`journal_entries.posting_rule_version_id` is OMITTED** (activated by migration 0010, one milestone later, exactly as the plan below predicted)**.** `posting_rule_versions` does not exist, and a column pointing at a table that does not exist is worse than no column — this document's own rule. Its migration plan already activates that foreign key in "Migration B", together with the paired `(entry_source = 'posting_rule') = (version_id is not null)` CHECK. `entry_source`'s CHECK keeps its unreachable `posting_rule` member anyway, following the `expenses.status = 'posted'` precedent; the service refuses to write it.
 - **The `posted` → `reversed` status stamp is a WHITELISTED update, and the draft does not reconcile that with immutability.** The draft says posted entries are immutable *and* gives `journal_entries.status` a `reversed` member, which nothing could ever set. The trigger permits exactly one update on a posted row — `status` to `reversed` with `updated_at`, compared through `to_jsonb(NEW) - 'status' - 'updated_at' = to_jsonb(OLD) - …` so that nothing else can ride along. A reversed entry's **lines are untouched and still count in every balance**; the reversal's own lines net them out, and `reversed` is a marker rather than a report filter.
 - **`journal_lines` immutability guards INSERT as well as UPDATE and DELETE.** The draft says posted lines are immutable, which reads as "no edits". Adding a *balanced pair* of lines to a posted entry would slip past the deferred balance check while restating a month someone has already read, so lines are written while the entry is a draft and the entry is posted afterwards. The posting service follows the same order.
 - **Reversing a reversal is REFUSED (the draft is silent).** A retried reversal is idempotent and returns the first one; reversing the reversal itself raises. A double negation is indistinguishable from the original entry while carrying provenance that says otherwise, and the honest expression of "we reversed that by mistake" is a fresh entry stating what is true.
@@ -1473,23 +1474,96 @@ One trap worth recording: a `daterange` with an inclusive upper bound of `'infin
 4. **`buyer_fee_income` in the shipped chart.** A system key the design's own table does not list, added because Phase 3's shipped reality requires it.
 5. **Fiscal years labelled by their starting year.**
 
-### What is still design-only
-
-**Eleven of this document's twenty-two tables**, and every capability that depends on them:
+### Milestone 3 — what shipped (posting rules and statements)
 
 ```text
-posting_rules, posting_rule_versions,
-  posting_rule_lines                     the declarative rule model
-journal_entry_source_links               multi-fact provenance
+migration      packages/db/migrations/0010_posting_rules_and_source_links.sql
+schema         packages/db/src/schema/accounting.ts   (4 tables, 1 column)
+               packages/db/src/schema/expenses.ts     (3 columns, 1 CHECK widened)
+services       packages/accounting/src/               (@loxep/accounting)
+  source-facts.ts           the closed normalized shape a rule can see, and the
+                            four readers that exist (order, order_fee,
+                            order_refund, expense)
+  posting-rules.ts          rules, immutable versions, templates, save-time
+                            validation, first-match-wins resolution
+  posting-rules-template.ts the shipped rule set, code-owned like the chart
+  posting-engine.ts         evaluate -> post / no-op / reverse-and-repost
+  statements.ts             income statement and balance sheet
+  journal.ts                EXTENDED: entry_source `posting_rule` with its
+                            version stamp, and source links written inside the
+                            posting transaction
+tests          packages/accounting/test/              (250 tests total, +43)
+                 posting-rules.test.ts    15  validation, versioning, the
+                                              database-level freeze
+                 posting-engine.test.ts   19  the five idempotency behaviours,
+                                              fee_direction, the backlog
+                 statements.test.ts        9  incl. the end-to-end reconciliation
+               packages/db/test/schema.test.ts        (+3: the column, the CHECK,
+                                              the triggers, the 63-byte limit)
+```
+
+The four tables are exactly this document's "Migration B": `posting_rules`,
+`posting_rule_versions`, `posting_rule_lines`, and `journal_entry_source_links`.
+Alongside them, the columns two earlier migrations deferred **to the milestone
+that would read them** finally land: `journal_entries.posting_rule_version_id`
+with its paired biconditional `CHECK`, `expenses.accounting_book_id`, and
+`expense_allocations.ledger_account_id` / `dimension_value_id`.
+`expenses.financial_account_id` is still absent, for the unchanged reason that
+`financial_accounts` does not exist.
+
+### Milestone 3 — the design's own checklist, item by item
+
+```text
+same fact posted twice        one entry; posting_key is the retry probe
+fact re-synced unchanged      NO-OP; source_fact_fingerprint is the free probe
+fact changed after posting    reverse + repost, never mutation
+re-post under a new version   reverse + repost, new key, old stamp preserved
+retried reversal              idempotent (milestone 2, unchanged)
+rule set tested with the      every shipped template resolves only seeded
+  chart template              system keys, asserted at save time AND in a test
+clearing invariant end to end  order + fees + surcharge + refund + expense,
+                              posted BY THE RULES, with the balance sheet and
+                              the income statement agreeing to the micro-unit
+```
+
+### Milestone 3 — divergences from the draft, and decisions it did not sketch
+
+- **PROVISIONAL: the posting key carries the FINGERPRINT.** The design's formula is `'pr:' || rule_code || ':v' || version || ':' || type || ':' || id`, and its argument for the version being inside it is exactly right: without it, a deliberate re-post under a corrected rule is swallowed by `unique(posting_key)` and the operator sees a successful job and an unchanged ledger. **That argument applies unchanged to the design's own primary re-post scenario** — a fact that changed while the rule did not. The version is identical, so the key is identical, so the correction is swallowed the same way. The implemented key appends `':' || left(fingerprint, 12)`. Idempotency is unchanged; reversal-and-repost becomes expressible at all. This is the one place where the document's stated formula could not do what the document's stated behaviour requires.
+- **PROVISIONAL: the buyer-surcharge entry debits `suspense`, not `marketplace_clearing`.** The sale rule debits clearing for the provider-asserted `total`, which already contains the surcharge; debiting clearing again would count the money twice and leave a permanent clearing residual — destroying the one number that is supposed to be zero. The sale rule's `remainder` plug parks the unrecognized part of the total in `suspense`, and the surcharge entry clears it. That makes suspense a work queue for orders whose components do not add up, which is the role this document gives it, and makes an uningested surcharge visible rather than quietly inflating revenue.
+- **PROVISIONAL: an expense's funding side credits `opening_balance_equity`.** `financial_accounts` does not exist, so an expense paid from an unmodeled account is owner-funded — which is what that account means in practice. Crediting `suspense` instead would make the plug permanently non-zero for ordinary correct activity and train an operator to ignore it. The banking milestone reclassifies by posting the real account.
+- **PROVISIONAL: an unmapped expense category posts to `suspense` through a catch-all rule.** The shipped chart carries a handful of expense accounts and an operator's categories outgrow them within a month. The alternative — refusing to post — leaves the expense invisible in the ledger *and* in the backlog, because the backlog is "facts with no entry".
+- **The template balance check is SYMBOLIC, not numeric.** The design says a version with no `remainder` line "is checked for balance at rule-save time against a synthetic fact". One set of numbers would pass a template that balances only when shipping and tax happen to be zero. Each amount is decomposed into independent components (`total = subtotal + shipping + tax − discount` for an order) and the whole combination must cancel identically.
+- **Placeholders are a closed set per fact type, validated at save.** `{buyer_email}` fails when the rule is written rather than rendering as literal text on a year of journal lines.
+- **`posting_rules.current_version_id` is a real foreign key**, expressed with drizzle's lazy `AnyPgColumn` reference because the two tables point at each other. The alternative was one of the two constraints living in hand-written SQL, outside the snapshot.
+- **Rule-version immutability is enforced by a trigger, not only by the service, and the two have different strengths.** The database freezes a version referenced by ANY journal entry — whitelisting only `status` and `effective_to`, which is the supersede lifecycle rather than an edit of the text — and freezes its lines against `INSERT` as well as `UPDATE` and `DELETE`. The service is stricter: an active rule is never edited in place, only superseded by version N+1.
+- **The engine honours `expense_allocations.ledger_account_id` at build time.** The rule model has no `amount_source` for "per allocation" — a line template is deliberately not a loop — so an expense whose splits name accounts has its debit side replaced by one line per allocation, each carrying that allocation's entity and dimension value. This is why those two columns ship in this migration rather than a later one, and the fingerprint counts them so editing a split reverses and reposts.
+- **Facts can be INELIGIBLE, which is neither an error nor a missing rule.** A cancelled order, a pending or failed refund, and a `draft` or `void` expense are recorded as unpostable with a reason. Posting revenue for a cancelled order would be a real misstatement produced by a correct-looking rule.
+- **Dates convert from `timestamptz` to `date` in UTC**, deliberately, so the same order posts to the same month on every machine. A per-book local-midnight setting is a later, explicit decision rather than a silent dependency on `TZ`.
+- **The unpostable backlog ships as a read model over the facts**, exactly as the design requires, with `explainFact()` answering "which rule would fire, and why not the others" — the diagnostic that makes first-match-wins debuggable.
+- **`decimal.ts` gains ONE rounding function.** `multiplyDecimals` rounds half away from zero, because `amount_source × multiplier` with a `0.5` multiplier on an odd number of micro-units genuinely cannot be exact. It is the only rounding in the package, and the `remainder` plug absorbs the residue so a rounded template still balances to the micro-unit.
+
+### Milestone 3 — what a reviewer should push back on first
+
+1. **The fingerprint in the posting key.** It diverges from a formula this document states verbatim. The argument is that the formula cannot express the behaviour the same document requires, but the reviewer should confirm the divergence rather than inherit it.
+2. **`suspense` as the sale rule's plug and the buyer-surcharge counter-account.** It makes suspense routinely non-zero between ingesting an order and ingesting its fees, which is a deliberate trade of "quiet and wrong" for "visible and explainable".
+3. **`opening_balance_equity` as every expense's funding side**, and the catch-all expense rule that posts to `suspense`.
+4. **The engine's allocation split**, which is behaviour the declarative model cannot express and therefore lives in code.
+5. **Whether a cancelled order should post nothing, or post and be reversed** when it was cancelled after payment.
+
+### What is still design-only
+
+**Nine of this document's twenty-two tables**, and every capability that depends on them:
+
+```text
 financial_accounts, payouts, payout_lines
 bank_statement_imports, bank_transactions,
   reconciliation_matches
 sales_tax_facts
 ```
 
-Consequently there is still **no automatic posting from operational facts, no COGS-on-depletion rule, no payout or clearing settlement, no bank import, no reconciliation, no tax fact, and no balance sheet or P&L statement object** — the trial balance, account balances, and account activity are the read models this milestone ships. `packages/db/test/schema.test.ts` asserts each absent table name, so an accidental `posting_rules` fails a test rather than quietly deciding the rule-versioning model.
+Consequently there is still **no payout or clearing settlement, no bank import, no reconciliation, and no tax fact**. There is also **no COGS-on-depletion rule**: the rule model carries `inventory_movement` and `acquisition_cost` in its `CHECK`, and neither has a source-fact reader, because assigning inventory valuation and COGS posting to a phase is [contradiction 2](#contradictions-and-tensions-found-in-existing-documentation) and still open. A rule naming a fact type nothing can read is refused at save time with the missing reader named. `packages/db/test/schema.test.ts` asserts each absent table name, so an accidental `payouts` fails a test rather than quietly deciding the settlement model.
 
-The clearing-account pattern is nonetheless **already proven**: `ledger-reports.test.ts` posts an order, its fees, a refund, a depletion, a payout, and a bank deposit by hand — the exact entries the rules milestone will generate — and asserts that `marketplace_clearing`, `facilitator_tax_clearing`, and `undeposited_funds` all return to exactly zero and that suspense was never touched.
+The clearing-account pattern was **already proven by hand** in milestone 2 — `ledger-reports.test.ts` posts an order, its fees, a refund, a depletion, a payout, and a bank deposit and asserts that `marketplace_clearing`, `facilitator_tax_clearing`, and `undeposited_funds` all return to exactly zero. Milestone 3 proves the same shape **through the rules**: `statements.test.ts` seeds an order, a seller fee, a buyer surcharge, a refund, and an expense, posts all five through the engine, and asserts that suspense returns to zero, that the balance sheet balances to the micro-unit, that its current earnings equal the income statement's net income, and that re-running every fact changes nothing.
 
 ## Open questions
 
@@ -1503,7 +1577,7 @@ Each item is a genuinely unresolved decision with a recommendation, not a placeh
 
 Phase 5 implementation is unblocked on these three; the remaining open questions below keep their recommendations and are resolvable during implementation per the provisional-decision policy.
 
-**OQ4, OQ5, OQ6, OQ7, OQ8, OQ12, OQ13, and OQ14 have been implemented per their own recommendation and marked PROVISIONAL** (see [Provisional implementation decisions](#provisional-implementation-decisions)). OQ9, OQ10, and OQ11 are untouched and fully open, because payouts, tax facts, and bank import do not exist. Every question is retained verbatim below, because the recommendation is not the same thing as the answer and the review needs the original reasoning — and because OQ5 still contains one genuinely unanswered part: whether backdating into a soft-closed period is `admin`-only.
+**OQ4, OQ5, OQ6, OQ7, OQ8, OQ10, OQ12, OQ13, and OQ14 have been implemented per their own recommendation and marked PROVISIONAL** (see [Provisional implementation decisions](#provisional-implementation-decisions)). OQ10 joined them in milestone 3: the shipped sale rule credits `facilitator_tax_clearing` and never `sales_tax_payable`, so facilitator-collected tax passes through a clearing account that nets to zero once the payout settles and never touches P&L — the recommendation, made physical, before `sales_tax_facts` exists to record the liability distinction in its own right. OQ9 and OQ11 remain untouched and fully open, because financial accounts and bank import do not exist. Every question is retained verbatim below, because the recommendation is not the same thing as the answer and the review needs the original reasoning — and because OQ5 still contains one genuinely unanswered part: whether backdating into a soft-closed period is `admin`-only.
 
 1. **OWNER-REVIEW-CRITICAL — Book granularity and `book_entity_links` semantics.** How many books does a real installation have, and does the entity link *route* postings (scope of inclusion) or merely *describe* contents (reporting label)? *Recommendation: scope of inclusion, effective-dated, with `link_role in ('posting_primary','reporting_only')` and an exclusion constraint guaranteeing at most one primary book per entity per day; facts with no entity fall back to an installation default book, and facts with neither enter an unpostable backlog rather than being guessed into a book.* Routing has to live somewhere, and every other candidate location — a single default book, the posting rule, or the connection — either fails on the second book or re-introduces the mutable-configuration-rewrites-history defect Phase 3 explicitly rejected. The residual question the owner must answer is the practical one: is the intended installation one book containing the LLC and its DBAs plus a second book for personal activity, or one book for everything, or one per legal entity? The schema supports all three, but the *default* the product ships and the onboarding flow it builds should match reality, and getting it wrong means operators create the wrong number of books before there is any data to migrate.
 

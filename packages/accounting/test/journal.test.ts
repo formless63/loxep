@@ -260,17 +260,20 @@ describe("the journal", () => {
       ).rejects.toThrow(/USD-only by owner decision/);
     });
 
-    it("refuses entry_source = 'posting_rule' while no rule engine exists", async () => {
+    it("refuses entry_source = 'posting_rule' with no rule version to explain it", async () => {
+      // Migration 0010 made the member reachable; the biconditional is what
+      // keeps it honest. An entry claiming a rule produced it while naming no
+      // rule text is unexplainable exactly where explainability is the product.
       const book = await newBook();
       await expect(
         journal.postEntry({
           accountingBookId: book.id,
           entryDate: "2026-03-15",
           description: "claims a rule",
-          entrySource: "posting_rule" as "manual",
+          entrySource: "posting_rule",
           lines: saleLines("10"),
         }),
-      ).rejects.toThrow(/invalid journal entry input/);
+      ).rejects.toThrow(/must name the rule VERSION/);
     });
   });
 
