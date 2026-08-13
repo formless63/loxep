@@ -25,6 +25,7 @@ import type {
   EbayOrderPageIterator,
   EbayOrderPageLike,
 } from "../src/ebay-sync.ts";
+import { writeOrderSyncCursor } from "../src/sync.ts";
 import { createOrderIngestionService } from "../src/orders.ts";
 import type { OrderIngestionService } from "../src/orders.ts";
 import {
@@ -725,6 +726,30 @@ describe("ebay order sync", () => {
     expect(config[COMMERCE_SYNC_CONFIG_KEY]?.["modifiedAfter"]).toBe(
       result.nextModifiedAfter?.toISOString(),
     );
+  });
+
+  it("re-reads a cursor whose stored watermark is null (zero-order first sync)", async () => {
+    // Regression (live eBay orders, 2026-08-13): a first sync that saw no
+    // orders persists `modifiedAfter: null`; the config schema rejecting
+    // null poisoned the target's own cursor on every later poll. The read
+    // path — the one the executor validates through — must accept it.
+    // Force the exact poisoned state the live target held: an explicit null
+    // watermark persisted by the cursor writer.
+    const cursor = await ensureEbayOrderSyncTarget(scratch.handle.db, {
+      connectionId,
+    });
+    await writeOrderSyncCursor(scratch.handle.db, cursor.monitorTargetId, {
+      modifiedAfter: null,
+    });
+    const reread = await readEbayOrderSyncCursor(scratch.handle.db, connectionId);
+    expect(reread).not.toBeNull();
+    expect(reread?.modifiedAfter).toBeNull();
+    // And a second sync through the same cursor must not throw.
+    const { iterate: iterate2 } = pageIterator([[{ orders: [] }]]);
+    const sync2 = createEbayOrderSync({ db: scratch.handle.db, iterateOrders: iterate2 });
+    await expect(sync2.syncConnection({ connectionId })).resolves.toMatchObject({
+      ordersSeen: 0,
+    });
   });
 
   it("hands the stored watermark to the next run", async () => {

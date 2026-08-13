@@ -103,8 +103,16 @@ export const DEFAULT_SYNC_MAX_PAGES = 10;
 export const wooOrdersTargetConfigSchema = z.looseObject({
   [COMMERCE_SYNC_CONFIG_KEY]: z
     .strictObject({
-      /** Watermark handed to `modified_after` on the next poll. */
-      modifiedAfter: z.iso.datetime().optional(),
+      /**
+       * Watermark handed to `modified_after` on the next poll. `null` is a
+       * legitimate stored value — `writeOrderSyncCursor` records it
+       * explicitly after a sync that saw zero orders, and this schema
+       * rejecting it poisoned a target's own config on its next poll (live
+       * eBay orders, 2026-08-13; the market-side copy was fixed first and
+       * this copy — the one the executor actually validates through — was
+       * the second half of the same bug).
+       */
+      modifiedAfter: z.iso.datetime().nullable().optional(),
       /** When the last successful sync finished. */
       lastSyncedAt: z.iso.datetime().optional(),
       /** Orders ingested by the last sync (diagnostic only). */
@@ -159,7 +167,7 @@ function readCursorFrom(
   return {
     monitorTargetId,
     modifiedAfter:
-      state?.modifiedAfter === undefined ? null : new Date(state.modifiedAfter),
+      state?.modifiedAfter == null ? null : new Date(state.modifiedAfter),
     lastSyncedAt:
       state?.lastSyncedAt === undefined ? null : new Date(state.lastSyncedAt),
     lastOrderCount: state?.lastOrderCount ?? null,
