@@ -400,6 +400,23 @@ an agent, a collector, or anything installed     Loxep ships one container; that
   on a monitored host
 ```
 
+### Status transition tracking — AMENDED 2026-08-13 (loxep-oii)
+
+Weave audit 2026-08 finding 5 flagged a gap this design left open: before this amendment, `upsertHealth` overwrote `integration_health` in place with no prior value, so a status degradation (or recovery) could never be noticed after the fact once the next probe ran — "cheap to fix now, impossible to backfill later." Migration `0020` adds two nullable columns, written by `upsertHealth` alone:
+
+```text
+previous_status      text, nullable      the status immediately before the most recent transition
+status_changed_at    timestamptz, nullable   when that transition was observed
+```
+
+Both are set together, only when the incoming `status` differs from the stored row's `status`; an unchanged-status upsert leaves both alone — they track the most recent *transition*, not the most recent write, and stay null until a subject's first transition. This is explicitly **not** the health history table the "what Phase 8 does not create" list above still refuses: one prior value per subject, replaced at the next transition, not an append-only series. The one-row-per-subject shape and the primary-key-as-upsert-probe property are unchanged.
+
+Three `CHECK`s extend this table's existing biconditional discipline (the `(status = 'ok') = (consecutive_failures = 0)` precedent) to the new pair, so a nonsensical row is refused at the database level rather than trusted to the one call site: `previous_status` is one of the same closed statuses when present; `previous_status` and `status_changed_at` are null together, never one without the other; and `previous_status`, when present, differs from the current `status` — a "transition" that didn't change anything is a bug, the same category the `ok`/`consecutive_failures` check already guards against.
+
+`/settings` overview's Integration health table (`IntegrationHealthReport`) renders a "Changed" column off `status_changed_at` (relative time, with the previous status in its tooltip), alongside the existing "Last checked" column.
+
+**What this amendment deliberately does not do:** wire the transition into `notification_deliveries` or any rule model. That is the other half of weave audit finding 5 — the schema-bound-to-market-events gap — and remains open, tracked as the remaining scope of loxep-oii. This amendment makes the transition **observable**; making it **notifiable** is separate, larger work gated on the `market_event_id` design decision the finding also names.
+
 ## The link model, and its vocabulary
 
 **Implementation status — the GENERIC link mechanism is IMPLEMENTED (loxep-v5r.3); the fleet-specific vocabulary/known-tool registry below is still design only.** loxep-v5r.3 shipped the single, shared `external_resources`/`resource_links` service this section always assumed would exist — `createResourceLinksService` in `@loxep/domain` (`packages/domain/src/resource-links.ts`): `registerExternalResource`/`attachLink`/`createLink`/`listLinksFor`/`detachLink`, plus `RESOURCE_LINK_RESOURCE_TYPES` (currently `["hosting_target"]`, the same closed-union-plus-config shape as `@loxep/market`'s `MONITOR_TARGET_TYPES`, extended by whichever milestone links a new record type). `apps/web`'s `/infrastructure/fleet/$name` now renders a real `CompanionLinksPanel` with an "Add tool link" dialog (provider/kind/URL/label/purpose, all free text) and a remove action — the panel this design and `infrastructure-control-design.md`'s milestone 3 both reserved space for, previously read-only. **What this milestone does NOT ship, per its own consolidation note:** the `(provider, external_type, resource_type, purpose)` vocabulary table immediately below is not enforced by the generic service (every one of those four fields stays free text at that layer) and the known-tool registry (icon/label/health path/embeddable, per-provider) has not been built — both remain this issue's (loxep-ovj.3's) job, to be layered on top of the shared mechanism loxep-v5r.3 now provides.
@@ -505,6 +522,8 @@ Gatus makes this the most attractive it can be, because Loxep dictates the paylo
 ## Where this surfaces
 
 **Implementation status — `/infrastructure/fleet/$name`'s companion-links panel is PARTIALLY built (loxep-v5r.3).** It renders every linked tool (title, provider, kind, purpose, and when it was linked) with a deep link and a remove action, and an "Add tool link" form writes new links — but it has no status column, no source, and no "last checked" time, because it reads `resource_links`/`external_resources` directly rather than `integration_health`. Turning it into the "Tools" panel this table describes is this milestone's (loxep-ovj.3's) remaining work: project each link's health into `integration_health` (`subject_type = 'external_resource'`, per [the `integration_health` table's own `CHECK`](#integration_health-the-only-new-table)) and render that alongside the link. Everything else in this table (the fleet-health summary, tier-3 catalog cards, `/settings/connections` accounts, the Operations band) remains unbuilt.
+
+**Correction (weave audit, 2026-08-13): "tier-3 catalog cards" shipped close to inverted from this table's promise.** Tailscale, Termix, and Gatus are each connectable in `/settings/integrations` today and each create a real `/settings/connections` account — but no adapter factory (`createTailscaleAdapter`/`createTermixAdapter`/`createGatusAdapter`) is ever constructed at runtime, so a pasted credential buys a permanently-`unknown` health row (nothing ever writes `last_success_at`). Beszel and Dockhand are the opposite: their adapters are real, tested, and consumed (`planContainerHostOperations`), but neither has a catalog entry or a form — a credential for either cannot be pasted at all. See loxep-rf4 for the minimal wiring that closes both halves of this gap (per-provider health probes in the sweep, plus the two missing catalog entries).
 
 Following [Frontend Standards](../../development/frontend-standards/) throughout — the donor `DataTable` stack, `useAppForm`, semantic tokens.
 

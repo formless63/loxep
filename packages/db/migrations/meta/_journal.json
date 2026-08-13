@@ -141,6 +141,13 @@
       "when": 1786627411169,
       "tag": "0019_manual_and_draft_listings",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786641824970,
+      "tag": "0020_integration_health_status_transitions",
+      "breakpoints": true
     }
   ]
 }

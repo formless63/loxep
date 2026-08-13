@@ -14,6 +14,7 @@ import { createScratchDb, dropScratchDb, scratchDbName, silentLogger } from "./h
 
 const SUBJECT_ID_A = "00000000-0000-4000-8000-0000000000a1";
 const SUBJECT_ID_B = "00000000-0000-4000-8000-0000000000b2";
+const SUBJECT_ID_C = "00000000-0000-4000-8000-0000000000c3";
 
 describe("health service", () => {
   const dbName = scratchDbName("loxep_test_domain_health");
@@ -163,6 +164,76 @@ describe("health service", () => {
     expect(row.detail).toEqual({ kind: "fs_error", code: "ENOENT" });
   });
 
+  describe("status transitions (loxep-oii, weave audit finding 5 health half)", () => {
+    it("leaves previous_status/status_changed_at null on first insert", async () => {
+      const row = await service.upsertHealth({
+        subjectType: "connection",
+        subjectId: SUBJECT_ID_C,
+        status: "ok",
+        source: "probe",
+        checkedAt: new Date("2026-07-01T00:00:00.000Z"),
+      });
+      expect(row.previousStatus).toBeNull();
+      expect(row.statusChangedAt).toBeNull();
+    });
+
+    it("does not record a transition when a same-status upsert repeats", async () => {
+      const row = await service.upsertHealth({
+        subjectType: "connection",
+        subjectId: SUBJECT_ID_C,
+        status: "ok",
+        source: "probe",
+        checkedAt: new Date("2026-07-01T00:05:00.000Z"),
+      });
+      expect(row.previousStatus).toBeNull();
+      expect(row.statusChangedAt).toBeNull();
+    });
+
+    it("records previous_status and stamps status_changed_at when status differs", async () => {
+      const changedAt = new Date("2026-07-01T00:10:00.000Z");
+      const row = await service.upsertHealth({
+        subjectType: "connection",
+        subjectId: SUBJECT_ID_C,
+        status: "degraded",
+        source: "probe",
+        checkedAt: changedAt,
+      });
+      expect(row.status).toBe("degraded");
+      expect(row.previousStatus).toBe("ok");
+      expect(row.statusChangedAt?.toISOString()).toBe(changedAt.toISOString());
+    });
+
+    it("leaves previous_status/status_changed_at stable across a non-transition upsert", async () => {
+      const transitionAt = new Date("2026-07-01T00:10:00.000Z");
+      const row = await service.upsertHealth({
+        subjectType: "connection",
+        subjectId: SUBJECT_ID_C,
+        status: "degraded",
+        source: "probe",
+        // A later checked_at, same status — must not restamp status_changed_at.
+        checkedAt: new Date("2026-07-01T00:15:00.000Z"),
+      });
+      expect(row.status).toBe("degraded");
+      expect(row.previousStatus).toBe("ok");
+      expect(row.statusChangedAt?.toISOString()).toBe(transitionAt.toISOString());
+    });
+
+    it("advances previous_status to the most recent prior status on a second transition", async () => {
+      const secondChangeAt = new Date("2026-07-01T00:20:00.000Z");
+      const row = await service.upsertHealth({
+        subjectType: "connection",
+        subjectId: SUBJECT_ID_C,
+        status: "failing",
+        source: "probe",
+        checkedAt: secondChangeAt,
+      });
+      expect(row.status).toBe("failing");
+      // The prior stored status was "degraded", not the original "ok".
+      expect(row.previousStatus).toBe("degraded");
+      expect(row.statusChangedAt?.toISOString()).toBe(secondChangeAt.toISOString());
+    });
+  });
+
   it("enforces the ok/consecutive_failures biconditional at the database level", async () => {
     await expect(
       handle.db.execute(
@@ -171,6 +242,26 @@ describe("health service", () => {
          values ('connection', '${SUBJECT_ID_A}', 'ok', 'probe', now(), 2)
          on conflict (subject_type, subject_id) do update set status = excluded.status,
            consecutive_failures = excluded.consecutive_failures`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("enforces the previous_status/status_changed_at pairing CHECK at the database level", async () => {
+    await expect(
+      handle.db.execute(
+        `insert into integration_health
+           (subject_type, subject_id, status, source, checked_at, previous_status, status_changed_at)
+         values ('connection', '${SUBJECT_ID_A}', 'ok', 'probe', now(), 'degraded', null)`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("enforces the previous_status <> status CHECK at the database level", async () => {
+    await expect(
+      handle.db.execute(
+        `insert into integration_health
+           (subject_type, subject_id, status, source, checked_at, previous_status, status_changed_at)
+         values ('connection', '${SUBJECT_ID_A}', 'ok', 'probe', now(), 'ok', now())`,
       ),
     ).rejects.toThrow();
   });

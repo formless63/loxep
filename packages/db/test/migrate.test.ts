@@ -53,8 +53,15 @@ import {
  *      orders.connection_id is relaxed the same way (design open question 7,
  *      PROVISIONAL), with orders_manual_connection_check and the existing
  *      unique widened to NULLS NOT DISTINCT (no partial WHERE needed there).
+ * 0020 integration_health status transitions (weave audit 2026-08 finding 5,
+ *      health half, loxep-oii): integration_health gains nullable
+ *      previous_status/status_changed_at, written only when upsertHealth
+ *      sees the incoming status differ from the stored one. Not a health-
+ *      history table — one prior value per subject, same one-row-per-
+ *      subject shape as the rest of the table. Three CHECKs extend the
+ *      table's existing biconditional discipline to the new pair.
  */
-const MIGRATION_FILE_COUNT = 20;
+const MIGRATION_FILE_COUNT = 21;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

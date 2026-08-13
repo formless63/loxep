@@ -95,6 +95,10 @@ export interface IntegrationHealthDto {
   lastFailureAt: string | null;
   consecutiveFailures: number;
   detail: JsonValue;
+  /** The status immediately before the most recent transition; null until the first one (loxep-oii). */
+  previousStatus: string | null;
+  /** When the most recent transition was observed; null until the first one (loxep-oii). */
+  statusChangedAt: string | null;
 }
 
 /**
@@ -150,7 +154,9 @@ export const fetchIntegrationHealth = createServerFn({ method: 'GET' }).handler(
       lastSuccessAt: iso(row.lastSuccessAt),
       lastFailureAt: iso(row.lastFailureAt),
       consecutiveFailures: row.consecutiveFailures,
-      detail: row.detail as JsonValue
+      detail: row.detail as JsonValue,
+      previousStatus: row.previousStatus,
+      statusChangedAt: iso(row.statusChangedAt)
     }));
   }
 );

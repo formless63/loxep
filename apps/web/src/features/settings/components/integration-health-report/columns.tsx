@@ -79,6 +79,20 @@ export const integrationHealthColumns: ColumnDef<DataTableFeatures, IntegrationH
     )
   },
   {
+    id: 'statusChangedAt',
+    header: 'Changed',
+    cell: ({ row }) => {
+      const { statusChangedAt, previousStatus } = row.original;
+      if (!statusChangedAt) {
+        return <span className='text-muted-foreground'>—</span>;
+      }
+      const title = previousStatus
+        ? `${formatDateTime(statusChangedAt)} — was ${previousStatus}`
+        : formatDateTime(statusChangedAt);
+      return <span title={title}>{formatRelativeTime(statusChangedAt)}</span>;
+    }
+  },
+  {
     id: 'consecutiveFailures',
     header: 'Failure streak',
     cell: ({ row }) => {

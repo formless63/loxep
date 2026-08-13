@@ -41,6 +41,31 @@
  *   is the same discipline as `order_fees`' scope check and the mailboxes'
  *   `kind`/`forward_to` biconditional: a green row with a failure streak is a
  *   bug that would otherwise render as a green dashboard.
+ *
+ * ## Transition tracking (loxep-oii, "cheap half")
+ *
+ * `previous_status`/`status_changed_at` (migration `0020`) are the minimal
+ * fix for weave-audit finding 5's health half: before this, `upsertHealth`
+ * overwrote the row in place with no prior value, so a degradation could
+ * never be noticed after the fact once the next probe ran — "cheap to fix
+ * now, impossible to backfill later." This is NOT the health-history table
+ * the design explicitly refuses (see "What Phase 8 does not create" in the
+ * design doc) — it is one prior value, kept only until the next transition,
+ * same one-row-per-subject shape as everything else here. Notification
+ * wiring off this transition (the audit's other half) is deferred.
+ *
+ * Both columns are nullable and set together, never independently: null on
+ * first insert (there is no "previous" yet), and only written when
+ * `upsertHealth` sees the incoming status differ from the stored one. An
+ * unchanged status leaves both alone — they hold the most recent transition,
+ * not the most recent write. `integration_health_status_change_pairing_check`
+ * and `integration_health_status_change_distinct_check` extend the table's
+ * existing biconditional-CHECK discipline to this pair: a row where exactly
+ * one of the two is null, or where `previous_status = status`, is exactly
+ * the same shape of bug the `ok`/`consecutive_failures` CHECK already
+ * guards against (a claimed transition that did not happen, or a status the
+ * app "forgot" was new), so it is refused at the database level rather than
+ * trusted to `upsertHealth` alone.
  */
 import { sql } from "drizzle-orm";
 import {
@@ -93,6 +118,11 @@ export const integrationHealth = pgTable(
     lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
     detail: jsonb("detail").notNull().default(emptyJsonObject),
+    // Transition tracking (loxep-oii, migration 0020) — see the module doc's
+    // "Transition tracking" section. Both null until the first status
+    // change; then hold the status/time of the most recent transition only.
+    previousStatus: text("previous_status"),
+    statusChangedAt: timestamp("status_changed_at", { withTimezone: true }),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -115,6 +145,24 @@ export const integrationHealth = pgTable(
     check(
       "integration_health_ok_zero_failures_check",
       sql`(${table.status} = 'ok') = (${table.consecutiveFailures} = 0)`,
+    ),
+    // previous_status, when present, is one of the same closed statuses.
+    check(
+      "integration_health_previous_status_check",
+      sql`${table.previousStatus} is null or ${table.previousStatus} in ('ok', 'degraded', 'failing', 'unknown')`,
+    ),
+    // The pair is set together — a row with exactly one of the two null
+    // claims a transition that has no timestamp, or a timestamp for no
+    // transition.
+    check(
+      "integration_health_status_change_pairing_check",
+      sql`(${table.previousStatus} is null) = (${table.statusChangedAt} is null)`,
+    ),
+    // A recorded "previous" status must actually differ from the current
+    // one, or it is not a transition.
+    check(
+      "integration_health_status_change_distinct_check",
+      sql`${table.previousStatus} is null or ${table.previousStatus} <> ${table.status}`,
     ),
     // "What needs attention" — deliberately excludes the common `ok` case.
     index("integration_health_status_idx")

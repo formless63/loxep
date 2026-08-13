@@ -20,6 +20,22 @@
  * `(status = 'ok') = (consecutive_failures = 0)` is a database CHECK, so a
  * caller cannot even attempt the two together in a way that would violate it.
  *
+ * ## Transitions are recorded, not just overwritten (loxep-oii, "cheap half")
+ *
+ * `previous_status`/`status_changed_at` (migration 0020) exist because
+ * without them a status degradation was structurally undetectable after the
+ * fact — the row was overwritten in place with no prior value, so nothing
+ * downstream could ever notice a change happened, only the row's current
+ * state (weave audit 2026-08, finding 5). `upsertHealth` sets both, together,
+ * only when the incoming `status` differs from the stored row's `status`;
+ * an unchanged status leaves them exactly as they were — they track the most
+ * recent *transition*, not the most recent write. On the very first insert
+ * for a subject there is no prior value, so both stay null. This is
+ * deliberately NOT a health-history table (see the design doc's "what Phase
+ * 8 does not create"): one prior value, replaced at the next transition.
+ * Wiring a notification off this transition is a separate, deferred piece of
+ * the same bead.
+ *
  * ## This table NEVER drives retry or backoff (tested)
  *
  * `upsertHealth` writes exactly one row, keyed by `(subject_type,
@@ -130,6 +146,10 @@ export interface HealthRow {
   lastFailureAt: Date | null;
   consecutiveFailures: number;
   detail: Record<string, unknown>;
+  /** The status immediately before the most recent transition; null until the first one. */
+  previousStatus: HealthStatus | null;
+  /** When the most recent transition was observed; null until the first one. */
+  statusChangedAt: Date | null;
   updatedAt: Date;
 }
 
@@ -181,6 +201,8 @@ function toHealthRow(row: HealthRowShape): HealthRow {
     lastFailureAt: row.lastFailureAt,
     consecutiveFailures: row.consecutiveFailures,
     detail: row.detail as Record<string, unknown>,
+    previousStatus: row.previousStatus as HealthStatus | null,
+    statusChangedAt: row.statusChangedAt,
     updatedAt: row.updatedAt,
   };
 }
@@ -221,6 +243,14 @@ export function createHealthService(options: { db: LoxepDb }): HealthService {
     const lastFailureAt =
       input.status === "ok" ? (existing?.lastFailureAt ?? null) : checkedAt;
 
+    // A transition is "the stored row had a different status" — there is no
+    // stored row on first insert, so first-insert semantics stay null/null
+    // rather than treating "no prior row" as a transition from nothing.
+    const statusChanged =
+      existing !== undefined && existing.status !== input.status;
+    const previousStatus = statusChanged ? existing.status : existing?.previousStatus ?? null;
+    const statusChangedAt = statusChanged ? checkedAt : (existing?.statusChangedAt ?? null);
+
     const rows = await db
       .insert(integrationHealth)
       .values({
@@ -233,6 +263,8 @@ export function createHealthService(options: { db: LoxepDb }): HealthService {
         lastFailureAt,
         consecutiveFailures,
         detail,
+        previousStatus,
+        statusChangedAt,
       })
       .onConflictDoUpdate({
         target: [integrationHealth.subjectType, integrationHealth.subjectId],
@@ -244,6 +276,8 @@ export function createHealthService(options: { db: LoxepDb }): HealthService {
           lastFailureAt,
           consecutiveFailures,
           detail,
+          previousStatus,
+          statusChangedAt,
           updatedAt: new Date(),
         },
       })
