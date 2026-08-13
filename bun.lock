@@ -406,6 +406,30 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/integrations/tailscale": {
+      "name": "@loxep/integration-tailscale",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/integrations/termix": {
+      "name": "@loxep/integration-termix",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/integrations/woo": {
       "name": "@loxep/integration-woo",
       "version": "0.0.0",
@@ -964,6 +988,10 @@
     "@loxep/integration-purelymail": ["@loxep/integration-purelymail@workspace:packages/integrations/purelymail"],
 
     "@loxep/integration-reverb": ["@loxep/integration-reverb@workspace:packages/integrations/reverb"],
+
+    "@loxep/integration-tailscale": ["@loxep/integration-tailscale@workspace:packages/integrations/tailscale"],
+
+    "@loxep/integration-termix": ["@loxep/integration-termix@workspace:packages/integrations/termix"],
 
     "@loxep/integration-woo": ["@loxep/integration-woo@workspace:packages/integrations/woo"],
 

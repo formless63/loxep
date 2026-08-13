@@ -31,6 +31,8 @@ describe("secret bundle registry", () => {
       "reverb_credentials",
       "s3_credentials",
       "smtp_password",
+      "tailscale_credentials",
+      "termix_credentials",
       "token",
       "woo_credentials",
     ]);
@@ -638,6 +640,132 @@ describe("reverb_credentials bundle (a self-service Personal Access Token)", () 
       const message = (error as Error).message;
       expect(message).toContain("personalAccessToken");
       expect(message).not.toContain(FAKE_PAT);
+    }
+  });
+});
+
+describe("tailscale_credentials bundle (an access token OR an OAuth client)", () => {
+  const FAKE_ACCESS_TOKEN = "fake-tailscale-tskey-api-0000000000000000";
+  const FAKE_CLIENT_SECRET = "fake-tailscale-tskey-client-0000000000000";
+
+  it("accepts an api_access_token bundle", () => {
+    expect(
+      validateBundle("tailscale_credentials", {
+        mode: "api_access_token",
+        apiAccessToken: FAKE_ACCESS_TOKEN,
+      }),
+    ).toEqual({ mode: "api_access_token", apiAccessToken: FAKE_ACCESS_TOKEN });
+  });
+
+  it("accepts an oauth_client bundle", () => {
+    expect(
+      validateBundle("tailscale_credentials", {
+        mode: "oauth_client",
+        clientId: "k123456CNTRL",
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    ).toEqual({
+      mode: "oauth_client",
+      clientId: "k123456CNTRL",
+      clientSecret: FAKE_CLIENT_SECRET,
+    });
+  });
+
+  it("rejects a bundle mixing fields from both modes", () => {
+    expect(() =>
+      validateBundle("tailscale_credentials", {
+        mode: "api_access_token",
+        apiAccessToken: FAKE_ACCESS_TOKEN,
+        clientSecret: FAKE_CLIENT_SECRET,
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects an oauth_client bundle missing either half of the pair", () => {
+    expect(() =>
+      validateBundle("tailscale_credentials", {
+        mode: "oauth_client",
+        clientId: "k123456CNTRL",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a tailnet name or base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("tailscale_credentials", {
+        mode: "api_access_token",
+        apiAccessToken: FAKE_ACCESS_TOKEN,
+        tailnet: "example.com",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("tailscale_credentials", {
+        mode: "api_access_token",
+        apiAccessToken: 42,
+      });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("apiAccessToken");
+      expect(message).not.toContain(FAKE_ACCESS_TOKEN);
+    }
+  });
+});
+
+describe("termix_credentials bundle (a login, because there is no scoped API token)", () => {
+  const FAKE_TERMIX_PASSWORD = "fake-termix-password-0000000000000000000";
+
+  it("accepts a username/password pair", () => {
+    expect(
+      validateBundle("termix_credentials", {
+        username: "loxep",
+        password: FAKE_TERMIX_PASSWORD,
+      }),
+    ).toEqual({ username: "loxep", password: FAKE_TERMIX_PASSWORD });
+  });
+
+  it("keeps the pair atomic — neither half alone is a credential", () => {
+    expect(() =>
+      validateBundle("termix_credentials", { username: "loxep" }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("termix_credentials", { password: FAKE_TERMIX_PASSWORD }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("termix_credentials", {
+        username: "loxep",
+        password: FAKE_TERMIX_PASSWORD,
+        baseUrl: "https://termix.example.com",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a stored JWT — the adapter mints one per session, it never stores one", () => {
+    expect(() =>
+      validateBundle("termix_credentials", {
+        username: "loxep",
+        password: FAKE_TERMIX_PASSWORD,
+        token: "abc.def.ghi",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the password itself", () => {
+    try {
+      validateBundle("termix_credentials", { username: "loxep", password: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("password");
+      expect(message).not.toContain(FAKE_TERMIX_PASSWORD);
     }
   });
 });

@@ -409,6 +409,72 @@ export const secretBundleSchemas = {
   reverb_credentials: z.strictObject({
     personalAccessToken: z.string().min(1),
   }),
+  /**
+   * Tailscale API credential (ADR-0009, loxep-4su): what
+   * `@loxep/integration-tailscale` authenticates every tailnet-devices read
+   * with. Verified against https://tailscale.com/docs/reference/tailscale-api,
+   * https://tailscale.com/docs/features/oauth-clients, and Tailscale's own
+   * maintained Go client (2026-08-13).
+   *
+   * ## Two modes, because Tailscale documents two, and neither subsumes the other
+   *
+   * A personal **API access token**, sent as HTTP Basic auth with the token
+   * as username and an empty password — simplest to set up, but it
+   * *"expires after"* an operator-chosen *"1 and 90"* days with no
+   * auto-renewal, so unattended polling eventually needs a human to paste a
+   * fresh one. Or an **OAuth client** (`client_id` + `client_secret`, RFC
+   * 6749 §4.4 client-credentials) — the pair itself does not carry that
+   * fixed expiry, and this adapter re-exchanges the short-lived (*"one
+   * hour"*) minted access token automatically, which is the better fit for
+   * unattended polling. Loxep supports both rather than picking one,
+   * because each is the DOCUMENTED way in and an operator may already have
+   * standardized on one or the other.
+   *
+   * `mode` is the discriminant so a bundle is never half of one shape and
+   * half of the other.
+   *
+   * The **tailnet name and base URL are deliberately NOT in this bundle**,
+   * matching every sibling: non-secret provider identity/config belongs in
+   * `connections.config`, readable without a decryption round-trip — see
+   * `tailscaleSourceAccountKey` in `@loxep/integration-tailscale`.
+   */
+  tailscale_credentials: z.discriminatedUnion("mode", [
+    z.strictObject({
+      mode: z.literal("api_access_token"),
+      apiAccessToken: z.string().min(1),
+    }),
+    z.strictObject({
+      mode: z.literal("oauth_client"),
+      clientId: z.string().min(1),
+      clientSecret: z.string().min(1),
+    }),
+  ]),
+  /**
+   * A Termix login (ADR-0009, loxep-g3f): the username/password
+   * `@loxep/integration-termix` exchanges at `POST /users/login` for a JWT,
+   * per Termix's own published OpenAPI document (`Termix-SSH/Docs`,
+   * `static/openapi.json`, verified 2026-08-13).
+   *
+   * ## Two fields, because Termix has no scoped API token
+   *
+   * Every sibling that carries one field does so because the provider
+   * issues a long-lived key. Termix issues none — its spec documents an
+   * ordinary username/password login and no per-integration read-only
+   * account concept (unlike Beszel's `readonly` role). The account stored
+   * here is therefore a real Termix user; Loxep's restraint against
+   * Termix's much larger write surface (Docker control, systemd services,
+   * process signals, terminal exec, file deletion) is enforced entirely in
+   * the adapter's own exported surface, not by anything this login grants
+   * or withholds — the same posture `dockhand_credentials` documents for
+   * the same reason, at smaller scale.
+   *
+   * The **base URL is deliberately NOT in this bundle**, for the same
+   * reason as every self-hosted sibling: `connections.config` carries it.
+   */
+  termix_credentials: z.strictObject({
+    username: z.string().min(1),
+    password: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

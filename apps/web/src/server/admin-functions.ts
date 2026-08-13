@@ -576,6 +576,30 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     name: z.string().trim().min(1),
     economicEntityId: z.uuid().nullable(),
     apiToken: z.string().trim().min(1)
+  }),
+  /**
+   * Tailscale and Termix (loxep-4su/loxep-g3f): read-only fleet-observability
+   * connections. Neither carries a `baseUrl` field named that way in the
+   * `woocommerce`/`medusa` sense of "the one non-secret config value" —
+   * Tailscale's `tailnet` plays that role instead (defaulting to `-`, its own
+   * "default tailnet of this token" shorthand, when the operator leaves it
+   * blank), while Termix genuinely does need a base URL, being self-hosted
+   * like Beszel/Dockhand.
+   */
+  z.strictObject({
+    service: z.literal('tailscale'),
+    name: z.string().trim().min(1),
+    tailnet: z.string().trim().min(1).optional(),
+    economicEntityId: z.uuid().nullable(),
+    apiAccessToken: z.string().trim().min(1)
+  }),
+  z.strictObject({
+    service: z.literal('termix'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    username: z.string().trim().min(1),
+    password: z.string().trim().min(1)
   })
 ]);
 
@@ -641,12 +665,18 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
       // readCloudflareAccountId's null-on-missing-key contract.
       kind = 'dns';
       config = data.accountId === undefined ? {} : { cloudflare: { accountId: data.accountId } };
-    } else {
+    } else if (data.service === 'purelymail') {
       // Purelymail exposes no account identifier at all (see
       // purelymail_credentials in @loxep/domain's bundle registry), so its
       // config object stays empty.
       kind = 'mail';
       config = {};
+    } else if (data.service === 'tailscale') {
+      kind = 'fleet_observability';
+      config = data.tailnet === undefined ? {} : { tailscale: { tailnet: data.tailnet } };
+    } else {
+      kind = 'fleet_observability';
+      config = { termix: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
     }
 
     const created = await connections.createConnection(
@@ -694,11 +724,25 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { apiToken: data.apiToken },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'purelymail') {
       await connections.setConnectionCredential(
         created.id,
         'purelymail_credentials',
         { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    } else if (data.service === 'tailscale') {
+      await connections.setConnectionCredential(
+        created.id,
+        'tailscale_credentials',
+        { mode: 'api_access_token', apiAccessToken: data.apiAccessToken },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      await connections.setConnectionCredential(
+        created.id,
+        'termix_credentials',
+        { username: data.username, password: data.password },
         { actorUserId: session.user.id }
       );
     }

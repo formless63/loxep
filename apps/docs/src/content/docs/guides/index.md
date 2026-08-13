@@ -18,6 +18,8 @@ Loxep mostly observes and reads from external services. Invoice Ninja is the one
 - [Connecting Purelymail](./connecting-purelymail/) — an API token for the Infrastructure control plane's mail-hosting milestone.
 - [Connecting Beszel](./connecting-beszel/) — a read-only hub user for server monitoring.
 - [Connecting Dockhand](./connecting-dockhand/) — a scoped session login for container host inventory.
+- [Connecting Tailscale](./connecting-tailscale/) — an API access token for tailnet device inventory.
+- [Connecting Termix](./connecting-termix/) — a Termix user login for SSH-host inventory and session evidence.
 
 Loxep also pushes in one direction, the reverse of every provider above: [Publishing health to Gatus](./gatus-health-push/) sends Loxep's own overall health outward to an operator-declared Gatus endpoint every five minutes, so Gatus can raise the alert Loxep can never raise about its own outage.
 

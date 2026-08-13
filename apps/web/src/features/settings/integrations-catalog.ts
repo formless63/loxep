@@ -31,6 +31,8 @@ export type IntegrationServiceId =
   | 'invoiceninja'
   | 'cloudflare'
   | 'purelymail'
+  | 'tailscale'
+  | 'termix'
   | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
@@ -85,7 +87,9 @@ export type IntegrationAccountForm =
   | 'medusa-api'
   | 'invoiceninja-api'
   | 'cloudflare-api'
-  | 'purelymail-api';
+  | 'purelymail-api'
+  | 'tailscale-api'
+  | 'termix-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -390,6 +394,52 @@ export const integrationServices: IntegrationService[] = [
       return count > 0
         ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
         : { tone: 'unconfigured', label: 'No accounts connected', details: [] };
+    }
+  },
+  {
+    id: 'tailscale',
+    name: 'Tailscale',
+    category: 'Infrastructure',
+    description:
+      'Read a tailnet’s device list — hostname, addresses, and whether each device is currently connected — for the fleet view. Read-only: Loxep never authorizes, removes, or tags a device. Each Tailscale tailnet is one connection.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage tailnets' },
+    accounts: {
+      provider: 'tailscale',
+      kind: 'fleet_observability',
+      form: 'tailscale-api',
+      addLabel: 'Add Tailscale tailnet',
+      formHint:
+        'A personal API access token is stored encrypted and never shown again. It expires on the schedule you chose when generating it (up to 90 days) and must be replaced manually — Loxep surfaces the expiry as an ordinary authentication error when it happens.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'tailscale').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No tailnets connected', details: [] };
+    }
+  },
+  {
+    id: 'termix',
+    name: 'Termix',
+    category: 'Infrastructure',
+    description:
+      'Read a self-hosted Termix instance’s SSH host inventory and active terminal sessions for the fleet view. Read-only: Loxep never opens a terminal, manages Docker, or touches a host through Termix. Each Termix instance is one connection.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage instances' },
+    accounts: {
+      provider: 'termix',
+      kind: 'fleet_observability',
+      form: 'termix-api',
+      addLabel: 'Add Termix instance',
+      formHint:
+        'The instance URL is kept as ordinary connection configuration; the username and password are stored encrypted and never shown again. Termix issues no scoped read-only token, so this should be an account you are comfortable having Loxep sign in as — Loxep’s own restraint is what keeps this integration read-only, not the account’s permissions.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'termix').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No instances connected', details: [] };
     }
   },
   {

@@ -94,8 +94,12 @@ export default function ConnectionAddDialog({
           <InvoiceNinjaAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'cloudflare-api' ? (
           <CloudflareAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'purelymail-api' ? (
           <PurelymailAccountForm entities={entities} onDone={onOpenChange} />
+        ) : accounts.form === 'tailscale-api' ? (
+          <TailscaleAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <TermixAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -1403,6 +1407,317 @@ function PurelymailAccountForm({
         </Button>
         <form.AppForm>
           <form.SubmitButton>Connect account</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const tailscaleAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  tailnet: z.string().trim(),
+  apiAccessToken: z.string().trim().min(1, 'API access token is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Tailscale (loxep-4su): a personal API access token, the simplest of the
+ * two documented auth modes (an OAuth client is the better fit for
+ * unattended long-lived polling and is a follow-up — see the adapter
+ * package). Verified against
+ * https://tailscale.com/docs/reference/tailscale-api and
+ * https://tailscale.com/docs/features/oauth-clients, 2026-08-13.
+ */
+function TailscaleSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Sign in to the Tailscale admin console as an Owner, Admin, IT admin, or Network admin of
+          the tailnet.
+        </GuidanceStep>
+        <GuidanceStep>
+          Open the <strong>Keys</strong> page and generate a new API access token.
+          <GuidanceNote>
+            Choose an expiry of up to 90 days — Tailscale does not offer a longer or auto-renewing
+            option for this credential.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Copy the token before leaving the page; Tailscale will not show it again.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          This token <strong>expires</strong> on the schedule you chose — there is no auto-renewal.
+          When it does, Loxep reports the connection as unable to authenticate; come back here and
+          paste a freshly generated token.
+        </p>
+        <p>
+          Leave the tailnet field blank to use <code>-</code>, Tailscale&apos;s shorthand for
+          &ldquo;the default tailnet of this token&rdquo; — the right choice unless the account
+          belongs to more than one tailnet.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function TailscaleAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof tailscaleAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'tailscale',
+          name: values.name,
+          apiAccessToken: values.apiAccessToken,
+          ...(values.tailnet === '' ? {} : { tailnet: values.tailnet }),
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Tailscale tailnet connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the tailnet')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      tailnet: '',
+      apiAccessToken: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: tailscaleAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <TailscaleSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Tailnet name'
+              required
+              placeholder='Main tailnet'
+              description='How this tailnet is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='tailnet'
+          children={(field) => (
+            <field.TextField
+              label='Tailnet'
+              placeholder='- (default tailnet of the token)'
+              description='Non-secret; kept as ordinary connection configuration. Leave blank for “-”.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiAccessToken'
+          children={(field) => (
+            <field.TextField
+              label='API access token'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again. Expires on the schedule chosen when it was generated.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect tailnet</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const termixAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  baseUrl: z.url(),
+  username: z.string().trim().min(1, 'Username is required'),
+  password: z.string().trim().min(1, 'Password is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Termix (loxep-g3f): an ordinary username/password login — Termix issues
+ * no scoped read-only token. Verified against its published OpenAPI
+ * document (`Termix-SSH/Docs`), 2026-08-13.
+ */
+function TermixSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Note the URL of your Termix instance&apos;s front door — the single reverse-proxied origin
+          you sign in to, not one of its internal service ports.
+        </GuidanceStep>
+        <GuidanceStep>
+          Decide which Termix user account Loxep should sign in as.
+          <GuidanceNote>
+            Termix does not publish a scoped read-only role. Loxep only ever calls its host-list,
+            host-status, session-list, and identity endpoints — never a terminal, Docker, or file
+            action — but that restraint is enforced in Loxep&apos;s own code, not by anything this
+            account&apos;s permissions withhold. Use an account you are comfortable with in that
+            light.
+          </GuidanceNote>
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          The password is write-only: stored encrypted, never displayed again. Loxep exchanges it
+          for a short-lived session token on each poll and does not store the token.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function TermixAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof termixAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'termix',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          username: values.username,
+          password: values.password,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Termix instance connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the instance')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      username: '',
+      password: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: termixAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <TermixSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Instance name'
+              required
+              placeholder='Home lab Termix'
+              description='How this instance is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Instance URL'
+              required
+              placeholder='https://termix.example.com'
+              description='The single reverse-proxied front door for this instance.'
+            />
+          )}
+        />
+        <form.AppField
+          name='username'
+          children={(field) => <field.TextField label='Username' required />}
+        />
+        <form.AppField
+          name='password'
+          children={(field) => (
+            <field.TextField
+              label='Password'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect instance</form.SubmitButton>
         </form.AppForm>
       </div>
     </form>
