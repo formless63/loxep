@@ -28,10 +28,17 @@ export type IntegrationServiceId =
   | 'woocommerce'
   | 'medusa'
   | 'invoiceninja'
+  | 'cloudflare'
+  | 'purelymail'
   | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
-export type IntegrationCategory = 'Marketplaces' | 'Stores' | 'Billing' | 'Notifications';
+export type IntegrationCategory =
+  | 'Marketplaces'
+  | 'Stores'
+  | 'Billing'
+  | 'Infrastructure'
+  | 'Notifications';
 
 /**
  * How complete a service's set-up is:
@@ -74,7 +81,9 @@ export type IntegrationAccountForm =
   | 'etsy-consent'
   | 'woo-api'
   | 'medusa-api'
-  | 'invoiceninja-api';
+  | 'invoiceninja-api'
+  | 'cloudflare-api'
+  | 'purelymail-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -313,6 +322,52 @@ export const integrationServices: IntegrationService[] = [
     }
   },
   {
+    id: 'cloudflare',
+    name: 'Cloudflare',
+    category: 'Infrastructure',
+    description:
+      'Give the Infrastructure control plane a scoped API token so it can read a domain’s DNS records at Cloudflare, compute the desired record set, and flag drift on a periodic sweep. Loxep never proxies a mail record under any circumstance. Each Cloudflare account is one connection.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage DNS accounts' },
+    accounts: {
+      provider: 'cloudflare',
+      kind: 'dns',
+      form: 'cloudflare-api',
+      addLabel: 'Add Cloudflare account',
+      formHint:
+        'A scoped API token — never the legacy global API key — is stored encrypted and never shown again. The account id is optional and kept as ordinary connection configuration.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'cloudflare').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No accounts connected', details: [] };
+    }
+  },
+  {
+    id: 'purelymail',
+    name: 'Purelymail',
+    category: 'Infrastructure',
+    description:
+      'Give the Infrastructure control plane a Purelymail API token so it can register mail domains, poll for delegation, and sync mailboxes from a template. The required DNS records (MX, SPF, three DKIM keys, and a DMARC CNAME) are computed and applied through the same DNS connection — Loxep never proxies them.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage mail accounts' },
+    accounts: {
+      provider: 'purelymail',
+      kind: 'mail',
+      form: 'purelymail-api',
+      addLabel: 'Add Purelymail account',
+      formHint:
+        'The API token is stored encrypted and never shown again. Purelymail exposes no account identifier of its own, so there is no connection configuration beyond the account’s name.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'purelymail').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No accounts connected', details: [] };
+    }
+  },
+  {
     id: 'ntfy',
     name: 'ntfy',
     category: 'Notifications',
@@ -339,6 +394,7 @@ export const integrationCategories: IntegrationCategory[] = [
   'Marketplaces',
   'Stores',
   'Billing',
+  'Infrastructure',
   'Notifications'
 ];
 

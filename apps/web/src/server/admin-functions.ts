@@ -328,27 +328,57 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     baseUrl: z.url(),
     economicEntityId: z.uuid().nullable(),
     apiToken: z.string().trim().min(1)
+  }),
+  /**
+   * Cloudflare and Purelymail (loxep-lmy.1/.2): the Infrastructure control
+   * plane's two provider connections. Neither carries a `baseUrl` — both
+   * adapters talk to a fixed, provider-owned endpoint
+   * (`packages/integrations/cloudflare/src/config.ts`,
+   * `packages/integrations/purelymail/src/config.ts`) — so there is no store
+   * URL to collect. `accountId` is Cloudflare's only non-secret config, and
+   * optional (a zone-scoped token has none); Purelymail has no account
+   * identifier of any kind, per its bundle doc in `@loxep/domain`.
+   */
+  z.strictObject({
+    service: z.literal('cloudflare'),
+    name: z.string().trim().min(1),
+    accountId: z.string().trim().min(1).optional(),
+    economicEntityId: z.uuid().nullable(),
+    apiToken: z.string().trim().min(1)
+  }),
+  z.strictObject({
+    service: z.literal('purelymail'),
+    name: z.string().trim().min(1),
+    economicEntityId: z.uuid().nullable(),
+    apiToken: z.string().trim().min(1)
   })
 ]);
 
 /**
- * Create a store/billing connection plus its credential in one guided step.
- * Despite the name (kept for the two original callers), this also drives
- * the Invoice Ninja form — its "account" is a billing companion connection,
- * not a commerce store, hence `kind: 'billing_account'` for that one
- * service; see `packages/integrations/invoiceninja/src/connection.ts`.
+ * Create a store/billing/infrastructure connection plus its credential in one
+ * guided step. Despite the name (kept for the two original callers), this
+ * also drives the Invoice Ninja form — its "account" is a billing companion
+ * connection, not a commerce store, hence `kind: 'billing_account'` for that
+ * one service; see `packages/integrations/invoiceninja/src/connection.ts` —
+ * and, per the same reasoning, the Cloudflare (`kind: 'dns'`) and Purelymail
+ * (`kind: 'mail'`) forms for the Infrastructure control plane
+ * (loxep-lmy.1/.2).
  *
  * WHERE EACH HALF LANDS — the split the integration packages document
  * (`packages/app/src/woo.ts`, `packages/integrations/medusa/src/connection.ts`,
- * `packages/integrations/invoiceninja/src/connection.ts`): the base URL is
- * non-secret and goes into `connections.config.<service>.baseUrl` so it
- * stays readable without a decryption round-trip, while the key pair / API
- * token is an atomic encrypted bundle on the connection.
+ * `packages/integrations/invoiceninja/src/connection.ts`,
+ * `packages/app/src/cloudflare.ts`, `packages/app/src/purelymail.ts`): any
+ * non-secret provider identity — a base URL, or Cloudflare's optional
+ * account id — goes into `connections.config.<service>` so it stays readable
+ * without a decryption round-trip, while the key pair / API token is an
+ * atomic encrypted bundle on the connection. Purelymail has no non-secret
+ * half at all, so its config object stays empty.
  *
  * The credential type is the registered bundle purpose (`woo_credentials`,
- * `medusa_credentials`, `invoiceninja_credentials`) because that is what the
- * domain service accepts and what the worker-side readers ask for — see
- * `WOO_CREDENTIAL_TYPE` in `packages/app/src/woo.ts`.
+ * `medusa_credentials`, `invoiceninja_credentials`, `cloudflare_credentials`,
+ * `purelymail_credentials`) because that is what the domain service accepts
+ * and what the worker-side readers ask for — see `WOO_CREDENTIAL_TYPE` in
+ * `packages/app/src/woo.ts` and its siblings in `cloudflare.ts`/`purelymail.ts`.
  */
 export const createStoreConnection = createServerFn({ method: 'POST' })
   .inputValidator(createStoreConnectionInput)
@@ -356,18 +386,39 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
     const { requireAdmin, getAdminServices } = await import('@/server/admin');
     const session = await requireAdmin();
     const { connections } = getAdminServices();
-    const baseUrl = data.baseUrl.replace(/\/+$/, '');
+
+    let kind: string;
+    let config: Record<string, unknown>;
+    if (data.service === 'woocommerce') {
+      kind = 'store_account';
+      config = { woo: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else if (data.service === 'medusa') {
+      kind = 'store_account';
+      config = { medusa: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else if (data.service === 'invoiceninja') {
+      kind = 'billing_account';
+      config = { invoiceninja: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else if (data.service === 'cloudflare') {
+      // 'dns' / 'mail', matching packages/app's connections fixtures for the
+      // Infrastructure control plane (loxep-lmy.1/.2). `accountId` stays out
+      // of the config object entirely when absent, matching
+      // readCloudflareAccountId's null-on-missing-key contract.
+      kind = 'dns';
+      config = data.accountId === undefined ? {} : { cloudflare: { accountId: data.accountId } };
+    } else {
+      // Purelymail exposes no account identifier at all (see
+      // purelymail_credentials in @loxep/domain's bundle registry), so its
+      // config object stays empty.
+      kind = 'mail';
+      config = {};
+    }
+
     const created = await connections.createConnection(
       {
         provider: data.service,
-        kind: data.service === 'invoiceninja' ? 'billing_account' : 'store_account',
+        kind,
         name: data.name,
-        config:
-          data.service === 'woocommerce'
-            ? { woo: { baseUrl } }
-            : data.service === 'medusa'
-              ? { medusa: { baseUrl } }
-              : { invoiceninja: { baseUrl } },
+        config,
         createdByUserId: session.user.id
       },
       { actorUserId: session.user.id }
@@ -386,10 +437,24 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { apiToken: data.apiToken },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'invoiceninja') {
       await connections.setConnectionCredential(
         created.id,
         'invoiceninja_credentials',
+        { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    } else if (data.service === 'cloudflare') {
+      await connections.setConnectionCredential(
+        created.id,
+        'cloudflare_credentials',
+        { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      await connections.setConnectionCredential(
+        created.id,
+        'purelymail_credentials',
         { apiToken: data.apiToken },
         { actorUserId: session.user.id }
       );

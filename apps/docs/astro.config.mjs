@@ -40,6 +40,8 @@ export default defineConfig({
             { label: 'Connecting WooCommerce', slug: 'guides/connecting-woocommerce' },
             { label: 'Connecting Medusa', slug: 'guides/connecting-medusa' },
             { label: 'Connecting Invoice Ninja', slug: 'guides/connecting-invoice-ninja' },
+            { label: 'Connecting Cloudflare', slug: 'guides/connecting-cloudflare' },
+            { label: 'Connecting Purelymail', slug: 'guides/connecting-purelymail' },
           ],
         },
         {

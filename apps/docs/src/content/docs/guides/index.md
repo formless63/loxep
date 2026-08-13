@@ -12,6 +12,8 @@ Loxep mostly observes and reads from external services. Invoice Ninja is the one
 - [Connecting WooCommerce](./connecting-woocommerce/) — issuing a read-only REST API key pair in the store admin.
 - [Connecting Medusa](./connecting-medusa/) — issuing a secret API key in the Medusa admin dashboard.
 - [Connecting Invoice Ninja](./connecting-invoice-ninja/) — issuing a company API token in a self-hosted Invoice Ninja instance.
+- [Connecting Cloudflare](./connecting-cloudflare/) — a scoped API token for the Infrastructure control plane's DNS reconciler.
+- [Connecting Purelymail](./connecting-purelymail/) — an API token for the Infrastructure control plane's mail-hosting milestone.
 
 ## How these guides relate to the application
 

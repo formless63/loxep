@@ -88,8 +88,12 @@ export default function ConnectionAddDialog({
           <WooAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'medusa-api' ? (
           <MedusaAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'invoiceninja-api' ? (
           <InvoiceNinjaAccountForm entities={entities} onDone={onOpenChange} />
+        ) : accounts.form === 'cloudflare-api' ? (
+          <CloudflareAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <PurelymailAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -949,6 +953,316 @@ function InvoiceNinjaAccountForm({
         </Button>
         <form.AppForm>
           <form.SubmitButton>Connect instance</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const cloudflareAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  accountId: z.string().trim(),
+  apiToken: z.string().trim().min(1, 'API token is required'),
+  economicEntityId: z.string()
+});
+
+const CLOUDFLARE_TOKEN_DOCS_URL =
+  'https://developers.cloudflare.com/fundamentals/api/get-started/create-token/';
+
+/**
+ * Where the Infrastructure control plane's own Cloudflare token comes from
+ * (ADR-0009, loxep-lmy.1). The legacy global API key is deliberately never
+ * accepted — see `cloudflare_credentials` in `@loxep/domain`'s bundle
+ * registry and `@loxep/integration-cloudflare/config.ts` for the same call.
+ */
+function CloudflareSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Sign in to the Cloudflare dashboard, then open <strong>My Profile</strong> →{' '}
+          <strong>API Tokens</strong> (or <strong>Manage Account</strong> →{' '}
+          <strong>API Tokens</strong> for a token owned by the account rather than your user).
+        </GuidanceStep>
+        <GuidanceStep>
+          Choose <strong>Create Token</strong>, then use the <strong>Edit zone DNS</strong> template
+          — or build a custom token with <strong>Zone · DNS · Edit</strong> and{' '}
+          <strong>Zone · Zone · Read</strong>.
+        </GuidanceStep>
+        <GuidanceStep>
+          Under <strong>Zone Resources</strong>, scope the token to the specific zone or zones Loxep
+          should manage, not to all zones on the account.
+          <GuidanceNote>
+            A token that cannot see a zone fails with an authentication error on that zone, not a
+            not-found — narrower is safer, but it must cover every zone this connection manages.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Continue, review the summary, and choose <strong>Create Token</strong>. Cloudflare shows
+          the token once — copy it into the field below.{' '}
+          <GuidanceLink href={CLOUDFLARE_TOKEN_DOCS_URL}>
+            Cloudflare&apos;s instructions
+          </GuidanceLink>
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          The legacy global API key is not supported here — it carries every permission on the
+          account with no scoping, and Loxep only ever sends a scoped token as{' '}
+          <code className='font-mono'>Authorization: Bearer &lt;token&gt;</code>.
+        </p>
+        <p>
+          Account id is optional: a zone-scoped token can list its own zones without one. Leave it
+          blank unless a zone-scoped token alone does not resolve for your account.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function CloudflareAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof cloudflareAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'cloudflare',
+          name: values.name,
+          apiToken: values.apiToken,
+          ...(values.accountId.trim() === '' ? {} : { accountId: values.accountId.trim() }),
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Cloudflare account connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the account')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      accountId: '',
+      apiToken: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: cloudflareAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <CloudflareSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Account name'
+              required
+              placeholder='Main Cloudflare account'
+              description='How this account is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='accountId'
+          children={(field) => (
+            <field.TextField
+              label='Account id'
+              placeholder='Optional'
+              description='Non-secret; kept as ordinary connection configuration. Leave blank for a zone-scoped token.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiToken'
+          children={(field) => (
+            <field.TextField
+              label='API token'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='A scoped Cloudflare API token, never the legacy global key. Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect account</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const purelymailAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  apiToken: z.string().trim().min(1, 'API token is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Purelymail has no token scoping at all (loxep-lmy.2's live-verified note:
+ * "one token does everything incl. deleteDomain"), and its account UI is not
+ * publicly documented step-by-step the way Cloudflare's is — so this stays
+ * deliberately general rather than naming labels that cannot be verified
+ * against the provider's own documentation.
+ */
+function PurelymailSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>Sign in to your Purelymail account.</GuidanceStep>
+        <GuidanceStep>
+          Open the account&apos;s API settings and generate a new API token.
+          <GuidanceNote>
+            Purelymail&apos;s dashboard labels this area differently across accounts — look for an
+            API or developer-access section of account settings.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Copy the token before leaving the page. Purelymail shows it once and cannot display it
+          again.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Purelymail tokens are not scoped — the one token can do everything the API exposes,
+          including deleting a domain. Treat it as full account access and keep it to a Purelymail
+          account you control; Loxep itself only registers domains, polls delegation, and syncs
+          mailboxes from the template you configure.
+        </p>
+        <p>
+          Every DNS record Loxep computes for a mail domain — the MX record, the SPF TXT record, all
+          three DKIM CNAMEs (Purelymail rotates three keys; publishing fewer makes mail verify only
+          intermittently), and the DMARC CNAME — is applied with proxying turned off. A mail record
+          must never be proxied through Cloudflare or any other CDN: a proxied MX or DKIM record
+          breaks mail delivery, and Loxep enforces this at the schema level as well as here.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function PurelymailAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof purelymailAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'purelymail',
+          name: values.name,
+          apiToken: values.apiToken,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Purelymail account connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the account')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      apiToken: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: purelymailAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <PurelymailSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Account name'
+              required
+              placeholder='Main Purelymail account'
+              description='How this account is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiToken'
+          children={(field) => (
+            <field.TextField
+              label='API token'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect account</form.SubmitButton>
         </form.AppForm>
       </div>
     </form>
