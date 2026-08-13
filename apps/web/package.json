@@ -41,6 +41,7 @@
     "@loxep/config": "workspace:*",
     "@loxep/db": "workspace:*",
     "@loxep/domain": "workspace:*",
+    "@loxep/infrastructure": "workspace:*",
     "@loxep/integration-ebay": "workspace:*",
     "@loxep/integration-etsy": "workspace:*",
     "@loxep/integration-invoiceninja": "workspace:*",

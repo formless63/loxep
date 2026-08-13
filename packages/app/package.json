@@ -24,6 +24,7 @@
     "@loxep/integration-cloudflare": "workspace:*",
     "@loxep/integration-purelymail": "workspace:*",
     "@loxep/integration-woo": "workspace:*",
+    "@loxep/inventory": "workspace:*",
     "zod": "4.4.3"
   },
   "devDependencies": {
