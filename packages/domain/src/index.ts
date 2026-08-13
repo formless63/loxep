@@ -48,6 +48,8 @@ export type {
 // process that reaches the registry through `@loxep/domain` therefore sees
 // the same keys (see the module doc for why they live in this package).
 export {
+  caaPolicySetting,
+  cloudflareRateBudgetSetting,
   ebayRateBudgetSetting,
   monitorDefaultsSetting,
   monitorObservationCapsSetting,

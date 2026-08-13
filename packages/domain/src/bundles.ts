@@ -111,6 +111,70 @@ export const secretBundleSchemas = {
   invoiceninja_credentials: z.strictObject({
     apiToken: z.string().min(1),
   }),
+  /**
+   * Etsy application keyset (ADR-0009, loxep-g4t.1): the approved Developer
+   * Portal app's credentials one Loxep installation uses to sign every Etsy
+   * Open API v3 call (`x-api-key: <keystring>:<sharedSecret>`) and to run
+   * the OAuth2+PKCE consent flow. Stored as the application secret
+   * `integration.etsy.keyset`, the Etsy analogue of `ebay_keyset`.
+   *
+   * NEW rather than reused: eBay's `certId` plays a related role, but the
+   * two bundle shapes differ enough (Etsy carries no environment/RuName —
+   * it has no sandbox and no redirect-name indirection) that sharing a
+   * schema would be a false economy, per the binding design
+   * (`apps/docs/.../architecture/etsy-integration-design.md`, "Credential
+   * bundle — app keyset + OAuth tokens, split like eBay's"). Unlike
+   * `ebay_keyset`, there is no non-secret half worth bundling alongside it
+   * (no environment, no redirect name) — both fields here are secret.
+   */
+  etsy_keyset: z.strictObject({
+    keystring: z.string().min(1),
+    sharedSecret: z.string().min(1),
+  }),
+  /**
+   * Cloudflare API token (ADR-0009, loxep-lmy.1): the single credential the
+   * Infrastructure control plane authenticates its own DNS calls with, sent as
+   * `Authorization: Bearer <apiToken>`. Verified against
+   * developers.cloudflare.com on 2026-08-13, including its troubleshooting
+   * page's warning not to send a token with the legacy key syntax.
+   *
+   * **The legacy global API key is deliberately unsupported.** It carries every
+   * permission on the account, cannot be scoped, and a control plane that edits
+   * DNS has no business holding one. Only a scoped API token fits this bundle,
+   * which is why the shape is `{ apiToken }` and not an email/key pair.
+   *
+   * Only one field, matching `medusa_credentials` and
+   * `invoiceninja_credentials` for the same reason: there is no second part to
+   * keep atomic with it.
+   *
+   * The **account identifier is deliberately NOT in this bundle**, for the same
+   * reasoning that keeps a WooCommerce store URL and a Medusa backend URL out
+   * of theirs: it is non-secret provider account identity that must stay
+   * readable without a decryption round-trip (to render the connection, run a
+   * health check, and compute `cloudflareSourceAccountKey`). The infrastructure
+   * design says the same thing from the schema side — `managed_domains`
+   * references the connection, "whose `config` carries the account
+   * identifier".
+   *
+   * NAMING NOTE, recorded rather than drifted: the Phase 7 design's credential
+   * table names this purpose `dns_provider_credentials`, one purpose shared by
+   * every DNS provider. It is registered here under the PROVIDER name instead,
+   * because that is what every sibling actually does (`woo_credentials`,
+   * `medusa_credentials`, `invoiceninja_credentials`, `ebay_keyset`,
+   * `etsy_keyset`) and because a second DNS provider will not necessarily
+   * authenticate with a single bearer token — a role-named bundle would then
+   * either fork or become a loose union, which is precisely the
+   * half-configuration hazard ADR-0019 bundles exist to prevent. Flagged in the
+   * design document's implementation-status header.
+   *
+   * This is the credential Loxep USES. The per-host tokens Loxep MINTS
+   * (milestone 3) are a different class entirely: they live in
+   * `application_secrets`, no Loxep adapter ever authenticates with them, and
+   * they need their own purpose when that milestone ships.
+   */
+  cloudflare_credentials: z.strictObject({
+    apiToken: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

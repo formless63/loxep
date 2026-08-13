@@ -13,6 +13,7 @@ import {
   fetchUsers
 } from '@/server/admin-functions';
 import { fetchEbayCallbackUrl, fetchEbayKeysetStatus } from '@/server/ebay-oauth';
+import { fetchEtsyCallbackUrl, fetchEtsyKeysetStatus } from '@/server/etsy-oauth';
 
 export const healthReportQuery = queryOptions({
   queryKey: ['settings', 'health'],
@@ -43,6 +44,22 @@ export const ebayKeysetStatusQuery = queryOptions({
 export const ebayCallbackUrlQuery = queryOptions({
   queryKey: ['settings', 'ebay-callback-url'],
   queryFn: () => fetchEbayCallbackUrl(),
+  staleTime: Infinity
+});
+
+export const etsyKeysetStatusQuery = queryOptions({
+  queryKey: ['settings', 'etsy-keyset-status'],
+  queryFn: () => fetchEtsyKeysetStatus()
+});
+
+/**
+ * This installation's Etsy callback URL — shown in the keyset setup
+ * guidance so the operator can register the exact redirect URI with Etsy
+ * (Etsy takes the literal URL, unlike eBay's RuName indirection).
+ */
+export const etsyCallbackUrlQuery = queryOptions({
+  queryKey: ['settings', 'etsy-callback-url'],
+  queryFn: () => fetchEtsyCallbackUrl(),
   staleTime: Infinity
 });
 

@@ -17,7 +17,9 @@ const FAKE_CERT = "SBX-fakefakefake-abcd-1234-5678-9abc";
 describe("secret bundle registry", () => {
   it("registers every purpose Loxep persists today", () => {
     expect([...secretPurposes].sort()).toEqual([
+      "cloudflare_credentials",
       "ebay_keyset",
+      "etsy_keyset",
       "invoiceninja_credentials",
       "medusa_credentials",
       "oauth_tokens",
@@ -193,6 +195,48 @@ describe("medusa_credentials bundle (the Medusa v2 Admin API secret key)", () =>
   });
 });
 
+describe("etsy_keyset bundle (the Etsy Developer Portal application keyset)", () => {
+  const keyset = {
+    keystring: "fake-etsy-keystring-0123456789",
+    sharedSecret: "fake-etsy-shared-secret-0123456789",
+  };
+
+  it("accepts the keystring/sharedSecret pair atomically", () => {
+    expect(validateBundle("etsy_keyset", keyset)).toEqual(keyset);
+  });
+
+  it("rejects a half-configured pair", () => {
+    const { sharedSecret: _dropped, ...keystringOnly } = keyset;
+    expect(() => validateBundle("etsy_keyset", keystringOnly)).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("etsy_keyset", { ...keyset, sharedSecret: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects an environment or ruName — Etsy has no sandbox and no redirect-name indirection", () => {
+    expect(() =>
+      validateBundle("etsy_keyset", { ...keyset, environment: "sandbox" }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("etsy_keyset", { ...keyset, ruName: "not-an-etsy-concept" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("etsy_keyset", { ...keyset, sharedSecret: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("sharedSecret");
+      expect(message).not.toContain(keyset.keystring);
+    }
+  });
+});
+
 describe("invoiceninja_credentials bundle (the Invoice Ninja v5 company API token)", () => {
   const FAKE_TOKEN = "fakefakefakefakefakefakefakefakefakefakefakefakefake01";
 
@@ -232,6 +276,61 @@ describe("invoiceninja_credentials bundle (the Invoice Ninja v5 company API toke
       const message = (error as Error).message;
       expect(message).toContain("apiToken");
       expect(message).not.toContain(FAKE_TOKEN);
+    }
+  });
+});
+
+describe("cloudflare_credentials bundle (the Cloudflare API token)", () => {
+  const FAKE_CF_TOKEN = "fake-cloudflare-api-token-000000000000000000";
+
+  it("accepts a lone API token", () => {
+    expect(
+      validateBundle("cloudflare_credentials", { apiToken: FAKE_CF_TOKEN }),
+    ).toEqual({ apiToken: FAKE_CF_TOKEN });
+  });
+
+  it("rejects an empty or missing token", () => {
+    expect(() => validateBundle("cloudflare_credentials", {})).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("cloudflare_credentials", { apiToken: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects the LEGACY global-key pair, which Loxep deliberately never accepts", () => {
+    // The global API key carries every permission on the account and cannot be
+    // scoped. A control plane that edits DNS has no business holding one, so
+    // the bundle has no shape that could store it.
+    expect(() =>
+      validateBundle("cloudflare_credentials", {
+        email: "operator@example.invalid",
+        apiKey: FAKE_CF_TOKEN,
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects the account id — non-secret identity belongs on the connection", () => {
+    // Same rule `woo_credentials` applies to a store URL and
+    // `medusa_credentials` to a backend URL: the account identifier must stay
+    // readable without a decryption round-trip.
+    expect(() =>
+      validateBundle("cloudflare_credentials", {
+        apiToken: FAKE_CF_TOKEN,
+        accountId: "acct_1",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("cloudflare_credentials", { apiToken: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("apiToken");
+      expect(message).not.toContain(FAKE_CF_TOKEN);
     }
   });
 });

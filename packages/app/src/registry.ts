@@ -47,6 +47,7 @@
  * ebay_item | ebay_watchlist | ebay_search | ebay_seller → createEbayPollExecutor
  * woo_orders                                            → createWooOrderPollExecutor
  * ebay_orders                                           → createEbayOrderPollExecutor
+ * etsy_listing | etsy_shop                              → createEtsyPollExecutor
  * ```
  *
  * Each branch is built by the domain that owns the type and joined here,
@@ -63,6 +64,17 @@
  * row through `createMonitorService`, whose `targetType` is a closed enum;
  * `@loxep/commerce`'s `ensureEbayOrderSyncTarget` inserts it directly. See
  * that module's doc for the follow-up.
+ *
+ * `etsy_listing`/`etsy_shop` (loxep-g4t.1) deliberately do NOT repeat that
+ * gap: both are in `@loxep/market`'s `MONITOR_TARGET_TYPES` AND
+ * `monitorTargetConfigSchemas` from the same change that adds this route, so
+ * `createMonitorService`'s CRUD accepts them immediately — no follow-up bead
+ * needed the way `ebay_orders` still has one.
+ *
+ * `createEtsyPollExecutor`'s adapter dependency is the ONE place in this
+ * file's wiring where a shared, installation-wide resource (not a
+ * per-connection one) feeds a poll route — see `services.ts`/`etsy.ts`'s
+ * module docs for why Etsy's rate limit forces that shape.
  *
  * The `commerce.sync-*-orders` TASKS are registered alongside the routes and
  * share the very same sync service instances. They are not how scheduled
@@ -129,6 +141,7 @@ import {
   createEbayOrderPollExecutor,
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
+import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -295,6 +308,15 @@ export function buildWorkerRegistry(
     commerce.ebaySync === null
       ? null
       : createEbayOrderPollExecutor({ services, sync: commerce.ebaySync });
+  // Etsy (loxep-g4t.1): one executor serves both m1 target types. Its
+  // adapter dependency (`services.getEtsyAdapterForConnection`) is backed by
+  // the SHARED, installation-wide rate budget — see `etsy.ts`'s module doc.
+  const etsyPollExecutor = createEtsyPollExecutor({
+    services,
+    enqueueDeliveriesForEvent: delivery.enqueueDeliveriesForEvent,
+    addJob: enqueue,
+    listings,
+  });
   // The archived-connection gate wraps the ROUTER, so every target type
   // inherits it (loxep-o7h) — see `createArchivedConnectionGate`.
   const pollExecutor: PollExecutor = createArchivedConnectionGate({
@@ -305,6 +327,8 @@ export function buildWorkerRegistry(
         ...(ebayOrderPollExecutor === null
           ? {}
           : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
+        etsy_listing: etsyPollExecutor,
+        etsy_shop: etsyPollExecutor,
       },
       fallback: ebayPollExecutor,
     }),

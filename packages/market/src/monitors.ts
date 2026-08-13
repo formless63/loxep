@@ -114,6 +114,7 @@ export const MONITOR_TARGET_TYPES = [
   "ebay_orders",
   "etsy_listing",
   "etsy_shop",
+  "infrastructure_domain_reconcile",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
 
@@ -190,6 +191,64 @@ export type EbaySearchFiltersConfig = z.infer<typeof ebaySearchFiltersSchema>;
  * interpret.
  */
 export const COMMERCE_SYNC_CONFIG_KEY = "commerceSync";
+
+/**
+ * Namespaced `config` key @loxep/infrastructure owns on an
+ * `infrastructure_domain_reconcile` row. Declared here only so this package
+ * can name the key it must NOT interpret.
+ *
+ * This is rule two of the three that keep the shared scheduling model from
+ * becoming a dumping ground: the scheduler writes only `config.adaptive`,
+ * Infrastructure writes only `config.infraSync`, and neither reads the
+ * other's.
+ */
+export const INFRA_SYNC_CONFIG_KEY = "infraSync";
+
+/**
+ * The stored form of @loxep/infrastructure's reconcile sweep state.
+ *
+ * RE-DECLARED, NOT IMPORTED — the same discipline as
+ * {@link commerceSyncStateSchema} and {@link ebaySearchFiltersSchema}, for the
+ * same reason: @loxep/market owns the scheduling mechanism and must not depend
+ * on a domain that registers against it. That direction would make every
+ * registering domain a dependency of the scheduler, which is exactly the
+ * coupling the registration rule exists to avoid, and the infrastructure
+ * design states the constraint from the other side too —
+ * "`@loxep/infrastructure` takes no dependency on `@loxep/market`".
+ *
+ * @loxep/infrastructure's own `infraSyncStateSchema` stays the AUTHORITY; this
+ * copy exists so the monitor service can validate a config it is asked to
+ * store. The duplication is guarded by a both-sides round-trip test, the way
+ * `commerce-sync.test.ts` guards Commerce's.
+ *
+ * **This is the THIRD domain to register a target type**, and the Commerce
+ * design named a third registrant as the trigger for building a runtime
+ * registration seam that would remove this structural re-declaration
+ * altogether. Phase 7's open question 5 raises the same point and leaves it to
+ * the owner. Registering the third copy is the PROVISIONAL choice: the seam is
+ * a refactor of a shared mechanism that three domains now depend on, and doing
+ * it inside a milestone that also lands a migration, an adapter, and a
+ * reconciler would make both changes harder to review. Recorded so the next
+ * registrant does not have to rediscover the argument.
+ *
+ * Every field is optional: a freshly created target has swept nothing yet.
+ */
+export const infraSyncStateSchema = z.strictObject({
+  /** When the last sweep finished, successfully or not. */
+  lastSweptAt: z.iso.datetime().optional(),
+  /** The `reconcile_runs.id` of the most recent sweep, for the UI's deep link. */
+  lastRunId: z.string().uuid().optional(),
+  /** Unresolved `dns_drift_findings` the last sweep left behind. */
+  lastDriftCount: z.number().int().nonnegative().optional(),
+  /**
+   * `check` compares and records findings; `apply` also converges the
+   * provider. The sweep's default is deliberately the operator's choice per
+   * domain, because an unattended `apply` is a different risk posture from an
+   * unattended `check`.
+   */
+  mode: z.enum(["apply", "check"]).optional(),
+});
+export type InfraSyncState = z.infer<typeof infraSyncStateSchema>;
 
 /**
  * The stored form of @loxep/commerce's order-sync cursor — WooCommerce and
@@ -345,6 +404,29 @@ export const monitorTargetConfigSchemas = {
   etsy_shop: z.strictObject({
     shopExternalId: z.string().min(1),
     maxItems: z.number().int().positive().max(1000).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One managed domain's recurring DNS reconcile sweep (Phase 7, loxep-lmy.1,
+   * PROVISIONAL). Registered by Infrastructure, executed by Infrastructure;
+   * this package neither knows nor reads what the sweep does.
+   *
+   * The domain it reconciles is NOT in this config: it is
+   * `managed_domains.reconcile_target_id`, a real foreign key pointing from
+   * Infrastructure at the scheduling row. The design chose that direction
+   * deliberately over a `domainId` inside `config`, which would be a JSON
+   * reference with no integrity. `connection_id` is set to the domain's DNS
+   * provider connection, so backoff and rate-budget reasoning work exactly as
+   * they do for every other row.
+   *
+   * The market-activity ADAPTIVE POLICY MUST BE OPTED OUT on these rows —
+   * `config.adaptive.enabled = false`. That flag exists precisely for a target
+   * whose cadence should not be driven by marketplace events, and this is its
+   * first non-market use: a DNS sweep's right cadence has nothing to do with
+   * listing churn.
+   */
+  infrastructure_domain_reconcile: z.strictObject({
+    [INFRA_SYNC_CONFIG_KEY]: infraSyncStateSchema.optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
 } as const satisfies Record<MonitorTargetType, z.ZodType>;

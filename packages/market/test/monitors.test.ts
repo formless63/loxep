@@ -362,6 +362,113 @@ describe("Etsy observation target types", () => {
   });
 });
 
+/**
+ * loxep-lmy.1: `infrastructure_domain_reconcile` is the Phase 7 recurring DNS
+ * sweep type @loxep/infrastructure registers against this shared scheduling
+ * mechanism — the THIRD domain to do so, after Market's own discovery types
+ * and Commerce's order sync.
+ *
+ * Registered in `MONITOR_TARGET_TYPES` and `monitorTargetConfigSchemas`
+ * TOGETHER in the same change, per the rule the two describe blocks above
+ * established.
+ *
+ * The two properties this block pins down are the ones the design calls out by
+ * name: the `infraSync` namespace this package must never interpret survives a
+ * round trip intact, and `adaptive.enabled = false` — the market-activity
+ * opt-out — is storable, because a DNS sweep's cadence has nothing to do with
+ * listing churn.
+ */
+describe("infrastructure reconcile target type", () => {
+  it("creates a sweep target whose config carries no domain identity", async () => {
+    // The domain is `managed_domains.reconcile_target_id`, a real FK pointing
+    // AT this row — never a `domainId` buried in `config`.
+    const created = await service.createTarget({
+      targetType: "infrastructure_domain_reconcile",
+      name: "example.test reconcile",
+      intervalSeconds: 3600,
+    });
+    expect(created.targetType).toBe("infrastructure_domain_reconcile");
+    expect(created.config).toEqual({});
+    await service.deleteTarget(created.id);
+  });
+
+  it("stores the infraSync namespace verbatim without interpreting it", async () => {
+    const created = await service.createTarget({
+      targetType: "infrastructure_domain_reconcile",
+      name: "example.test infraSync",
+      intervalSeconds: 3600,
+    });
+    const state = {
+      lastSweptAt: "2026-08-13T00:00:00.000Z",
+      lastRunId: "8f1d6a1e-0d4a-4f0b-9f6a-1a2b3c4d5e6f",
+      lastDriftCount: 2,
+      mode: "check" as const,
+    };
+    const updated = await service.updateTarget(created.id, {
+      config: { infraSync: state },
+    });
+    expect(updated.config).toEqual({ infraSync: state });
+    await service.deleteTarget(created.id);
+  });
+
+  it("accepts the adaptive opt-out this target type requires", async () => {
+    const created = await service.createTarget({
+      targetType: "infrastructure_domain_reconcile",
+      name: "example.test adaptive off",
+      intervalSeconds: 3600,
+      config: { adaptive: { enabled: false } },
+    });
+    expect(created.config).toEqual({ adaptive: { enabled: false } });
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects a typo inside the infraSync namespace", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "infrastructure_domain_reconcile",
+        name: "typo",
+        intervalSeconds: 3600,
+        config: { infraSync: { lastSweptt: "2026-08-13T00:00:00.000Z" } },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("rejects a domain identity smuggled into the config", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "infrastructure_domain_reconcile",
+        name: "smuggled domainId",
+        intervalSeconds: 3600,
+        config: { domainId: "8f1d6a1e-0d4a-4f0b-9f6a-1a2b3c4d5e6f" },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("lists sweep targets without disturbing other types", async () => {
+    const sweep = await service.createTarget({
+      targetType: "infrastructure_domain_reconcile",
+      name: "listed sweep",
+      intervalSeconds: 3600,
+    });
+    const item = await service.createTarget({
+      targetType: "ebay_item",
+      name: "listed item",
+      intervalSeconds: 300,
+      config: { externalItemId: "1234567890" },
+    });
+    const ids = (
+      await service.listTargets({
+        targetType: "infrastructure_domain_reconcile",
+      })
+    ).map((row) => row.id);
+    expect(ids).toContain(sweep.id);
+    expect(ids).not.toContain(item.id);
+
+    await service.deleteTarget(sweep.id);
+    await service.deleteTarget(item.id);
+  });
+});
+
 describe("claimDueTargets", () => {
   async function createDueTargets(count: number, prefix: string) {
     const ids: string[] = [];

@@ -20,8 +20,15 @@
  */
 import type { ConnectionDto, NotificationEndpointDto } from '@/server/admin-functions';
 import type { EbayKeysetStatus } from '@/server/ebay-oauth';
+import type { EtsyKeysetStatus } from '@/server/etsy-oauth';
 
-export type IntegrationServiceId = 'ebay' | 'woocommerce' | 'medusa' | 'invoiceninja' | 'ntfy';
+export type IntegrationServiceId =
+  | 'ebay'
+  | 'etsy'
+  | 'woocommerce'
+  | 'medusa'
+  | 'invoiceninja'
+  | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
 export type IntegrationCategory = 'Marketplaces' | 'Stores' | 'Billing' | 'Notifications';
@@ -57,10 +64,17 @@ export interface IntegrationStatusInput {
   connections: ConnectionDto[];
   endpoints: NotificationEndpointDto[];
   ebayKeyset: EbayKeysetStatus | null;
+  /** `null` for non-administrators, mirroring `ebayKeyset`. */
+  etsyKeyset: EtsyKeysetStatus | null;
 }
 
 /** The guided form an "Add account" action opens. */
-export type IntegrationAccountForm = 'ebay-consent' | 'woo-api' | 'medusa-api' | 'invoiceninja-api';
+export type IntegrationAccountForm =
+  | 'ebay-consent'
+  | 'etsy-consent'
+  | 'woo-api'
+  | 'medusa-api'
+  | 'invoiceninja-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -82,7 +96,8 @@ export interface IntegrationAccountSetup {
  */
 export type IntegrationManageAction =
   | { kind: 'route'; to: string; label: string }
-  | { kind: 'ebay-keyset' };
+  | { kind: 'ebay-keyset' }
+  | { kind: 'etsy-keyset' };
 
 export interface IntegrationService {
   id: IntegrationServiceId;
@@ -180,6 +195,52 @@ export const integrationServices: IntegrationService[] = [
             details,
             ...(warning && { warning })
           };
+    }
+  },
+  {
+    id: 'etsy',
+    name: 'Etsy',
+    category: 'Marketplaces',
+    description:
+      'Watch listings and a shop’s active catalogue on Etsy. One application keyset covers the installation; each Etsy shop is then connected through Etsy’s PKCE consent screen. Etsy has no sandbox — everything here runs against a real, approved Developer Portal app.',
+    manage: { kind: 'etsy-keyset' },
+    accounts: {
+      provider: 'etsy',
+      kind: 'marketplace_account',
+      form: 'etsy-consent',
+      addLabel: 'Add Etsy shop',
+      formHint:
+        'Name the shop, give its Etsy shop id, and choose how much access to ask Etsy for. Etsy’s consent screen opens next and binds the shop itself.',
+      blockedReason: ({ etsyKeyset }) => {
+        if (etsyKeyset === null) {
+          return 'Only an administrator can set up the Etsy application keyset.';
+        }
+        if (!etsyKeyset.configured) {
+          return 'Set up the Etsy application keyset before adding a shop.';
+        }
+        return null;
+      }
+    },
+    status: ({ etsyKeyset, connections }) => {
+      const count = accountsFor(connections, 'etsy').length;
+      if (etsyKeyset === null) {
+        return count > 0
+          ? { tone: 'ready', label: 'In use', details: [accountCountDetail(count)] }
+          : { tone: 'unconfigured', label: 'Not set up', details: [] };
+      }
+      if (!etsyKeyset.configured) {
+        return { tone: 'unconfigured', label: 'Keyset not configured', details: [] };
+      }
+      const details = [accountCountDetail(count)];
+      const warning =
+        etsyKeyset.source === 'dev-file'
+          ? {
+              label: 'Keyset: dev file',
+              title:
+                'Resolved from the local ~/.config/loxep/etsy-sandbox.env development fallback, not a stored application secret. Etsy has no sandbox, so this file holds a real approved app’s credentials for local development only — a stored secret always takes precedence over it.'
+            }
+          : undefined;
+      return { tone: 'ready', label: 'Keyset configured', details, ...(warning && { warning }) };
     }
   },
   {

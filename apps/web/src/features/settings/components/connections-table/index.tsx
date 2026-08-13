@@ -15,7 +15,8 @@ import type { ConnectionDto, EntityDto } from '@/server/admin-functions';
 import {
   connectionsQuery,
   ebayKeysetStatusQuery,
-  entitiesQuery
+  entitiesQuery,
+  etsyKeysetStatusQuery
 } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ConnectionAddDialog from '@/features/settings/components/connection-add-dialog';
@@ -47,6 +48,9 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   // Admin-only server function: fetched only when it can succeed, and only
   // used to decide whether adding an eBay account can work at all.
   const { data: ebayKeyset } = useQuery({ ...ebayKeysetStatusQuery, enabled: isAdmin });
+  // Admin-only server function: same reasoning as ebayKeyset above, for
+  // whether adding an Etsy shop can work at all.
+  const { data: etsyKeyset } = useQuery({ ...etsyKeysetStatusQuery, enabled: isAdmin });
   const [addServiceId, setAddServiceId] = React.useState<string | null>(null);
 
   if (isPending || entitiesPending) {
@@ -63,7 +67,8 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const statusInput: IntegrationStatusInput = {
     connections,
     endpoints: [],
-    ebayKeyset: ebayKeyset ?? null
+    ebayKeyset: ebayKeyset ?? null,
+    etsyKeyset: etsyKeyset ?? null
   };
   const activeCount = connections.filter((connection) => connection.status === 'active').length;
   // Archived accounts are retired, so they are not part of the "of N" the

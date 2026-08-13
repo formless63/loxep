@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
 import { connectionsQuery, notificationEndpointsQuery } from '@/features/settings/api/queries';
 import EbayIntegrationCard from '@/features/settings/components/ebay-integration-card';
+import EtsyIntegrationCard from '@/features/settings/components/etsy-integration-card';
 import { IntegrationCard } from '@/features/settings/components/integration-card';
 import {
   integrationCategories,
@@ -25,7 +26,8 @@ export default function IntegrationsCatalogGrid({ isAdmin }: { isAdmin: boolean 
   const statusInput: IntegrationStatusInput = {
     connections: connections ?? [],
     endpoints: endpoints ?? [],
-    ebayKeyset: null
+    ebayKeyset: null,
+    etsyKeyset: null
   };
   const isPending = connectionsPending || endpointsPending;
 
@@ -41,6 +43,8 @@ export default function IntegrationsCatalogGrid({ isAdmin }: { isAdmin: boolean 
               {services.map((service) =>
                 service.manage.kind === 'ebay-keyset' && isAdmin ? (
                   <EbayIntegrationCard key={service.id} statusInput={statusInput} />
+                ) : service.manage.kind === 'etsy-keyset' && isAdmin ? (
+                  <EtsyIntegrationCard key={service.id} statusInput={statusInput} />
                 ) : (
                   <CatalogCard
                     key={service.id}

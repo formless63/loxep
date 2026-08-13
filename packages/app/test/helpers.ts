@@ -30,7 +30,17 @@ import type {
   searchAllListings,
 } from "@loxep/integration-ebay";
 import { createRateBudget as createWooRateBudget, createWooAdapter } from "@loxep/integration-woo";
-import type { EbayConnectionAdapter, WooConnectionAdapter } from "../src/index.ts";
+import { EtsyAdapterError } from "../../integrations/etsy/src/index.ts";
+import type {
+  EtsyAdapter,
+  EtsyListPage,
+  EtsyUserAdapter,
+} from "../../integrations/etsy/src/index.ts";
+import type {
+  EbayConnectionAdapter,
+  EtsyConnectionAdapter,
+  WooConnectionAdapter,
+} from "../src/index.ts";
 
 const DEFAULT_TEST_DATABASE_URL =
   "postgres://postgres:loxep-dev@localhost:5433/loxep_test";
@@ -646,6 +656,111 @@ export function fakeConnectionAdapter(
         );
       }
       return user;
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Etsy fakes (loxep-g4t.1)
+// ---------------------------------------------------------------------------
+
+export interface FakeEtsyState {
+  /** External listing id → raw Etsy Listing payload. */
+  listings: Map<string, Record<string, unknown>>;
+  /** Shop id -> the raw Listing payloads that shop's active-listings page returns. */
+  shopListings: Map<string, Record<string, unknown>[]>;
+  /** When set, every provider call throws it (connection-failure path). */
+  failWith: EtsyAdapterError | null;
+  /** Operation names, in call order. */
+  calls: string[];
+}
+
+export function fakeEtsyState(overrides: Partial<FakeEtsyState> = {}): FakeEtsyState {
+  return {
+    listings: new Map(),
+    shopListings: new Map(),
+    failWith: null,
+    calls: [],
+    ...overrides,
+  };
+}
+
+/** Page size the fake shop-listings backend emits, so paging is exercised. */
+export const FAKE_ETSY_SHOP_PAGE_SIZE = 2;
+
+/**
+ * A {@link EtsyConnectionAdapter} whose provider client is a fake — the same
+ * "only the HTTP call is canned" discipline as `fakeConnectionAdapter`
+ * (eBay). The application adapter is deliberately the SAME object across
+ * every call this test suite makes for a given `state`, standing in for the
+ * real SHARED, installation-wide `EtsyAdapter` `etsy.ts` builds.
+ */
+export function fakeEtsyConnectionAdapter(
+  connectionId: string,
+  shopExternalId: string,
+  state: FakeEtsyState,
+  options: { minIntervalSeconds?: number } = {},
+): EtsyConnectionAdapter {
+  const getListing = (id: string): Record<string, unknown> => {
+    state.calls.push(`getListing:${id}`);
+    if (state.failWith !== null) throw state.failWith;
+    const payload = state.listings.get(id);
+    if (payload === undefined) {
+      throw new EtsyAdapterError("not_found", "fake listing not found", { id });
+    }
+    return payload;
+  };
+
+  const getShopListingsActive = (input: {
+    shopId: string;
+    limit?: number;
+    offset?: number;
+  }): EtsyListPage => {
+    state.calls.push(`getShopListingsActive:${input.shopId}`);
+    if (state.failWith !== null) throw state.failWith;
+    const all = state.shopListings.get(input.shopId) ?? [];
+    const limit = Math.min(input.limit ?? FAKE_ETSY_SHOP_PAGE_SIZE, FAKE_ETSY_SHOP_PAGE_SIZE);
+    const offset = input.offset ?? 0;
+    return { results: all.slice(offset, offset + limit), count: all.length };
+  };
+
+  const application = {
+    async ping() {
+      return { applicationId: 1 };
+    },
+    async getListing(listingId: string) {
+      return getListing(listingId);
+    },
+    async getShop(shopId: string) {
+      state.calls.push(`getShop:${shopId}`);
+      return { shop_id: Number(shopId) };
+    },
+    async getShopListingsActive(input: { shopId: string; limit?: number; offset?: number }) {
+      return getShopListingsActive(input);
+    },
+    withUserToken() {
+      throw new Error("fake Etsy adapter: withUserToken is not exercised by these tests");
+    },
+    stats() {
+      return {
+        rateBudget: { capacity: 10, refillPerSecond: 10, available: 10, pending: 0, acquired: 0, rejected: 0 },
+        requests: state.calls.length,
+      };
+    },
+  } as unknown as EtsyAdapter;
+
+  return {
+    connectionId,
+    shopExternalId,
+    keysetSource: "secret",
+    application,
+    user: null,
+    minIntervalSeconds: options.minIntervalSeconds ?? 30,
+    requireUser: () => {
+      throw new EtsyAdapterError(
+        "auth",
+        "fake Etsy connection has no stored user token",
+      );
     },
   };
 }

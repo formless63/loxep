@@ -20,7 +20,18 @@ import {
   EBAY_CONSENT_TIER_LABELS,
   startEbayConsent
 } from '@/server/ebay-oauth';
-import { connectionsQuery, ebayKeysetStatusQuery } from '@/features/settings/api/queries';
+import {
+  DEFAULT_ETSY_CONSENT_TIER,
+  ETSY_CONSENT_TIER_DESCRIPTIONS,
+  ETSY_CONSENT_TIER_IDS,
+  ETSY_CONSENT_TIER_LABELS,
+  startEtsyConsent
+} from '@/server/etsy-oauth';
+import {
+  connectionsQuery,
+  ebayKeysetStatusQuery,
+  etsyKeysetStatusQuery
+} from '@/features/settings/api/queries';
 import { NO_ENTITY_VALUE } from '@/features/settings/constants';
 import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 import {
@@ -71,6 +82,8 @@ export default function ConnectionAddDialog({
         </DialogHeader>
         {accounts.form === 'ebay-consent' ? (
           <EbayAccountForm service={service} entities={entities} onDone={onOpenChange} />
+        ) : accounts.form === 'etsy-consent' ? (
+          <EtsyAccountForm service={service} entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'woo-api' ? (
           <WooAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'medusa-api' ? (
@@ -280,6 +293,181 @@ function EbayAccountForm({
         </Button>
         <form.AppForm>
           <form.SubmitButton>Continue to eBay</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const etsyAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  shopExternalId: z.string().trim().min(1, 'Etsy shop id is required'),
+  economicEntityId: z.string(),
+  consentTier: z.enum(ETSY_CONSENT_TIER_IDS)
+});
+
+const ETSY_CONSENT_TIER_OPTIONS = ETSY_CONSENT_TIER_IDS.map((tier) => ({
+  value: tier,
+  label: ETSY_CONSENT_TIER_LABELS[tier]
+}));
+
+const ETSY_CONSENT_TIER_FIELD_DESCRIPTION = `${ETSY_CONSENT_TIER_LABELS.shop}: ${ETSY_CONSENT_TIER_DESCRIPTIONS.shop} ${ETSY_CONSENT_TIER_LABELS.orders}: ${ETSY_CONSENT_TIER_DESCRIPTIONS.orders}`;
+
+/**
+ * Consent-step guidance, mirroring `EbayConsentGuidance`'s shape. Etsy has
+ * no sandbox, so there is no environment-dependent branch to show — every
+ * connection here talks to the real Etsy site the moment the keyset is
+ * approved.
+ */
+function EtsyConsentGuidance() {
+  const { data } = useQuery(etsyKeysetStatusQuery);
+
+  return (
+    <SetupGuidance title='What happens next'>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Loxep records the shop, then sends this tab to Etsy&apos;s consent screen.
+        </GuidanceStep>
+        <GuidanceStep>
+          Sign in there as the Etsy account that owns the shop, and accept the requested access.
+        </GuidanceStep>
+        <GuidanceStep>
+          Etsy returns you here. The shop shows as connected once the token is stored; declining
+          leaves the record in place, unconnected, so you can retry.
+        </GuidanceStep>
+      </GuidanceSteps>
+      {data?.configured === true && (
+        <GuidanceCallout>
+          <p>
+            Etsy has no sandbox — this consent talks to the real Etsy site. Sign in as the account
+            that actually owns the shop you want Loxep to observe.
+          </p>
+        </GuidanceCallout>
+      )}
+      <GuidanceNote>
+        Pick the narrower access if you are unsure — order access is not yet used by Loxep&apos;s
+        polling, so <strong>Shop &amp; listings</strong> is the right choice for observation.
+      </GuidanceNote>
+      <GuidanceNote>
+        Loxep only ever reads from Etsy. Consent can be withdrawn from Etsy&apos;s own account
+        settings, and removing the connection here deletes the stored token.
+      </GuidanceNote>
+    </SetupGuidance>
+  );
+}
+
+/**
+ * Etsy: the connection row is created first (carrying the shop's non-secret
+ * id in `config.etsy.shopExternalId`), then the browser is sent to Etsy's
+ * PKCE consent screen through a full top-level navigation — the CSRF nonce
+ * AND the PKCE code_verifier live in same-browser httpOnly cookies that
+ * only a real navigation carries back through the callback (see
+ * `startEtsyConsent` in `@/server/etsy-oauth`).
+ */
+function EtsyAccountForm({
+  service,
+  entities,
+  onDone
+}: {
+  service: IntegrationService;
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const accounts = service.accounts;
+
+  const mutation = useMutation({
+    mutationFn: async (values: z.infer<typeof etsyAccountSchema>) => {
+      const created = await createConnection({
+        data: {
+          provider: accounts?.provider ?? 'etsy',
+          kind: accounts?.kind ?? 'marketplace_account',
+          name: values.name,
+          config: { etsy: { shopExternalId: values.shopExternalId } },
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      });
+      return startEtsyConsent({ data: { connectionId: created.id, tier: values.consentTier } });
+    },
+    onSuccess: (consent) => {
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      window.location.href = consent.url;
+    },
+    onError: (error) => toastError(error, 'Failed to start the Etsy consent flow')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      shopExternalId: '',
+      economicEntityId: NO_ENTITY_VALUE,
+      consentTier: DEFAULT_ETSY_CONSENT_TIER
+    },
+    validators: { onSubmit: etsyAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <EtsyConsentGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Shop name'
+              required
+              placeholder='My Etsy shop'
+              description='How this shop is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='shopExternalId'
+          children={(field) => (
+            <field.TextField
+              label='Etsy shop id'
+              required
+              placeholder='e.g. 12345678'
+              description="The numeric shop id Etsy assigns — visible in the shop's dashboard URL, not the shop's name."
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+        <form.AppField
+          name='consentTier'
+          children={(field) => (
+            <field.RadioGroupField
+              label='Access to request'
+              required
+              options={ETSY_CONSENT_TIER_OPTIONS}
+              description={ETSY_CONSENT_TIER_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Continue to Etsy</form.SubmitButton>
         </form.AppForm>
       </div>
     </form>

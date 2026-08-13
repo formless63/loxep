@@ -10,10 +10,12 @@ import { SettingsPage } from '@/features/settings/components/settings-page';
  * `?ebay=<status>&connection=<id>` — the query params
  * `handleEbayConsentCallback` (`@/server/ebay-oauth`) redirects back to after
  * the eBay consent screen. Read once, surfaced as a toast, then stripped from
- * the URL so a refresh doesn't re-show it.
+ * the URL so a refresh doesn't re-show it. `?etsy=<status>` is the same
+ * shape for `handleEtsyConsentCallback` (`@/server/etsy-oauth-callback`).
  */
 const connectionsSearchSchema = z.object({
   ebay: z.enum(['connected', 'declined', 'failed']).optional(),
+  etsy: z.enum(['connected', 'declined', 'failed']).optional(),
   connection: z.string().optional()
 });
 
@@ -31,6 +33,15 @@ const EBAY_CALLBACK_MESSAGES = {
   }
 } as const;
 
+const ETSY_CALLBACK_MESSAGES = {
+  connected: { ok: true, message: 'Etsy shop connected.' },
+  declined: { ok: false, message: 'Etsy consent was declined — no shop was connected.' },
+  failed: {
+    ok: false,
+    message: 'Etsy connection failed. Check the connection row for the recorded error.'
+  }
+} as const;
+
 function SettingsConnections() {
   const { auth } = Route.useRouteContext();
   const isAdmin = auth?.roles.includes('admin') ?? false;
@@ -44,6 +55,14 @@ function SettingsConnections() {
     else toast.error(outcome.message);
     navigate({ search: {}, replace: true });
   }, [search.ebay, navigate]);
+
+  React.useEffect(() => {
+    if (search.etsy === undefined) return;
+    const outcome = ETSY_CALLBACK_MESSAGES[search.etsy];
+    if (outcome.ok) toast.success(outcome.message);
+    else toast.error(outcome.message);
+    navigate({ search: {}, replace: true });
+  }, [search.etsy, navigate]);
 
   return (
     <SettingsPage

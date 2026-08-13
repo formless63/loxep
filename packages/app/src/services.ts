@@ -37,6 +37,8 @@ import type {
 import type { JobsLogger } from "@loxep/jobs";
 import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
+import { createEtsyAdapterFactory } from "./etsy.ts";
+import type { EtsyAdapterFactory } from "./etsy.ts";
 import { createMonitorSettingsReader } from "./settings.ts";
 import type { MonitorSettingsReader } from "./settings.ts";
 import { createWooAdapterFactory } from "./woo.ts";
@@ -62,6 +64,14 @@ export interface BuildAppServicesOptions {
    * on refills.
    */
   wooRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the SHARED-PER-APPLICATION Etsy token bucket (see
+   * `etsy.ts`'s module doc — this is the one budget the whole installation's
+   * Etsy traffic draws from, not a per-connection value the way
+   * `ebayRateBudget`/`wooRateBudget` are). An explicit value here WINS; tests
+   * use it for a wide-open budget.
+   */
+  etsyRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -102,6 +112,18 @@ export interface AppServices {
   invalidateWooAdapter: (connectionId: string) => void;
   /** The Woo interval floor implied by the DEFAULT/overridden budget. */
   wooIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Etsy adapter — but the underlying `EtsyAdapter` and its
+   * `RateBudget` are ONE SHARED INSTANCE for the whole installation, not
+   * built per connection (see `etsy.ts`'s module doc; this is the load-
+   * bearing divergence from `getEbayAdapterForConnection`/
+   * `getWooAdapterForConnection`).
+   */
+  getEtsyAdapterForConnection: EtsyAdapterFactory;
+  /** Drop a cached per-connection Etsy view (after an `auth`-class provider failure). */
+  invalidateEtsyAdapter: (connectionId: string) => void;
+  /** The interval floor implied by the shared Etsy budget. */
+  etsyIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -153,6 +175,21 @@ export function buildAppServices(
     resolveRateBudget: async () => (await monitorSettings.read()).wooRateBudget,
   });
 
+  // SHARED PER APPLICATION — see etsy.ts's module doc. `resolveRateBudget`
+  // is intentionally omitted (no registered setting for it yet, unlike
+  // eBay/Woo); an explicit `etsyRateBudget` still wins over the compiled-in
+  // defaults.
+  const etsy = createEtsyAdapterFactory({
+    db,
+    secrets,
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.etsyRateBudget !== undefined
+      ? { rateBudget: options.etsyRateBudget }
+      : {}),
+  });
+
   let closed = false;
   return {
     config,
@@ -169,6 +206,9 @@ export function buildAppServices(
     getWooAdapterForConnection: woo.getAdapterForConnection,
     invalidateWooAdapter: woo.invalidate,
     wooIntervalFloorSeconds: woo.intervalFloorSeconds,
+    getEtsyAdapterForConnection: etsy.getAdapterForConnection,
+    invalidateEtsyAdapter: etsy.invalidate,
+    etsyIntervalFloorSeconds: etsy.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;

@@ -17,3 +17,6 @@ export class AppConfigurationError extends AppError {}
 
 /** The eBay application keyset is absent or unusable. */
 export class EbayKeysetMissingError extends AppConfigurationError {}
+
+/** The Etsy application keyset is absent or unusable (loxep-g4t.1). */
+export class EtsyKeysetMissingError extends AppConfigurationError {}

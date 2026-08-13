@@ -19,6 +19,7 @@
     "@loxep/market": "workspace:*",
     "@loxep/notifications": "workspace:*",
     "@loxep/integration-ebay": "workspace:*",
+    "@loxep/integration-etsy": "workspace:*",
     "@loxep/integration-woo": "workspace:*",
     "zod": "4.4.3"
   },

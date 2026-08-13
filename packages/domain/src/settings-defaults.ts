@@ -188,6 +188,104 @@ export const orderPayloadRetentionSetting = defineSetting({
   defaultValue: { mode: "keep", afterDays: 180 },
 });
 
+/**
+ * The per-connection Cloudflare token bucket, the Infrastructure sibling of
+ * `integration.ebay.rate_budget` and `integration.woo.rate_budget`.
+ *
+ * The defaults are the most conservative of the three, and for a reason the
+ * other two do not have: Cloudflare's documented limit is **1200 requests per
+ * five minutes PER USER** — four per second — and it *"applies cumulatively
+ * regardless of whether the request is made via the dashboard, API key, or API
+ * token"* (verified 2026-08-13). Exceeding it blocks every call for the next
+ * five minutes. A reconciler that spends the operator's whole budget makes
+ * their own Cloudflare dashboard stop working, which is a worse failure than a
+ * slow sweep. One sustained request per second claims a quarter of the account
+ * ceiling and leaves the rest to the human.
+ *
+ * (These values mirror the adapter's private default in
+ * `packages/integrations/cloudflare/src/adapter.ts`; this module cannot import
+ * an integration package, so they are duplicated as literals exactly the way
+ * `ebayRateBudgetSetting`'s and `wooRateBudgetSetting`'s are.)
+ */
+export const cloudflareRateBudgetSetting = defineSetting({
+  key: "integration.cloudflare.rate_budget",
+  schema: z.strictObject({
+    /** Burst size, in provider calls. */
+    capacity: z.number().int().min(1).max(1000),
+    /** Sustained provider calls per second. */
+    refillPerSecond: z.number().positive().max(100),
+  }),
+  description:
+    "Per-connection Cloudflare rate budget (token-bucket capacity and refill " +
+    "per second). Cloudflare's own limit is 1200 requests per five minutes " +
+    "per USER and is shared with the operator's dashboard, so this default " +
+    "deliberately claims only a fraction of it",
+  schemaVersion: 1,
+  defaultValue: { capacity: 8, refillPerSecond: 1 },
+});
+
+/**
+ * The installation's CAA issuance policy — Phase 7 open question 2,
+ * **OWNER-REVIEW-CRITICAL**, resolved PROVISIONAL per its own recommendation
+ * with one owner amendment: **ship with NO default issuer list.**
+ *
+ * A CAA record set closes a real certificate-misissuance path and costs one
+ * record, which is why the materializer emits one at all. A **wrong** CAA
+ * record silently breaks certificate renewal, and the failure surfaces at
+ * expiry rather than at write time — weeks or months after the mistake, at the
+ * worst possible moment.
+ *
+ * So the default below is empty and `reviewed` is `false`, and
+ * `materializeDesiredRecords` **refuses to emit any CAA record** until the
+ * owner has filled this in and marked it reviewed. The design's own words:
+ * *"Never ship a guessed issuer list as a working default."* An installation
+ * that never touches this setting simply gets no CAA records, which is the
+ * status quo ante and cannot break anything.
+ *
+ * `issuers` populates `CAA 0 issue "<value>"`; `wildcardIssuers` populates
+ * `CAA 0 issuewild "<value>"` and is separate because wildcard issuance is a
+ * distinct property that a CA may or may not be authorized for. `iodef` is the
+ * optional violation-report address (`CAA 0 iodef "mailto:..."`).
+ *
+ * The owner must confirm which certificate authorities the estate uses today,
+ * **including any used indirectly** by a proxying DNS provider or a reverse
+ * proxy — the indirect ones are what a hand-written CAA policy usually
+ * forgets.
+ */
+export const caaPolicySetting = defineSetting({
+  key: "infrastructure.caa_policy",
+  schema: z.strictObject({
+    /**
+     * Must be explicitly set to `true` by the owner before ANY CAA record is
+     * materialized. Not derived from a non-empty issuer list: an empty
+     * reviewed policy ("no CA may issue for these names") is a legitimate,
+     * deliberate stance, and it must be distinguishable from "nobody has
+     * looked at this yet".
+     */
+    reviewed: z.boolean(),
+    /** CA domains for `issue`, e.g. `letsencrypt.org`. */
+    issuers: z.array(z.string().min(1)).max(32),
+    /** CA domains for `issuewild`. */
+    wildcardIssuers: z.array(z.string().min(1)).max(32),
+    /** `mailto:` or `https:` violation-report target, or null. */
+    iodef: z.string().min(1).nullable(),
+  }),
+  description:
+    "CAA issuance policy materialized into every managed domain. Ships " +
+    "DELIBERATELY EMPTY and unreviewed: a wrong CAA record breaks " +
+    "certificate renewal silently, at expiry. No CAA record is materialized " +
+    "until an operator sets 'reviewed' with the issuers this estate actually " +
+    "uses, including any used indirectly by a proxying DNS provider or " +
+    "reverse proxy",
+  schemaVersion: 1,
+  defaultValue: {
+    reviewed: false,
+    issuers: [],
+    wildcardIssuers: [],
+    iodef: null,
+  },
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -195,4 +293,6 @@ export const registeredApplicationSettings = [
   ebayRateBudgetSetting,
   wooRateBudgetSetting,
   orderPayloadRetentionSetting,
+  cloudflareRateBudgetSetting,
+  caaPolicySetting,
 ] as const;

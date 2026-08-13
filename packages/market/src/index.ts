@@ -12,6 +12,7 @@ export {
 
 export {
   COMMERCE_SYNC_CONFIG_KEY,
+  INFRA_SYNC_CONFIG_KEY,
   MAX_BACKOFF_SECONDS,
   MONITOR_TARGET_TYPES,
   backoffSeconds,
@@ -20,6 +21,7 @@ export {
   commerceSyncStateSchema,
   createMonitorService,
   ebaySearchFiltersSchema,
+  infraSyncStateSchema,
   monitorTargetConfigSchemas,
   recordPollFailure,
   recordPollSuccess,
@@ -30,6 +32,7 @@ export type {
   CommerceSyncState,
   CreateMonitorTargetInput,
   EbaySearchFiltersConfig,
+  InfraSyncState,
   MonitorService,
   MonitorTargetRow,
   MonitorTargetType,

@@ -11,7 +11,12 @@
  * it for `LOXEP_MODE=all|worker`, and `LOXEP_MODE=web` never does.
  */
 
-export { AppConfigurationError, AppError, EbayKeysetMissingError } from "./errors.ts";
+export {
+  AppConfigurationError,
+  AppError,
+  EbayKeysetMissingError,
+  EtsyKeysetMissingError,
+} from "./errors.ts";
 
 export {
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
@@ -80,6 +85,39 @@ export type {
   EbayKeyset,
   EbayKeysetSource,
 } from "./ebay.ts";
+
+export {
+  ETSY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  ETSY_BUDGET_TARGETS_PER_INSTALLATION,
+  ETSY_CONNECTION_CONFIG_KEY,
+  ETSY_CONNECTION_PROVIDER,
+  ETSY_KEYSET_SECRET_KEY,
+  ETSY_OAUTH_CREDENTIAL_TYPE,
+  ETSY_RATE_BUDGET_CAPACITY,
+  ETSY_RATE_BUDGET_REFILL_PER_SECOND,
+  ETSY_SHOP_CONFIG_KEY,
+  createEtsyAdapterFactory,
+  etsyRateBudgetIntervalFloorSeconds,
+  loadEtsyKeyset,
+  readEtsyShopId,
+} from "./etsy.ts";
+export type {
+  CreateEtsyAdapterFactoryOptions,
+  EtsyAdapterConstructor,
+  EtsyAdapterFactory,
+  EtsyConnectionAdapter,
+  EtsyKeyset,
+  EtsyKeysetSource,
+  EtsyRateBudgetConfig,
+} from "./etsy.ts";
+
+export {
+  ETSY_LISTING_OBSERVATION_SOURCE,
+  ETSY_SHOP_DEFAULT_MAX_ITEMS,
+  ETSY_SHOP_OBSERVATION_SOURCE,
+  createEtsyPollExecutor,
+} from "./etsy-poll-executor.ts";
+export type { CreateEtsyPollExecutorOptions } from "./etsy-poll-executor.ts";
 
 export {
   LISTING_CONTEXT_CACHE_LIMIT,

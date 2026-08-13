@@ -12,6 +12,8 @@ import {
   createSettingsService,
   defineSetting,
   findRegisteredSetting,
+  caaPolicySetting,
+  cloudflareRateBudgetSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
@@ -395,5 +397,50 @@ describe("settings service", () => {
         defaultValue: "",
       }),
     ).toThrow(/already registered/);
+  });
+});
+
+describe("Phase 7 infrastructure settings", () => {
+  /**
+   * Open question 2 is OWNER-REVIEW-CRITICAL and was resolved PROVISIONAL per
+   * its own recommendation with one amendment: **no default issuer list.**
+   *
+   * A wrong CAA record silently breaks certificate renewal and the failure
+   * surfaces at expiry, not at write time. This assertion is what stops a
+   * future edit from "helpfully" seeding `letsencrypt.org` and turning an
+   * unreviewed guess into published policy.
+   */
+  it("ships the CAA policy EMPTY and unreviewed, never a guessed issuer list", () => {
+    expect(caaPolicySetting.key).toBe("infrastructure.caa_policy");
+    expect(caaPolicySetting.defaultValue).toEqual({
+      reviewed: false,
+      issuers: [],
+      wildcardIssuers: [],
+      iodef: null,
+    });
+  });
+
+  it("keeps 'reviewed' independent of the issuer list", () => {
+    // An empty REVIEWED policy ("no CA may issue for these names") is a
+    // legitimate deliberate stance and must be distinguishable from "nobody
+    // has looked at this yet". Deriving one from the other would collapse them.
+    const parsed = caaPolicySetting.schema.parse({
+      reviewed: true,
+      issuers: [],
+      wildcardIssuers: [],
+      iodef: null,
+    });
+    expect(parsed.reviewed).toBe(true);
+  });
+
+  it("claims only a fraction of Cloudflare's per-user account ceiling", () => {
+    // Cloudflare allows 1200 requests per five minutes PER USER — four per
+    // second — shared with the operator's own dashboard.
+    expect(cloudflareRateBudgetSetting.key).toBe(
+      "integration.cloudflare.rate_budget",
+    );
+    expect(cloudflareRateBudgetSetting.defaultValue.refillPerSecond).toBeLessThan(
+      1200 / 300,
+    );
   });
 });
