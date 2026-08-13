@@ -162,7 +162,7 @@ Goal: support non-e-commerce business activity coherently.
 - Recurring service periods/billing facts.
 - External-resource links to knowledge/task platforms.
 - Outline/AFFiNE/Vikunja-style integrations where current APIs make them worthwhile.
-- Invoice Ninja integration as an initial delivery/payment surface where useful.
+- Invoice Ninja integration as an initial delivery/payment surface where useful. *(adapter and connection UX implemented: `packages/integrations/invoiceninja` (`@loxep/integration-invoiceninja`) is a source-verified, fixtures-tested boundary over the self-hosted API (`X-API-TOKEN` auth, client/invoice read+write mappings, the Fractal `ArraySerializer` pagination envelope), registered in the integrations catalog and connections UI with an `invoiceninja_credentials` bundle. **Not yet wired**: the on-demand push server function, the counterparties/invoices tables it would round-trip against (still design-only past the counterparty core — see below), and live write verification. See [Connecting Invoice Ninja](../../guides/connecting-invoice-ninja/).)*
 - Quotes/invoices/AR model where owning those capabilities provides value.
 - Project and subscription profitability.
 

@@ -73,8 +73,10 @@ export default function ConnectionAddDialog({
           <EbayAccountForm service={service} entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'woo-api' ? (
           <WooAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'medusa-api' ? (
           <MedusaAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <InvoiceNinjaAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -609,6 +611,156 @@ function MedusaAccountForm({
         </Button>
         <form.AppForm>
           <form.SubmitButton>Connect backend</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const invoiceNinjaAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  baseUrl: z.url('Enter the full instance URL, including https://'),
+  apiToken: z.string().trim().min(1, 'API token is required'),
+  economicEntityId: z.string()
+});
+
+/** Where a self-hosted Invoice Ninja instance issues a company API token. */
+function InvoiceNinjaSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>Sign in to the instance as an admin user.</GuidanceStep>
+        <GuidanceStep>
+          Open <strong>Settings</strong> → <strong>Account Management</strong> →{' '}
+          <strong>API Tokens</strong>, then <strong>Add token</strong>.
+          <GuidanceNote>
+            If the labels differ from these, look for the API-token area within Account Management
+            settings.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Name it something you will recognise and confirm. Copy the generated token into the field
+          below.
+        </GuidanceStep>
+        <GuidanceStep>
+          The instance URL is the site root —{' '}
+          <code className='font-mono'>https://billing.example.com</code> — not the{' '}
+          <code className='font-mono'>/api/v1</code> API path.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Invoice Ninja shows a token once, when it is created. Invoice Ninja does not scope company
+          tokens read-only, so treat the token as full access to that user&apos;s company — Loxep
+          only pushes invoice drafts and client records it created itself, and never pulls invoice
+          lines back once issued.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function InvoiceNinjaAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof invoiceNinjaAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'invoiceninja',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          apiToken: values.apiToken,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Invoice Ninja instance connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the instance')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      apiToken: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: invoiceNinjaAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <InvoiceNinjaSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Instance name'
+              required
+              placeholder='Main billing instance'
+              description='How this instance is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Instance URL'
+              required
+              placeholder='https://billing.example.com'
+              description='The instance root, not the /api/v1 path.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiToken'
+          children={(field) => (
+            <field.TextField
+              label='API token'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='From Settings → Account Management → API Tokens. Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect instance</form.SubmitButton>
         </form.AppForm>
       </div>
     </form>

@@ -86,6 +86,31 @@ export const secretBundleSchemas = {
   medusa_credentials: z.strictObject({
     apiToken: z.string().min(1),
   }),
+  /**
+   * Invoice Ninja v5 company API token (ADR-0009): the single credential a
+   * self-hosted Invoice Ninja instance issues per company/user pair
+   * (Settings → Account Management → API Tokens), generated server-side as
+   * `Str::random(64)` with no fixed prefix. Sent as `X-API-TOKEN: <apiToken>`
+   * — no Basic/Bearer wrapping. See
+   * `packages/integrations/invoiceninja/src/config.ts` for the verified
+   * source trail behind that auth header.
+   *
+   * Only one field, matching `medusa_credentials`'s shape for the same
+   * reason: Invoice Ninja's API authenticates with a single long-lived
+   * token, so there is no second part to keep atomic with it.
+   *
+   * The instance URL is deliberately NOT part of this bundle, for the same
+   * reasoning `medusa_credentials`/`woo_credentials` exclude their base
+   * URLs: it is non-secret connection configuration that must stay readable
+   * without a decryption round-trip (to render the connection, run a health
+   * check, and compute the adapter's `invoiceNinjaSourceAccountKey`), and a
+   * company token is issued by exactly one instance — pointing it at the
+   * wrong URL fails as a clean HTTP 403 `{"message":"Invalid token"}`
+   * (live-verified), not as apparent credential corruption.
+   */
+  invoiceninja_credentials: z.strictObject({
+    apiToken: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

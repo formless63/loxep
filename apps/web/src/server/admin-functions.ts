@@ -321,22 +321,34 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     baseUrl: z.url(),
     economicEntityId: z.uuid().nullable(),
     apiToken: z.string().trim().min(1)
+  }),
+  z.strictObject({
+    service: z.literal('invoiceninja'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    economicEntityId: z.uuid().nullable(),
+    apiToken: z.string().trim().min(1)
   })
 ]);
 
 /**
- * Create a store connection plus its credential in one guided step.
+ * Create a store/billing connection plus its credential in one guided step.
+ * Despite the name (kept for the two original callers), this also drives
+ * the Invoice Ninja form — its "account" is a billing companion connection,
+ * not a commerce store, hence `kind: 'billing_account'` for that one
+ * service; see `packages/integrations/invoiceninja/src/connection.ts`.
  *
  * WHERE EACH HALF LANDS — the split the integration packages document
- * (`packages/app/src/woo.ts`, `packages/integrations/medusa/src/connection.ts`):
- * the base URL is non-secret and goes into `connections.config.<service>.baseUrl`
- * so it stays readable without a decryption round-trip, while the key pair /
- * API token is an atomic encrypted bundle on the connection.
+ * (`packages/app/src/woo.ts`, `packages/integrations/medusa/src/connection.ts`,
+ * `packages/integrations/invoiceninja/src/connection.ts`): the base URL is
+ * non-secret and goes into `connections.config.<service>.baseUrl` so it
+ * stays readable without a decryption round-trip, while the key pair / API
+ * token is an atomic encrypted bundle on the connection.
  *
  * The credential type is the registered bundle purpose (`woo_credentials`,
- * `medusa_credentials`) because that is what the domain service accepts and
- * what the worker-side readers ask for — see `WOO_CREDENTIAL_TYPE` in
- * `packages/app/src/woo.ts`.
+ * `medusa_credentials`, `invoiceninja_credentials`) because that is what the
+ * domain service accepts and what the worker-side readers ask for — see
+ * `WOO_CREDENTIAL_TYPE` in `packages/app/src/woo.ts`.
  */
 export const createStoreConnection = createServerFn({ method: 'POST' })
   .inputValidator(createStoreConnectionInput)
@@ -348,9 +360,14 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
     const created = await connections.createConnection(
       {
         provider: data.service,
-        kind: 'store_account',
+        kind: data.service === 'invoiceninja' ? 'billing_account' : 'store_account',
         name: data.name,
-        config: data.service === 'woocommerce' ? { woo: { baseUrl } } : { medusa: { baseUrl } },
+        config:
+          data.service === 'woocommerce'
+            ? { woo: { baseUrl } }
+            : data.service === 'medusa'
+              ? { medusa: { baseUrl } }
+              : { invoiceninja: { baseUrl } },
         createdByUserId: session.user.id
       },
       { actorUserId: session.user.id }
@@ -362,10 +379,17 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { consumerKey: data.consumerKey, consumerSecret: data.consumerSecret },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'medusa') {
       await connections.setConnectionCredential(
         created.id,
         'medusa_credentials',
+        { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      await connections.setConnectionCredential(
+        created.id,
+        'invoiceninja_credentials',
         { apiToken: data.apiToken },
         { actorUserId: session.user.id }
       );

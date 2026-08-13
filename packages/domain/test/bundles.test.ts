@@ -18,6 +18,7 @@ describe("secret bundle registry", () => {
   it("registers every purpose Loxep persists today", () => {
     expect([...secretPurposes].sort()).toEqual([
       "ebay_keyset",
+      "invoiceninja_credentials",
       "medusa_credentials",
       "oauth_tokens",
       "s3_credentials",
@@ -182,6 +183,49 @@ describe("medusa_credentials bundle (the Medusa v2 Admin API secret key)", () =>
   it("reports issue paths and codes, never the secret itself", () => {
     try {
       validateBundle("medusa_credentials", { apiToken: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("apiToken");
+      expect(message).not.toContain(FAKE_TOKEN);
+    }
+  });
+});
+
+describe("invoiceninja_credentials bundle (the Invoice Ninja v5 company API token)", () => {
+  const FAKE_TOKEN = "fakefakefakefakefakefakefakefakefakefakefakefakefake01";
+
+  it("accepts the single API token", () => {
+    expect(validateBundle("invoiceninja_credentials", { apiToken: FAKE_TOKEN })).toEqual(
+      { apiToken: FAKE_TOKEN },
+    );
+  });
+
+  it("rejects an empty token", () => {
+    expect(() =>
+      validateBundle("invoiceninja_credentials", { apiToken: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a missing token", () => {
+    expect(() => validateBundle("invoiceninja_credentials", {})).toThrowError(
+      BundleValidationError,
+    );
+  });
+
+  it("rejects the instance URL — baseUrl is non-secret connection config", () => {
+    expect(() =>
+      validateBundle("invoiceninja_credentials", {
+        apiToken: FAKE_TOKEN,
+        baseUrl: "https://billing.example.invalid",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("invoiceninja_credentials", { apiToken: 42 });
       throw new Error("expected a BundleValidationError");
     } catch (error) {
       expect(error).toBeInstanceOf(BundleValidationError);

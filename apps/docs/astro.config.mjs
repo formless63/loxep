@@ -38,6 +38,7 @@ export default defineConfig({
             { label: 'Connecting eBay', slug: 'guides/connecting-ebay' },
             { label: 'Connecting WooCommerce', slug: 'guides/connecting-woocommerce' },
             { label: 'Connecting Medusa', slug: 'guides/connecting-medusa' },
+            { label: 'Connecting Invoice Ninja', slug: 'guides/connecting-invoice-ninja' },
           ],
         },
         {

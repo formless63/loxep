@@ -21,10 +21,10 @@
 import type { ConnectionDto, NotificationEndpointDto } from '@/server/admin-functions';
 import type { EbayKeysetStatus } from '@/server/ebay-oauth';
 
-export type IntegrationServiceId = 'ebay' | 'woocommerce' | 'medusa' | 'ntfy';
+export type IntegrationServiceId = 'ebay' | 'woocommerce' | 'medusa' | 'invoiceninja' | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
-export type IntegrationCategory = 'Marketplaces' | 'Stores' | 'Notifications';
+export type IntegrationCategory = 'Marketplaces' | 'Stores' | 'Billing' | 'Notifications';
 
 /**
  * How complete a service's set-up is:
@@ -60,7 +60,7 @@ export interface IntegrationStatusInput {
 }
 
 /** The guided form an "Add account" action opens. */
-export type IntegrationAccountForm = 'ebay-consent' | 'woo-api' | 'medusa-api';
+export type IntegrationAccountForm = 'ebay-consent' | 'woo-api' | 'medusa-api' | 'invoiceninja-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -229,6 +229,29 @@ export const integrationServices: IntegrationService[] = [
     }
   },
   {
+    id: 'invoiceninja',
+    name: 'Invoice Ninja',
+    category: 'Billing',
+    description:
+      'Push Loxep-billed invoice drafts to a self-hosted Invoice Ninja instance for rendering, delivery, and payment collection. Loxep records the billable facts and amounts; Invoice Ninja owns the customer-visible invoice number, PDFs, email, and payment links.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage instances' },
+    accounts: {
+      provider: 'invoiceninja',
+      kind: 'billing_account',
+      form: 'invoiceninja-api',
+      addLabel: 'Add Invoice Ninja instance',
+      formHint:
+        'The instance URL is kept as ordinary connection configuration; the company API token is stored encrypted and never shown again.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'invoiceninja').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No instances connected', details: [] };
+    }
+  },
+  {
     id: 'ntfy',
     name: 'ntfy',
     category: 'Notifications',
@@ -254,6 +277,7 @@ export const integrationServices: IntegrationService[] = [
 export const integrationCategories: IntegrationCategory[] = [
   'Marketplaces',
   'Stores',
+  'Billing',
   'Notifications'
 ];
 
