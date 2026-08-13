@@ -12,6 +12,13 @@ import type {
   DnsApplyResult,
   DnsProviderCapabilities,
   DnsProviderPort,
+  MailDnsRecord,
+  MailDnsSummary,
+  MailDomainState,
+  MailProviderCapabilities,
+  MailProviderPort,
+  MailRoutingRule,
+  MailboxSecretWriter,
   ObservedDnsRecord,
   ProviderZone,
 } from "../src/index.ts";
@@ -241,6 +248,402 @@ export function createStubProvider(
   };
 
   return provider;
+}
+
+/* ---------------------------------------------------- stub MAIL provider */
+
+/**
+ * The mail half of the stubs (milestone 2).
+ *
+ * Same discipline as the DNS stub above and for the same reason: this package
+ * takes no dependency on a mail integration package, so its tests must be able
+ * to drive `MailProviderPort` with no provider code in the graph at all. The
+ * stub is structural — it never imports `@loxep/integration-purelymail`.
+ *
+ * Two things it deliberately makes easy, because the reconciler's whole design
+ * turns on them:
+ *
+ * 1. **Counting provider calls.** The delegation gate's claim is that a gated
+ *    run makes ZERO provider calls, which can only be asserted against a
+ *    counter. {@link StubMailProvider.calls} is that counter.
+ * 2. **Injecting a classified failure.** `addDomain` rejecting with
+ *    `invalid_request` (the ownership TXT is not resolvable yet) and rejecting
+ *    with `auth` (a real fault) must produce completely different behavior, so
+ *    the failure carries a `kind` property on the thrown `Error` exactly as the
+ *    DNS stub's does — that string is the only thing that crosses the adapter
+ *    boundary (ADR-0009).
+ */
+export interface StubMailFailure {
+  kind: string;
+  message: string;
+}
+
+export interface StubMailDomainSeed {
+  name: string;
+  dns?: Partial<MailDnsSummary>;
+  allowAccountReset?: boolean;
+  isShared?: boolean;
+}
+
+export interface StubMailProviderOptions {
+  /** The account-level ownership code. PUBLIC by construction. */
+  ownershipCode?: string;
+  /** Domains the provider already knows about before the run. */
+  domains?: StubMailDomainSeed[];
+  /** Full addresses (`local@domain`) already on the account. */
+  users?: string[];
+  routingRules?: MailRoutingRule[];
+  /**
+   * The DNS verdict a domain registered by `addDomain` starts with. Defaults
+   * to all four checks passing, so the happy path is the terse one.
+   */
+  dnsOnRegister?: Partial<MailDnsSummary>;
+  failAddDomainWith?: StubMailFailure;
+  failOwnershipCodeWith?: StubMailFailure;
+  failCreateUserWith?: StubMailFailure;
+}
+
+/** One counter per port member — the delegation gate's assertion surface. */
+export interface StubMailProviderCalls {
+  getOwnershipCode: number;
+  addDomain: number;
+  findDomainByName: number;
+  recheckDomainDns: number;
+  createUser: number;
+  deleteUser: number;
+  listUsers: number;
+  listRoutingRules: number;
+  createRoutingRule: number;
+  deleteRoutingRule: number;
+}
+
+export interface StubMailProvider extends MailProviderPort {
+  readonly calls: StubMailProviderCalls;
+  /** Every provider call made, in order, for a legible failure message. */
+  readonly callLog: string[];
+  /** The provider's current address list, readable by assertions. */
+  userAddresses(): string[];
+  rules(): MailRoutingRule[];
+  hasDomain(name: string): boolean;
+  registerDomain(name: string, dns?: Partial<MailDnsSummary>): void;
+  setDomainDns(name: string, dns: Partial<MailDnsSummary>): void;
+  setFailAddDomainWith(failure: StubMailFailure | undefined): void;
+  setFailCreateUserWith(failure: StubMailFailure | undefined): void;
+  /**
+   * The password the provider was handed for one address. The provider is the
+   * one party that legitimately receives it, so this exists ONLY to prove
+   * containment — that the marker a boundary test looks for really did travel,
+   * which is what makes its absence everywhere else meaningful.
+   */
+  passwordFor(fullAddress: string): string | undefined;
+}
+
+const ALL_PASS: MailDnsSummary = {
+  passesMx: true,
+  passesSpf: true,
+  passesDkim: true,
+  passesDmarc: true,
+};
+
+function summary(overrides: Partial<MailDnsSummary> | undefined): MailDnsSummary {
+  return { ...ALL_PASS, ...(overrides ?? {}) };
+}
+
+function kindedError(failure: StubMailFailure): Error & { kind: string } {
+  const error = new Error(failure.message) as Error & { kind: string };
+  error.kind = failure.kind;
+  return error;
+}
+
+let stubRuleSeq = 0;
+
+export function createStubMailProvider(
+  options: StubMailProviderOptions = {},
+): StubMailProvider {
+  const domains = new Map<string, MailDomainState>(
+    (options.domains ?? []).map((seed) => [
+      seed.name,
+      {
+        name: seed.name,
+        allowAccountReset: seed.allowAccountReset ?? false,
+        isShared: seed.isShared ?? false,
+        dns: summary(seed.dns),
+      },
+    ]),
+  );
+  const users = new Set<string>(options.users ?? []);
+  const rules: MailRoutingRule[] = [...(options.routingRules ?? [])];
+  const passwords = new Map<string, string>();
+  const callLog: string[] = [];
+  const calls: StubMailProviderCalls = {
+    getOwnershipCode: 0,
+    addDomain: 0,
+    findDomainByName: 0,
+    recheckDomainDns: 0,
+    createUser: 0,
+    deleteUser: 0,
+    listUsers: 0,
+    listRoutingRules: 0,
+    createRoutingRule: 0,
+    deleteRoutingRule: 0,
+  };
+  let failAddDomainWith = options.failAddDomainWith;
+  let failCreateUserWith = options.failCreateUserWith;
+
+  const record = (member: keyof StubMailProviderCalls): void => {
+    calls[member] += 1;
+    callLog.push(member);
+  };
+
+  return {
+    async getOwnershipCode() {
+      record("getOwnershipCode");
+      if (options.failOwnershipCodeWith !== undefined) {
+        throw kindedError(options.failOwnershipCodeWith);
+      }
+      return options.ownershipCode ?? "stub-ownership-code";
+    },
+
+    async addDomain(domainName) {
+      record("addDomain");
+      if (failAddDomainWith !== undefined) throw kindedError(failAddDomainWith);
+      domains.set(domainName, {
+        name: domainName,
+        allowAccountReset: false,
+        isShared: false,
+        dns: summary(options.dnsOnRegister),
+      });
+    },
+
+    async findDomainByName(name) {
+      record("findDomainByName");
+      return domains.get(name) ?? null;
+    },
+
+    async recheckDomainDns(domainName) {
+      record("recheckDomainDns");
+      void domainName;
+    },
+
+    async createUser(input) {
+      record("createUser");
+      if (failCreateUserWith !== undefined) {
+        throw kindedError(failCreateUserWith);
+      }
+      const address = `${input.userName}@${input.domainName}`;
+      users.add(address);
+      passwords.set(address, input.password);
+    },
+
+    async deleteUser(fullAddress) {
+      record("deleteUser");
+      users.delete(fullAddress);
+    },
+
+    async listUsers() {
+      record("listUsers");
+      return [...users];
+    },
+
+    async listRoutingRules() {
+      record("listRoutingRules");
+      return rules.map((rule) => ({ ...rule }));
+    },
+
+    async createRoutingRule(input) {
+      record("createRoutingRule");
+      stubRuleSeq += 1;
+      rules.push({
+        id: stubRuleSeq,
+        domainName: input.domainName,
+        prefix: input.prefix ?? false,
+        matchUser: input.matchUser,
+        targetAddresses: [...input.targetAddresses],
+        catchall: input.catchall ?? false,
+      });
+    },
+
+    async deleteRoutingRule(routingRuleId) {
+      record("deleteRoutingRule");
+      const index = rules.findIndex((rule) => rule.id === routingRuleId);
+      if (index >= 0) rules.splice(index, 1);
+    },
+
+    requiredRecords({ domainName, ownershipCode }): MailDnsRecord[] {
+      const records: MailDnsRecord[] = [
+        {
+          type: "MX",
+          name: "@",
+          content: `mail.${domainName}`,
+          ttlSeconds: null,
+          priority: 10,
+          purpose: "inbound mail",
+        },
+        {
+          type: "TXT",
+          name: "@",
+          content: "v=spf1 include:stub.test ~all",
+          ttlSeconds: null,
+          priority: null,
+          purpose: "spf",
+        },
+        {
+          type: "CNAME",
+          name: "stub1._domainkey",
+          content: "stub1.dkim.stub.test",
+          ttlSeconds: null,
+          priority: null,
+          purpose: "dkim",
+        },
+        {
+          type: "TXT",
+          name: "_dmarc",
+          content: "v=DMARC1; p=none",
+          ttlSeconds: null,
+          priority: null,
+          purpose: "dmarc",
+        },
+      ];
+      if (ownershipCode !== null) {
+        records.push({
+          type: "TXT",
+          name: "@",
+          content: `stub-verification=${ownershipCode}`,
+          ttlSeconds: null,
+          priority: null,
+          purpose: "ownership proof",
+        });
+      }
+      return records;
+    },
+
+    capabilities(): MailProviderCapabilities {
+      return {
+        provider: "stub-mail",
+        routingRules: true,
+        catchAll: true,
+        suppliesMailboxPassword: false,
+        ownershipCodeScope: "account",
+        maxListedUsers: 1_000,
+        requiredRecordCount: 4,
+      };
+    },
+
+    get calls() {
+      return calls;
+    },
+
+    get callLog() {
+      return callLog;
+    },
+
+    userAddresses() {
+      return [...users];
+    },
+
+    rules() {
+      return rules.map((rule) => ({ ...rule }));
+    },
+
+    hasDomain(name) {
+      return domains.has(name);
+    },
+
+    registerDomain(name, dns) {
+      domains.set(name, {
+        name,
+        allowAccountReset: false,
+        isShared: false,
+        dns: summary(dns),
+      });
+    },
+
+    setDomainDns(name, dns) {
+      const existing = domains.get(name);
+      if (existing === undefined) return;
+      domains.set(name, { ...existing, dns: { ...existing.dns, ...dns } });
+    },
+
+    setFailAddDomainWith(failure) {
+      failAddDomainWith = failure;
+    },
+
+    setFailCreateUserWith(failure) {
+      failCreateUserWith = failure;
+    },
+
+    passwordFor(fullAddress) {
+      return passwords.get(fullAddress);
+    },
+  };
+}
+
+/* ------------------------------------------------ recording secret writer */
+
+/**
+ * A {@link MailboxSecretWriter} that records WHAT was stored and WHERE, and
+ * nothing else.
+ *
+ * The port has no read member on purpose (`mail-port.ts`: "no future edit to
+ * this package can start revealing one without first widening this interface"),
+ * so this stub keeps the same shape: `writes` carries the secret key and the
+ * purpose, never the value. The single accessor that touches the value is
+ * {@link RecordingSecretWriter.storedValueContains}, a boolean containment
+ * probe — enough to prove a marker really was stored, not enough to hand a
+ * password to an assertion message.
+ *
+ * It inserts a REAL `application_secrets` row rather than inventing a uuid,
+ * because `mailboxes.secret_id` is a foreign key: a fake id would make the
+ * "the reconciler sets `secret_id`" assertion pass against a database that
+ * would have rejected it in production.
+ */
+export interface RecordingSecretWriter extends MailboxSecretWriter {
+  readonly writes: ReadonlyArray<{
+    secretKey: string;
+    purpose: "mailbox_password";
+  }>;
+  /** How many times one key was written — i.e. "was it rotated?". */
+  writeCountFor(secretKey: string): number;
+  /** The only value read-back this suite permits itself, to prove containment. */
+  storedValueContains(marker: string): boolean;
+}
+
+export function createRecordingSecretWriter(options: {
+  pool: pg.Pool;
+}): RecordingSecretWriter {
+  const writes: Array<{ secretKey: string; purpose: "mailbox_password" }> = [];
+  const stored: string[] = [];
+
+  return {
+    async setSecret(input) {
+      writes.push({ secretKey: input.secretKey, purpose: input.purpose });
+      stored.push(input.payload.password);
+      const result = await options.pool.query<{ id: string }>(
+        `insert into application_secrets (secret_key, purpose, current_version)
+         values ($1, $2, 1)
+         on conflict (secret_key)
+           do update set current_version = application_secrets.current_version + 1,
+                         updated_at = now()
+         returning id`,
+        [input.secretKey, input.purpose],
+      );
+      const id = result.rows[0]?.id;
+      if (id === undefined) throw new Error("secret upsert returned no row");
+      return { id };
+    },
+
+    get writes() {
+      return writes;
+    },
+
+    writeCountFor(secretKey) {
+      return writes.filter((entry) => entry.secretKey === secretKey).length;
+    },
+
+    storedValueContains(marker) {
+      return stored.some((value) => value.includes(marker));
+    },
+  };
 }
 
 /** An observed record with sensible defaults, for terse test setup. */

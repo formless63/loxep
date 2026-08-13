@@ -2,19 +2,37 @@
  * The Infrastructure worker tasks, and the transactional enqueue that makes
  * intent changes and jobs atomic.
  *
- * Milestone 1 ships two of the design's ten tasks — the two that need no
- * milestone-2/3 table:
+ * Milestones 1 and 2 ship five of the design's ten tasks:
  *
  * ```text
  * infrastructure.materialize-records  intent change      key domain:{id}:materialize
  * infrastructure.sync-records         after materialize  key domain:{id}:records
+ * infrastructure.ensure-mail-domain   provision, mail on key domain:{id}:mail
+ * infrastructure.poll-mail-ownership  GATED ON DELEGATION
+ *                                                        key domain:{id}:mailverify
+ * infrastructure.sync-mailboxes       after verified     key domain:{id}:mailboxes
  * ```
  *
  * Deferred with their milestones, listed so the gap is visible rather than
  * forgotten: `provision-domain`, `ensure-zone`, `poll-delegation` (needs the
- * zone-create ledger path), `sync-token-policy` (milestone 3),
- * `ensure-mail-domain` / `poll-mail-ownership` / `sync-mailboxes` (milestone
- * 2), `sync-proxy-resource` (milestone 3).
+ * zone-create ledger path), `sync-token-policy` and `sync-proxy-resource`
+ * (milestone 3).
+ *
+ * ## `ensure-mail-domain` and `poll-mail-ownership` run the SAME function
+ *
+ * The design lists them separately and they are enqueued separately, with
+ * different job keys, because they are triggered by different things — an
+ * intent change versus a bounded poll. But both call
+ * `createMailSyncService(...).runMailDomainSync(...)`, because the work is
+ * identical: advance the domain as far as it currently can and record where it
+ * stopped. Writing them as two code paths would produce two implementations of
+ * the delegation gate, and the second one would be the wrong one.
+ *
+ * Their `job_key_mode` differs, and that difference is load-bearing:
+ * `ensure-mail-domain` uses the default `replace` (the newest intent wins and
+ * should run now), while `poll-mail-ownership` must use `preserve_run_at` so
+ * re-enqueueing a poll neither resets its backoff nor stacks duplicates during
+ * a delegation wait that can last days.
  *
  * ## Two rules, both easy to violate silently
  *
@@ -42,6 +60,11 @@ import {
 } from "./domains.ts";
 
 export { MATERIALIZE_RECORDS_TASK, SYNC_RECORDS_TASK, domainJobKey };
+export {
+  ENSURE_MAIL_DOMAIN_TASK,
+  POLL_MAIL_OWNERSHIP_TASK,
+  SYNC_MAILBOXES_TASK,
+} from "./mail.ts";
 
 /** Payload shapes. `domainId` and nothing else — see rule 1 above. */
 export interface MaterializeRecordsPayload {
@@ -51,6 +74,24 @@ export interface SyncRecordsPayload {
   domainId: string;
   mode?: "apply" | "check";
   trigger?: "intent_change" | "sweep" | "manual" | "poll";
+}
+/**
+ * Mail payloads carry a `domainId` and NOTHING else — not the mail connection
+ * id, not the ownership code, and emphatically not a mailbox password. Rule 1
+ * above is at its sharpest here: `sync-mailboxes` is the one task in this
+ * domain that handles a minted credential, and Graphile Worker payloads sit in
+ * a table in cleartext and survive failure. The password is minted INSIDE the
+ * task, written straight to `application_secrets`, and never serialized
+ * anywhere else. `test/mail-boundary.test.ts` asserts it.
+ */
+export interface EnsureMailDomainPayload {
+  domainId: string;
+}
+export interface PollMailOwnershipPayload {
+  domainId: string;
+}
+export interface SyncMailboxesPayload {
+  domainId: string;
 }
 
 /**

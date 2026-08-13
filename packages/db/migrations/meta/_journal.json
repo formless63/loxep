@@ -92,6 +92,13 @@
       "when": 1786590369542,
       "tag": "0012_infrastructure_control_plane",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786604840409,
+      "tag": "0013_infrastructure_mail",
+      "breakpoints": true
     }
   ]
 }

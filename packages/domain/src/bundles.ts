@@ -175,6 +175,88 @@ export const secretBundleSchemas = {
   cloudflare_credentials: z.strictObject({
     apiToken: z.string().min(1),
   }),
+  /**
+   * Purelymail API token (ADR-0009, loxep-lmy.2): the single credential the
+   * Infrastructure control plane authenticates every mail-hosting call with,
+   * sent as `Purelymail-Api-Token: <apiToken>`. Verified against the provider's
+   * published OpenAPI document (`components.securitySchemes.token`, an `apiKey`
+   * in a header) and against the live API on 2026-08-13 — an unauthenticated
+   * call answers with a message naming the header itself.
+   *
+   * Only one field, matching `cloudflare_credentials`, `medusa_credentials`,
+   * and `invoiceninja_credentials`: there is no second part to keep atomic
+   * with it.
+   *
+   * **There is no non-secret half to leave out**, unlike every sibling. A
+   * WooCommerce store URL, a Medusa backend URL, and a Cloudflare account id
+   * are each excluded from their bundles because they must stay readable
+   * without a decryption round-trip. Purelymail exposes **no account identifier
+   * at all** — the token IS the account, and no endpoint takes or returns an
+   * account id — so `connections.config` carries nothing for this provider and
+   * the source-account key derives from the base URL alone. The consequence is
+   * worth stating: two Purelymail connections against the same host produce the
+   * same source-account key, so the connection id remains the only
+   * discriminator between them.
+   *
+   * NAMING NOTE: the Phase 7 design's credential table names this purpose
+   * `mail_provider_credentials`, one purpose shared by every mail provider. It
+   * is registered under the PROVIDER name instead, for the reason recorded in
+   * `cloudflare_credentials` above and endorsed by the design's own
+   * implementation note — *"milestones 2 and 3 should follow the provider-named
+   * form too"*.
+   */
+  purelymail_credentials: z.strictObject({
+    apiToken: z.string().min(1),
+  }),
+  /**
+   * A generated mailbox password (ADR-0019, loxep-lmy.2), stored as the
+   * application secret `infrastructure.mailbox.<mailboxes.id>` and referenced
+   * by `mailboxes.secret_id`.
+   *
+   * **This is a credential Loxep MINTS, not one it consumes.** No Loxep adapter
+   * ever authenticates with it; it is generated, handed to the mail provider
+   * once at mailbox creation, and stored. That is the same class as the
+   * milestone-3 per-host DNS token and a different class from every other
+   * purpose in this registry, which is why it is an `application_secrets` row
+   * rather than a `connection_credentials` one — the design's split criterion:
+   * *"an application secret is for encrypted material that is not naturally the
+   * credential of one provider connection"*.
+   *
+   * ## WRITE-ONLY, and ADR-0022 is why that is the FINISHED state here
+   *
+   * Nothing reads this secret back. There is no reveal server function, route,
+   * or UI, and no read member on the port the reconciler writes through.
+   *
+   * ADR-0022 (PROVISIONAL) resolved the design's open question 1 —
+   * *"reveal-once at mint time; write-only forever after"*: plaintext may be
+   * shown to the requesting admin **exactly once, in the response to the
+   * creating action**, and after that response completes no read-back path
+   * exists for anyone.
+   *
+   * **That one-time channel is structurally unavailable to this milestone, and
+   * the reason is worth stating rather than discovering.** Loxep mints a
+   * mailbox password inside `infrastructure.sync-mailboxes`, a Graphile Worker
+   * job. There is no requesting admin, no response, and no tab to show a value
+   * in — the mint happens minutes or days after the operator declared the
+   * mailbox, whenever delegation and ownership verification finally complete.
+   * So clause 1 has nothing to fire into and clause 2 applies from birth: this
+   * value is write-only, and a lost one is a ROTATION (ADR-0022 clause 4),
+   * never a recovery.
+   *
+   * A milestone-3 UI that wants the one-time reveal must therefore move the
+   * mint into a request-scoped admin action rather than adding a read-back to
+   * this purpose — reading a stored value later is precisely what clause 2
+   * forbids, and the distinction is easy to lose.
+   *
+   * Distinct from `smtp_password`, which is a credential Loxep USES to send
+   * mail through someone else's server. Sharing the schema would have merged a
+   * consumed credential with a minted one, and the reveal exception — if it
+   * ever lands — must not widen to consumed credentials by accident. That is
+   * precisely the widening the design's recommendation warns against.
+   */
+  mailbox_password: z.strictObject({
+    password: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

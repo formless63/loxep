@@ -23,7 +23,7 @@ import {
  *      managed domains, DNS records, reconcile runs and steps, drift
  *      findings, and the provider-operation idempotency ledger.
  */
-const MIGRATION_FILE_COUNT = 13;
+const MIGRATION_FILE_COUNT = 14;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

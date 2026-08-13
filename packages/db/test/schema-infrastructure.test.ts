@@ -1,7 +1,9 @@
 /**
- * Migration 0012's Phase 7 milestone-1 DDL against real PostgreSQL:
- * `hosting_targets`, `managed_domains`, `dns_records`, `reconcile_runs`,
- * `reconcile_run_steps`, `dns_drift_findings`, and `provider_operations`.
+ * Phase 7's DDL against real PostgreSQL — migration 0012's milestone-1 tables
+ * (`hosting_targets`, `managed_domains`, `dns_records`, `reconcile_runs`,
+ * `reconcile_run_steps`, `dns_drift_findings`, `provider_operations`) and
+ * migration 0013's milestone-2 mail tables (`mailbox_templates`,
+ * `mailbox_template_entries`, `mail_domains`, `mailboxes`).
  *
  * These write through the pool rather than through a service, because the
  * constraints below are the ones that must hold even when a service forgets
@@ -708,6 +710,373 @@ describe("infrastructure control plane schema (migration 0012)", () => {
            values ('k:unknown', 'cloudflare', 'zone-create', 'in_flight', now())`,
         ),
       ).rejects.toThrow(/provider_operations_status_check/);
+    });
+  });
+
+  /* ------------------------------------- mail (migration 0013, milestone 2) */
+
+  describe("mailbox_templates and mailbox_template_entries", () => {
+    async function insertTemplate(
+      overrides: Record<string, string> = {},
+    ): Promise<string> {
+      const n = nextSeq();
+      return insertRow("mailbox_templates", {
+        name: `'template-${n}'`,
+        ...overrides,
+      });
+    }
+
+    it("requires a template name to be unique", async () => {
+      await insertTemplate({ name: `'standard-addresses'` });
+      await expect(
+        insertTemplate({ name: `'standard-addresses'` }),
+      ).rejects.toThrow(/mailbox_templates_name_uq/);
+    });
+
+    it("permits AT MOST ONE default template, declaratively", async () => {
+      // The design's `unique(is_default) where is_default`. A service-level
+      // check would let two concurrent writers both pass; a partial unique
+      // index cannot.
+      await insertTemplate({ is_default: "true" });
+      await expect(insertTemplate({ is_default: "true" })).rejects.toThrow(
+        /mailbox_templates_default_uq/,
+      );
+      // Any number of NON-default templates coexist: the index covers only
+      // rows where the flag is true.
+      await expect(insertTemplate()).resolves.toBeTypeOf("string");
+      await expect(insertTemplate()).resolves.toBeTypeOf("string");
+    });
+
+    it("ties a forwarding kind to forward_to, both ways", async () => {
+      const templateId = await insertTemplate();
+
+      // An alias with nowhere to forward is a rule with no effect.
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'abuse'`,
+          kind: `'alias'`,
+        }),
+      ).rejects.toThrow(/mailbox_template_entries_forward_to_check/);
+
+      // And a real mailbox that also forwards is two different intentions
+      // wearing one row.
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'postmaster'`,
+          kind: `'mailbox'`,
+          forward_to: `'elsewhere@example.test'`,
+        }),
+      ).rejects.toThrow(/mailbox_template_entries_forward_to_check/);
+
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'postmaster'`,
+          kind: `'mailbox'`,
+        }),
+      ).resolves.toBeTypeOf("string");
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'abuse'`,
+          kind: `'alias'`,
+          forward_to: `'postmaster@example.test'`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("rejects a kind outside the closed set", async () => {
+      const templateId = await insertTemplate();
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'group'`,
+          kind: `'distribution_list'`,
+        }),
+      ).rejects.toThrow(/mailbox_template_entries_kind_check/);
+    });
+
+    it("keeps one entry per local part and cascades with its template", async () => {
+      const templateId = await insertTemplate();
+      await insertRow("mailbox_template_entries", {
+        template_id: `'${templateId}'`,
+        local_part: `'postmaster'`,
+        kind: `'mailbox'`,
+      });
+      await expect(
+        insertRow("mailbox_template_entries", {
+          template_id: `'${templateId}'`,
+          local_part: `'postmaster'`,
+          kind: `'mailbox'`,
+        }),
+      ).rejects.toThrow(/mailbox_template_entries_local_part_uq/);
+
+      await handle.pool.query(`delete from mailbox_templates where id = $1`, [
+        templateId,
+      ]);
+      const remaining = await handle.pool.query(
+        `select 1 from mailbox_template_entries where template_id = $1`,
+        [templateId],
+      );
+      expect(remaining.rowCount).toBe(0);
+    });
+
+    it("is referenced by managed_domains.mailbox_template_id — the FK milestone 1 deferred", async () => {
+      // Migration 0012 shipped the column without its constraint and its
+      // header promised milestone 2 would add it. This is that promise,
+      // asserted rather than assumed.
+      const templateId = await insertTemplate();
+      const domainId = await insertDomain({
+        mailbox_template_id: `'${templateId}'`,
+      });
+      expect(domainId).toBeTypeOf("string");
+
+      await expect(
+        insertDomain({
+          mailbox_template_id: `'00000000-0000-0000-0000-000000000000'`,
+        }),
+      ).rejects.toThrow(/managed_domains_mailbox_template_id/);
+    });
+  });
+
+  describe("mail_domains", () => {
+    async function insertMailDomain(
+      overrides: Record<string, string> = {},
+    ): Promise<string> {
+      const domainId = await insertDomain();
+      await handle.pool.query(
+        `insert into mail_domains (domain_id, mail_connection_id ${
+          Object.keys(overrides).length > 0
+            ? `, ${Object.keys(overrides).join(", ")}`
+            : ""
+        })
+         values ('${domainId}', '${dnsConnectionId}' ${
+           Object.keys(overrides).length > 0
+             ? `, ${Object.values(overrides).join(", ")}`
+             : ""
+         })`,
+      );
+      return domainId;
+    }
+
+    it("is keyed by the domain, so a domain has at most one mail registration", async () => {
+      const domainId = await insertMailDomain();
+      await expect(
+        handle.pool.query(
+          `insert into mail_domains (domain_id, mail_connection_id)
+           values ($1, $2)`,
+          [domainId, dnsConnectionId],
+        ),
+      ).rejects.toThrow(/mail_domains_pkey/);
+    });
+
+    it("stores ownership_code in PLAINTEXT, because it is public by construction", async () => {
+      // The design says so explicitly "so the argument is not had twice": the
+      // code's entire purpose is to be published in a public TXT record.
+      // Someone will eventually propose encrypting it; the answer is no.
+      const code = "purelymail-ownership-code-fake-value";
+      const domainId = await insertMailDomain({ ownership_code: `'${code}'` });
+      const row = await handle.pool.query<{ ownership_code: string }>(
+        `select ownership_code from mail_domains where domain_id = $1`,
+        [domainId],
+      );
+      expect(row.rows[0]?.ownership_code).toBe(code);
+    });
+
+    it("starts unregistered and unverified, with a zero attempt count", async () => {
+      const domainId = await insertMailDomain();
+      const row = await handle.pool.query<{
+        provider_added_at: Date | null;
+        ownership_verified_at: Date | null;
+        verify_attempts: number;
+      }>(
+        `select provider_added_at, ownership_verified_at, verify_attempts
+           from mail_domains where domain_id = $1`,
+        [domainId],
+      );
+      expect(row.rows[0]?.provider_added_at).toBeNull();
+      expect(row.rows[0]?.ownership_verified_at).toBeNull();
+      expect(row.rows[0]?.verify_attempts).toBe(0);
+    });
+
+    it("refuses a verification that precedes registration", async () => {
+      // The provider cannot have verified a domain it never accepted.
+      // Ordering made a constraint rather than a comment, because the
+      // reconciler advances the two independently.
+      await expect(
+        insertMailDomain({ ownership_verified_at: `now()` }),
+      ).rejects.toThrow(/mail_domains_verified_implies_added_check/);
+
+      await expect(
+        insertMailDomain({
+          provider_added_at: `now()`,
+          ownership_verified_at: `now()`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("refuses a negative attempt count", async () => {
+      await expect(
+        insertMailDomain({ verify_attempts: `-1` }),
+      ).rejects.toThrow(/mail_domains_verify_attempts_check/);
+    });
+
+    it("cascades from its domain", async () => {
+      const domainId = await insertMailDomain();
+      await handle.pool.query(`delete from managed_domains where id = $1`, [
+        domainId,
+      ]);
+      const remaining = await handle.pool.query(
+        `select 1 from mail_domains where domain_id = $1`,
+        [domainId],
+      );
+      expect(remaining.rowCount).toBe(0);
+    });
+  });
+
+  describe("mailboxes", () => {
+    async function insertMailbox(
+      domainId: string,
+      overrides: Record<string, string> = {},
+    ): Promise<string> {
+      return insertRow("mailboxes", {
+        domain_id: `'${domainId}'`,
+        local_part: `'postmaster'`,
+        kind: `'mailbox'`,
+        ...overrides,
+      });
+    }
+
+    it("permits one address per domain and rejects the duplicate", async () => {
+      const domainId = await insertDomain();
+      await insertMailbox(domainId);
+      await expect(insertMailbox(domainId)).rejects.toThrow(
+        /mailboxes_domain_local_part_uq/,
+      );
+
+      // The same local part on a DIFFERENT domain is a different address.
+      const other = await insertDomain();
+      await expect(insertMailbox(other)).resolves.toBeTypeOf("string");
+    });
+
+    it("keeps tombstones inside the unique key, so a re-declared address RESURRECTS", async () => {
+      // Open question 7's resolution, applied to the table that shares
+      // `dns_records`' shape: the unique covers soft-deleted rows too, so
+      // re-adding a removed address must clear `desired_deleted_at` rather
+      // than insert a second row.
+      const domainId = await insertDomain();
+      const id = await insertMailbox(domainId);
+      await handle.pool.query(
+        `update mailboxes set desired_deleted_at = now() where id = $1`,
+        [id],
+      );
+      await expect(insertMailbox(domainId)).rejects.toThrow(
+        /mailboxes_domain_local_part_uq/,
+      );
+    });
+
+    it("ties a forwarding kind to forward_to, both ways", async () => {
+      const domainId = await insertDomain();
+      await expect(
+        insertMailbox(domainId, { local_part: `'abuse'`, kind: `'alias'` }),
+      ).rejects.toThrow(/mailboxes_forward_to_check/);
+      await expect(
+        insertMailbox(domainId, {
+          local_part: `'everything'`,
+          kind: `'catchall'`,
+          forward_to: `'postmaster@example.test'`,
+        }),
+      ).resolves.toBeTypeOf("string");
+      await expect(
+        insertMailbox(domainId, {
+          local_part: `'sales'`,
+          kind: `'mailbox'`,
+          forward_to: `'elsewhere@example.test'`,
+        }),
+      ).rejects.toThrow(/mailboxes_forward_to_check/);
+    });
+
+    it("rejects a kind outside the closed set", async () => {
+      const domainId = await insertDomain();
+      await expect(
+        insertMailbox(domainId, { kind: `'shared_inbox'` }),
+      ).rejects.toThrow(/mailboxes_kind_check/);
+    });
+
+    it("references a LOGICAL application_secrets row for the minted password", async () => {
+      // ADR-0019: the reference is to the logical secret, never to a version
+      // row — the same shape `storage_backends.secret_id` and
+      // `notification_endpoints.secret_id` already use.
+      const domainId = await insertDomain();
+      const secret = await handle.pool.query<{ id: string }>(
+        `insert into application_secrets (secret_key, purpose, current_version)
+         values ($1, 'mailbox_password', 1) returning id`,
+        [`infrastructure.mailbox.test-${nextSeq()}`],
+      );
+      const secretId = secret.rows[0]?.id;
+      expect(secretId).toBeTypeOf("string");
+
+      const id = await insertMailbox(domainId, { secret_id: `'${secretId}'` });
+      expect(id).toBeTypeOf("string");
+
+      await expect(
+        insertMailbox(domainId, {
+          local_part: `'sales'`,
+          secret_id: `'00000000-0000-0000-0000-000000000000'`,
+        }),
+      ).rejects.toThrow(/mailboxes_secret_id/);
+    });
+
+    it("cascades from its domain", async () => {
+      const domainId = await insertDomain();
+      await insertMailbox(domainId);
+      await handle.pool.query(`delete from managed_domains where id = $1`, [
+        domainId,
+      ]);
+      const remaining = await handle.pool.query(
+        `select 1 from mailboxes where domain_id = $1`,
+        [domainId],
+      );
+      expect(remaining.rowCount).toBe(0);
+    });
+  });
+
+  describe("identifier length", () => {
+    it("keeps every infrastructure constraint and index name inside PostgreSQL's 63-byte limit", async () => {
+      // PostgreSQL TRUNCATES silently at 63 bytes, so two long generated names
+      // can collide into one. The design names `mailbox_template_entries` as a
+      // candidate; measuring by hand is exactly the wrong tool, so this asks
+      // the live catalog instead.
+      const rows = await handle.pool.query<{ name: string; len: number }>(
+        `select conname as name, length(conname) as len
+           from pg_constraint
+          where conrelid::regclass::text in (
+            'hosting_targets','managed_domains','dns_records','reconcile_runs',
+            'reconcile_run_steps','dns_drift_findings','provider_operations',
+            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes')
+         union all
+         select indexname as name, length(indexname) as len
+           from pg_indexes
+          where tablename in (
+            'hosting_targets','managed_domains','dns_records','reconcile_runs',
+            'reconcile_run_steps','dns_drift_findings','provider_operations',
+            'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes')`,
+      );
+      expect(rows.rowCount).toBeGreaterThan(40);
+      const overlong = rows.rows.filter((row) => row.len > 63);
+      expect(overlong).toEqual([]);
+
+      // The two longest names in Phase 7, present VERBATIM. Truncation is
+      // silent, so "the name exists exactly as written" is the only assertion
+      // that catches it — a length check alone would pass on a truncated name.
+      const names = new Set(rows.rows.map((row) => row.name));
+      expect(names).toContain("mailbox_template_entries_template_fk");
+      expect(names).toContain(
+        "managed_domains_mailbox_template_id_mailbox_templates_id_fk",
+      );
+      expect(names).toContain("hosting_targets_fronted_by_target_fk");
     });
   });
 });

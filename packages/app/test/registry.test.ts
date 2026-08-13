@@ -10,6 +10,11 @@ import {
   SYNC_WOO_ORDERS_TASK_NAME,
 } from "@loxep/commerce";
 import { DISPATCH_TASK_NAME, POLL_TARGET_TASK_NAME } from "@loxep/market";
+import {
+  ENSURE_MAIL_DOMAIN_TASK,
+  POLL_MAIL_OWNERSHIP_TASK,
+  SYNC_MAILBOXES_TASK,
+} from "@loxep/infrastructure";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
@@ -65,6 +70,13 @@ describe("buildWorkerRegistry", () => {
         SYNC_WOO_ORDERS_TASK_NAME,
         SYNC_EBAY_ORDERS_TASK_NAME,
         REDACT_ORDER_PAYLOADS_TASK_NAME,
+        // Phase 7 milestone 2 (loxep-lmy.2). Three tasks and no fourth poll
+        // route: ownership verification is a bounded, self-terminating poll,
+        // which the infrastructure design classifies as NOT scheduling, so it
+        // registers no `monitor_targets` target type.
+        ENSURE_MAIL_DOMAIN_TASK,
+        POLL_MAIL_OWNERSHIP_TASK,
+        SYNC_MAILBOXES_TASK,
         "maintenance.heartbeat",
       ].sort(),
     );

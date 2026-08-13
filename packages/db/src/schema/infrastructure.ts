@@ -1,19 +1,27 @@
 /**
- * Phase 7 Infrastructure control plane — milestone 1 (loxep-lmy.1).
+ * Phase 7 Infrastructure control plane — milestones 1 (loxep-lmy.1) and 2
+ * (loxep-lmy.2).
  *
  * Physical realization of
  * `apps/docs/src/content/docs/architecture/infrastructure-control-design.md`.
- * That design lists twelve tables; this file ships the **seven** its
- * "Migration plan sketch" assigns to milestone 1 (its ordering steps 1, 2, 4,
- * 5, 6, 7):
+ * That design lists twelve tables; this file now ships **eleven** of them.
+ *
+ * Milestone 1 (`0012_infrastructure_control_plane`), ordering steps 1, 2, 4, 5,
+ * 6, 7:
  *
  *   hosting_targets, managed_domains, dns_records, reconcile_runs,
  *   reconcile_run_steps, dns_drift_findings, provider_operations
  *
- * Deliberately NOT here, and why:
+ * Milestone 2 (`0013_infrastructure_mail`), ordering steps 3 and 9:
  *
  *   mailbox_templates, mailbox_template_entries, mail_domains, mailboxes
- *                              milestone 2 (design ordering steps 3 and 9)
+ *
+ * plus the one constraint milestone 1 deferred by name:
+ * `managed_domains.mailbox_template_id` gains its foreign key, exactly as that
+ * migration's header promised.
+ *
+ * Deliberately NOT here, and why:
+ *
  *   dns_provider_tokens, dns_provider_token_zones
  *                              milestone 3 (design ordering step 8)
  *
@@ -61,12 +69,18 @@
  *
  * The design requires explicit constraint names "where the generated name
  * would exceed PostgreSQL's 63-byte identifier limit" and names
- * `dns_provider_token_zones` / `mailbox_template_entries` — both milestone-2/3
- * tables — as the candidates. Every generated name in THIS file was measured;
- * the longest is
- * `hosting_targets_fronted_by_target_id_hosting_targets_id_fk` at 59 bytes.
- * The self-reference is still declared with an explicit name because Drizzle
- * requires the `foreignKey()` form for it.
+ * `dns_provider_token_zones` / `mailbox_template_entries` as the candidates.
+ * Every generated name in this file was measured. The longest milestone-1 name
+ * is `hosting_targets_fronted_by_target_id_hosting_targets_id_fk` (59); the
+ * longest milestone-2 name would have been
+ * `mailbox_template_entries_template_id_mailbox_templates_id_fk` (60) — inside
+ * the limit, with three bytes of headroom and silent truncation as the failure
+ * mode, so it is named explicitly as the design asked. The other two long
+ * candidates measured 59 (`managed_domains_mailbox_template_id_…_fk`) and 44
+ * (`mail_domains_domain_id_managed_domains_id_fk`).
+ * `test/schema-infrastructure.test.ts` asserts the limit against the live
+ * catalog rather than trusting arithmetic — PostgreSQL truncates silently, so
+ * measuring by hand is exactly the wrong tool.
  */
 import { sql } from "drizzle-orm";
 import {
@@ -88,6 +102,7 @@ import {
 import { user } from "./auth.ts";
 import { connections } from "./connections.ts";
 import { monitorTargets } from "./monitoring.ts";
+import { applicationSecrets } from "./settings.ts";
 
 /* ------------------------------------------------------------------ unions */
 
@@ -279,10 +294,48 @@ export type ProviderOperationStatus =
 export const INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE =
   "infrastructure_domain_reconcile";
 
+/**
+ * `mailbox_template_entries.kind` and `mailboxes.kind` — CLOSED and `CHECK`ed
+ * in both tables (milestone 2, loxep-lmy.2).
+ *
+ *   mailbox    a real account at the mail provider, with its own password
+ *   alias      an address that forwards; no account, no password
+ *   catchall   everything not matching a mailbox or alias, forwarded
+ *
+ * Loxep-owned, and closed on purpose: the three values decide which provider
+ * call a sync makes (a user create versus a routing rule), so a fourth value
+ * arriving from a provider would have no implementation and must fail loudly
+ * at the constraint rather than silently at the switch.
+ */
+export const MAILBOX_KINDS = ["mailbox", "alias", "catchall"] as const;
+export type MailboxKind = (typeof MAILBOX_KINDS)[number];
+
 /** `audit_events.resource_type` values this domain writes. */
 export const MANAGED_DOMAIN_RESOURCE_TYPE = "managed_domain";
 /** `audit_events.resource_type` values this domain writes. */
 export const HOSTING_TARGET_RESOURCE_TYPE = "hosting_target";
+/** `audit_events.resource_type` values this domain writes (milestone 2). */
+export const MAILBOX_TEMPLATE_RESOURCE_TYPE = "mailbox_template";
+/** `audit_events.resource_type` values this domain writes (milestone 2). */
+export const MAIL_DOMAIN_RESOURCE_TYPE = "mail_domain";
+/** `audit_events.resource_type` values this domain writes (milestone 2). */
+export const MAILBOX_RESOURCE_TYPE = "mailbox";
+
+/**
+ * `application_secrets.secret_key` for a generated mailbox password, following
+ * the design's stated convention `infrastructure.mailbox.<mailboxes.id>`.
+ *
+ * The value behind this key is WRITE-ONLY: it is minted, handed to the provider
+ * once, and stored. No surface reads it back.
+ *
+ * ADR-0022 (PROVISIONAL) permits a one-time reveal *"in the response to the
+ * creating action"* and forbids any read-back after it. Milestone 2's mint has
+ * no such response — it happens inside a worker job with no admin waiting on
+ * it — so this value is write-only from birth, and a lost one is a rotation.
+ */
+export function mailboxSecretKey(mailboxId: string): string {
+  return `infrastructure.mailbox.${mailboxId}`;
+}
 
 /* ----------------------------------------------------------------- tables */
 
@@ -428,13 +481,14 @@ export const managedDomains = pgTable(
     wildcardProxied: boolean("wildcard_proxied").notNull().default(true),
     mailEnabled: boolean("mail_enabled").notNull().default(true),
     /**
-     * Milestone 2's `mailbox_templates` does not exist yet, so this column
-     * ships WITHOUT its foreign key and milestone 2 adds the constraint. Same
-     * reasoning as `hosting_targets.proxy_connection_id`: a nullable unused
-     * column now is cheaper than an `ALTER TABLE ... ADD COLUMN` later, and an
-     * `ADD CONSTRAINT` against an empty relationship is free.
+     * Shipped without its foreign key in milestone 1 (`mailbox_templates` did
+     * not exist yet); **milestone 2 adds the constraint**, exactly as that
+     * migration's header promised. `ADD CONSTRAINT` against an empty
+     * relationship is free; `ADD COLUMN` later would not have been.
      */
-    mailboxTemplateId: uuid("mailbox_template_id"),
+    mailboxTemplateId: uuid("mailbox_template_id").references(
+      () => mailboxTemplates.id,
+    ),
     /**
      * Design open question 5, PROVISIONAL: recurring reconcile cadence lives on
      * the shared scheduling model, one `monitor_targets` row per domain with
@@ -871,5 +925,244 @@ export const providerOperations = pgTable(
       "provider_operations_completed_at_check",
       sql`(${table.status} = 'pending') = (${table.completedAt} is null)`,
     ),
+  ],
+);
+
+/* ------------------------------------------------- mail (milestone 2) ---- */
+
+/**
+ * The data-driven standard address set — design ordering step 3, independent of
+ * every other table.
+ *
+ * **This is what makes "provision the standard addresses" a setting rather than
+ * a deploy.** Edit the template once and every future domain picks it up; the
+ * alternative is a hardcoded list inside the materializer that nobody can
+ * change without shipping code.
+ *
+ * `unique(is_default) where is_default` enforces "at most one default"
+ * declaratively — a partial unique index over a boolean, which is the standard
+ * PostgreSQL idiom for a singleton flag and is preferable to a service-level
+ * check that two concurrent writers can both pass.
+ */
+export const mailboxTemplates = pgTable(
+  "mailbox_templates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("mailbox_templates_name_uq").on(table.name),
+    // "At most one default", declaratively.
+    uniqueIndex("mailbox_templates_default_uq")
+      .on(table.isDefault)
+      .where(sql`${table.isDefault}`),
+  ],
+);
+
+/**
+ * One address in a template.
+ *
+ * `generate_password` is per ENTRY rather than per template, because the
+ * distinction it encodes is real: `postmaster` wants a real account with a
+ * password, `abuse` is usually an alias that forwards to it, and a template
+ * that could not express both would be replaced by a hardcoded list within a
+ * month.
+ *
+ * ## Explicit foreign-key name
+ *
+ * The design names this table as one of the two candidates for exceeding
+ * PostgreSQL's 63-byte identifier limit, so it was measured rather than
+ * assumed: the generated name
+ * `mailbox_template_entries_template_id_mailbox_templates_id_fk` is 60 bytes —
+ * inside the limit, but with three bytes of headroom and a silent truncation as
+ * the failure mode. It is named explicitly anyway, which is what the design
+ * asked for and costs nothing.
+ */
+export const mailboxTemplateEntries = pgTable(
+  "mailbox_template_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    templateId: uuid("template_id").notNull(),
+    /** Local part only — `postmaster`, never `postmaster@example.com`. */
+    localPart: text("local_part").notNull(),
+    /** Closed set: see {@link MAILBOX_KINDS}. */
+    kind: text("kind").notNull(),
+    forwardTo: text("forward_to"),
+    generatePassword: boolean("generate_password").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "mailbox_template_entries_template_fk",
+      columns: [table.templateId],
+      foreignColumns: [mailboxTemplates.id],
+    }).onDelete("cascade"),
+
+    unique("mailbox_template_entries_local_part_uq").on(
+      table.templateId,
+      table.localPart,
+    ),
+
+    check(
+      "mailbox_template_entries_kind_check",
+      sql`${table.kind} in ('mailbox', 'alias', 'catchall')`,
+    ),
+    // A forwarding kind must say where, and a real mailbox must not: the
+    // biconditional catches both halves in one constraint.
+    check(
+      "mailbox_template_entries_forward_to_check",
+      sql`(${table.kind} in ('alias', 'catchall')) = (${table.forwardTo} is not null)`,
+    ),
+  ],
+);
+
+/**
+ * Mail-provider registration and ownership-verification state for one domain —
+ * design ordering step 9.
+ *
+ * `domain_id` is the PRIMARY KEY, not a plain foreign key: a managed domain has
+ * at most one mail registration, and making that a primary key says so with a
+ * constraint instead of a convention.
+ *
+ * ## `ownership_code` is NOT a secret, and must not be treated as one
+ *
+ * Its entire purpose is to be published in a public `TXT` record. The design
+ * says so explicitly *"so the argument is not had twice"*: it is stored in
+ * plaintext `text`, it is safe in a redacted run-step summary, and it must not
+ * be moved into `application_secrets`. Verified against Purelymail's own API on
+ * 2026-08-13, the code is per-ACCOUNT rather than per-domain (`getOwnershipCode`
+ * takes an empty request body), which makes the point even sharper — the same
+ * published value proves every domain in the account.
+ *
+ * ## The verification counters exist because delegation takes days
+ *
+ * `verify_attempts` / `last_verify_error` / `last_verify_at` are the resumable
+ * half of the design's delegation gate. Ownership verification cannot succeed
+ * while the registrar still delegates elsewhere, so a failed attempt is an
+ * expected intermediate state rather than an error — it is recorded here,
+ * surfaced in the UI, and retried by the next bounded poll. It is deliberately
+ * NOT a `managed_domains.state` regression: `state` only ever advances.
+ */
+export const mailDomains = pgTable(
+  "mail_domains",
+  {
+    domainId: uuid("domain_id")
+      .primaryKey()
+      .references(() => managedDomains.id, { onDelete: "cascade" }),
+    mailConnectionId: uuid("mail_connection_id")
+      .notNull()
+      .references(() => connections.id),
+    /** Set when the provider accepted the domain. Evidence, not intent. */
+    providerAddedAt: timestamp("provider_added_at", { withTimezone: true }),
+    /** PUBLIC by construction. See the table note; never encrypt this. */
+    ownershipCode: text("ownership_code"),
+    ownershipVerifiedAt: timestamp("ownership_verified_at", {
+      withTimezone: true,
+    }),
+    verifyAttempts: integer("verify_attempts").notNull().default(0),
+    /** The adapter's taxonomy kind plus a sanitized message. Never a payload. */
+    lastVerifyError: text("last_verify_error"),
+    lastVerifyAt: timestamp("last_verify_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    check("mail_domains_verify_attempts_check", sql`${table.verifyAttempts} >= 0`),
+    // Verification implies registration: the provider cannot have verified a
+    // domain it never accepted. Ordering made a constraint rather than a
+    // comment, because the reconciler advances the two independently.
+    check(
+      "mail_domains_verified_implies_added_check",
+      sql`${table.ownershipVerifiedAt} is null or ${table.providerAddedAt} is not null`,
+    ),
+
+    // "Which domains are still waiting on ownership verification" — the
+    // bounded poll's work list, and the UI's "needs attention" panel.
+    index("mail_domains_unverified_idx")
+      .on(table.domainId)
+      .where(sql`${table.ownershipVerifiedAt} is null`),
+  ],
+);
+
+/**
+ * The intended mailboxes and aliases for one domain — INTENT, materialized from
+ * a template or authored directly, never a mirror of provider state.
+ *
+ * `secret_id` points at a **logical** `application_secrets` record, never a
+ * version row — ADR-0019's rule, and the same shape `storage_backends.secret_id`
+ * and `notification_endpoints.secret_id` already use. The generated password is
+ * written under `mailboxSecretKey(id)` with the `mailbox_password` purpose.
+ *
+ * **That secret is write-only.** It is minted, sent to the provider once, and
+ * stored; nothing reads it back. ADR-0022 (PROVISIONAL) resolved the design's
+ * open question 1 as "reveal-once at mint time, write-only forever after" —
+ * and milestone 2's mint happens inside a worker job, where there is no
+ * creating response to reveal into, so only the second half applies. A lost
+ * password is a rotation, never a recovery.
+ *
+ * `desired_deleted_at` is a soft delete for the same reason `dns_records` has
+ * one: sync must tell "remove this mailbox at the provider" apart from "this
+ * mailbox never existed", and a deleted mailbox is exactly the history somebody
+ * will need. A mailbox delete is also destructive at the provider in a way a
+ * DNS record is not — it takes the mail with it.
+ */
+export const mailboxes = pgTable(
+  "mailboxes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    domainId: uuid("domain_id")
+      .notNull()
+      .references(() => managedDomains.id, { onDelete: "cascade" }),
+    /** Local part only. The provider is told `local_part@domain`. */
+    localPart: text("local_part").notNull(),
+    /** Closed set: see {@link MAILBOX_KINDS}. */
+    kind: text("kind").notNull(),
+    forwardTo: text("forward_to"),
+    /** LOGICAL `application_secrets` id (ADR-0019), never a version row. */
+    secretId: uuid("secret_id").references(() => applicationSecrets.id),
+    providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
+    desiredDeletedAt: timestamp("desired_deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // The design's index strategy names exactly this one. It covers tombstones
+    // for the same reason `dns_records`' natural key does: a re-declared
+    // address is RESURRECTED, not inserted a second time (open question 7's
+    // resolution, applied to the table that shares its shape).
+    unique("mailboxes_domain_local_part_uq").on(table.domainId, table.localPart),
+
+    check(
+      "mailboxes_kind_check",
+      sql`${table.kind} in ('mailbox', 'alias', 'catchall')`,
+    ),
+    // Mirrors mailbox_template_entries, deliberately: an intent row derived
+    // from a template must not be able to hold a shape its template could not.
+    check(
+      "mailboxes_forward_to_check",
+      sql`(${table.kind} in ('alias', 'catchall')) = (${table.forwardTo} is not null)`,
+    ),
+
+    // The sync read: live intent for one domain.
+    index("mailboxes_domain_id_live_idx")
+      .on(table.domainId)
+      .where(sql`${table.desiredDeletedAt} is null`),
   ],
 );

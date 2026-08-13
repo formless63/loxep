@@ -21,8 +21,10 @@ describe("secret bundle registry", () => {
       "ebay_keyset",
       "etsy_keyset",
       "invoiceninja_credentials",
+      "mailbox_password",
       "medusa_credentials",
       "oauth_tokens",
+      "purelymail_credentials",
       "s3_credentials",
       "smtp_password",
       "token",
@@ -331,6 +333,99 @@ describe("cloudflare_credentials bundle (the Cloudflare API token)", () => {
       const message = (error as Error).message;
       expect(message).toContain("apiToken");
       expect(message).not.toContain(FAKE_CF_TOKEN);
+    }
+  });
+});
+
+describe("purelymail_credentials bundle (the Purelymail API token)", () => {
+  const FAKE_PM_TOKEN = "fake-purelymail-api-token-00000000000000000";
+
+  it("accepts a lone API token", () => {
+    expect(
+      validateBundle("purelymail_credentials", { apiToken: FAKE_PM_TOKEN }),
+    ).toEqual({ apiToken: FAKE_PM_TOKEN });
+  });
+
+  it("rejects an empty or missing token", () => {
+    expect(() => validateBundle("purelymail_credentials", {})).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("purelymail_credentials", { apiToken: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("purelymail_credentials", {
+        apiToken: FAKE_PM_TOKEN,
+        baseUrl: "https://purelymail.com",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("purelymail_credentials", { apiToken: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("apiToken");
+      expect(message).not.toContain(FAKE_PM_TOKEN);
+    }
+  });
+});
+
+describe("mailbox_password bundle (a credential Loxep MINTS)", () => {
+  const FAKE_PASSWORD = "fake-minted-mailbox-password-0000000000";
+
+  it("accepts a lone password", () => {
+    expect(
+      validateBundle("mailbox_password", { password: FAKE_PASSWORD }),
+    ).toEqual({ password: FAKE_PASSWORD });
+  });
+
+  it("rejects an empty or missing password", () => {
+    expect(() => validateBundle("mailbox_password", {})).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("mailbox_password", { password: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("carries no address, mailbox id, or provider identity", () => {
+    // The bundle is the SECRET and nothing else. Identity lives on the
+    // `mailboxes` row and in the secret key `infrastructure.mailbox.<id>`;
+    // duplicating it inside the ciphertext would mean two places to keep
+    // consistent and one of them undiscoverable without decryption.
+    expect(() =>
+      validateBundle("mailbox_password", {
+        password: FAKE_PASSWORD,
+        address: "postmaster@example.test",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("is a SEPARATE purpose from smtp_password, which Loxep consumes", () => {
+    // Same shape, deliberately not shared: `smtp_password` is a credential
+    // Loxep USES to send mail through someone else's server, and a future
+    // operator-reveal exception for minted secrets must not widen to it by
+    // accident.
+    expect(secretPurposes).toContain("mailbox_password");
+    expect(secretPurposes).toContain("smtp_password");
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("mailbox_password", { password: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("password");
+      expect(message).not.toContain(FAKE_PASSWORD);
     }
   });
 });

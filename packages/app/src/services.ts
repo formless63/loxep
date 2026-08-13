@@ -37,6 +37,8 @@ import type {
 import type { JobsLogger } from "@loxep/jobs";
 import { createCloudflareAdapterFactory } from "./cloudflare.ts";
 import type { CloudflareAdapterFactory } from "./cloudflare.ts";
+import { createPurelymailAdapterFactory } from "./purelymail.ts";
+import type { PurelymailAdapterFactory } from "./purelymail.ts";
 import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
 import { createEtsyAdapterFactory } from "./etsy.ts";
@@ -83,6 +85,13 @@ export interface BuildAppServicesOptions {
    * without spending wall-clock time waiting on refills.
    */
   cloudflareRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Purelymail token bucket (Phase 7 milestone 2
+   * composition-root wiring, loxep-lmy.2). Production uses `purelymail.ts`'s
+   * documented defaults; there is no registered setting for it yet, unlike
+   * eBay/Woo.
+   */
+  purelymailRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -147,6 +156,19 @@ export interface AppServices {
   invalidateCloudflareAdapter: (connectionId: string) => void;
   /** The Cloudflare interval floor implied by the DEFAULT/overridden budget. */
   cloudflareIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Purelymail adapter — Phase 7 milestone 2's
+   * composition-root wiring (loxep-lmy.2). Per-CONNECTION like Cloudflare, and
+   * with NO non-secret configuration at all: Purelymail exposes no account
+   * identifier, so `connections.config` carries nothing for this provider. See
+   * `purelymail.ts`'s module doc, including why its `sourceAccountKey` is not
+   * unique across two tokens.
+   */
+  getPurelymailAdapterForConnection: PurelymailAdapterFactory;
+  /** Drop a cached Purelymail adapter (after an `auth`-class provider failure). */
+  invalidatePurelymailAdapter: (connectionId: string) => void;
+  /** The Purelymail interval floor implied by the DEFAULT/overridden budget. */
+  purelymailIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -224,6 +246,18 @@ export function buildAppServices(
       : {}),
   });
 
+  // PER-CONNECTION, and deliberately gentler than Cloudflare's: Purelymail
+  // publishes no API rate limit at all, and an undocumented limit is one
+  // nobody can design against. See purelymail.ts's module doc.
+  const purelymail = createPurelymailAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.purelymailRateBudget !== undefined
+      ? { rateBudget: options.purelymailRateBudget }
+      : {}),
+  });
+
   let closed = false;
   return {
     config,
@@ -246,6 +280,9 @@ export function buildAppServices(
     getCloudflareAdapterForConnection: cloudflare.getAdapterForConnection,
     invalidateCloudflareAdapter: cloudflare.invalidate,
     cloudflareIntervalFloorSeconds: cloudflare.intervalFloorSeconds,
+    getPurelymailAdapterForConnection: purelymail.getAdapterForConnection,
+    invalidatePurelymailAdapter: purelymail.invalidate,
+    purelymailIntervalFloorSeconds: purelymail.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;

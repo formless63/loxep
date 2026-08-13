@@ -153,6 +153,7 @@ import {
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
+import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
@@ -365,12 +366,21 @@ export function buildWorkerRegistry(
   // --- eBay token lifecycle -------------------------------------------
   const refresh = createEbayTokenRefreshTasks({ services });
 
+  // --- infrastructure mail (Phase 7 milestone 2, loxep-lmy.2) ----------
+  // Three TASKS and no poll-executor route, deliberately: ownership
+  // verification is a bounded, self-terminating poll, which the design's
+  // "Where recurring cadence lives" section classifies as NOT scheduling. See
+  // `infrastructure-mail.ts`'s module doc for why no fourth `monitor_targets`
+  // target type is registered here.
+  const infrastructureMail = createInfrastructureMailTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
     delivery.deliverTask,
     refresh.refreshTokensTask,
     ...commerce.tasks,
+    ...infrastructureMail.tasks,
   ]);
 
   return {

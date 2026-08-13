@@ -35,8 +35,24 @@
  * tasks.ts        materialize-records / sync-records, and add_job through a tx
  * ```
  *
- * Mail (milestone 2) and minted tokens plus the `/infrastructure` workspace
- * (milestone 3) are deliberately absent.
+ * ## What milestone 2 adds (loxep-lmy.2)
+ *
+ * ```text
+ * mail.ts         templates, mail enablement, mailbox INTENT
+ * mail-port.ts    the mail provider contract, re-declared structurally
+ * mail-sync.ts    the resumable mail reconciler AND THE DELEGATION GATE
+ * ```
+ *
+ * Its one load-bearing idea, in one sentence: mail provisioning contains a step
+ * that takes **days and is performed by a human at a registrar**, so the whole
+ * workflow is a resumable desired-state loop that advances as far as it can and
+ * records where it stopped — never a script that has to run to completion.
+ * `isDelegationConfirmed` is the gate that keeps it from spending provider
+ * calls on a question DNS cannot yet answer.
+ *
+ * Minted tokens and the `/infrastructure` workspace (milestone 3) are
+ * deliberately absent, as is any path that reads a stored mailbox password
+ * back — `MailboxSecretWriter` has no read member at all.
  */
 export {
   InfrastructureError,
@@ -145,9 +161,68 @@ export {
   jobKeysInQueue,
 } from "./tasks.ts";
 export type {
+  EnsureMailDomainPayload,
   MaterializeRecordsPayload,
+  PollMailOwnershipPayload,
+  SyncMailboxesPayload,
   SyncRecordsPayload,
 } from "./tasks.ts";
+
+/* ------------------------------------------------- mail (milestone 2) ---- */
+
+export {
+  ENSURE_MAIL_DOMAIN_TASK,
+  MAILBOX_RESOURCE_TYPE,
+  MAILBOX_TEMPLATE_RESOURCE_TYPE,
+  MAIL_DOMAIN_RESOURCE_TYPE,
+  POLL_MAIL_OWNERSHIP_TASK,
+  SYNC_MAILBOXES_TASK,
+  createMailDomainsService,
+  createMailboxTemplatesService,
+} from "./mail.ts";
+export type {
+  ApplyTemplateResult,
+  CreateMailboxTemplateInput,
+  EnableMailInput,
+  MailDomainRow,
+  MailDomainsService,
+  MailboxInput,
+  MailboxRow,
+  MailboxTemplateEntryInput,
+  MailboxTemplateEntryRow,
+  MailboxTemplateRow,
+  MailboxTemplatesService,
+} from "./mail.ts";
+
+export type {
+  CreateMailRoutingRuleInput,
+  CreateMailUserInput,
+  MailDnsRecord,
+  MailDnsSummary,
+  MailDomainState,
+  MailProviderCapabilities,
+  MailProviderPort,
+  MailRoutingRule,
+  MailboxSecretWriter,
+  PasswordMinter,
+} from "./mail-port.ts";
+
+export {
+  MAILBOX_RUN_KIND,
+  MAIL_DOMAIN_RUN_KIND,
+  createMailSyncService,
+  defaultPasswordMinter,
+  isDelegationConfirmed,
+  nextState,
+} from "./mail-sync.ts";
+export type {
+  CreateMailSyncServiceOptions,
+  MailDomainOutcome,
+  MailDomainSyncResult,
+  MailSyncService,
+  MailboxSyncResult,
+  RunMailSyncInput,
+} from "./mail-sync.ts";
 
 /**
  * The monitor target type this domain registers against the SHARED scheduling
