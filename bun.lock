@@ -249,6 +249,18 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/integrations/cloudflare": {
+      "name": "@loxep/integration-cloudflare",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/integrations/ebay": {
       "name": "@loxep/integration-ebay",
       "version": "0.0.0",
@@ -837,6 +849,8 @@
     "@loxep/docs": ["@loxep/docs@workspace:apps/docs"],
 
     "@loxep/domain": ["@loxep/domain@workspace:packages/domain"],
+
+    "@loxep/integration-cloudflare": ["@loxep/integration-cloudflare@workspace:packages/integrations/cloudflare"],
 
     "@loxep/integration-ebay": ["@loxep/integration-ebay@workspace:packages/integrations/ebay"],
 
