@@ -5,8 +5,9 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * /inventory workspace critical flow (loxep-dgf.2, M2): create an
  * acquisition (the direct path — "create acquisition via the market handoff
  * or direct" per the milestone's acceptance), add an item to it through the
- * intake form, and confirm the row lands, in `Intake` status, in the stock
- * table. Mirrors `finance.spec.ts`'s pattern for M1.
+ * intake form, confirm the row lands, in `Intake` status, in the stock
+ * table, then complete the review and confirm it moves to `Available`.
+ * Mirrors `finance.spec.ts`'s pattern for M1.
  *
  * `createAcquisition`/`createInventoryItem` (`@/server/inventory-functions.ts`)
  * call the real `@loxep/inventory` services (`createAcquisitionsService`,
@@ -14,6 +15,17 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * the same `@vite-ignore` lazy-module pattern `@loxep/market` uses (see
  * `admin.ts`'s `getInventoryModule` doc) — exactly the shape
  * `QuickExpenseDialog`'s create flow exercises for `/finance`.
+ *
+ * The create-time receipt movement used to promote a new item straight past
+ * `intake` (a real bug this spec's first run caught — `deriveItemStatus`,
+ * `packages/inventory/src/movements.ts`, now preserves `intake` while stock
+ * remains, the same way it already preserved `listed`/`reserved`). Leaving
+ * `intake` is `completeItemIntakeReview`'s job (`itemsService.completeIntakeReview`,
+ * `packages/inventory/src/items.ts`) — a status-only, one-way transition
+ * exercised here from the item detail page rather than the intake-filtered
+ * list, because completing review removes the row from a `status=intake`
+ * filtered view (it no longer matches), which would make "still visible,
+ * now Available" an untestable assertion on that view.
  */
 
 const runId = Date.now();
@@ -69,10 +81,23 @@ test('creates an acquisition, adds an item to it, and the item lands in the stoc
   await expect(lotItemRow.getByText('Intake')).toBeVisible();
 
   // And the intake review queue (`/inventory/stock?status=intake`, reachable
-  // from the "Intake review" nav entry) shows the same row.
+  // from the "Intake review" nav entry) shows the same row, with a "Complete
+  // review" action now that it isn't silently skipping intake.
   await page.goto('/inventory/intake');
   await page.waitForURL('**/inventory/stock**');
   const stockRow = tableRow(page, itemLabel);
   await expect(stockRow).toBeVisible();
   await expect(stockRow.getByText('Intake')).toBeVisible();
+  await expect(stockRow.getByRole('button', { name: 'Complete review' })).toBeVisible();
+
+  // Complete review from the item's own detail page: the intake-filtered
+  // list drops the row the moment it leaves `intake`, so asserting the
+  // Available badge has to happen somewhere that keeps showing the item
+  // regardless of status.
+  await stockRow.getByRole('link').first().click();
+  await page.waitForURL('**/inventory/stock/*');
+  await expect(page.getByText('Intake', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Complete review' }).click();
+  await expect(page.getByText('Available', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Complete review' })).toHaveCount(0);
 });

@@ -435,6 +435,24 @@ export const createInventoryItem = createServerFn({ method: 'POST' })
     return { id: item.id, itemCode: item.itemCode };
   });
 
+/**
+ * "Complete review" — the ONLY exit from `intake` (`itemsService.completeIntakeReview`,
+ * `packages/inventory/src/items.ts`). Status-only: no quantity or movement
+ * changes. Session-gated like every other write here — completing a review
+ * is ordinary operator work, not an administrative action. The service
+ * refuses (`InventoryValidationError`) when the item is not currently
+ * `intake`, which reaches the caller as a mutation error.
+ */
+export const completeItemIntakeReview = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string; status: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    await requireSession();
+    const itemsService = await getItemsService();
+    const item = await itemsService.completeIntakeReview(data.id);
+    return { id: item.id, status: item.status };
+  });
+
 // ---------------------------------------------------------------------------
 // Locations
 // ---------------------------------------------------------------------------

@@ -191,6 +191,12 @@ function assertSign(kind: MovementKind, quantity: string): void {
  * written_off / archived   never touched — a decision, not a quantity
  * listed / reserved        preserved while stock remains; a channel state
  *                          outlives a balance change
+ * intake                   preserved while stock remains; leaving review is a
+ *                          human decision, not a side effect of the receipt
+ *                          movement that put the stock on hand (found live by
+ *                          the first /inventory e2e: the create-time default
+ *                          receipt was silently promoting every new item past
+ *                          the intake review screen)
  * anything else            available | partially_depleted | depleted
  * ```
  */
@@ -202,7 +208,9 @@ export function deriveItemStatus(
   if (current === "written_off" || current === "archived") return current;
   if (compareDecimals(quantityOnHand, "0") <= 0) return "depleted";
   if (compareDecimals(quantityOnHand, quantity) < 0) return "partially_depleted";
-  if (current === "listed" || current === "reserved") return current;
+  if (current === "listed" || current === "reserved" || current === "intake") {
+    return current;
+  }
   return "available";
 }
 

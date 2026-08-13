@@ -37,7 +37,11 @@ describe("movements", () => {
       quantity: "100",
     });
     expect(item.quantityOnHand).toBe("100.000000");
-    expect(item.status).toBe("available");
+    // The receipt movement puts stock on hand but must not exit intake by
+    // itself — leaving review is a human decision (`completeIntakeReview`),
+    // never a side effect of the receipt (regression: this used to read
+    // "available" the moment the item was created).
+    expect(item.status).toBe("intake");
     expect(await movements().ledgerBalance(item.id)).toBe("100.000000");
   });
 
@@ -290,8 +294,17 @@ describe("movements", () => {
       expect(deriveItemStatus("listed", "0", "1")).toBe("depleted");
     });
 
-    it("moves intake to available on receipt", () => {
-      expect(deriveItemStatus("intake", "1", "1")).toBe("available");
+    it("preserves intake across the create-time receipt movement, same as a channel state", () => {
+      // Regression: the receipt movement that puts a hand-entered item on
+      // hand must NOT promote it past intake — leaving review is a human
+      // decision, never a side effect of a quantity change. Found live by
+      // the first `/inventory` e2e run, which showed every new item
+      // silently skipping the intake review screen.
+      expect(deriveItemStatus("intake", "1", "1")).toBe("intake");
+    });
+
+    it("still depletes an intake item that ran out", () => {
+      expect(deriveItemStatus("intake", "0", "1")).toBe("depleted");
     });
 
     it("reports a partial balance as partially_depleted", () => {

@@ -319,6 +319,29 @@ describe("inventory items", () => {
     ).rejects.toThrow(InventoryValidationError);
   });
 
+  /* ------------------------------------------------------- intake review */
+
+  it("completes intake review (intake -> available) and refuses when the item is not in intake", async () => {
+    const item = await items().create({
+      label: "a boxed lot find",
+      currency: "USD",
+    });
+    // The create-time default receipt movement must NOT have promoted this
+    // past intake — the bug `deriveItemStatus`'s intake-preservation rule
+    // fixes (found live by the first `/inventory` e2e run).
+    expect(item.status).toBe("intake");
+
+    const reviewed = await items().completeIntakeReview(item.id);
+    expect(reviewed.status).toBe("available");
+    // Quantities are untouched: review is a status-only transition, never a
+    // movement — quantities and movements remain the sole authority.
+    expect(reviewed.quantityOnHand).toBe(item.quantityOnHand);
+
+    await expect(items().completeIntakeReview(item.id)).rejects.toThrow(
+      InventoryValidationError,
+    );
+  });
+
   it("leaves the ledger and the cache in agreement after every operation above", async () => {
     const result = await movements().reconcile();
     expect(result.drift).toHaveLength(0);

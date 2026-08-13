@@ -259,6 +259,21 @@ export interface ItemsService {
    * cache is one thing that can drift instead of two.
    */
   availableToSell: (inventoryItemId: string) => Promise<string>;
+  /**
+   * The ONLY exit from `intake`. {@link deriveItemStatus} deliberately
+   * preserves `intake` across every movement while stock remains — leaving
+   * review is a human decision, never a side effect of the receipt movement
+   * that put the stock on hand (see that function's doc; found live by the
+   * first `/inventory` e2e run, which showed every hand-entered item
+   * silently skipping the review screen the moment it was created). This
+   * touches `status` ONLY — never `quantity_on_hand` or a movement row,
+   * because quantities and movements remain the authority and this is
+   * purely the human-decision half `deriveItemStatus` refuses to infer.
+   * Refuses (does not silently no-op) when the item is not currently
+   * `intake`, so a stale UI action can't quietly relabel an item that has
+   * since been listed, sold, or written off.
+   */
+  completeIntakeReview: (inventoryItemId: string) => Promise<InventoryItemRow>;
 }
 
 export function createItemsService(options: { db: LoxepDb }): ItemsService {
@@ -727,6 +742,25 @@ export function createItemsService(options: { db: LoxepDb }): ItemsService {
       }
       return value;
     },
+
+    completeIntakeReview: async (inventoryItemId) =>
+      db.transaction(async (tx) => {
+        const item = await loadItem(tx, inventoryItemId);
+        if (item.status !== "intake") {
+          throw new InventoryValidationError(
+            `cannot complete intake review for "${item.itemCode}": its status ` +
+              `is "${item.status}", not "intake" — review is a one-way exit, ` +
+              "not a general status setter",
+          );
+        }
+        await tx.execute(
+          `update inventory_items
+              set status = 'available',
+                  updated_at = now()
+            where id = ${uuidLiteral(inventoryItemId)}`,
+        );
+        return loadItem(tx, inventoryItemId);
+      }),
   };
 }
 

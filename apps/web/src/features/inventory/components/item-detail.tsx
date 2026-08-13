@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -11,9 +13,11 @@ import {
   TableRow
 } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
+import { toastError } from '@/lib/errors';
 import { formatDate, formatDateTime, formatMoney, formatQuantity, formatScore } from '@/lib/format';
 import { inventoryItemQuery } from '@/features/inventory/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import { completeItemIntakeReview } from '@/server/inventory-functions';
 import {
   itemConditionLabel,
   itemStatusLabel,
@@ -33,6 +37,16 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 export default function ItemDetail({ itemId }: { itemId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(inventoryItemQuery(itemId));
+  const queryClient = useQueryClient();
+
+  const completeReviewMutation = useMutation({
+    mutationFn: () => completeItemIntakeReview({ data: { id: itemId } }),
+    onSuccess: () => {
+      toast.success('Marked available');
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+    onError: (error) => toastError(error, 'Could not complete review')
+  });
 
   if (isPending) {
     return <div className='text-muted-foreground text-sm'>Loading…</div>;
@@ -53,6 +67,16 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
             </CardTitle>
             <p className='text-muted-foreground text-sm'>{data.label}</p>
           </div>
+          {data.status === 'intake' && (
+            <Button
+              size='sm'
+              disabled={completeReviewMutation.isPending}
+              onClick={() => completeReviewMutation.mutate()}
+            >
+              <Icons.check />
+              Complete review
+            </Button>
+          )}
         </CardHeader>
         <CardContent className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
           <DetailRow label='Condition'>

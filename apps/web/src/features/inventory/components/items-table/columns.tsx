@@ -1,11 +1,18 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import { toastError } from '@/lib/errors';
 import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDate, formatMoney, formatQuantity } from '@/lib/format';
-import type { InventoryItemListItemDto } from '@/server/inventory-functions';
+import {
+  completeItemIntakeReview,
+  type InventoryItemListItemDto
+} from '@/server/inventory-functions';
 import {
   itemConditionLabel,
   itemConditionOptions,
@@ -13,6 +20,39 @@ import {
   itemStatusOptions,
   itemStatusTone
 } from '@/features/inventory/constants';
+
+/**
+ * "Complete review" — the intake review screen's one row action, per
+ * loxep-dgf.2's follow-up: there was no exit from `intake` anywhere until
+ * now. Only rendered for `intake`-status rows; every other row cell is
+ * blank rather than a disabled button, matching `monitors-table`'s
+ * admin-gating precedent of omitting rather than disabling.
+ */
+function CompleteReviewCell({ item }: { item: InventoryItemListItemDto }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: () => completeItemIntakeReview({ data: { id: item.id } }),
+    onSuccess: () => {
+      toast.success(`${item.itemCode} marked available`);
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    },
+    onError: (error) => toastError(error, 'Could not complete review')
+  });
+
+  if (item.status !== 'intake') return null;
+
+  return (
+    <Button
+      size='sm'
+      variant='outline'
+      disabled={mutation.isPending}
+      onClick={() => mutation.mutate()}
+    >
+      <Icons.check />
+      Complete review
+    </Button>
+  );
+}
 
 export function createColumns(
   locationOptions: { value: string; label: string }[]
@@ -155,6 +195,12 @@ export function createColumns(
           {formatDate(cell.getValue<string>())}
         </span>
       )
+    },
+    {
+      id: 'actions',
+      enableSorting: false,
+      header: '',
+      cell: ({ row }) => <CompleteReviewCell item={row.original} />
     }
   ];
 }
