@@ -20,6 +20,7 @@ import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import {
+  ACCOUNTING_POST_FACTS_TASK_NAME,
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
   GATUS_PUSH_TASK_NAME,
   HEALTH_SWEEP_TASK_NAME,
@@ -97,6 +98,9 @@ describe("buildWorkerRegistry", () => {
         // Phase 8 milestone 2 (loxep-ovj.2): the outward Gatus health push,
         // piggybacking on the same 5-minute cadence.
         GATUS_PUSH_TASK_NAME,
+        // loxep-6fm: the posting-engine sweep — WEAVE AUDIT finding 1's
+        // "the ledger has no pump", wired into the worker for the first time.
+        ACCOUNTING_POST_FACTS_TASK_NAME,
       ].sort(),
     );
 
@@ -106,6 +110,7 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain(REFRESH_TOKENS_TASK_NAME);
     expect(cronTasks).toContain(HEALTH_SWEEP_TASK_NAME);
     expect(cronTasks).toContain(GATUS_PUSH_TASK_NAME);
+    expect(cronTasks).toContain(ACCOUNTING_POST_FACTS_TASK_NAME);
     // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
     // scheduled work is a `woo_orders` / `ebay_orders` monitor target the
     // market dispatcher claims, which is the whole point of registering a

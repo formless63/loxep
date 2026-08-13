@@ -1639,6 +1639,28 @@ Every other movement kind is deliberately **unposted and says why**, which is th
 3. **Posting nothing for `disposal` and `shrinkage`**, which leaves inventory overstated for genuinely lost stock until a valuation milestone exists. The alternative is inventing a loss account this phase declined to form a policy for.
 4. **Cumulative-share differencing**, whose per-event numbers can differ by one micro-unit from `profitability.ts`'s when an item depletes partially across several events. The totals always agree; the per-event split is order-dependent by construction, because the engine sees one movement at a time.
 
+### Milestone 5 — the pump (loxep-6fm)
+
+**Implementation-status correction.** Through milestone 4, `createPostingEngine`/`evaluateFacts` shipped complete and tested but had **zero runtime callers** — `@loxep/app` did not depend on `@loxep/accounting`, no worker task posted facts, and no web action did either (WEAVE AUDIT 2026-08 finding 1, `apps/docs/src/content/docs/product/weave-audit-2026-08.md`). Every fact this document's rules describe — a sale, a fee, an expense, an acquisition cost, a depletion — reached its own domain table and stopped there, one hop short of the ledger. That is now closed:
+
+```text
+services   packages/app/src/accounting-posting.ts
+  accounting.post-facts     a Graphile Worker cron task, the same thin-
+                             wrapper shape as `health.sweep`/
+                             `infrastructure.gatus-push`: this module owns
+                             the task/cron definition, `@loxep/accounting`'s
+                             engine owns the posting mechanics
+tests      packages/app/test/accounting-posting.test.ts
+  4 tests: task/cron shape, a posted fact fills the Financial dashboard
+  band's own query, idempotency (a redelivered fact AND a repeated whole-
+  sweep run), and the archived-book gating case below
+```
+
+- **Trigger mechanics: cadence sweep, PROVISIONAL.** This document names `accounting.default_book_id`, `accounting.default_entity_id`, `accounting.auto_post_enabled`, and `accounting.posting_lag_days` as `application_settings` keys (see "Migration plan sketch" above) but is otherwise silent on whether posting is event-driven or cadence-driven. Absent a named answer, the pump runs `evaluateFacts` over `unpostedFacts` on a recurring 5-minute cron, mirroring `health.sweep`'s own precedent — PROVISIONAL, and on-write enqueueing from the web actions that create facts (WEAVE AUDIT finding 1's own "STRETCH" list) remains a future latency improvement layered on top of the sweep, not a replacement for it.
+- **Rule seeding folded into the sweep, PROVISIONAL.** `DEFAULT_POSTING_RULES` (`posting-rules-template.ts`) are global (`posting_rules.accounting_book_id` is nullable-and-normally-null) but `PostingEngine.seedDefaultRules()` also had zero callers outside tests. Rather than invent a separate admin action this bead does not own, the sweep calls `seedDefaultRules()` every run; it is idempotent by rule code and never touches a rule an operator has since edited.
+- **A genuine engine-contract gap, fixed:** an entity could route to an ARCHIVED (disabled) book — Phase 5's toggleable-books answer (`accounting_books.status`, `archiveBook`) — and `evaluateFact` would let `journal.postEntry`'s archived-book guard throw instead of returning `unpostable`, which would have aborted an entire sweep on one disabled book. `posting-engine.ts` now checks the routed book's status before attempting to post and degrades to the same `no_route` backlog outcome a missing link produces (see that file's "GAP FIX (loxep-6fm)" comment).
+- **Not built in this bead:** the posting-backlog panel on `/finance/overview`, and trial-balance drill-down to journal lines — both remain design-only/UI work, tracked separately under loxep-6fm.
+
 ### What is still design-only
 
 **Nine of this document's twenty-two tables**, and every capability that depends on them:

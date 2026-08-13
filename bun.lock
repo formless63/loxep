@@ -144,6 +144,7 @@
       "name": "@loxep/app",
       "version": "0.0.0",
       "dependencies": {
+        "@loxep/accounting": "workspace:*",
         "@loxep/commerce": "workspace:*",
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",

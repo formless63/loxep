@@ -231,6 +231,19 @@ export {
 export type { HealthSweepTask, HealthSweepTasks } from "./health-sweep.ts";
 
 export {
+  ACCOUNTING_POST_FACTS_CRON_MATCH,
+  ACCOUNTING_POST_FACTS_TASK_NAME,
+  DEFAULT_POST_FACTS_LIMIT,
+  createAccountingPostFactsTasks,
+  runAccountingPostFactsSweep,
+} from "./accounting-posting.ts";
+export type {
+  AccountingPostFactsResult,
+  AccountingPostFactsTask,
+  AccountingPostFactsTasks,
+} from "./accounting-posting.ts";
+
+export {
   SYNC_EBAY_PURCHASES_TASK_NAME,
   createEbayPurchasePageIterator,
   createEbayPurchasePollExecutor,

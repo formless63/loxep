@@ -573,6 +573,34 @@ export function createPostingEngine(options: { db: LoxepDb }): PostingEngine {
     }
     const book = routed.book;
 
+    // GAP FIX (loxep-6fm): books are "toggleable per economic entity"
+    // (financial-schema-design.md, owner answer 1) via `accounting_books.status`
+    // — `archiveBook` sets it and the design gives no separate "enabled" flag.
+    // Routing can still resolve an entity to an ARCHIVED book (a link outlives
+    // the book being taken offline; nothing prunes `book_entity_links` when a
+    // book archives), and `journal.postEntry`'s `loadBook` THROWS
+    // `AccountingValidationError` for that book rather than returning
+    // `unpostable`. Left uncaught, that turns a single disabled book into an
+    // exception that aborts the whole sweep's `evaluateFacts` loop — the
+    // opposite of "a fact whose accounting ownership nobody has stated is a
+    // visible backlog, never a guess and never a rejected ingestion" this
+    // module's own doc promises for every OTHER routing failure. Checked here,
+    // before `post()` is ever reached, so an archived book degrades to the same
+    // `no_route` backlog entry a missing link produces, and the pump (a sweep
+    // over MANY facts) never dies on one entity whose book an operator
+    // disabled.
+    if (book.status !== "active") {
+      return {
+        ...base,
+        status: "unpostable",
+        reason: "no_route",
+        explanation:
+          `book ${book.code} is archived: an archived book is disabled for ` +
+          "new postings, which the design's toggleable-books answer treats " +
+          "the same as no book being routed at all, not an error.",
+      };
+    }
+
     const resolved = await rules.resolveForFact(fact, book.id);
     if (resolved === null) {
       return {

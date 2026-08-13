@@ -57,7 +57,21 @@ const EXPENSE_PAYMENT_METHOD_VALUES = [
   'other'
 ] as const;
 
-/** Excludes `posted` — unreachable in this slice; only a (nonexistent) posting engine sets it. */
+/**
+ * Excludes `posted` — still unreachable, but not because the engine is
+ * missing. `@loxep/accounting`'s posting engine (`createPostingEngine` /
+ * `evaluateFacts`, `packages/accounting/src/posting-engine.ts`) exists and,
+ * as of loxep-6fm, runs on a cadence via `@loxep/app`'s
+ * `accounting.post-facts` worker task. `expenses.status` still never becomes
+ * `posted`, though: Phase 5 links a fact to the entry it produced by
+ * SOURCE-FACT IDENTITY (`journal_entries.source_fact_type`/`source_fact_id`),
+ * deliberately without a foreign key or a status write-back on the expense
+ * row itself (`posting.ts`'s module doc — `expenses` gains no
+ * `journal_entry_id`). "Did this expense post?" is answered by querying the
+ * journal (`JournalService.findBySourceFact('expense', id)`), not by reading
+ * this column, so excluding `posted` here reflects the shipped engine's
+ * actual behaviour rather than standing in for one that doesn't exist yet.
+ */
 const EXPENSE_STATUS_VALUES = ['draft', 'recorded', 'void'] as const;
 
 // ---------------------------------------------------------------------------

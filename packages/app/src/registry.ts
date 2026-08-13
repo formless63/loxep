@@ -16,6 +16,7 @@
  * | `commerce.redact-order-payloads` | @loxep/commerce | ADR-0021 retention sweep (daily) |
  * | `health.sweep`               | @loxep/app (mechanics in @loxep/domain) | Phase 8 m1 integration_health probe (5 min) |
  * | `infrastructure.gatus-push`  | @loxep/app            | Phase 8 m2 outward Gatus health push (5 min) |
+ * | `accounting.post-facts`      | @loxep/app (mechanics in @loxep/accounting) | loxep-6fm posting-engine sweep, PROVISIONAL cadence (5 min) |
  * | `inventory.sync-ebay-purchases` | @loxep/app (mechanics in @loxep/inventory) | on-demand eBay purchase-history sync for one connection |
  * | `infrastructure.sync-token-policy` | @loxep/app (mechanics in @loxep/infrastructure) | Phase 7 m3 DNS-token zone-scope policy rebuild (on-demand, scope-change-triggered) |
  *
@@ -36,7 +37,9 @@
  * (every 15 minutes), `commerce.redact-order-payloads` (daily),
  * `health.sweep` (every 5 minutes), `infrastructure.gatus-push` (every 5
  * minutes, piggybacking on `health.sweep`'s own cadence — see
- * `gatus-push.ts`'s module doc).
+ * `gatus-push.ts`'s module doc), `accounting.post-facts` (every 5 minutes,
+ * PROVISIONAL — see `accounting-posting.ts`'s module doc for why the design
+ * names no cadence and a sweep was chosen over event-driven posting).
  *
  * @loxep/commerce's ORDER SYNC deliberately defines no cron item — that
  * scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed by
@@ -194,6 +197,7 @@ import {
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
+import { createAccountingPostFactsTasks } from "./accounting-posting.ts";
 import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
@@ -290,6 +294,7 @@ export function buildCronItems(input: {
   redactOrderPayloads: CommerceCronItem;
   healthSweep: AppCronItem;
   gatusPush: AppCronItem;
+  accountingPostFacts: AppCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -300,6 +305,7 @@ export function buildCronItems(input: {
     input.redactOrderPayloads,
     input.healthSweep,
     input.gatusPush,
+    input.accountingPostFacts,
   ];
 }
 
@@ -490,6 +496,13 @@ export function buildWorkerRegistry(
   // gatus-push.ts's module doc.
   const gatusPush = createGatusPushTasks({ services });
 
+  // --- accounting posting-engine sweep (loxep-6fm) ----------------------
+  // Wires `@loxep/accounting`'s posting engine into the runtime for the
+  // first time — WEAVE AUDIT finding 1. See accounting-posting.ts's module
+  // doc for the trigger-mechanics decision (cadence sweep, PROVISIONAL) and
+  // the idempotency/books-gating contract it relies on.
+  const accountingPostFacts = createAccountingPostFactsTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
@@ -501,6 +514,7 @@ export function buildWorkerRegistry(
     ...infrastructureTokens.tasks,
     health.healthSweepTask,
     gatusPush.gatusPushTask,
+    accountingPostFacts.accountingPostFactsTask,
   ]);
 
   return {
@@ -511,6 +525,7 @@ export function buildWorkerRegistry(
       redactOrderPayloads: commerce.redactOrderPayloadsCronItem,
       healthSweep: health.healthSweepCronItem,
       gatusPush: gatusPush.gatusPushCronItem,
+      accountingPostFacts: accountingPostFacts.accountingPostFactsCronItem,
     }),
     services,
     listings,

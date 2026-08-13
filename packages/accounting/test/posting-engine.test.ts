@@ -617,6 +617,35 @@ describe("posting engine", () => {
       expect(backlog.some((item) => item.sourceFactId === orderId)).toBe(true);
     });
 
+    it("skips a fact routed to an archived (disabled) book rather than throwing", async () => {
+      // loxep-6fm: books are toggleable per entity (financial-schema-design.md
+      // owner answer 1) via `archiveBook`. A link can outlive the book being
+      // archived, so routing still resolves — and posting must degrade to
+      // `unpostable`/`no_route`, never let `journal.postEntry`'s archived-book
+      // guard throw out of `evaluateFact`, or a single disabled book would
+      // abort an entire sweep of unrelated facts.
+      const { book, entityId } = await newFixture();
+      await books.archiveBook({ accountingBookId: book.id });
+      const orderId = await seedOrder(scratch, {
+        connectionId,
+        economicEntityId: entityId,
+        externalOrderId: `ARCHIVED-${(counter += 1)}`,
+        subtotal: "10",
+        total: "10",
+      });
+
+      const outcome = await engine.evaluateFact({
+        sourceFactType: "order",
+        sourceFactId: orderId,
+      });
+      expect(outcome.status).toBe("unpostable");
+      expect(outcome.reason).toBe("no_route");
+      expect(outcome.explanation).toMatch(/archived/);
+
+      const entries = await journal.findBySourceFact("order", orderId);
+      expect(entries).toHaveLength(0);
+    });
+
     it("reports a fact no rule matches, and explains which candidates lost", async () => {
       const { book, entityId } = await newFixture();
       // Disable the shipped refund rule for this book by narrowing a
