@@ -37,6 +37,7 @@ import { connectionsQuery } from '@/features/settings/api/queries';
 import { EbayConnectionActions } from '@/features/settings/components/ebay-connection-actions';
 import { isOrderSyncEligible, supportsOrderSync } from './order-sync-cell';
 import { isPurchaseSyncEligible, supportsPurchaseSync } from './purchase-sync-cell';
+import { TailscaleExpiryDialog, tailscaleExpiryEditable } from './tailscale-expiry-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -58,6 +59,7 @@ export function CellAction({ data }: { data: ConnectionDto }) {
   const queryClient = useQueryClient();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [blocking, setBlocking] = useState<ConnectionReferenceDto[] | null>(null);
+  const [editingExpiry, setEditingExpiry] = useState(false);
   const archived = data.status === 'archived';
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
@@ -208,6 +210,11 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 )}
               </DropdownMenuItem>
             )}
+          {tailscaleExpiryEditable(data) && (
+            <DropdownMenuItem onClick={() => setEditingExpiry(true)}>
+              <Icons.calendar className='mr-2 h-4 w-4' /> Record token expiry
+            </DropdownMenuItem>
+          )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setConfirmingDelete(true)}>
             <Icons.trash className='mr-2 h-4 w-4' /> Delete
@@ -275,6 +282,14 @@ export function CellAction({ data }: { data: ConnectionDto }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {tailscaleExpiryEditable(data) && (
+        <TailscaleExpiryDialog
+          connection={data}
+          open={editingExpiry}
+          onOpenChange={setEditingExpiry}
+        />
+      )}
     </div>
   );
 }

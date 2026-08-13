@@ -40,6 +40,28 @@ export type {
   WooRateBudgetConfig,
 } from "./woo.ts";
 
+export {
+  MEDUSA_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  MEDUSA_ADAPTER_CACHE_TTL_MS,
+  MEDUSA_CONNECTION_CONFIG_KEY,
+  MEDUSA_CONNECTION_PROVIDER,
+  MEDUSA_CREDENTIAL_TYPE,
+  MEDUSA_PAGES_PER_SYNC,
+  MEDUSA_RATE_BUDGET_CAPACITY,
+  MEDUSA_RATE_BUDGET_REFILL_PER_SECOND,
+  MedusaCredentialsMissingError,
+  createMedusaAdapterFactory,
+  medusaRateBudgetIntervalFloorSeconds,
+  readMedusaBaseUrl,
+} from "./medusa.ts";
+export type {
+  CreateMedusaAdapterFactoryOptions,
+  MedusaAdapterConstructor,
+  MedusaAdapterFactory,
+  MedusaConnectionAdapter,
+  MedusaRateBudgetConfig,
+} from "./medusa.ts";
+
 export { createWooOrderPollExecutor } from "./commerce.ts";
 export type { CreateWooOrderPollExecutorOptions } from "./commerce.ts";
 
@@ -48,6 +70,12 @@ export {
   createEbayOrderPollExecutor,
 } from "./commerce-ebay.ts";
 export type { CreateEbayOrderPollExecutorOptions } from "./commerce-ebay.ts";
+
+export {
+  createMedusaOrderPageIterator,
+  createMedusaOrderPollExecutor,
+} from "./commerce-medusa.ts";
+export type { CreateMedusaOrderPollExecutorOptions } from "./commerce-medusa.ts";
 
 export { createOrderPayloadRedactors } from "./commerce-retention.ts";
 

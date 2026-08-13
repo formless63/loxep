@@ -5,16 +5,20 @@ import type { ConnectionDto } from '@/server/admin-functions';
 
 const WOOCOMMERCE_PROVIDER = 'woocommerce';
 const EBAY_PROVIDER = 'ebay';
+/** Mirrors `@loxep/commerce`'s `MEDUSA_PROVIDER`. */
+const MEDUSA_PROVIDER = 'medusa';
 
 /**
  * Whether the "Order sync" control should even offer to turn sync on
- * (loxep-cxh) — mirrors `@/server/order-sync-functions`'
- * `isOrderSyncEligible`, narrowed to `active` rows only (the task's "active
- * woocommerce always" rule). WooCommerce: any active account. eBay: only
- * once the connection's granted scopes include the orders consent tier
- * (loxep-ld0), read the same way
+ * (loxep-cxh, extended for Medusa by loxep-xxz) — mirrors
+ * `@/server/order-sync-functions`' `isOrderSyncEligible`, narrowed to
+ * `active` rows only (the task's "active woocommerce always" rule).
+ * WooCommerce: any active account. eBay: only once the connection's granted
+ * scopes include the orders consent tier (loxep-ld0), read the same way
  * `@/features/settings/components/ebay-connection-actions`'
- * `EbayCredentialStatus`/`EbayConnectionActions` already do.
+ * `EbayCredentialStatus`/`EbayConnectionActions` already do. Medusa: like
+ * WooCommerce, not eBay — no OAuth, no consent tier, no scope check; any
+ * active connection is eligible.
  */
 export function isOrderSyncEligible(connection: ConnectionDto): boolean {
   if (connection.status !== 'active') return false;
@@ -22,12 +26,17 @@ export function isOrderSyncEligible(connection: ConnectionDto): boolean {
   if (connection.provider === EBAY_PROVIDER) {
     return ebayConsentTierForScopes(ebayGrantedScopes(connection.config)) === 'orders';
   }
+  if (connection.provider === MEDUSA_PROVIDER) return true;
   return false;
 }
 
 /** Whether this connection's provider has an order-sync concept at all. */
 export function supportsOrderSync(connection: ConnectionDto): boolean {
-  return connection.provider === WOOCOMMERCE_PROVIDER || connection.provider === EBAY_PROVIDER;
+  return (
+    connection.provider === WOOCOMMERCE_PROVIDER ||
+    connection.provider === EBAY_PROVIDER ||
+    connection.provider === MEDUSA_PROVIDER
+  );
 }
 
 /** A one-line reason the control is not offered yet, or `null` when it is (or never will be). */

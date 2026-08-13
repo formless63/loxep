@@ -14,6 +14,7 @@ import { AttributionCell } from './attribution-cell';
 import { CellAction } from './cell-action';
 import { OrderSyncStatusCell } from './order-sync-cell';
 import { PurchaseSyncStatusCell } from './purchase-sync-cell';
+import { TAILSCALE_PROVIDER, TailscaleCredentialExpiryCell } from './tailscale-expiry-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -110,6 +111,8 @@ export function getColumns(
       cell: ({ row }) =>
         row.original.provider === EBAY_PROVIDER ? (
           <EbayCredentialStatus connection={row.original} />
+        ) : row.original.provider === TAILSCALE_PROVIDER ? (
+          <TailscaleCredentialExpiryCell connection={row.original} />
         ) : row.original.credentials.length === 0 ? (
           <span className='text-muted-foreground'>none</span>
         ) : (

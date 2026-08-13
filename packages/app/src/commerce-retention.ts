@@ -62,10 +62,15 @@
  */
 import {
   EBAY_ORDER_OBJECT_TYPE,
+  MEDUSA_ORDER_OBJECT_TYPE,
   WOO_ORDER_OBJECT_TYPE,
 } from "@loxep/commerce";
 import type { OrderPayloadRedactors } from "@loxep/commerce";
 import { mapEbayOrder, redactEbayOrderFact } from "@loxep/integration-ebay";
+import {
+  mapMedusaOrder,
+  redactMedusaOrderFact,
+} from "@loxep/integration-medusa";
 import { mapWooOrder, redactWooOrderFact } from "@loxep/integration-woo";
 
 /** The marker every `redact*OrderFact` helper stamps in place of `raw`. */
@@ -78,6 +83,7 @@ const REDACTED_MARKER = "[redacted]";
  */
 const WOO_REDACTED_SOURCE_ACCOUNT_KEY = "woocommerce:redacted";
 const EBAY_REDACTED_SOURCE_ACCOUNT_KEY = "ebay:redacted";
+const MEDUSA_REDACTED_SOURCE_ACCOUNT_KEY = "medusa:redacted";
 
 function alreadyRedacted(payload: Record<string, unknown>): boolean {
   return payload["raw"] === REDACTED_MARKER;
@@ -92,12 +98,12 @@ function alreadyRedacted(payload: Record<string, unknown>): boolean {
  * requirement that every adapter gaining order ingestion ships a redaction
  * helper as part of that work.
  *
- * Medusa is absent for a benign reason and is worth stating explicitly:
- * `@loxep/integration-medusa` DOES ship `redactMedusaOrderFact`, but no Medusa
- * order ingestion exists in `@loxep/commerce` yet — there is no
- * `medusa.order` object type, so no such row is ever written and there is
- * nothing to redact. Wiring it belongs with the Medusa order-ingestion work,
- * which is also when `ORDER_PROVIDER_OBJECT_TYPES` gains its type.
+ * Medusa (loxep-xxz) is the third entry, added when Medusa order ingestion
+ * landed in `@loxep/commerce` — `MEDUSA_ORDER_OBJECT_TYPE` ("medusa.order")
+ * now has rows to redact, `ORDER_PROVIDER_OBJECT_TYPES` (`retention.ts`)
+ * carries the type, and `mapMedusaOrder`/`redactMedusaOrderFact` (already
+ * shipped by `@loxep/integration-medusa`) are wired in exactly like the
+ * WooCommerce and eBay pairs above.
  */
 export function createOrderPayloadRedactors(): OrderPayloadRedactors {
   return {
@@ -114,6 +120,18 @@ export function createOrderPayloadRedactors(): OrderPayloadRedactors {
       return redactEbayOrderFact(
         mapEbayOrder(payload, {
           fallbackSourceAccountKey: EBAY_REDACTED_SOURCE_ACCOUNT_KEY,
+        }),
+      ) as unknown as Record<string, unknown>;
+    },
+    [MEDUSA_ORDER_OBJECT_TYPE]: (payload) => {
+      if (alreadyRedacted(payload)) return payload;
+      // NOTE the field name: `MapMedusaOrderOptions` has `sourceAccountKey`
+      // (unconditional), unlike Woo's `sourceAccountKey` fallback-by-name
+      // coincidence and eBay's `fallbackSourceAccountKey` — Medusa's mapper
+      // takes no payload-derived fallback to prefer over this placeholder.
+      return redactMedusaOrderFact(
+        mapMedusaOrder(payload, {
+          sourceAccountKey: MEDUSA_REDACTED_SOURCE_ACCOUNT_KEY,
         }),
       ) as unknown as Record<string, unknown>;
     },

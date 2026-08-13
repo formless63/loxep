@@ -24,24 +24,30 @@
  *
  * ## What is duplicated, and why
  *
- * Three domains register a target type against `@loxep/market`'s shared
+ * Three domains register FOUR target types against `@loxep/market`'s shared
  * `monitor_targets` scheduling model, and each domain's config schema is
  * RE-DECLARED (not imported) inside `@loxep/market`'s
  * `monitorTargetConfigSchemas`, because the scheduler must not take a
  * dependency on every domain that registers against it:
  *
- *   - `woo_orders` / `ebay_orders` — @loxep/commerce's `commerceSync`
- *     cursor (`wooOrdersTargetConfigSchema` /
- *     `ebayOrdersTargetConfigSchema`, the same object per `sync.ts`).
+ *   - `woo_orders` / `ebay_orders` / `medusa_orders` — @loxep/commerce's
+ *     `commerceSync` cursor (`wooOrdersTargetConfigSchema` /
+ *     `ebayOrdersTargetConfigSchema` / `medusaOrdersTargetConfigSchema`, all
+ *     THE SAME OBJECT per `sync.ts`/`medusa-sync.ts` — the cursor's fields
+ *     are provider-neutral facts regardless of which adapter produced them).
  *   - `ebay_purchases` — @loxep/inventory's `purchaseSync` cursor
  *     (`purchaseSyncTargetConfigSchema`, `purchase-sync.ts`).
  *
- * Both pairs drifted on nullability once already (the `modifiedAfter: null`
- * incident, `ebay_orders`, 2026-08-13 — market's copy was fixed first, the
- * executor-facing package's own copy was the second half of the same bug).
- * `purchaseSyncStateSchema`'s `lastPurchasedAt` was written nullable from
- * the start specifically citing that incident; this test is what makes a
- * FUTURE repeat of either fail loudly here instead of live.
+ * The `commerceSync` pair drifted on nullability once already (the
+ * `modifiedAfter: null` incident, `ebay_orders`, 2026-08-13 — market's copy
+ * was fixed first, the executor-facing package's own copy was the second
+ * half of the same bug). `purchaseSyncStateSchema`'s `lastPurchasedAt` was
+ * written nullable from the start specifically citing that incident; this
+ * test is what makes a FUTURE repeat of either fail loudly here instead of
+ * live. `medusa_orders` (loxep-xxz) is a THIRD alias of the exact same
+ * object as `woo_orders`/`ebay_orders`, so its pair is a tautology on day
+ * one — the point is that it starts failing the day someone specializes the
+ * Medusa copy instead of reusing `commerceSyncTargetConfigSchema`.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -51,6 +57,7 @@ import {
 } from "@loxep/market";
 import {
   ebayOrdersTargetConfigSchema,
+  medusaOrdersTargetConfigSchema,
   wooOrdersTargetConfigSchema,
 } from "@loxep/commerce";
 import {
@@ -78,7 +85,7 @@ function assertBothAgree(pair: SchemaPair, config: unknown, expected: boolean): 
   ).toBe(expected);
 }
 
-describe("commerceSync (woo_orders / ebay_orders) schema conformance", () => {
+describe("commerceSync (woo_orders / ebay_orders / medusa_orders) schema conformance", () => {
   const pairs: SchemaPair[] = [
     {
       label: "woo_orders",
@@ -89,6 +96,11 @@ describe("commerceSync (woo_orders / ebay_orders) schema conformance", () => {
       label: "ebay_orders",
       market: monitorTargetConfigSchemas.ebay_orders,
       owner: ebayOrdersTargetConfigSchema,
+    },
+    {
+      label: "medusa_orders",
+      market: monitorTargetConfigSchemas.medusa_orders,
+      owner: medusaOrdersTargetConfigSchema,
     },
   ];
 

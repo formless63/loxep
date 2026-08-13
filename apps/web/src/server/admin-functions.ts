@@ -24,6 +24,7 @@ import {
 } from '@/features/settings/constants';
 import {
   EBAY_ORDERS_TARGET_TYPE,
+  MEDUSA_ORDERS_TARGET_TYPE,
   WOO_ORDERS_TARGET_TYPE,
   type OrderSyncStatusDto
 } from '@/server/order-sync-functions';
@@ -380,7 +381,11 @@ export const fetchConnections = createServerFn({ method: 'GET' }).handler(
         : await handle.db.query.monitorTargets.findMany({
             where: (table, { and, inArray }) =>
               and(
-                inArray(table.targetType, [WOO_ORDERS_TARGET_TYPE, EBAY_ORDERS_TARGET_TYPE]),
+                inArray(table.targetType, [
+                  WOO_ORDERS_TARGET_TYPE,
+                  EBAY_ORDERS_TARGET_TYPE,
+                  MEDUSA_ORDERS_TARGET_TYPE
+                ]),
                 inArray(
                   table.connectionId,
                   rows.map((row) => row.id)

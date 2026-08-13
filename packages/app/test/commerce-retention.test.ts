@@ -19,7 +19,11 @@
  * `buyerCheckoutNotes` — with obviously fake values, so a failing assertion
  * cannot print a real person's data.
  */
-import { EBAY_ORDER_OBJECT_TYPE, WOO_ORDER_OBJECT_TYPE } from "@loxep/commerce";
+import {
+  EBAY_ORDER_OBJECT_TYPE,
+  MEDUSA_ORDER_OBJECT_TYPE,
+  WOO_ORDER_OBJECT_TYPE,
+} from "@loxep/commerce";
 import { describe, expect, it } from "vitest";
 import { createOrderPayloadRedactors } from "../src/commerce-retention.ts";
 
@@ -191,15 +195,96 @@ function ebayPayloadWithPii(): Record<string, unknown> {
   };
 }
 
+const MEDUSA_PII_MARKERS = [
+  "Fixture",
+  "3 Synthetic Court",
+  "fixture.medusa@example.invalid",
+  "+1-555-0177",
+] as const;
+
+function medusaPayloadWithPii(): Record<string, unknown> {
+  return {
+    id: "order_01SYNTHETIC",
+    display_id: 9001,
+    status: "completed",
+    payment_status: "partially_refunded",
+    fulfillment_status: "fulfilled",
+    currency_code: "usd",
+    total: 25,
+    original_total: 30,
+    subtotal: 55,
+    shipping_total: 5,
+    tax_total: 4,
+    discount_total: 0,
+    created_at: "2026-01-01T12:00:00.000Z",
+    updated_at: "2026-01-01T12:10:00.000Z",
+    customer_id: "cus_SYNTHETIC",
+    email: "fixture.medusa@example.invalid",
+    shipping_address: {
+      first_name: "Fixture",
+      last_name: "Person",
+      address_1: "3 Synthetic Court",
+      city: "Somewhere",
+      postal_code: "00000",
+      country_code: "us",
+      phone: "+1-555-0177",
+    },
+    billing_address: {
+      first_name: "Fixture",
+      last_name: "Person",
+      address_1: "3 Synthetic Court",
+      city: "Somewhere",
+      postal_code: "00000",
+      country_code: "us",
+      phone: "+1-555-0177",
+    },
+    items: [
+      {
+        id: "ordli_01SYNTHETIC",
+        title: "Alpha widget",
+        variant_sku: "SKU-ALPHA",
+        product_id: "prod_01SYNTHETIC",
+        variant_id: "variant_01SYNTHETIC",
+        quantity: 2,
+        unit_price: 25,
+        subtotal: 50,
+        total: 50,
+        tax_total: 4,
+        discount_total: 0,
+      },
+    ],
+    payment_collections: [
+      {
+        payments: [
+          {
+            captured_at: "2026-01-01T12:05:00.000Z",
+            refunds: [
+              {
+                id: "ref_01SYNTHETIC",
+                refund_reason: { label: "requested_by_customer" },
+                note: null,
+                amount: 5,
+                created_at: "2026-01-01T12:08:00.000Z",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    fulfillments: [],
+  };
+}
+
 describe("createOrderPayloadRedactors", () => {
   const redactors = createOrderPayloadRedactors();
 
   it("covers exactly the order classes this composition can ingest", () => {
-    // Medusa is deliberately absent: `redactMedusaOrderFact` exists in
-    // `@loxep/integration-medusa`, but no Medusa order ingestion exists in
-    // `@loxep/commerce`, so no `medusa.order` provider object is ever written.
     expect(Object.keys(redactors).sort()).toEqual(
-      [WOO_ORDER_OBJECT_TYPE, EBAY_ORDER_OBJECT_TYPE].sort(),
+      [
+        WOO_ORDER_OBJECT_TYPE,
+        EBAY_ORDER_OBJECT_TYPE,
+        MEDUSA_ORDER_OBJECT_TYPE,
+      ].sort(),
     );
   });
 
@@ -262,6 +347,46 @@ describe("createOrderPayloadRedactors", () => {
 
     it("produces a JSON-serializable object for the jsonb column", () => {
       const redacted = redact(ebayPayloadWithPii());
+      expect(() => JSON.stringify(redacted)).not.toThrow();
+      expect(JSON.parse(JSON.stringify(redacted))).toEqual(redacted);
+    });
+  });
+
+  describe("medusa.order", () => {
+    const redact = redactors[MEDUSA_ORDER_OBJECT_TYPE]!;
+
+    it("removes every personal-data field from a stored payload", () => {
+      const redacted = redact(medusaPayloadWithPii());
+      expectNoPii(redacted, MEDUSA_PII_MARKERS);
+      expect(redacted["raw"]).toBe("[redacted]");
+    });
+
+    it("keeps the order economics that make the payload worth retaining", () => {
+      const redacted = redact(medusaPayloadWithPii()) as Record<string, unknown>;
+      expect(redacted["externalOrderId"]).toBe("order_01SYNTHETIC");
+      // originalTotal, not total — mapping #1, unaffected by the refund.
+      expect(redacted["totals"]).toMatchObject({
+        total: "25",
+        originalTotal: "30",
+        shipping: "5",
+        tax: "4",
+        refunded: "5",
+      });
+      expect(Array.isArray(redacted["lineItems"])).toBe(true);
+      expect((redacted["lineItems"] as unknown[]).length).toBe(1);
+      // The customer id is an opaque handle, not personal data — kept, same
+      // reasoning as eBay's username.
+      expect(redacted["buyerExternalId"]).toBe("cus_SYNTHETIC");
+    });
+
+    it("is total on its own output (at-least-once safety)", () => {
+      const once = redact(medusaPayloadWithPii());
+      const twice = redact(once);
+      expect(twice).toEqual(once);
+    });
+
+    it("produces a JSON-serializable object for the jsonb column", () => {
+      const redacted = redact(medusaPayloadWithPii());
       expect(() => JSON.stringify(redacted)).not.toThrow();
       expect(JSON.parse(JSON.stringify(redacted))).toEqual(redacted);
     });

@@ -434,8 +434,27 @@ export const fetchDashboardMarketPulse = createServerFn({ method: 'GET' }).handl
 // Band 3 — Operations health
 // ---------------------------------------------------------------------------
 
-/** Mirrors `@/server/order-sync-functions`' target types (same re-declaration reason). */
-const ORDER_SYNC_TARGET_TYPES = ['woo_orders', 'ebay_orders'] as const;
+/**
+ * Mirrors `@/server/order-sync-functions`' target types (same re-declaration
+ * reason). `medusa_orders` added by loxep-xxz — required, not optional:
+ * without it every `medusa_orders` row falls into `fleet` below, inflating
+ * `monitors.total/enabled/disabled`, letting a stalled Medusa sync count as
+ * a market-monitor error, letting a healthy Medusa sync mask a stale
+ * discovery fleet via the `lastSuccessAt` `Math.max`, and showing
+ * `OrderSyncCard` as "off" while sync is actually running.
+ *
+ * THIS ARRAY IS A HAND-MAINTAINED LIST WITH NO `satisfies` TIE (loxep-9m2) —
+ * `ebay_purchases` and `infrastructure_domain_reconcile` are ALSO order-sync-
+ * adjacent/non-fleet target types absent from this list today and get
+ * miscounted as market monitors as a result; that is loxep-9m2's bug, in the
+ * opposite direction from the one `medusa_orders`'s absence would have been.
+ * loxep-9m2 owns replacing this array with a typed derivation (partitioning
+ * targets by owning domain / a `satisfies` tie to the market registry); this
+ * bead (loxep-xxz) deliberately does not attempt that refactor — it only
+ * keeps the list from getting a fourth honesty gap. Whatever replaces this
+ * array must keep `medusa_orders` out of the fleet count.
+ */
+const ORDER_SYNC_TARGET_TYPES = ['woo_orders', 'ebay_orders', 'medusa_orders'] as const;
 type OrderSyncTargetType = (typeof ORDER_SYNC_TARGET_TYPES)[number];
 
 /** Delivery-success window; matches the design's "7d" notification tile. */

@@ -13,6 +13,7 @@
  * | `ebay.refresh-tokens`       | @loxep/app           | keeps user tokens warm (15 min) |
  * | `commerce.sync-woo-orders`  | @loxep/commerce      | on-demand order sync for one connection |
  * | `commerce.sync-ebay-orders` | @loxep/commerce      | the same, for an eBay seller account |
+ * | `commerce.sync-medusa-orders` | @loxep/commerce    | the same, for a self-hosted Medusa backend |
  * | `commerce.redact-order-payloads` | @loxep/commerce | ADR-0021 retention sweep (daily) |
  * | `health.sweep`               | @loxep/app (mechanics in @loxep/domain) | Phase 8 m1 integration_health probe (5 min) |
  * | `infrastructure.gatus-push`  | @loxep/app            | Phase 8 m2 outward Gatus health push (5 min) |
@@ -69,6 +70,7 @@
  * ebay_item | ebay_watchlist | ebay_search | ebay_seller → createEbayPollExecutor
  * woo_orders                                            → createWooOrderPollExecutor
  * ebay_orders                                           → createEbayOrderPollExecutor
+ * medusa_orders                                         → createMedusaOrderPollExecutor
  * etsy_listing | etsy_shop                              → createEtsyPollExecutor
  * reverb_listing | reverb_shop                          → createReverbPollExecutor
  * ebay_purchases                                        → createEbayPurchasePollExecutor
@@ -80,15 +82,19 @@
  * target type belongs to the domain that registered it, wired in the
  * composition root — never in the scheduling package".
  *
- * REGISTRATION CAVEAT: `woo_orders` is in `@loxep/market`'s
- * `MONITOR_TARGET_TYPES` and `monitorTargetConfigSchemas`; **`ebay_orders` is
- * not yet**, because `packages/market` was outside loxep-xh9.2's write fence.
- * Nothing about polling depends on that list — `claimDueTargets`,
- * `recordPollSuccess`, and `recordPollFailure` read `target_type` as text —
- * so the route below works end to end. What does not work is creating such a
- * row through `createMonitorService`, whose `targetType` is a closed enum;
- * `@loxep/commerce`'s `ensureEbayOrderSyncTarget` inserts it directly. See
- * that module's doc for the follow-up.
+ * REGISTRATION CAVEAT (CLOSED, loxep-itn): `woo_orders` and `ebay_orders` are
+ * BOTH in `@loxep/market`'s `MONITOR_TARGET_TYPES` and
+ * `monitorTargetConfigSchemas` today — `ebay_orders`'s gap (it shipped
+ * outside loxep-xh9.2's write fence) was closed by loxep-itn, so
+ * `createMonitorService`'s CRUD covers both target types, the same as every
+ * type below. `medusa_orders` (loxep-xxz) deliberately did NOT repeat that
+ * gap: it was registered in `@loxep/market`'s `MONITOR_TARGET_TYPES` AND
+ * `monitorTargetConfigSchemas` from the start, in the same change that added
+ * `medusa-sync.ts` — see that module's doc. Nothing about polling ever
+ * depended on this list — `claimDueTargets`, `recordPollSuccess`, and
+ * `recordPollFailure` read `target_type` as text — but leaving a stale
+ * warning next to a THIRD clean registration is how the split-registration
+ * gap gets repeated, so this note is corrected rather than left to rot.
  *
  * `etsy_listing`/`etsy_shop` (loxep-g4t.1) deliberately do NOT repeat that
  * gap: both are in `@loxep/market`'s `MONITOR_TARGET_TYPES` AND
@@ -158,6 +164,7 @@
 import type { BootstrapConfig } from "@loxep/config";
 import {
   EBAY_ORDERS_TARGET_TYPE,
+  MEDUSA_ORDERS_TARGET_TYPE,
   WOO_ORDERS_TARGET_TYPE,
   createCommerceTasks,
 } from "@loxep/commerce";
@@ -165,6 +172,7 @@ import type { CommerceCronItem } from "@loxep/commerce";
 import type {
   CommerceTasks,
   EbayOrderPageIterator,
+  MedusaOrderPageIterator,
   OrderPayloadRedactors,
 } from "@loxep/commerce";
 import {
@@ -195,6 +203,10 @@ import {
   createEbayOrderPageIterator,
   createEbayOrderPollExecutor,
 } from "./commerce-ebay.ts";
+import {
+  createMedusaOrderPageIterator,
+  createMedusaOrderPollExecutor,
+} from "./commerce-medusa.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
 import { createAccountingPostFactsTasks } from "./accounting-posting.ts";
@@ -237,6 +249,8 @@ export interface BuildWorkerRegistryOptions {
   ebayRateBudget?: { capacity: number; refillPerSecond: number };
   /** Per-connection WooCommerce token bucket override (tests). */
   wooRateBudget?: { capacity: number; refillPerSecond: number };
+  /** Per-connection Medusa token bucket override (tests, and a gentle live run). */
+  medusaRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Provider seam for the `ebay_search`/`ebay_seller` paging calls — see
    * {@link CreateEbayPollExecutorOptions.discovery} for why it exists.
@@ -250,6 +264,14 @@ export interface BuildWorkerRegistryOptions {
    * the Sell Fulfillment HTTP surface.
    */
   ebayOrders?: EbayOrderPageIterator;
+  /**
+   * Provider seam for `medusa_orders`. Defaults to
+   * `createMedusaOrderPageIterator(services)`, which binds
+   * `@loxep/integration-medusa`'s `iterateMedusaOrders` to this composition's
+   * adapter factory. A test supplies canned pages here instead of stubbing
+   * the Medusa Admin API surface.
+   */
+  medusaOrders?: MedusaOrderPageIterator;
   /**
    * ADR-0021 redaction seam for `commerce.redact-order-payloads`. Defaults to
    * `createOrderPayloadRedactors()`, which binds each order adapter's
@@ -325,6 +347,9 @@ export function buildWorkerRegistry(
       ...(options.wooRateBudget !== undefined
         ? { wooRateBudget: options.wooRateBudget }
         : {}),
+      ...(options.medusaRateBudget !== undefined
+        ? { medusaRateBudget: options.medusaRateBudget }
+        : {}),
     });
 
   const listings = createListingContextCache();
@@ -361,6 +386,9 @@ export function buildWorkerRegistry(
       (await services.getWooAdapterForConnection(connectionId)).adapter,
     iterateEbayOrders:
       options.ebayOrders ?? createEbayOrderPageIterator(services),
+    iterateMedusaOrders:
+      options.medusaOrders ??
+      createMedusaOrderPageIterator(services, { logger }),
     // ADR-0021: the only place in the wiring that knows a provider's redacted
     // payload shape. See `commerce-retention.ts`.
     orderPayloadRedactors:
@@ -399,6 +427,14 @@ export function buildWorkerRegistry(
     commerce.ebaySync === null
       ? null
       : createEbayOrderPollExecutor({ services, sync: commerce.ebaySync });
+  // `commerce.medusaSync` is non-null because `iterateMedusaOrders` was
+  // supplied above; the guard keeps the route out of the table rather than
+  // registering a branch that would throw when claimed — the same rule
+  // `ebayOrderPollExecutor` follows.
+  const medusaOrderPollExecutor =
+    commerce.medusaSync === null
+      ? null
+      : createMedusaOrderPollExecutor({ services, sync: commerce.medusaSync });
   // Flipping M5 (loxep-dgf.5): `ebay_purchases`, sharing the ONE purchase-
   // sync service instance the `inventory.sync-ebay-purchases` task also
   // runs — see `inventory-ebay.ts`'s module doc.
@@ -444,6 +480,9 @@ export function buildWorkerRegistry(
         ...(ebayOrderPollExecutor === null
           ? {}
           : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
+        ...(medusaOrderPollExecutor === null
+          ? {}
+          : { [MEDUSA_ORDERS_TARGET_TYPE]: medusaOrderPollExecutor }),
         etsy_listing: etsyPollExecutor,
         etsy_shop: etsyPollExecutor,
         reverb_listing: reverbPollExecutor,

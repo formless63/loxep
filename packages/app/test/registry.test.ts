@@ -3,13 +3,24 @@
  * Phase 1 pipeline needs, and boots the REAL Graphile Worker runtime.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runMigrations } from "@loxep/db";
+import { closeDb, createDb, runMigrations } from "@loxep/db";
+import type { DbHandle } from "@loxep/db";
+import { user } from "@loxep/db/schema";
 import {
+  MEDUSA_ORDERS_TARGET_TYPE,
   REDACT_ORDER_PAYLOADS_TASK_NAME,
   SYNC_EBAY_ORDERS_TASK_NAME,
+  SYNC_MEDUSA_ORDERS_TASK_NAME,
   SYNC_WOO_ORDERS_TASK_NAME,
+  ensureMedusaOrderSyncTarget,
 } from "@loxep/commerce";
-import { DISPATCH_TASK_NAME, POLL_TARGET_TASK_NAME } from "@loxep/market";
+import {
+  DISPATCH_TASK_NAME,
+  MONITOR_TARGET_TYPES,
+  POLL_TARGET_TASK_NAME,
+  createMarketTasks,
+} from "@loxep/market";
+import type { MedusaAdapter } from "@loxep/integration-medusa";
 import {
   ENSURE_MAIL_DOMAIN_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
@@ -28,11 +39,16 @@ import {
   SYNC_EBAY_PURCHASES_TASK_NAME,
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
   WOO_PAGES_PER_SYNC,
+  buildAppServices,
   buildWorkerRegistry,
   rateBudgetIntervalFloorSeconds,
   wooRateBudgetIntervalFloorSeconds,
 } from "../src/index.ts";
-import type { WorkerComposition } from "../src/index.ts";
+import type {
+  AppServices,
+  MedusaConnectionAdapter,
+  WorkerComposition,
+} from "../src/index.ts";
 import {
   createScratchDb,
   dropScratchDb,
@@ -74,6 +90,7 @@ describe("buildWorkerRegistry", () => {
         REFRESH_TOKENS_TASK_NAME,
         SYNC_WOO_ORDERS_TASK_NAME,
         SYNC_EBAY_ORDERS_TASK_NAME,
+        SYNC_MEDUSA_ORDERS_TASK_NAME,
         REDACT_ORDER_PAYLOADS_TASK_NAME,
         // Flipping M5 (loxep-dgf.5): the on-demand eBay purchase-history sync
         // task, sharing the `ebay_orders`-style split — SCHEDULED polling is
@@ -112,11 +129,12 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain(GATUS_PUSH_TASK_NAME);
     expect(cronTasks).toContain(ACCOUNTING_POST_FACTS_TASK_NAME);
     // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
-    // scheduled work is a `woo_orders` / `ebay_orders` monitor target the
-    // market dispatcher claims, which is the whole point of registering a
-    // target type rather than adding a second scheduler.
+    // scheduled work is a `woo_orders` / `ebay_orders` / `medusa_orders`
+    // monitor target the market dispatcher claims, which is the whole point
+    // of registering a target type rather than adding a second scheduler.
     expect(cronTasks).not.toContain(SYNC_WOO_ORDERS_TASK_NAME);
     expect(cronTasks).not.toContain(SYNC_EBAY_ORDERS_TASK_NAME);
+    expect(cronTasks).not.toContain(SYNC_MEDUSA_ORDERS_TASK_NAME);
     // Same rule for `ebay_purchases`: it is an `ebay_purchases` monitor
     // target the market dispatcher claims, not a cron item.
     expect(cronTasks).not.toContain(SYNC_EBAY_PURCHASES_TASK_NAME);
@@ -188,5 +206,142 @@ describe("WooCommerce rate-budget interval floor", () => {
     expect(wooRateBudgetIntervalFloorSeconds({ refillPerSecond: 0.01 })).toBe(
       WOO_PAGES_PER_SYNC * 100,
     );
+  });
+});
+
+/**
+ * The route table's silent failure mode: a `medusa_orders` target that falls
+ * through to the eBay fallback executor instead of `medusaOrderPollExecutor`
+ * (`registry.ts`'s route map). `getEbayAdapterForConnection` is stubbed to
+ * THROW unconditionally and count its own calls, so a broken route fails this
+ * test loudly (the poll would error, and `ebayAdapterCalls` would be nonzero)
+ * instead of silently misrouting.
+ */
+describe("medusa_orders routing", () => {
+  const routingDbName = scratchDbName("loxep_test_app_registry_medusa_routing");
+  let routingDatabaseUrl = "";
+  let routingHandle: DbHandle;
+  let routingServices: AppServices;
+  let routingComposition: WorkerComposition;
+  let routingRuntime: WorkerRuntime;
+  let ebayAdapterCalls = 0;
+  let connectionId = "";
+  let targetId = "";
+
+  beforeAll(async () => {
+    routingDatabaseUrl = await createScratchDb(routingDbName);
+    await runMigrations({ databaseUrl: routingDatabaseUrl, logger: silentLogger });
+    routingHandle = createDb(routingDatabaseUrl);
+    const config = testConfig(routingDatabaseUrl);
+
+    const real = buildAppServices({ config, logger: silentJobsLogger });
+    const fakeMedusaAdapter: MedusaConnectionAdapter = {
+      connectionId: "",
+      baseUrl: "https://medusa-routing-check.example.invalid",
+      sourceAccountKey: "medusa:https://medusa-routing-check.example.invalid",
+      // Unused: paging comes from the injected `medusaOrders` iterator below,
+      // never from this adapter object directly.
+      adapter: {} as unknown as MedusaAdapter,
+      minIntervalSeconds: 60,
+    };
+    routingServices = {
+      ...real,
+      getEbayAdapterForConnection: async () => {
+        ebayAdapterCalls += 1;
+        throw new Error(
+          "medusa_orders must not reach the eBay fallback executor",
+        );
+      },
+      getMedusaAdapterForConnection: async (id) => ({
+        ...fakeMedusaAdapter,
+        connectionId: id,
+      }),
+    };
+
+    routingComposition = buildWorkerRegistry({
+      config,
+      services: routingServices,
+      logger: silentJobsLogger,
+      // Zero pages: this test proves ROUTING, not ingestion — a successful,
+      // empty sync is enough to show the poll reached the Medusa branch.
+      medusaOrders: () => (async function* () {})(),
+    });
+
+    routingRuntime = await startWorkerRuntime({
+      databaseUrl: routingDatabaseUrl,
+      logger: silentJobsLogger,
+      concurrency: 1,
+      pollInterval: 200,
+      registry: routingComposition.registry,
+      cronItems: [],
+    });
+
+    await routingHandle.db.insert(user).values({
+      id: "registry-medusa-routing-user",
+      name: "Registry Medusa Routing",
+      email: "registry-medusa-routing@example.invalid",
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const connection = await routingServices.connections.createConnection({
+      provider: "medusa",
+      kind: "store",
+      name: "routing-check backend",
+      createdByUserId: "registry-medusa-routing-user",
+    });
+    connectionId = connection.id;
+
+    const cursor = await ensureMedusaOrderSyncTarget(routingHandle.db, {
+      connectionId,
+    });
+    targetId = cursor.monitorTargetId;
+  }, 120_000);
+
+  afterAll(async () => {
+    await routingRuntime?.stop();
+    await routingComposition?.close();
+    // `composition.close()` is a no-op here (services were INJECTED, not
+    // owned), so the underlying pool `buildAppServices` opened must be
+    // closed explicitly — the same two-handle discipline
+    // `commerce-ebay-sync.test.ts` follows.
+    await routingServices?.close();
+    await closeDb(routingHandle);
+    await dropScratchDb(routingDbName);
+  });
+
+  it("IS registered in @loxep/market's target-type union", () => {
+    expect(MONITOR_TARGET_TYPES).toContain(MEDUSA_ORDERS_TARGET_TYPE);
+  });
+
+  it("routes medusa_orders to the Medusa executor, never the eBay fallback", async () => {
+    await routingHandle.pool.query(
+      `update monitor_targets
+          set next_poll_at = now() - interval '1 second', backoff_until = null
+        where id = $1`,
+      [targetId],
+    );
+
+    const market = createMarketTasks({ db: routingHandle.db });
+    await routingRuntime.addJob(market.dispatchDueMonitorsTask, {});
+
+    await waitFor(
+      async () => {
+        const rows = await routingHandle.pool.query<{
+          last_success_at: Date | null;
+        }>(`select last_success_at from monitor_targets where id = $1`, [
+          targetId,
+        ]);
+        return rows.rows[0]?.last_success_at !== null ? true : undefined;
+      },
+      { timeoutMs: 30_000, label: "medusa_orders routing poll succeeded" },
+    );
+
+    // The strongest possible evidence of correct routing: the eBay fallback
+    // executor — which would throw for ANY connection on a "medusa_orders"
+    // target type, per `poll-executor.ts`'s own unsupported-target-type
+    // guard — was never even asked to resolve an adapter.
+    expect(ebayAdapterCalls).toBe(0);
   });
 });

@@ -46,6 +46,8 @@ import { createEtsyAdapterFactory } from "./etsy.ts";
 import type { EtsyAdapterFactory } from "./etsy.ts";
 import { createReverbAdapterFactory } from "./reverb.ts";
 import type { ReverbAdapterFactory } from "./reverb.ts";
+import { createMedusaAdapterFactory } from "./medusa.ts";
+import type { MedusaAdapterFactory } from "./medusa.ts";
 import { createMonitorSettingsReader } from "./settings.ts";
 import type { MonitorSettingsReader } from "./settings.ts";
 import { createWooAdapterFactory } from "./woo.ts";
@@ -85,6 +87,16 @@ export interface BuildAppServicesOptions {
    * on refills.
    */
   wooRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Medusa token bucket (loxep-xxz). Production
+   * uses `medusa.ts`'s documented defaults (matching the adapter's own
+   * conservative default); there is no registered
+   * `integration.medusa.rate_budget` setting yet, matching Cloudflare's/
+   * Purelymail's/Reverb's own gap — an explicit value here WINS, which is how
+   * tests get a wide-open budget without spending wall-clock time waiting on
+   * refills.
+   */
+  medusaRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Override the SHARED-PER-APPLICATION Etsy token bucket (see
    * `etsy.ts`'s module doc — this is the one budget the whole installation's
@@ -200,6 +212,16 @@ export interface AppServices {
   invalidateWooAdapter: (connectionId: string) => void;
   /** The Woo interval floor implied by the DEFAULT/overridden budget. */
   wooIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Medusa adapter (backend URL + secret API key + budget,
+   * loxep-xxz). Per-CONNECTION like eBay/Woo, not shared-per-installation
+   * like Etsy — see `medusa.ts`'s module doc.
+   */
+  getMedusaAdapterForConnection: MedusaAdapterFactory;
+  /** Drop a cached Medusa adapter (after an `auth`-class provider failure). */
+  invalidateMedusaAdapter: (connectionId: string) => void;
+  /** The Medusa interval floor implied by the DEFAULT/overridden budget. */
+  medusaIntervalFloorSeconds: number;
   /**
    * Connection-scoped Etsy adapter — but the underlying `EtsyAdapter` and its
    * `RateBudget` are ONE SHARED INSTANCE for the whole installation, not
@@ -360,6 +382,19 @@ export function buildAppServices(
     resolveRateBudget: async () => (await monitorSettings.read()).wooRateBudget,
   });
 
+  // PER-CONNECTION — see medusa.ts's module doc. `resolveRateBudget` is
+  // intentionally omitted (no registered setting for it yet, matching
+  // Cloudflare's/Purelymail's/Reverb's own gap); an explicit
+  // `medusaRateBudget` still wins over the compiled-in defaults.
+  const medusa = createMedusaAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.medusaRateBudget !== undefined
+      ? { rateBudget: options.medusaRateBudget }
+      : {}),
+  });
+
   // SHARED PER APPLICATION — see etsy.ts's module doc. `resolveRateBudget`
   // is intentionally omitted (no registered setting for it yet, unlike
   // eBay/Woo); an explicit `etsyRateBudget` still wins over the compiled-in
@@ -490,6 +525,9 @@ export function buildAppServices(
     getWooAdapterForConnection: woo.getAdapterForConnection,
     invalidateWooAdapter: woo.invalidate,
     wooIntervalFloorSeconds: woo.intervalFloorSeconds,
+    getMedusaAdapterForConnection: medusa.getAdapterForConnection,
+    invalidateMedusaAdapter: medusa.invalidate,
+    medusaIntervalFloorSeconds: medusa.intervalFloorSeconds,
     getEtsyAdapterForConnection: etsy.getAdapterForConnection,
     invalidateEtsyAdapter: etsy.invalidate,
     etsyIntervalFloorSeconds: etsy.intervalFloorSeconds,

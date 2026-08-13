@@ -12,12 +12,13 @@
  * on the market workspace) — it covers the four Phase 2 discovery types
  * (`ebay_item`/`ebay_watchlist`/`ebay_search`/`ebay_seller`, which poll
  * through the same claim/backoff/adaptive machinery, `monitors.ts`'s doc),
- * the two Phase 3 COMMERCE order-sync types (`woo_orders`/`ebay_orders`,
- * registered by `@loxep/commerce`), and `ebay_purchases` (Flipping milestone
- * 5, loxep-dgf.5, registered by `@loxep/inventory` — see that package's
- * `purchase-sync.ts`). `monitorTargetTypeLabel` still falls back to the raw
- * stored value for any other `monitor_targets.target_type` value, so a type
- * this union hasn't caught up to yet displays instead of erroring.
+ * the three Phase 3 COMMERCE order-sync types (`woo_orders`/`ebay_orders`/
+ * `medusa_orders`, registered by `@loxep/commerce`), and `ebay_purchases`
+ * (Flipping milestone 5, loxep-dgf.5, registered by `@loxep/inventory` — see
+ * that package's `purchase-sync.ts`). `monitorTargetTypeLabel` still falls
+ * back to the raw stored value for any other `monitor_targets.target_type`
+ * value, so a type this union hasn't caught up to yet displays instead of
+ * erroring.
  *
  * The order-sync AND purchase-sync types are labeled/filterable like any
  * other monitor row, but are EXCLUDED from the create dialog's type dropdown
@@ -46,6 +47,7 @@ export type SupportedMonitorTargetType =
   | 'ebay_seller'
   | 'woo_orders'
   | 'ebay_orders'
+  | 'medusa_orders'
   | 'ebay_purchases';
 
 const MONITOR_TARGET_TYPE_LABELS = {
@@ -55,6 +57,7 @@ const MONITOR_TARGET_TYPE_LABELS = {
   ebay_seller: 'eBay seller',
   woo_orders: 'WooCommerce orders',
   ebay_orders: 'eBay orders',
+  medusa_orders: 'Medusa orders',
   ebay_purchases: 'eBay purchases'
 } satisfies Record<SupportedMonitorTargetType, string>;
 
@@ -69,18 +72,24 @@ export const monitorTargetTypeOptions = MONITOR_TARGET_TYPE_VALUES.map((value) =
 
 /**
  * Order-sync target types — see the module doc. Kept as a `Set` for a fast
- * membership check in `manuallyCreatableMonitorTargetTypeOptions`.
+ * membership check in `manuallyCreatableMonitorTargetTypeOptions`. NOT
+ * typecheck-forced (no `satisfies` ties it to `SupportedMonitorTargetType`),
+ * so a new order-sync type omitted here appears in the manual monitor-create
+ * dropdown with no config fields, creating an unwired duplicate row
+ * (loxep-xxz) — `medusa_orders` is here for exactly that reason.
  */
 const ORDER_SYNC_MONITOR_TARGET_TYPES: ReadonlySet<SupportedMonitorTargetType> = new Set([
   'woo_orders',
   'ebay_orders',
+  'medusa_orders',
   'ebay_purchases'
 ]);
 
 /**
  * `monitorTargetTypeOptions` minus the order-sync types — what the monitor
- * create/edit dialog's type dropdown offers. `woo_orders`/`ebay_orders` rows
- * are created by `@loxep/commerce`'s sync bootstrap, not through this form.
+ * create/edit dialog's type dropdown offers. `woo_orders`/`ebay_orders`/
+ * `medusa_orders` rows are created by `@loxep/commerce`'s sync bootstrap,
+ * not through this form.
  */
 export const manuallyCreatableMonitorTargetTypeOptions = monitorTargetTypeOptions.filter(
   (option) => !ORDER_SYNC_MONITOR_TARGET_TYPES.has(option.value)

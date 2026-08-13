@@ -37,6 +37,9 @@
  *   `connections.config.ebayOAuth.scopes` the same way
  *   `EbayCredentialStatus`/`EbayConnectionActions`
  *   (`@/features/settings/components/ebay-connection-actions`) do.
+ * - Medusa (loxep-xxz): like WooCommerce, not eBay — no OAuth, no consent
+ *   tier, no scope check. Any connection that is not archived is eligible,
+ *   full stop.
  * - Archived connections are never eligible: they are retired and skipped
  *   everywhere.
  */
@@ -44,22 +47,29 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 
 /**
- * Mirrors `@loxep/commerce`'s `WOO_ORDERS_TARGET_TYPE`/`EBAY_ORDERS_TARGET_TYPE`
- * and the matching `@loxep/market` `MonitorTargetType` entries. Re-declared,
- * not imported — see the module doc above for why apps/web does not depend
- * on `@loxep/commerce`. The re-declaration discipline mirrors
- * `@loxep/market`'s own `commerceSyncStateSchema` (which re-declares
- * `@loxep/commerce`'s config shape for the same cross-boundary reason).
+ * Mirrors `@loxep/commerce`'s `WOO_ORDERS_TARGET_TYPE`/`EBAY_ORDERS_TARGET_TYPE`/
+ * `MEDUSA_ORDERS_TARGET_TYPE` and the matching `@loxep/market`
+ * `MonitorTargetType` entries. Re-declared, not imported — see the module
+ * doc above for why apps/web does not depend on `@loxep/commerce`. The
+ * re-declaration discipline mirrors `@loxep/market`'s own
+ * `commerceSyncStateSchema` (which re-declares `@loxep/commerce`'s config
+ * shape for the same cross-boundary reason).
  */
 export const WOO_ORDERS_TARGET_TYPE = 'woo_orders' as const;
 export const EBAY_ORDERS_TARGET_TYPE = 'ebay_orders' as const;
-export type OrderSyncTargetType = typeof WOO_ORDERS_TARGET_TYPE | typeof EBAY_ORDERS_TARGET_TYPE;
+export const MEDUSA_ORDERS_TARGET_TYPE = 'medusa_orders' as const;
+export type OrderSyncTargetType =
+  | typeof WOO_ORDERS_TARGET_TYPE
+  | typeof EBAY_ORDERS_TARGET_TYPE
+  | typeof MEDUSA_ORDERS_TARGET_TYPE;
 
 /** Mirrors `@loxep/commerce`'s `DEFAULT_SYNC_INTERVAL_SECONDS`. */
 const DEFAULT_ORDER_SYNC_INTERVAL_SECONDS = 900;
 
 const WOOCOMMERCE_PROVIDER = 'woocommerce';
 const EBAY_PROVIDER = 'ebay';
+/** Mirrors `@loxep/commerce`'s `MEDUSA_PROVIDER`. */
+const MEDUSA_PROVIDER = 'medusa';
 /** Mirrors `@/server/ebay-oauth`'s `EBAY_ORDER_SCOPE`. */
 const EBAY_ORDER_SCOPE = 'https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly';
 
@@ -91,6 +101,7 @@ function hasEbayOrderScope(config: Record<string, unknown>): boolean {
 function orderSyncTargetTypeForProvider(provider: string): OrderSyncTargetType | null {
   if (provider === WOOCOMMERCE_PROVIDER) return WOO_ORDERS_TARGET_TYPE;
   if (provider === EBAY_PROVIDER) return EBAY_ORDERS_TARGET_TYPE;
+  if (provider === MEDUSA_PROVIDER) return MEDUSA_ORDERS_TARGET_TYPE;
   return null;
 }
 
@@ -103,11 +114,38 @@ function isOrderSyncEligible(connection: {
   if (connection.status === 'archived') return false;
   if (connection.provider === WOOCOMMERCE_PROVIDER) return true;
   if (connection.provider === EBAY_PROVIDER) return hasEbayOrderScope(connection.config);
+  if (connection.provider === MEDUSA_PROVIDER) return true;
   return false;
 }
 
+/**
+ * A lookup, not a binary ternary (loxep-xxz) — the ternary this replaced
+ * silently gave any third provider the eBay label the day one was added.
+ * Keyed by target type so an unrecognized future type still fails loudly
+ * (`satisfies Record<OrderSyncTargetType, string>` below) rather than
+ * falling through to the wrong name.
+ */
+const TARGET_NAME_PREFIXES = {
+  [WOO_ORDERS_TARGET_TYPE]: 'WooCommerce orders',
+  [EBAY_ORDERS_TARGET_TYPE]: 'eBay orders',
+  [MEDUSA_ORDERS_TARGET_TYPE]: 'Medusa orders'
+} as const satisfies Record<OrderSyncTargetType, string>;
+
 function targetNamePrefix(targetType: OrderSyncTargetType): string {
-  return targetType === WOO_ORDERS_TARGET_TYPE ? 'WooCommerce orders' : 'eBay orders';
+  return TARGET_NAME_PREFIXES[targetType];
+}
+
+/**
+ * Provider-aware ineligibility reason (loxep-xxz) — the message this
+ * replaced was eBay-worded ("has not granted order access yet") for every
+ * provider, which is simply wrong for WooCommerce/Medusa (neither has a
+ * consent tier to grant).
+ */
+function ineligibleOrderSyncMessage(provider: string): string {
+  if (provider === EBAY_PROVIDER) {
+    return 'This eBay account has not granted order access yet — use "Grant order access" first';
+  }
+  return `Order sync is not currently eligible for this ${provider} account`;
 }
 
 function toOrderSyncStatusDto(row: {
@@ -146,7 +184,7 @@ export const enableOrderSync = createServerFn({ method: 'POST' })
       throw new Error(
         connection.status === 'archived'
           ? 'Cannot enable order sync for an archived account'
-          : 'This eBay account has not granted order access yet — use "Grant order access" first'
+          : ineligibleOrderSyncMessage(connection.provider)
       );
     }
 
