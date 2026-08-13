@@ -115,9 +115,7 @@ test('a non-eBay connection never offers the purchase-sync action', async ({ pag
   await page.keyboard.press('Escape');
 });
 
-test('no consented eBay purchase-sync fixture can exist in this harness', async ({
-  page
-}) => {
+test('no consented eBay purchase-sync fixture can exist in this harness', async ({ page }) => {
   await page.goto('/settings/connections');
   const ebaySection = page
     .locator('section')
