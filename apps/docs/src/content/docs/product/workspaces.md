@@ -75,10 +75,29 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 | **Customers** | `/customers` | people, organizations, contacts, addresses/sites, operational history, terms/tax metadata |
 | **Projects** | `/projects` | jobs/projects, tasks/milestones, time, materials, expenses, service delivery, subscriptions/recurring services |
 | **Finance** | `/finance` | billing/AR, expenses/AP, payments, marketplace payouts/fees, banking, reconciliation, accounting, tax-oriented reporting |
+| **Infrastructure** | `/infrastructure` | the installation's own operational estate: domains and their DNS desired-versus-actual state, delegation status, mail-provider state, hosting targets/fleet, reconciler run history, and — later — the container, metrics, and uptime layers Loxep links rather than owns |
 | **Settings** | `/settings` | users/admin, economic entities, integrations (the catalog of supported services and their set-up: eBay keyset, WooCommerce, Medusa, notification transports), connections (accounts added under a chosen service), notifications, storage, application settings, secret status/rotation, health/diagnostics |
 | **Starter Reference** | `/starter` | preserved donor demos and UI patterns; development/reference use rather than product data |
 
 Not every proposed workspace needs to be implemented during Phase 0. The value of defining the map now is to keep route structure and future deep links from assuming that Dashboard owns everything.
+
+### Infrastructure is a future peer root, and it is about the installation itself
+
+`/infrastructure` is reserved now and built later. It is the odd one out in the table above, and the difference is worth stating so it is not mistaken for a Settings page or for a new commercial domain.
+
+Every other workspace presents facts about **the business Loxep runs** — items observed, goods sold, money moved, people billed. Infrastructure presents facts about **the machines and names Loxep and its owner's other services run on**. Those facts have no counterparty, no economic entity, and no place in any accounting book; see [Domain Boundaries](../../architecture/domain-boundaries/#infrastructure) for the ownership rules that follow from that.
+
+It is the meeting point for capability that arrives in layers:
+
+```text
+now (designed)   domains, DNS desired-vs-actual state, delegation, mail provider,
+                 hosting targets/fleet, reconciler runs and drift
+later            container/stack management, host and container metrics, uptime and
+                 endpoint monitoring — surfaced through links and health state rather
+                 than reimplemented, per the companion-services guiding rule
+```
+
+It is **not** `/settings`. `/settings` configures Loxep — its users, connections, secrets, storage, and application behavior. `/infrastructure` is a working surface over external estate that Loxep observes and reconciles, with its own tables, its own jobs, and its own daily use. The credentials that reach those external systems still live where every other provider credential lives: connections and encrypted secrets administered under `/settings`. The physical design is [Infrastructure Control Plane Design](../../architecture/infrastructure-control-design/).
 
 ## Cross-cutting capabilities
 

@@ -313,6 +313,31 @@ Timescale continuous aggregates, materialized views, and analytical SQL belong h
 
 Reporting may aggregate or segment by economic entity independently of how Accounting groups those entities into books.
 
+## Infrastructure
+
+Owns the **desired and observed state of the installation's own operational estate** — the domain names, DNS zones, mail-hosting registration, and hosting targets that Loxep and its owner's surrounding services run on.
+
+Owns:
+
+- domain records and their provisioning state, including registrar and delegation facts;
+- DNS desired state per domain, its materialization rules, and the record-ownership marker that says which rows a reconciler may rewrite and which are hand-authored;
+- observed provider state and the diff between desired and observed, including drift findings;
+- mail-hosting registration and ownership-verification state for a domain, plus the mailbox/alias intent derived from a template;
+- hosting targets (nodes, tunnels, and the relationship between a tunnel-connected host and the node that fronts it);
+- provider-token *scope intent* — which zones a produced credential should cover — as distinct from the credential value itself;
+- reconciler run and step history for every apply and every read-only drift check.
+
+Does **not** own:
+
+- credential material. Provider API tokens, keys, and generated mailbox passwords are shared-foundation `connections` / `connection_credentials` / `application_secrets` records reached through the credential service, exactly as every other provider's are. Infrastructure stores the *reference* and the *scope intent*, never ciphertext of its own;
+- the scheduling mechanism. Due-work discovery, claim, backoff, and cadence remain the shared scheduling foundation described above; Infrastructure registers target types against it rather than building a second scheduler;
+- container orchestration, host metrics, or uptime probing. Those remain independently deployed companion applications; Infrastructure may hold links and health state for them under the generic external-resource and integration-health models, and must not grow into a reimplementation of them;
+- anything commercial. There are no prices, no invoices, and no cost attribution here. A hosting bill is an Expense, attributed like any other expense, and it reaches this domain's records — if ever — as a reference, not as a column.
+
+**Infrastructure records are installation-scoped and carry no economic-entity attribution.** A server, a zone, or a nameserver delegation is a fact about the installation, not about which operating identity's activity it supports; several entities' work commonly runs on one host, and inventing a per-record owner would create exactly the entity-as-container semantics ADR-0017 forbids. If cross-entity cost allocation for infrastructure is ever wanted, it belongs to the Costs and Expenses domain's allocation model, which already exists for that purpose.
+
+Provider protocol shapes stop at the Integrations boundary as usual: DNS, mail, and hosting providers get adapters under `packages/integrations/*` and this domain consumes Loxep-owned types.
+
 ## Cross-domain rules
 
 1. A domain may reference another domain's stable ID but should not mutate another domain's canonical tables directly from presentation code.
@@ -326,3 +351,4 @@ Reporting may aggregate or segment by economic entity independently of how Accou
 9. UI workspace placement does not transfer backend ownership between domains.
 10. Application users, provider connections, economic entities, counterparties, and accounting books are distinct concepts.
 11. Economic entities classify owned/operated activity; they do not define who may access data in the installation.
+12. Records describing the installation's own operational estate are installation-scoped. They take no economic-entity attribution and are never a substitute for an expense, a counterparty, or an accounting fact.

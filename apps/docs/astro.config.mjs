@@ -65,6 +65,7 @@ export default defineConfig({
             { label: 'Inventory & Acquisition Schema Design (Phase 4)', slug: 'architecture/inventory-schema-design' },
             { label: 'Financial Foundation Schema Design (Phase 5)', slug: 'architecture/financial-schema-design' },
             { label: 'Counterparty, Project, Service & Billing Schema Design (Phase 6)', slug: 'architecture/services-billing-schema-design' },
+            { label: 'Infrastructure Control Plane Design (Phase 7)', slug: 'architecture/infrastructure-control-design' },
           ],
         },
         {
