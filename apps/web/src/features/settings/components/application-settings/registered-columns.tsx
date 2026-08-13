@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime } from '@/lib/format';
 import type { RegisteredSettingDto } from '@/server/admin-functions';
 
@@ -18,11 +19,11 @@ function formatValue(value: unknown): string {
   return serialized;
 }
 
-export const registeredColumns: ColumnDef<RegisteredSettingDto>[] = [
+export const registeredColumns: ColumnDef<DataTableFeatures, RegisteredSettingDto>[] = [
   {
     id: 'key',
     accessorKey: 'key',
-    header: ({ column }: { column: Column<RegisteredSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RegisteredSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Key' />
     ),
     cell: ({ cell }) => (
@@ -59,7 +60,7 @@ export const registeredColumns: ColumnDef<RegisteredSettingDto>[] = [
   {
     id: 'isSet',
     accessorKey: 'isSet',
-    header: ({ column }: { column: Column<RegisteredSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RegisteredSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Source' />
     ),
     cell: ({ cell }) => (
@@ -71,7 +72,7 @@ export const registeredColumns: ColumnDef<RegisteredSettingDto>[] = [
   {
     id: 'updatedAt',
     accessorKey: 'updatedAt',
-    header: ({ column }: { column: Column<RegisteredSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RegisteredSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Updated' />
     ),
     cell: ({ cell }) => (
@@ -91,7 +92,7 @@ export const registeredColumns: ColumnDef<RegisteredSettingDto>[] = [
 export function getRegisteredColumns(
   isAdmin: boolean,
   onEdit: (setting: RegisteredSettingDto) => void
-): ColumnDef<RegisteredSettingDto>[] {
+): ColumnDef<DataTableFeatures, RegisteredSettingDto>[] {
   if (!isAdmin) return registeredColumns;
   return [
     ...registeredColumns,

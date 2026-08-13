@@ -4,6 +4,7 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import { Icons } from '@/components/icons';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
 import { STORAGE_DRIVER_LABELS } from '@/features/settings/constants';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { StorageBackendDto } from '@/server/admin-functions';
 import { CellAction } from './cell-action';
 
@@ -25,12 +26,12 @@ function describeConfig(backend: StorageBackendDto): string {
   return '—';
 }
 
-export function getColumns(isAdmin: boolean): ColumnDef<StorageBackendDto>[] {
-  const columns: ColumnDef<StorageBackendDto>[] = [
+export function getColumns(isAdmin: boolean): ColumnDef<DataTableFeatures, StorageBackendDto>[] {
+  const columns: ColumnDef<DataTableFeatures, StorageBackendDto>[] = [
     {
       id: 'name',
       accessorKey: 'name',
-      header: ({ column }: { column: Column<StorageBackendDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, StorageBackendDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Name' />
       ),
       cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>,
@@ -45,7 +46,7 @@ export function getColumns(isAdmin: boolean): ColumnDef<StorageBackendDto>[] {
     {
       id: 'driver',
       accessorKey: 'driver',
-      header: ({ column }: { column: Column<StorageBackendDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, StorageBackendDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Driver' />
       ),
       cell: ({ row }) => (
@@ -68,7 +69,7 @@ export function getColumns(isAdmin: boolean): ColumnDef<StorageBackendDto>[] {
     {
       id: 'enabled',
       accessorKey: 'enabled',
-      header: ({ column }: { column: Column<StorageBackendDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, StorageBackendDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Enabled' />
       ),
       cell: ({ cell }) => (

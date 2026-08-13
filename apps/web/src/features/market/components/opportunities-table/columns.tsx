@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatScore, formatTimestampPrecise } from '@/lib/format';
 import { marketEventTypeLabel } from '@/features/settings/constants';
 import {
@@ -21,7 +22,7 @@ import type { OpportunityEventDto } from '@/server/market-functions';
  * `fetchOpportunityEvents`, which pushes ordering/filtering into
  * `@loxep/market`'s `listOpportunityEventsPage`.
  */
-export const columns: ColumnDef<OpportunityEventDto>[] = [
+export const columns: ColumnDef<DataTableFeatures, OpportunityEventDto>[] = [
   {
     id: 'item',
     accessorFn: (row) => row.itemTitle ?? row.marketplaceItemId,
@@ -67,7 +68,7 @@ export const columns: ColumnDef<OpportunityEventDto>[] = [
   {
     id: 'rule',
     accessorKey: 'ruleName',
-    header: ({ column }: { column: Column<OpportunityEventDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, OpportunityEventDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Rule' />
     ),
     cell: ({ cell }) => <span className='text-muted-foreground'>{cell.getValue<string>()}</span>
@@ -75,7 +76,7 @@ export const columns: ColumnDef<OpportunityEventDto>[] = [
   {
     id: 'score',
     accessorKey: 'score',
-    header: ({ column }: { column: Column<OpportunityEventDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, OpportunityEventDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Score' />
     ),
     cell: ({ cell }) => {
@@ -103,7 +104,7 @@ export const columns: ColumnDef<OpportunityEventDto>[] = [
   {
     id: 'detectedAt',
     accessorKey: 'detectedAt',
-    header: ({ column }: { column: Column<OpportunityEventDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, OpportunityEventDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Detected' />
     ),
     cell: ({ cell }) => (

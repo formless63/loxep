@@ -1,4 +1,4 @@
-import type { Table } from '@tanstack/react-table';
+import type { ReactTable, RowData } from '@tanstack/react-table';
 import { Icons } from '@/components/icons';
 
 import { Button } from '@/components/ui/button';
@@ -12,13 +12,16 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import type { DataTableFeatures } from '@/lib/table-features';
 import * as React from 'react';
 
-interface DataTableViewOptionsProps<TData> {
-  table: Table<TData>;
+interface DataTableViewOptionsProps<TData extends RowData> {
+  table: ReactTable<DataTableFeatures, TData>;
 }
 
-export function DataTableViewOptions<TData>({ table }: DataTableViewOptionsProps<TData>) {
+export function DataTableViewOptions<TData extends RowData>({
+  table
+}: DataTableViewOptionsProps<TData>) {
   const columns = React.useMemo(
     () =>
       table

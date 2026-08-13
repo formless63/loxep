@@ -2,6 +2,7 @@ import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatMoney, formatQuantity } from '@/lib/format';
 import {
   marketItemStateIcon,
@@ -18,7 +19,9 @@ import type { Option } from '@/types/data-table';
  * reference's static `CATEGORY_OPTIONS`/`ROLE_OPTIONS`
  * (`options.tsx`), there is no fixed option set to export ahead of time.
  */
-export function createColumns(monitorOptions: Option[]): ColumnDef<MarketItemDto>[] {
+export function createColumns(
+  monitorOptions: Option[]
+): ColumnDef<DataTableFeatures, MarketItemDto>[] {
   return [
     {
       id: 'item',
@@ -97,7 +100,7 @@ export function createColumns(monitorOptions: Option[]): ColumnDef<MarketItemDto
     {
       id: 'lastObserved',
       accessorFn: (row) => row.latestObservation?.observedAt ?? null,
-      header: ({ column }: { column: Column<MarketItemDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, MarketItemDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Last observed' />
       ),
       cell: ({ cell }) => (

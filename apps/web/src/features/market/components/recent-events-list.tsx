@@ -1,5 +1,5 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
-import { getCoreRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table';
+import { useTable } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -12,12 +12,13 @@ import {
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import { formatTimestampPrecise } from '@/lib/format';
 import { marketEventTypeLabel } from '@/features/settings/constants';
 import { marketEventTypeIcon, marketEventTypeTone } from '@/features/market/constants';
 import type { MarketEventSummaryDto } from '@/server/market-functions';
 
-const columns: ColumnDef<MarketEventSummaryDto>[] = [
+const columns: ColumnDef<DataTableFeatures, MarketEventSummaryDto>[] = [
   {
     id: 'eventType',
     accessorKey: 'eventType',
@@ -60,7 +61,7 @@ const columns: ColumnDef<MarketEventSummaryDto>[] = [
   {
     id: 'detectedAt',
     accessorKey: 'detectedAt',
-    header: ({ column }: { column: Column<MarketEventSummaryDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, MarketEventSummaryDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Detected' />
     ),
     cell: ({ cell }) => (
@@ -75,17 +76,22 @@ const columns: ColumnDef<MarketEventSummaryDto>[] = [
  * Recent market events for the overview page, linking each row to its item.
  * `events` is a bounded top-N prop from `fetchMarketOverview`
  * (`RECENT_EVENTS_LIMIT`, `@/server/market-functions`), not a paginated
- * query of its own, so this uses a plain (non-URL-synced) `useReactTable`
+ * query of its own, so this uses a plain (non-URL-synced) `useTable`
  * instance rather than `useDataTable` — there is no page/filter state
  * belonging in the URL for a fixed "last 10" widget embedded in the
  * overview page (owned separately, outside this pass's fence).
  */
 export default function RecentEventsList({ events }: { events: MarketEventSummaryDto[] }) {
-  const table = useReactTable({
+  const table = useTable({
     data: events,
     columns,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel()
+    features: dataTableFeatures,
+    // No `getPaginationRowModel()` in the v8 original either — this is a
+    // fixed "last 10" widget, not a real paginated table. `dataTableFeatures`
+    // registers `paginatedRowModel` for every table that uses it, so
+    // `manualPagination` opts this one back out, keeping `table.getRowModel()`
+    // on the sorted (unsliced) rows exactly as it was pre-migration.
+    manualPagination: true
   });
 
   if (events.length === 0) {

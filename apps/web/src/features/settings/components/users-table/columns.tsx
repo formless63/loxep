@@ -1,6 +1,7 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime } from '@/lib/format';
 import { ToneBadge } from '@/features/settings/components/status-tone';
 import type { UserDto } from '@/server/admin-functions';
@@ -12,12 +13,12 @@ const ROLE_OPTIONS = [
 ];
 
 /** `currentUserId` is closed over so the actions cell can guard self-demotion. */
-export function getColumns(currentUserId: string): ColumnDef<UserDto>[] {
+export function getColumns(currentUserId: string): ColumnDef<DataTableFeatures, UserDto>[] {
   return [
     {
       id: 'email',
       accessorKey: 'email',
-      header: ({ column }: { column: Column<UserDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, UserDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Email' />
       ),
       cell: ({ row }) => (
@@ -39,7 +40,7 @@ export function getColumns(currentUserId: string): ColumnDef<UserDto>[] {
     {
       id: 'role',
       accessorKey: 'role',
-      header: ({ column }: { column: Column<UserDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, UserDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Role' />
       ),
       cell: ({ row }) => (
@@ -60,7 +61,7 @@ export function getColumns(currentUserId: string): ColumnDef<UserDto>[] {
     {
       id: 'createdAt',
       accessorKey: 'createdAt',
-      header: ({ column }: { column: Column<UserDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, UserDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Created' />
       ),
       cell: ({ cell }) => (

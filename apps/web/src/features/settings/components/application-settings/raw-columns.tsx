@@ -1,14 +1,15 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatQuantity } from '@/lib/format';
 import type { RawSettingDto } from '@/server/admin-functions';
 
-export const rawColumns: ColumnDef<RawSettingDto>[] = [
+export const rawColumns: ColumnDef<DataTableFeatures, RawSettingDto>[] = [
   {
     id: 'key',
     accessorKey: 'key',
-    header: ({ column }: { column: Column<RawSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RawSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Key' />
     ),
     cell: ({ cell }) => (
@@ -27,7 +28,7 @@ export const rawColumns: ColumnDef<RawSettingDto>[] = [
   {
     id: 'schemaVersion',
     accessorKey: 'schemaVersion',
-    header: ({ column }: { column: Column<RawSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RawSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Schema version' />
     ),
     cell: ({ cell }) => (
@@ -49,7 +50,7 @@ export const rawColumns: ColumnDef<RawSettingDto>[] = [
   {
     id: 'updatedAt',
     accessorKey: 'updatedAt',
-    header: ({ column }: { column: Column<RawSettingDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, RawSettingDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Updated' />
     ),
     cell: ({ cell }) => (

@@ -1,4 +1,4 @@
-import { type Table as TanstackTable, flexRender } from '@tanstack/react-table';
+import { type ReactTable, type RowData, flexRender } from '@tanstack/react-table';
 import type * as React from 'react';
 
 import { DataTablePagination } from '@/components/ui/table/data-table-pagination';
@@ -11,14 +11,19 @@ import {
   TableRow
 } from '@/components/ui/table';
 import { getCommonPinningStyles } from '@/lib/data-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 
-interface DataTableProps<TData> extends React.ComponentProps<'div'> {
-  table: TanstackTable<TData>;
+interface DataTableProps<TData extends RowData> extends React.ComponentProps<'div'> {
+  table: ReactTable<DataTableFeatures, TData>;
   actionBar?: React.ReactNode;
 }
 
-export function DataTable<TData>({ table, actionBar, children }: DataTableProps<TData>) {
+export function DataTable<TData extends RowData>({
+  table,
+  actionBar,
+  children
+}: DataTableProps<TData>) {
   return (
     <div className='flex flex-1 flex-col space-y-4'>
       {children}
@@ -68,7 +73,7 @@ export function DataTable<TData>({ table, actionBar, children }: DataTableProps<
                 ) : (
                   <TableRow>
                     <TableCell colSpan={table.getAllColumns().length} className='h-24 text-center'>
-                      {table.getState().columnFilters.length > 0
+                      {table.state.columnFilters.length > 0
                         ? 'No results match your filters.'
                         : 'No data to display yet.'}
                     </TableCell>

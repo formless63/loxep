@@ -3,20 +3,23 @@ import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { NotificationEndpointDto } from '@/server/admin-functions';
 import { CellAction } from './cell-action';
 
 export function getColumns(
   isAdmin: boolean,
   onEdit: (endpoint: NotificationEndpointDto) => void
-): ColumnDef<NotificationEndpointDto>[] {
-  const columns: ColumnDef<NotificationEndpointDto>[] = [
+): ColumnDef<DataTableFeatures, NotificationEndpointDto>[] {
+  const columns: ColumnDef<DataTableFeatures, NotificationEndpointDto>[] = [
     {
       id: 'name',
       accessorKey: 'name',
-      header: ({ column }: { column: Column<NotificationEndpointDto, unknown> }) => (
-        <DataTableColumnHeader column={column} title='Name' />
-      ),
+      header: ({
+        column
+      }: {
+        column: Column<DataTableFeatures, NotificationEndpointDto, unknown>;
+      }) => <DataTableColumnHeader column={column} title='Name' />,
       cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>,
       meta: {
         label: 'Name',
@@ -43,9 +46,11 @@ export function getColumns(
     {
       id: 'enabled',
       accessorKey: 'enabled',
-      header: ({ column }: { column: Column<NotificationEndpointDto, unknown> }) => (
-        <DataTableColumnHeader column={column} title='Enabled' />
-      ),
+      header: ({
+        column
+      }: {
+        column: Column<DataTableFeatures, NotificationEndpointDto, unknown>;
+      }) => <DataTableColumnHeader column={column} title='Enabled' />,
       cell: ({ cell }) => (
         <BooleanStatusBadge
           value={cell.getValue<boolean>()}

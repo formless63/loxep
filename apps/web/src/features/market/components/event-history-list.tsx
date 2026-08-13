@@ -16,6 +16,7 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
 import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatTimestampPrecise } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import { itemEventsQuery } from '@/features/market/api/queries';
@@ -47,7 +48,7 @@ function PayloadDeltas({ payload }: { payload: Record<string, unknown> }) {
   );
 }
 
-const columns: ColumnDef<MarketEventDto>[] = [
+const columns: ColumnDef<DataTableFeatures, MarketEventDto>[] = [
   {
     id: 'eventType',
     accessorKey: 'eventType',
@@ -90,7 +91,7 @@ const columns: ColumnDef<MarketEventDto>[] = [
   {
     id: 'detectedAt',
     accessorKey: 'detectedAt',
-    header: ({ column }: { column: Column<MarketEventDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, MarketEventDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Detected' />
     ),
     cell: ({ cell }) => (

@@ -1,25 +1,34 @@
 import type { ExtendedColumnFilter, FilterOperator, FilterVariant } from '@/types/data-table';
-import type { Column } from '@tanstack/react-table';
+import type { DataTableFeatures } from '@/lib/table-features';
+import type { Column, RowData } from '@tanstack/react-table';
 
 import { dataTableConfig } from '@/config/data-table';
 
-export function getCommonPinningStyles<TData>({
+/**
+ * v9 renamed physical `'left'`/`'right'` pinning to logical `'start'`/`'end'`
+ * (`column.pin()`, `getIsPinned()`, `getStart()`/`getAfter()`) and moved
+ * `getIsFirstColumn()`/`getIsLastColumn()` off `columnPinningFeature` onto
+ * `columnOrderingFeature` — same names and `'start' | 'end' | 'center'`
+ * argument, different owning feature. See
+ * `node_modules/@tanstack/table-core/skills/migrate-v8-to-v9`.
+ */
+export function getCommonPinningStyles<TData extends RowData>({
   column
 }: {
-  column: Column<TData>;
+  column: Column<DataTableFeatures, TData>;
 }): React.CSSProperties {
   const isPinned = column.getIsPinned();
-  const isLastLeftPinnedColumn = isPinned === 'left' && column.getIsLastColumn('left');
-  const isFirstRightPinnedColumn = isPinned === 'right' && column.getIsFirstColumn('right');
+  const isLastStartPinnedColumn = isPinned === 'start' && column.getIsLastColumn('start');
+  const isFirstEndPinnedColumn = isPinned === 'end' && column.getIsFirstColumn('end');
 
   return {
-    boxShadow: isLastLeftPinnedColumn
+    boxShadow: isLastStartPinnedColumn
       ? '-5px 0 5px -5px var(--border) inset'
-      : isFirstRightPinnedColumn
+      : isFirstEndPinnedColumn
         ? '5px 0 5px -5px var(--border) inset'
         : undefined,
-    left: isPinned === 'left' ? `${column.getStart('left')}px` : undefined,
-    right: isPinned === 'right' ? `${column.getAfter('right')}px` : undefined,
+    left: isPinned === 'start' ? `${column.getStart('start')}px` : undefined,
+    right: isPinned === 'end' ? `${column.getAfter('end')}px` : undefined,
     position: isPinned ? 'sticky' : 'relative',
     background: isPinned ? 'var(--background)' : undefined,
     width: column.getSize(),

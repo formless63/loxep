@@ -88,6 +88,19 @@ export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
             </div>
           ) : (
             <>
+              {loginPaths.oidc && (
+                <Button className='w-full' onClick={handleSso} disabled={ssoPending}>
+                  {ssoPending ? <Spinner className='size-4' /> : <Icons.login className='size-4' />}
+                  Continue with SSO
+                </Button>
+              )}
+              {loginPaths.magicLink && loginPaths.oidc && (
+                <div className='flex items-center gap-3'>
+                  <Separator className='flex-1' />
+                  <span className='text-muted-foreground text-xs uppercase'>or</span>
+                  <Separator className='flex-1' />
+                </div>
+              )}
               {loginPaths.magicLink && (
                 <form
                   onSubmit={(e) => {
@@ -111,28 +124,16 @@ export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
                       )}
                     />
                     <form.AppForm>
-                      <form.SubmitButton className='w-full'>Send sign-in link</form.SubmitButton>
+                      {/* Outline when SSO is present: SSO is the primary path. */}
+                      <form.SubmitButton
+                        className='w-full'
+                        variant={loginPaths.oidc ? 'outline' : 'default'}
+                      >
+                        Send sign-in link
+                      </form.SubmitButton>
                     </form.AppForm>
                   </FieldGroup>
                 </form>
-              )}
-              {loginPaths.magicLink && loginPaths.oidc && (
-                <div className='flex items-center gap-3'>
-                  <Separator className='flex-1' />
-                  <span className='text-muted-foreground text-xs uppercase'>or</span>
-                  <Separator className='flex-1' />
-                </div>
-              )}
-              {loginPaths.oidc && (
-                <Button
-                  variant='outline'
-                  className='w-full'
-                  onClick={handleSso}
-                  disabled={ssoPending}
-                >
-                  {ssoPending ? <Spinner className='size-4' /> : <Icons.login className='size-4' />}
-                  Continue with SSO
-                </Button>
               )}
               {!loginPaths.magicLink && !loginPaths.oidc && (
                 <p className='text-muted-foreground text-center text-sm'>

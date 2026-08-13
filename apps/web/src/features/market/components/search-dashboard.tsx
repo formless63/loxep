@@ -1,11 +1,6 @@
 import * as React from 'react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
-import {
-  getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable
-} from '@tanstack/react-table';
+import { useTable } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +18,7 @@ import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
 import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatQuantity, formatTimestampPrecise } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import { monitorsQuery, searchDashboardQuery } from '@/features/market/api/queries';
@@ -41,11 +37,11 @@ interface DiscoveryMonitorRow {
   stats: DiscoveryMonitorStatsDto | null;
 }
 
-const discoveryColumns: ColumnDef<DiscoveryMonitorRow>[] = [
+const discoveryColumns: ColumnDef<DataTableFeatures, DiscoveryMonitorRow>[] = [
   {
     id: 'name',
     accessorFn: (row) => row.monitor.name,
-    header: ({ column }: { column: Column<DiscoveryMonitorRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, DiscoveryMonitorRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Name' />
     ),
     cell: ({ row }) => <span className='font-medium'>{row.original.monitor.name}</span>
@@ -62,7 +58,7 @@ const discoveryColumns: ColumnDef<DiscoveryMonitorRow>[] = [
   {
     id: 'discoveredItemCount',
     accessorFn: (row) => row.stats?.discoveredItemCount ?? 0,
-    header: ({ column }: { column: Column<DiscoveryMonitorRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, DiscoveryMonitorRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Discovered items' />
     ),
     cell: ({ cell }) => (
@@ -74,7 +70,7 @@ const discoveryColumns: ColumnDef<DiscoveryMonitorRow>[] = [
   {
     id: 'newListingCount24h',
     accessorFn: (row) => row.stats?.newListingCount24h ?? 0,
-    header: ({ column }: { column: Column<DiscoveryMonitorRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, DiscoveryMonitorRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='New listings (24h)' />
     ),
     cell: ({ cell }) => (
@@ -86,7 +82,7 @@ const discoveryColumns: ColumnDef<DiscoveryMonitorRow>[] = [
   {
     id: 'lastNewListingAt',
     accessorFn: (row) => row.stats?.lastNewListingAt ?? null,
-    header: ({ column }: { column: Column<DiscoveryMonitorRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, DiscoveryMonitorRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Last new listing' />
     ),
     cell: ({ cell }) => (
@@ -98,7 +94,7 @@ const discoveryColumns: ColumnDef<DiscoveryMonitorRow>[] = [
   {
     id: 'nextPollAt',
     accessorFn: (row) => row.monitor.nextPollAt,
-    header: ({ column }: { column: Column<DiscoveryMonitorRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, DiscoveryMonitorRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Next poll' />
     ),
     cell: ({ cell }) => (
@@ -154,7 +150,7 @@ function DiscoveryMonitorsTable({ rows }: { rows: DiscoveryMonitorRow[] }) {
   );
 }
 
-const recentListingsColumns: ColumnDef<NewListingEventDto>[] = [
+const recentListingsColumns: ColumnDef<DataTableFeatures, NewListingEventDto>[] = [
   {
     id: 'item',
     accessorFn: (row) => row.itemTitle ?? row.marketplaceItemId,
@@ -197,7 +193,7 @@ const recentListingsColumns: ColumnDef<NewListingEventDto>[] = [
   {
     id: 'detectedAt',
     accessorKey: 'detectedAt',
-    header: ({ column }: { column: Column<NewListingEventDto, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, NewListingEventDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Detected' />
     ),
     cell: ({ cell }) => (
@@ -213,7 +209,7 @@ const recentListingsColumns: ColumnDef<NewListingEventDto>[] = [
  * rows and takes no `page` parameter — the whole result set is already in
  * memory, so pagination/sorting here is genuinely correct over the full
  * set, not just the current page. Pagination/sort state is local
- * (`useReactTable`, not `useDataTable`) rather than URL-synced: this table
+ * (`useTable`, not `useDataTable`) rather than URL-synced: this table
  * shares `/market/searches` with `DiscoveryMonitorsTable` above, and
  * `useDataTable` reads/writes fixed `page`/`perPage`/`sort` search-param
  * names (`@/hooks/use-data-table.ts`) with no per-table prefix, so two
@@ -223,12 +219,10 @@ const recentListingsColumns: ColumnDef<NewListingEventDto>[] = [
  * component-local state instead of colliding with it.
  */
 function RecentNewListingsTable({ events }: { events: NewListingEventDto[] }) {
-  const table = useReactTable({
+  const table = useTable({
     data: events,
     columns: recentListingsColumns,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    features: dataTableFeatures,
     initialState: { pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE } }
   });
 

@@ -2,6 +2,7 @@ import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import { CONNECTION_STATUS_LABELS } from '@/features/settings/constants';
@@ -36,12 +37,12 @@ export function getColumns(
   entities: EntityDto[],
   isAdmin: boolean,
   showService: boolean
-): ColumnDef<ConnectionDto>[] {
-  const columns: ColumnDef<ConnectionDto>[] = [
+): ColumnDef<DataTableFeatures, ConnectionDto>[] {
+  const columns: ColumnDef<DataTableFeatures, ConnectionDto>[] = [
     {
       id: 'name',
       accessorKey: 'name',
-      header: ({ column }: { column: Column<ConnectionDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, ConnectionDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Account' />
       ),
       // Archived rows read as retired, not broken: the name goes muted while
@@ -81,7 +82,7 @@ export function getColumns(
     {
       id: 'status',
       accessorKey: 'status',
-      header: ({ column }: { column: Column<ConnectionDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, ConnectionDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Status' />
       ),
       cell: ({ cell }) => {
@@ -128,7 +129,7 @@ export function getColumns(
     {
       id: 'lastSuccessAt',
       accessorKey: 'lastSuccessAt',
-      header: ({ column }: { column: Column<ConnectionDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, ConnectionDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Last success' />
       ),
       cell: ({ cell }) => (

@@ -2,6 +2,7 @@ import type { Column, ColumnDef } from '@tanstack/react-table';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
+import type { DataTableFeatures } from '@/lib/table-features';
 
 export interface CheckRow {
   name: string;
@@ -9,11 +10,11 @@ export interface CheckRow {
   detail?: string;
 }
 
-export const checkColumns: ColumnDef<CheckRow>[] = [
+export const checkColumns: ColumnDef<DataTableFeatures, CheckRow>[] = [
   {
     id: 'name',
     accessorKey: 'name',
-    header: ({ column }: { column: Column<CheckRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, CheckRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Name' />
     ),
     cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>,
@@ -28,7 +29,7 @@ export const checkColumns: ColumnDef<CheckRow>[] = [
   {
     id: 'ok',
     accessorKey: 'ok',
-    header: ({ column }: { column: Column<CheckRow, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, CheckRow, unknown> }) => (
       <DataTableColumnHeader column={column} title='Status' />
     ),
     cell: ({ cell }) => (

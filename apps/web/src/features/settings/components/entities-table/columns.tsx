@@ -2,6 +2,7 @@ import type { ColumnDef, Row } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
 import { entityKindLabel } from '@/features/settings/constants';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { EntityDto } from '@/server/admin-functions';
 import { CellAction } from './cell-action';
 
@@ -46,13 +47,13 @@ export function getColumns(
   isAdmin: boolean,
   nameById: Map<string, string>,
   onEdit: (entity: EntityDto) => void
-): ColumnDef<EntityTreeNode>[] {
-  const columns: ColumnDef<EntityTreeNode>[] = [
+): ColumnDef<DataTableFeatures, EntityTreeNode>[] {
+  const columns: ColumnDef<DataTableFeatures, EntityTreeNode>[] = [
     {
       id: 'name',
       accessorKey: 'name',
       header: 'Name',
-      cell: ({ row }: { row: Row<EntityTreeNode> }) => (
+      cell: ({ row }: { row: Row<DataTableFeatures, EntityTreeNode> }) => (
         <div className='flex flex-col' style={{ paddingLeft: `${row.depth * 1.25}rem` }}>
           <span className='font-medium'>{row.original.name}</span>
           {row.original.legalName && (

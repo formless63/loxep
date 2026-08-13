@@ -1,6 +1,7 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatQuantity, formatTimestampPrecise } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import { DELIVERY_STATUS_LABELS, deliveryStatusLabel } from '@/features/settings/constants';
@@ -19,13 +20,15 @@ const STATUS_OPTIONS = (Object.keys(DELIVERY_STATUS_LABELS) as DeliveryStatus[])
   label: DELIVERY_STATUS_LABELS[value]
 }));
 
-export const columns: ColumnDef<NotificationDeliveryDto>[] = [
+export const columns: ColumnDef<DataTableFeatures, NotificationDeliveryDto>[] = [
   {
     id: 'eventType',
     accessorKey: 'eventType',
-    header: ({ column }: { column: Column<NotificationDeliveryDto, unknown> }) => (
-      <DataTableColumnHeader column={column} title='Event type' />
-    ),
+    header: ({
+      column
+    }: {
+      column: Column<DataTableFeatures, NotificationDeliveryDto, unknown>;
+    }) => <DataTableColumnHeader column={column} title='Event type' />,
     cell: ({ cell }) => cell.getValue<string>()
   },
   {
@@ -44,9 +47,11 @@ export const columns: ColumnDef<NotificationDeliveryDto>[] = [
   {
     id: 'status',
     accessorKey: 'status',
-    header: ({ column }: { column: Column<NotificationDeliveryDto, unknown> }) => (
-      <DataTableColumnHeader column={column} title='Status' />
-    ),
+    header: ({
+      column
+    }: {
+      column: Column<DataTableFeatures, NotificationDeliveryDto, unknown>;
+    }) => <DataTableColumnHeader column={column} title='Status' />,
     cell: ({ cell }) => {
       const status = cell.getValue<DeliveryStatus>();
       return (
@@ -59,9 +64,11 @@ export const columns: ColumnDef<NotificationDeliveryDto>[] = [
   {
     id: 'attemptCount',
     accessorKey: 'attemptCount',
-    header: ({ column }: { column: Column<NotificationDeliveryDto, unknown> }) => (
-      <DataTableColumnHeader column={column} title='Attempts' />
-    ),
+    header: ({
+      column
+    }: {
+      column: Column<DataTableFeatures, NotificationDeliveryDto, unknown>;
+    }) => <DataTableColumnHeader column={column} title='Attempts' />,
     cell: ({ cell }) => (
       <div className='text-right tabular-nums'>{formatQuantity(cell.getValue<number>())}</div>
     )
@@ -76,9 +83,11 @@ export const columns: ColumnDef<NotificationDeliveryDto>[] = [
   {
     id: 'deliveredAt',
     accessorKey: 'deliveredAt',
-    header: ({ column }: { column: Column<NotificationDeliveryDto, unknown> }) => (
-      <DataTableColumnHeader column={column} title='Delivered at' />
-    ),
+    header: ({
+      column
+    }: {
+      column: Column<DataTableFeatures, NotificationDeliveryDto, unknown>;
+    }) => <DataTableColumnHeader column={column} title='Delivered at' />,
     cell: ({ cell }) => (
       <span className='text-muted-foreground'>
         {formatTimestampPrecise(cell.getValue<string | null>())}

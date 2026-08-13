@@ -156,7 +156,7 @@ function MonitorsDataTable({
     debounceMs: 500,
     initialState: {
       pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
-      columnPinning: isAdmin ? { right: ['actions'] } : undefined
+      columnPinning: isAdmin ? { start: [], end: ['actions'] } : undefined
     }
   });
 

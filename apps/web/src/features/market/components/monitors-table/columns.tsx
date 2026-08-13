@@ -2,6 +2,7 @@ import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatDuration } from '@/lib/format';
 import { StatusBadge } from '@/features/market/components/market-page';
 import {
@@ -34,12 +35,12 @@ function BackoffBadge({ backoffUntil }: { backoffUntil: string | null }) {
 export function createColumns(
   onEdit: (monitor: MonitorDto) => void,
   isAdmin: boolean
-): ColumnDef<MonitorDto>[] {
-  const columns: ColumnDef<MonitorDto>[] = [
+): ColumnDef<DataTableFeatures, MonitorDto>[] {
+  const columns: ColumnDef<DataTableFeatures, MonitorDto>[] = [
     {
       id: 'name',
       accessorKey: 'name',
-      header: ({ column }: { column: Column<MonitorDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, MonitorDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Name' />
       ),
       cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>
@@ -78,7 +79,7 @@ export function createColumns(
     {
       id: 'intervalSeconds',
       accessorKey: 'intervalSeconds',
-      header: ({ column }: { column: Column<MonitorDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, MonitorDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Base interval' />
       ),
       cell: ({ cell }) => (
@@ -90,7 +91,7 @@ export function createColumns(
     {
       id: 'nextPollAt',
       accessorKey: 'nextPollAt',
-      header: ({ column }: { column: Column<MonitorDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, MonitorDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Next poll' />
       ),
       cell: ({ cell }) => (
@@ -102,7 +103,7 @@ export function createColumns(
     {
       id: 'consecutiveErrors',
       accessorKey: 'consecutiveErrors',
-      header: ({ column }: { column: Column<MonitorDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, MonitorDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Consecutive errors' />
       ),
       cell: ({ cell }) => {

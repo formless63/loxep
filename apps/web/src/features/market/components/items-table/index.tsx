@@ -17,6 +17,7 @@ import { useDataTable } from '@/hooks/use-data-table';
 import { parseSortingState } from '@/lib/parsers';
 import { marketItemsQuery, monitorsQuery } from '@/features/market/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { MarketItemDto, MarketItemsPageDto } from '@/server/market-functions';
 import { createColumns } from './columns';
 
@@ -121,7 +122,7 @@ function ItemsDataTable({
   columns
 }: {
   data: MarketItemsPageDto;
-  columns: ColumnDef<MarketItemDto>[];
+  columns: ColumnDef<DataTableFeatures, MarketItemDto>[];
 }) {
   const pageCount = Math.max(1, Math.ceil(data.total / data.pageSize));
 

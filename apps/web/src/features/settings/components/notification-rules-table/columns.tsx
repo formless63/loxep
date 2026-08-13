@@ -4,6 +4,7 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import { Icons } from '@/components/icons';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
 import { marketEventTypeLabel, marketEventTypeOptions } from '@/features/settings/constants';
+import type { DataTableFeatures } from '@/lib/table-features';
 import type { NotificationRuleDto } from '@/server/admin-functions';
 import { CellAction } from './cell-action';
 
@@ -12,12 +13,12 @@ export function getColumns(
   endpointNameById: Map<string, string>,
   monitorNameById: Map<string, string>,
   onEdit: (rule: NotificationRuleDto) => void
-): ColumnDef<NotificationRuleDto>[] {
-  const columns: ColumnDef<NotificationRuleDto>[] = [
+): ColumnDef<DataTableFeatures, NotificationRuleDto>[] {
+  const columns: ColumnDef<DataTableFeatures, NotificationRuleDto>[] = [
     {
       id: 'name',
       accessorKey: 'name',
-      header: ({ column }: { column: Column<NotificationRuleDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, NotificationRuleDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Name' />
       ),
       cell: ({ cell }) => <span className='font-medium'>{cell.getValue<string>()}</span>,
@@ -32,7 +33,7 @@ export function getColumns(
     {
       id: 'marketEventType',
       accessorKey: 'marketEventType',
-      header: ({ column }: { column: Column<NotificationRuleDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, NotificationRuleDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Event type' />
       ),
       cell: ({ row }) =>
@@ -71,7 +72,7 @@ export function getColumns(
     {
       id: 'enabled',
       accessorKey: 'enabled',
-      header: ({ column }: { column: Column<NotificationRuleDto, unknown> }) => (
+      header: ({ column }: { column: Column<DataTableFeatures, NotificationRuleDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Enabled' />
       ),
       cell: ({ cell }) => (

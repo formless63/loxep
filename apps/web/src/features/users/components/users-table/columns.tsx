@@ -3,14 +3,15 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import type { User } from '../../api/types';
 import { Column, ColumnDef } from '@tanstack/react-table';
 import { Icons } from '@/components/icons';
+import type { DataTableFeatures } from '@/lib/table-features';
 import { CellAction } from './cell-action';
 import { ROLE_OPTIONS } from './options';
 
-export const columns: ColumnDef<User>[] = [
+export const columns: ColumnDef<DataTableFeatures, User>[] = [
   {
     id: 'name',
     accessorFn: (row) => `${row.first_name} ${row.last_name}`,
-    header: ({ column }: { column: Column<User, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, User, unknown> }) => (
       <DataTableColumnHeader column={column} title='Name' />
     ),
     cell: ({ row }) => (
@@ -37,7 +38,7 @@ export const columns: ColumnDef<User>[] = [
     id: 'role',
     accessorKey: 'role',
     enableSorting: false,
-    header: ({ column }: { column: Column<User, unknown> }) => (
+    header: ({ column }: { column: Column<DataTableFeatures, User, unknown> }) => (
       <DataTableColumnHeader column={column} title='Role' />
     ),
     cell: ({ cell }) => {

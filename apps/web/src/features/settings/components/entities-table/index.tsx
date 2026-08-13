@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { getExpandedRowModel } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
@@ -121,8 +120,7 @@ function EntitiesDataTable({
     shallow: true,
     debounceMs: 500,
     getSubRows: (row) => (row.children.length > 0 ? row.children : undefined),
-    getExpandedRowModel: getExpandedRowModel(),
-    initialState: { expanded: true, columnPinning: { right: ['actions'] } }
+    initialState: { expanded: true, columnPinning: { start: [], end: ['actions'] } }
   });
 
   return (

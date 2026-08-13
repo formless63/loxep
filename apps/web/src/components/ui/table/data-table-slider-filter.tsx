@@ -1,4 +1,4 @@
-import type { Column } from '@tanstack/react-table';
+import type { Column, RowData } from '@tanstack/react-table';
 import * as React from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils';
 import { Icons } from '@/components/icons';
 import { DataTableFilterClear } from '@/components/ui/table/data-table-filter-clear';
+import type { DataTableFeatures } from '@/lib/table-features';
 
 interface Range {
   min: number;
@@ -27,12 +28,15 @@ function getIsValidRange(value: unknown): value is RangeValue {
   );
 }
 
-interface DataTableSliderFilterProps<TData> {
-  column: Column<TData, unknown>;
+interface DataTableSliderFilterProps<TData extends RowData> {
+  column: Column<DataTableFeatures, TData, unknown>;
   title?: string;
 }
 
-export function DataTableSliderFilter<TData>({ column, title }: DataTableSliderFilterProps<TData>) {
+export function DataTableSliderFilter<TData extends RowData>({
+  column,
+  title
+}: DataTableSliderFilterProps<TData>) {
   const id = React.useId();
 
   const columnFilterValue = getIsValidRange(column.getFilterValue())

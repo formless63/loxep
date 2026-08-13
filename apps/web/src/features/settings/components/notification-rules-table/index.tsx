@@ -172,7 +172,7 @@ function RulesDataTable({
     pageCount,
     shallow: true,
     debounceMs: 500,
-    initialState: { columnPinning: { right: ['actions'] } }
+    initialState: { columnPinning: { start: [], end: ['actions'] } }
   });
 
   return (
