@@ -5,6 +5,11 @@ import {
   fetchMissingReceipts,
   fetchUnallocatedExpenses
 } from '@/server/expense-functions';
+import {
+  checkDraftInvoicePushStatus,
+  listInvoiceNinjaConnections,
+  searchCounterpartiesForBilling
+} from '@/server/finance-billing-functions';
 import type { ExpenseStatus } from '@/features/finance/constants';
 
 export interface ExpenseFilterParams {
@@ -36,3 +41,33 @@ export const unallocatedExpensesQuery = queryOptions({
   queryKey: ['finance', 'unallocated-expenses'],
   queryFn: () => fetchUnallocatedExpenses()
 });
+
+// ---------------------------------------------------------------------------
+// Invoice Ninja draft-invoice push (loxep-v5r.5)
+// ---------------------------------------------------------------------------
+
+export const invoiceNinjaConnectionsQuery = queryOptions({
+  queryKey: ['finance', 'invoiceninja-connections'],
+  queryFn: () => listInvoiceNinjaConnections()
+});
+
+export const counterpartyBillingSearchQuery = (query: string) =>
+  queryOptions({
+    queryKey: ['finance', 'counterparty-billing-search', query],
+    queryFn: () => searchCounterpartiesForBilling({ data: { query } })
+  });
+
+export const draftInvoicePushStatusQuery = (params: {
+  counterpartyId: string | null;
+  projectId: string | null;
+}) =>
+  queryOptions({
+    queryKey: ['finance', 'draft-invoice-push-status', params.counterpartyId, params.projectId],
+    queryFn: () =>
+      params.counterpartyId === null
+        ? Promise.resolve(null)
+        : checkDraftInvoicePushStatus({
+            data: { counterpartyId: params.counterpartyId, projectId: params.projectId }
+          }),
+    enabled: params.counterpartyId !== null
+  });
