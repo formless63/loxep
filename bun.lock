@@ -276,8 +276,32 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/integrations/beszel": {
+      "name": "@loxep/integration-beszel",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/integrations/cloudflare": {
       "name": "@loxep/integration-cloudflare",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/integrations/dockhand": {
+      "name": "@loxep/integration-dockhand",
       "version": "0.0.0",
       "dependencies": {
         "zod": "4.4.3",
@@ -342,6 +366,18 @@
     },
     "packages/integrations/purelymail": {
       "name": "@loxep/integration-purelymail",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
+    "packages/integrations/reverb": {
+      "name": "@loxep/integration-reverb",
       "version": "0.0.0",
       "dependencies": {
         "zod": "4.4.3",
@@ -891,7 +927,11 @@
 
     "@loxep/infrastructure": ["@loxep/infrastructure@workspace:packages/infrastructure"],
 
+    "@loxep/integration-beszel": ["@loxep/integration-beszel@workspace:packages/integrations/beszel"],
+
     "@loxep/integration-cloudflare": ["@loxep/integration-cloudflare@workspace:packages/integrations/cloudflare"],
+
+    "@loxep/integration-dockhand": ["@loxep/integration-dockhand@workspace:packages/integrations/dockhand"],
 
     "@loxep/integration-ebay": ["@loxep/integration-ebay@workspace:packages/integrations/ebay"],
 
@@ -902,6 +942,8 @@
     "@loxep/integration-medusa": ["@loxep/integration-medusa@workspace:packages/integrations/medusa"],
 
     "@loxep/integration-purelymail": ["@loxep/integration-purelymail@workspace:packages/integrations/purelymail"],
+
+    "@loxep/integration-reverb": ["@loxep/integration-reverb@workspace:packages/integrations/reverb"],
 
     "@loxep/integration-woo": ["@loxep/integration-woo@workspace:packages/integrations/woo"],
 
