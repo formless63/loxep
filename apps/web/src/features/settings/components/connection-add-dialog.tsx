@@ -84,6 +84,8 @@ export default function ConnectionAddDialog({
           <EbayAccountForm service={service} entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'etsy-consent' ? (
           <EtsyAccountForm service={service} entities={entities} onDone={onOpenChange} />
+        ) : accounts.form === 'reverb-api' ? (
+          <ReverbAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'woo-api' ? (
           <WooAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'medusa-api' ? (
@@ -472,6 +474,144 @@ function EtsyAccountForm({
         </Button>
         <form.AppForm>
           <form.SubmitButton>Continue to Etsy</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const reverbAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  personalAccessToken: z.string().trim().min(1, 'Personal Access Token is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Reverb's Personal Access Token is minted in the operator's own account
+ * settings, self-service and instant — no application review, no approval
+ * wait, unlike eBay's/Etsy's consent flows above. Scopes are chosen by the
+ * OPERATOR when minting the token in Reverb's own UI; Loxep cannot request
+ * or negotiate them the way it negotiates an OAuth consent, so this
+ * guidance names the scopes to grant rather than a tier picker.
+ */
+function ReverbSetupGuidance() {
+  return (
+    <SetupGuidance>
+      <GuidanceSteps>
+        <GuidanceStep>Sign in to the Reverb account Loxep should observe.</GuidanceStep>
+        <GuidanceStep>
+          Open <strong>Settings</strong> → <strong>API tokens</strong> (or the equivalent path in
+          Reverb&apos;s current account settings) and create a new Personal Access Token.
+        </GuidanceStep>
+        <GuidanceStep>
+          Grant at least <code className='font-mono'>public</code> and{' '}
+          <code className='font-mono'>read_listings</code>. Skip every{' '}
+          <code className='font-mono'>write_*</code> scope — Loxep only ever reads.
+        </GuidanceStep>
+        <GuidanceStep>
+          Copy the token into the field below. Paste it now: Reverb, like most personal-token
+          systems, shows it once.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceCallout>
+        <p>
+          Reverb Personal Access Tokens do not expire and carry no separate application keyset — the
+          token itself is the whole credential, and there is no shop id to enter: Loxep always
+          observes the token owner&apos;s own account.
+        </p>
+      </GuidanceCallout>
+    </SetupGuidance>
+  );
+}
+
+function ReverbAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof reverbAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'reverb',
+          name: values.name,
+          personalAccessToken: values.personalAccessToken,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Reverb account connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the account')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      personalAccessToken: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: reverbAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <ReverbSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Account name'
+              required
+              placeholder='Main Reverb account'
+              description='How this account is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='personalAccessToken'
+          children={(field) => (
+            <field.TextField
+              label='Personal Access Token'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect account</form.SubmitButton>
         </form.AppForm>
       </div>
     </form>

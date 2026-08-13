@@ -17,7 +17,9 @@ const FAKE_CERT = "SBX-fakefakefake-abcd-1234-5678-9abc";
 describe("secret bundle registry", () => {
   it("registers every purpose Loxep persists today", () => {
     expect([...secretPurposes].sort()).toEqual([
+      "beszel_credentials",
       "cloudflare_credentials",
+      "dockhand_credentials",
       "ebay_keyset",
       "etsy_keyset",
       "invoiceninja_credentials",
@@ -25,6 +27,7 @@ describe("secret bundle registry", () => {
       "medusa_credentials",
       "oauth_tokens",
       "purelymail_credentials",
+      "reverb_credentials",
       "s3_credentials",
       "smtp_password",
       "token",
@@ -377,6 +380,117 @@ describe("purelymail_credentials bundle (the Purelymail API token)", () => {
   });
 });
 
+describe("beszel_credentials bundle (a READONLY hub user, not a superuser)", () => {
+  const FAKE_BESZEL_PASSWORD = "fake-beszel-readonly-password-0000000";
+
+  it("accepts an email/password pair", () => {
+    expect(
+      validateBundle("beszel_credentials", {
+        email: "loxep-readonly@example.com",
+        password: FAKE_BESZEL_PASSWORD,
+      }),
+    ).toEqual({
+      email: "loxep-readonly@example.com",
+      password: FAKE_BESZEL_PASSWORD,
+    });
+  });
+
+  it("keeps the pair atomic — neither half alone is a credential", () => {
+    expect(() =>
+      validateBundle("beszel_credentials", {
+        email: "loxep-readonly@example.com",
+      }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("beszel_credentials", { password: FAKE_BESZEL_PASSWORD }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("beszel_credentials", {
+        email: "loxep-readonly@example.com",
+        password: FAKE_BESZEL_PASSWORD,
+        baseUrl: "https://beszel.example.com",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the password itself", () => {
+    try {
+      validateBundle("beszel_credentials", {
+        email: "loxep-readonly@example.com",
+        password: 42,
+      });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("password");
+      expect(message).not.toContain(FAKE_BESZEL_PASSWORD);
+    }
+  });
+});
+
+describe("dockhand_credentials bundle (a login, because there is no bearer path)", () => {
+  const FAKE_DOCKHAND_PASSWORD = "fake-dockhand-password-000000000000";
+
+  it("accepts a username/password pair", () => {
+    expect(
+      validateBundle("dockhand_credentials", {
+        username: "loxep",
+        password: FAKE_DOCKHAND_PASSWORD,
+      }),
+    ).toEqual({ username: "loxep", password: FAKE_DOCKHAND_PASSWORD });
+  });
+
+  it("keeps the pair atomic — neither half alone is a credential", () => {
+    expect(() =>
+      validateBundle("dockhand_credentials", { username: "loxep" }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("dockhand_credentials", {
+        password: FAKE_DOCKHAND_PASSWORD,
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a base URL — non-secret configuration belongs on the connection", () => {
+    expect(() =>
+      validateBundle("dockhand_credentials", {
+        username: "loxep",
+        password: FAKE_DOCKHAND_PASSWORD,
+        baseUrl: "https://dockhand.example.com:3000",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a session cookie — the adapter mints those, it never stores one", () => {
+    expect(() =>
+      validateBundle("dockhand_credentials", {
+        username: "loxep",
+        password: FAKE_DOCKHAND_PASSWORD,
+        session: "abc123",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the password itself", () => {
+    try {
+      validateBundle("dockhand_credentials", {
+        username: "loxep",
+        password: 42,
+      });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("password");
+      expect(message).not.toContain(FAKE_DOCKHAND_PASSWORD);
+    }
+  });
+});
+
 describe("mailbox_password bundle (a credential Loxep MINTS)", () => {
   const FAKE_PASSWORD = "fake-minted-mailbox-password-0000000000";
 
@@ -426,6 +540,50 @@ describe("mailbox_password bundle (a credential Loxep MINTS)", () => {
       const message = (error as Error).message;
       expect(message).toContain("password");
       expect(message).not.toContain(FAKE_PASSWORD);
+    }
+  });
+});
+
+describe("reverb_credentials bundle (a self-service Personal Access Token)", () => {
+  const FAKE_PAT = "fake-reverb-personal-access-token-0000000000";
+
+  it("accepts a lone personal access token", () => {
+    expect(
+      validateBundle("reverb_credentials", { personalAccessToken: FAKE_PAT }),
+    ).toEqual({ personalAccessToken: FAKE_PAT });
+  });
+
+  it("rejects an empty or missing token", () => {
+    expect(() => validateBundle("reverb_credentials", {})).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("reverb_credentials", { personalAccessToken: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects a shop id or scope list — non-secret facts belong on the connection", () => {
+    // Unlike etsy_keyset (which DOES bundle non-secret facts because a
+    // sandbox/production mismatch fails like credential corruption), Reverb
+    // has no per-deployment host and no shop identifier to bundle at all —
+    // see packages/integrations/reverb/src/connection.ts.
+    expect(() =>
+      validateBundle("reverb_credentials", {
+        personalAccessToken: FAKE_PAT,
+        scopes: ["public", "read_listings"],
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("reverb_credentials", { personalAccessToken: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("personalAccessToken");
+      expect(message).not.toContain(FAKE_PAT);
     }
   });
 });

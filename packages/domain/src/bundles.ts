@@ -257,6 +257,123 @@ export const secretBundleSchemas = {
   mailbox_password: z.strictObject({
     password: z.string().min(1),
   }),
+  /**
+   * A Beszel hub login (ADR-0019, loxep-9j6): the credential
+   * `@loxep/integration-beszel` exchanges for a PocketBase auth token before
+   * every read of the fleet's system status.
+   *
+   * ## Two fields, because Beszel has no API token at all
+   *
+   * Every sibling in this registry that carries one field does so because the
+   * provider issues a long-lived key. Beszel issues none. Its hub *"is built on
+   * PocketBase"* and the documented way in is PocketBase's password exchange
+   * (`POST /api/collections/users/auth-with-password`), which returns a
+   * short-lived JWT. The email and the password are useless apart and must
+   * rotate together, which is exactly the atomicity ADR-0019 bundles exist for.
+   *
+   * ## This is a READONLY user, not a superuser — a correction, recorded
+   *
+   * The fleet-observability design gated Beszel at tier 3 on the claim that
+   * *"a read consumer needs a superuser credential… there is no scoped
+   * read-only token"*, and made the owner's approval conditional on accepting
+   * fleet-wide administrative access in Loxep's database.
+   *
+   * **That claim was wrong, and upstream's own documentation says so.** Beszel
+   * publishes three roles in the ordinary `users` collection, the lowest of
+   * which is exactly the shape this bundle wants: *"Read-only users cannot
+   * create systems but can view any system shared with them by an admin and
+   * create alerts."* Upstream also states that *"regular user accounts and
+   * PocketBase superuser accounts are entirely separate"* and that *"changing a
+   * user's role to admin does not create a superuser account"* — so the
+   * `users` collection and the `_superusers` collection are different
+   * credentials, and the REST guide's own first example authenticates *"as
+   * regular user"*.
+   *
+   * The consequence is the one that matters for consent: the credential Loxep
+   * stores is a purpose-made readonly account that can see only the systems an
+   * admin deliberately shared with it. A Loxep database compromise plus keyring
+   * access therefore yields *a view of the shared subset of the fleet*, not
+   * administrative control of the monitoring hub. The bundle is named for the
+   * connection, and the connection form must say "Beszel readonly user" —
+   * calling it an "API token" would be the small dishonesty the design already
+   * warned about, in the opposite direction.
+   *
+   * The **base URL is deliberately NOT in this bundle**, matching every sibling:
+   * it is non-secret provider identity that must stay readable without a
+   * decryption round-trip, so it lives in `connections.config`.
+   */
+  beszel_credentials: z.strictObject({
+    /** PocketBase calls this field `identity`; Beszel's accounts are emails. */
+    email: z.string().min(1),
+    password: z.string().min(1),
+  }),
+  /**
+   * A Dockhand login (ADR-0019, loxep-9j6): the credential
+   * `@loxep/integration-dockhand` exchanges at `POST /api/auth/login` for the
+   * session cookie every subsequent call carries.
+   *
+   * ## Two fields, because Dockhand has no bearer path
+   *
+   * Dockhand's API reference documents exactly one machine-usable
+   * authentication mode: *"HTTP-only session cookies"*, sent back as
+   * `Cookie: session=…`, obtained from `POST /api/auth/login`. There is no API
+   * key, personal access token, or service account anywhere in its published
+   * authentication documentation.
+   *
+   * That resolves — in the API reference's favour — the fleet-observability
+   * design's complaint that Dockhand had *"contradictory auth documentation"*
+   * describing session cookies in one place and API tokens in another. The
+   * published API reference is not contradictory: it is session-cookie only.
+   * The adapter therefore holds a login, not a key, and re-logs-in when the
+   * cookie expires (upstream default: seven days).
+   *
+   * ## The privilege this credential should carry
+   *
+   * Dockhand gates its endpoints on named permissions — `environments:view`,
+   * `environments:edit`, `stacks:view` are the four this integration touches.
+   * The account stored here needs those and nothing else. It must **not** be
+   * the operator's own admin account, because the same session that reads a
+   * container list can, at Dockhand's own API, start and stop containers: the
+   * restraint that keeps Loxep on the right side of
+   * [rule 13](../../architecture/domain-boundaries/) is enforced in Loxep's
+   * adapter surface, not by Dockhand's session.
+   *
+   * The **base URL is deliberately NOT in this bundle**, for the same reason as
+   * every sibling: `connections.config` carries it.
+   */
+  dockhand_credentials: z.strictObject({
+    /** Dockhand rate-limits login by IP/username pair; this is that username. */
+    username: z.string().min(1),
+    password: z.string().min(1),
+  }),
+  /**
+   * Reverb Personal Access Token (ADR-0009, loxep-g4t.3): the single
+   * credential `@loxep/integration-reverb` authenticates every call with,
+   * sent as `Authorization: Bearer <personalAccessToken>`. Verified against
+   * Reverb's own developer documentation
+   * (https://www.reverb-api.com/docs/authentication, fetched 2026-08-13):
+   * "Reverb Personal Access Tokens do not expire" and are minted by the
+   * account owner, self-service, with no approval queue — the simplest
+   * auth model of any marketplace in the catalog.
+   *
+   * Only one field, matching `medusa_credentials`/`invoiceninja_credentials`/
+   * `cloudflare_credentials`/`purelymail_credentials`: there is no second
+   * part to keep atomic with it. UNLIKE Etsy's `etsy_keyset`, there is no
+   * separate application-level credential at all — Reverb has no
+   * installation-wide keyset; each connection's PAT is minted independently
+   * from its own Reverb account.
+   *
+   * **There is no non-secret half to leave out**, the same as
+   * `purelymail_credentials`: Reverb has no per-deployment base URL (one
+   * fixed hosted API) and m1's `reverb_shop` monitor target observes the
+   * token owner's own account implicitly, so no shop identifier needs to be
+   * typed in at connect time either — see
+   * `packages/integrations/reverb/src/connection.ts` for the full contract,
+   * including the `source_account_key` divergence this implies.
+   */
+  reverb_credentials: z.strictObject({
+    personalAccessToken: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

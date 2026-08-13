@@ -20,6 +20,7 @@ import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import {
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  HEALTH_SWEEP_TASK_NAME,
   REFRESH_TOKENS_TASK_NAME,
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
   WOO_PAGES_PER_SYNC,
@@ -78,6 +79,9 @@ describe("buildWorkerRegistry", () => {
         POLL_MAIL_OWNERSHIP_TASK,
         SYNC_MAILBOXES_TASK,
         "maintenance.heartbeat",
+        // Phase 8 milestone 1 (loxep-ovj.1): the one recurring integration
+        // health sweep, no monitor_targets row.
+        HEALTH_SWEEP_TASK_NAME,
       ].sort(),
     );
 
@@ -85,6 +89,7 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain("maintenance.heartbeat");
     expect(cronTasks).toContain(DISPATCH_TASK_NAME);
     expect(cronTasks).toContain(REFRESH_TOKENS_TASK_NAME);
+    expect(cronTasks).toContain(HEALTH_SWEEP_TASK_NAME);
     // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
     // scheduled work is a `woo_orders` / `ebay_orders` monitor target the
     // market dispatcher claims, which is the whole point of registering a

@@ -9,6 +9,8 @@ Operator guides: step-by-step walkthroughs for the tasks a person actually perfo
 Loxep mostly observes and reads from external services. Invoice Ninja is the one exception: it is a billing companion Loxep pushes invoice drafts to on demand, never a channel Loxep polls or scans (see [Connecting Invoice Ninja](./connecting-invoice-ninja/) for what that push does and does not do). Every provider connection is created **in the application**, on `/settings/integrations` and `/settings/connections` — never through environment variables or Compose files. The credentials are stored application-encrypted in PostgreSQL and are never displayed again after they are saved. See [Configuration & Secrets](../architecture/configuration-and-secrets/) for the rule behind that split.
 
 - [Connecting eBay](./connecting-ebay/) — developer account, application keyset, redirect URL and RuName, sandbox test users, per-account consent, and the switch to production.
+- [Connecting Etsy](./connecting-etsy/) — a Developer Portal app, its approval wait, redirect URI, and per-shop PKCE consent.
+- [Connecting Reverb](./connecting-reverb/) — a self-service Personal Access Token, no approval queue.
 - [Connecting WooCommerce](./connecting-woocommerce/) — issuing a read-only REST API key pair in the store admin.
 - [Connecting Medusa](./connecting-medusa/) — issuing a secret API key in the Medusa admin dashboard.
 - [Connecting Invoice Ninja](./connecting-invoice-ninja/) — issuing a company API token in a self-hosted Invoice Ninja instance.
@@ -21,7 +23,7 @@ Every step described here also appears inside the application, in the dialog whe
 
 Two vocabulary notes used throughout:
 
-- An **integration** is a service Loxep can talk to. A **connection** is one account, store, backend, or instance of that service. eBay needs one installation-wide keyset plus one connection per eBay account; WooCommerce, Medusa, and Invoice Ninja need only a connection each.
+- An **integration** is a service Loxep can talk to. A **connection** is one account, store, backend, or instance of that service. eBay and Etsy each need one installation-wide keyset plus one connection per account/shop; Reverb, WooCommerce, Medusa, and Invoice Ninja need only a connection each — Reverb's is the simplest of all, a single self-service Personal Access Token with no installation-wide setup.
 - An **economic entity** is optional business attribution on a connection. It records which of your businesses a connection belongs to. It grants nothing and restricts nothing.
 
 ## Before you start

@@ -67,6 +67,90 @@ export const fetchHealthReport = createServerFn({ method: 'GET' }).handler(
 );
 
 // ---------------------------------------------------------------------------
+// integration_health (Phase 8 milestone 1, loxep-ovj.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the shared-foundation `integration_health` rollup, labeled for
+ * display. `status`/`source` are the design's closed sets
+ * (ok/degraded/failing/unknown; probe/adapter/ingest/report) but travel as
+ * plain strings here, same convention as every other text-union DTO field in
+ * this module. There is deliberately no `stale` field: the UI derives that
+ * from `checkedAt` itself, per the design.
+ */
+export interface IntegrationHealthDto {
+  subjectType: string;
+  subjectId: string;
+  /** Human-readable subject name, resolved from the owning table. */
+  label: string;
+  status: string;
+  source: string;
+  checkedAt: string;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  consecutiveFailures: number;
+  detail: JsonValue;
+}
+
+/**
+ * Subjects by status, for `/settings/overview` and the dashboard Operations
+ * band. Labels are resolved per subject type from the owning table/service —
+ * `integration_health` itself carries only the polymorphic
+ * `(subject_type, subject_id)` key (the design's deliberate cost: no FK, see
+ * the schema doc), so a subject deleted after its last probe and before the
+ * owning service cleared its row would fall back to a short id label rather
+ * than fail the whole read.
+ */
+export const fetchIntegrationHealth = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<IntegrationHealthDto[]> => {
+    const { requireSession, getAdminServices, getNotificationsService, getStorageBackendsService } =
+      await import('@/server/admin');
+    await requireSession();
+    const admin = getAdminServices();
+
+    const [rows, connections, endpoints, backends] = await Promise.all([
+      admin.health.listHealth(),
+      admin.connections.listConnections(),
+      getNotificationsService().then((service) => service.listEndpoints()),
+      getStorageBackendsService().then((service) => service.listBackends())
+    ]);
+
+    const connectionLabels = new Map(
+      connections.map((row) => [row.id, `${row.name} (${row.provider})`])
+    );
+    const endpointLabels = new Map(endpoints.map((row) => [row.id, row.name]));
+    const backendLabels = new Map(backends.map((row) => [row.id, row.name]));
+
+    function labelFor(subjectType: string, subjectId: string): string {
+      const short = subjectId.slice(0, 8);
+      if (subjectType === 'connection') {
+        return connectionLabels.get(subjectId) ?? `connection ${short}`;
+      }
+      if (subjectType === 'notification_endpoint') {
+        return endpointLabels.get(subjectId) ?? `notification endpoint ${short}`;
+      }
+      if (subjectType === 'storage_backend') {
+        return backendLabels.get(subjectId) ?? `storage backend ${short}`;
+      }
+      return `${subjectType} ${short}`;
+    }
+
+    return rows.map((row) => ({
+      subjectType: row.subjectType,
+      subjectId: row.subjectId,
+      label: labelFor(row.subjectType, row.subjectId),
+      status: row.status,
+      source: row.source,
+      checkedAt: iso(row.checkedAt),
+      lastSuccessAt: iso(row.lastSuccessAt),
+      lastFailureAt: iso(row.lastFailureAt),
+      consecutiveFailures: row.consecutiveFailures,
+      detail: row.detail as JsonValue
+    }));
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Economic entities (loxep-e51.4)
 // ---------------------------------------------------------------------------
 
@@ -330,6 +414,19 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     apiToken: z.string().trim().min(1)
   }),
   /**
+   * Reverb (loxep-g4t.3): a self-service Personal Access Token, simpler than
+   * every other marketplace form — no `baseUrl` (one fixed hosted API, per
+   * `packages/integrations/reverb/src/config.ts`) and no shop id to collect
+   * (m1's `reverb_shop` monitor target always means "the connection's own
+   * account"; see `packages/integrations/reverb/src/connection.ts`).
+   */
+  z.strictObject({
+    service: z.literal('reverb'),
+    name: z.string().trim().min(1),
+    economicEntityId: z.uuid().nullable(),
+    personalAccessToken: z.string().trim().min(1)
+  }),
+  /**
    * Cloudflare and Purelymail (loxep-lmy.1/.2): the Infrastructure control
    * plane's two provider connections. Neither carries a `baseUrl` — both
    * adapters talk to a fixed, provider-owned endpoint
@@ -355,11 +452,14 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
 ]);
 
 /**
- * Create a store/billing/infrastructure connection plus its credential in one
- * guided step. Despite the name (kept for the two original callers), this
- * also drives the Invoice Ninja form — its "account" is a billing companion
- * connection, not a commerce store, hence `kind: 'billing_account'` for that
- * one service; see `packages/integrations/invoiceninja/src/connection.ts` —
+ * Create a store/billing/marketplace/infrastructure connection plus its
+ * credential in one guided step. Despite the name (kept for the two
+ * original callers), this also drives the Invoice Ninja form — its
+ * "account" is a billing companion connection, not a commerce store, hence
+ * `kind: 'billing_account'` for that one service; see
+ * `packages/integrations/invoiceninja/src/connection.ts` — the Reverb form
+ * (loxep-g4t.3, `kind: 'marketplace_account'`, matching eBay/Etsy's own
+ * accounts even though this path is simpler than either's consent flow) —
  * and, per the same reasoning, the Cloudflare (`kind: 'dns'`) and Purelymail
  * (`kind: 'mail'`) forms for the Infrastructure control plane
  * (loxep-lmy.1/.2).
@@ -367,18 +467,20 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
  * WHERE EACH HALF LANDS — the split the integration packages document
  * (`packages/app/src/woo.ts`, `packages/integrations/medusa/src/connection.ts`,
  * `packages/integrations/invoiceninja/src/connection.ts`,
+ * `packages/integrations/reverb/src/connection.ts`,
  * `packages/app/src/cloudflare.ts`, `packages/app/src/purelymail.ts`): any
  * non-secret provider identity — a base URL, or Cloudflare's optional
  * account id — goes into `connections.config.<service>` so it stays readable
  * without a decryption round-trip, while the key pair / API token is an
- * atomic encrypted bundle on the connection. Purelymail has no non-secret
- * half at all, so its config object stays empty.
+ * atomic encrypted bundle on the connection. Reverb and Purelymail have no
+ * non-secret half at all, so their config objects stay empty.
  *
  * The credential type is the registered bundle purpose (`woo_credentials`,
- * `medusa_credentials`, `invoiceninja_credentials`, `cloudflare_credentials`,
- * `purelymail_credentials`) because that is what the domain service accepts
- * and what the worker-side readers ask for — see `WOO_CREDENTIAL_TYPE` in
- * `packages/app/src/woo.ts` and its siblings in `cloudflare.ts`/`purelymail.ts`.
+ * `medusa_credentials`, `invoiceninja_credentials`, `reverb_credentials`,
+ * `cloudflare_credentials`, `purelymail_credentials`) because that is what
+ * the domain service accepts and what the worker-side readers ask for — see
+ * `WOO_CREDENTIAL_TYPE` in `packages/app/src/woo.ts` and its siblings in
+ * `reverb.ts`/`cloudflare.ts`/`purelymail.ts`.
  */
 export const createStoreConnection = createServerFn({ method: 'POST' })
   .inputValidator(createStoreConnectionInput)
@@ -398,6 +500,12 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
     } else if (data.service === 'invoiceninja') {
       kind = 'billing_account';
       config = { invoiceninja: { baseUrl: data.baseUrl.replace(/\/+$/, '') } };
+    } else if (data.service === 'reverb') {
+      // No non-secret half at all — the same shape as Purelymail's branch
+      // below, for the same reason: Reverb has no per-deployment host and
+      // no operator-entered shop id (see this union's Reverb doc comment).
+      kind = 'marketplace_account';
+      config = {};
     } else if (data.service === 'cloudflare') {
       // 'dns' / 'mail', matching packages/app's connections fixtures for the
       // Infrastructure control plane (loxep-lmy.1/.2). `accountId` stays out
@@ -442,6 +550,13 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         created.id,
         'invoiceninja_credentials',
         { apiToken: data.apiToken },
+        { actorUserId: session.user.id }
+      );
+    } else if (data.service === 'reverb') {
+      await connections.setConnectionCredential(
+        created.id,
+        'reverb_credentials',
+        { personalAccessToken: data.personalAccessToken },
         { actorUserId: session.user.id }
       );
     } else if (data.service === 'cloudflare') {

@@ -105,6 +105,20 @@ import {
  * (and again in `packages/app/src/registry.ts`'s module doc) rather than
  * repeating it.
  */
+/**
+ * REVERB-TARGET-TYPES(loxep-g4t.3): `reverb_listing`/`reverb_shop` are the
+ * Reverb observation types, registered in this closed list AND
+ * `monitorTargetConfigSchemas` TOGETHER in the same change (same discipline
+ * as `etsy_listing`/`etsy_shop` above). `reverb_listing` is the Reverb
+ * analogue of `ebay_item`/`etsy_listing` (single listing, any PAT scope
+ * that grants public read). `reverb_shop` is NARROWER than `etsy_shop`:
+ * this survey did not confirm a public by-shop-slug listings endpoint, so
+ * `reverb_shop` always observes the CONNECTED account's own listings (needs
+ * `read_listings`) — it carries no shop identity of its own, the target
+ * IS the connection, the same "no identity, only cursor/cap" shape
+ * `woo_orders`/`etsy_orders` use. See
+ * `apps/docs/src/content/docs/architecture/reverb-integration-design.md`.
+ */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
   "ebay_item",
@@ -114,6 +128,8 @@ export const MONITOR_TARGET_TYPES = [
   "ebay_orders",
   "etsy_listing",
   "etsy_shop",
+  "reverb_listing",
+  "reverb_shop",
   "infrastructure_domain_reconcile",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
@@ -403,6 +419,32 @@ export const monitorTargetConfigSchemas = {
    */
   etsy_shop: z.strictObject({
     shopExternalId: z.string().min(1),
+    maxItems: z.number().int().positive().max(1000).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * REVERB-CONFIG-SCHEMAS(loxep-g4t.3): a single Reverb listing, identified
+   * by its external listing id. Any PAT scope that grants public read — the
+   * Reverb analogue of `ebay_item`/`etsy_listing`.
+   */
+  reverb_listing: z.strictObject({
+    externalItemId: z.string().min(1),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * The connected Reverb account's own listings (needs the `read_listings`
+   * PAT scope) — the Reverb analogue of `ebay_seller`/`etsy_shop`, but
+   * NARROWER: it always observes the token owner's own account, never an
+   * arbitrary third party's (this survey did not confirm a public
+   * by-shop-slug listings endpoint — see
+   * `reverb-integration-design.md`'s "Monitor target types"). The config
+   * therefore carries no shop identity of its own — the shop IS the
+   * target's connection, the same "no identity, only cursor/cap" shape
+   * `woo_orders`/`ebay_orders` use for their own connection-scoped targets.
+   * `maxItems` bounds how far one poll pages the account's listings, the
+   * same cost knob `ebay_seller`/`etsy_shop` use.
+   */
+  reverb_shop: z.strictObject({
     maxItems: z.number().int().positive().max(1000).optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),

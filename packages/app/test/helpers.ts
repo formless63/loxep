@@ -36,11 +36,17 @@ import type {
   EtsyListPage,
   EtsyUserAdapter,
 } from "../../integrations/etsy/src/index.ts";
+import { ReverbAdapterError } from "../../integrations/reverb/src/index.ts";
+import type {
+  ReverbAdapter,
+  ReverbListPage,
+} from "../../integrations/reverb/src/index.ts";
 import type { CloudflareAdapter } from "@loxep/integration-cloudflare";
 import type {
   CloudflareConnectionAdapter,
   EbayConnectionAdapter,
   EtsyConnectionAdapter,
+  ReverbConnectionAdapter,
   WooConnectionAdapter,
 } from "../src/index.ts";
 
@@ -764,6 +770,89 @@ export function fakeEtsyConnectionAdapter(
         "fake Etsy connection has no stored user token",
       );
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Reverb fakes (loxep-g4t.3)
+// ---------------------------------------------------------------------------
+
+export interface FakeReverbState {
+  /** External listing id -> raw Reverb listing payload. */
+  listings: Map<string, Record<string, unknown>>;
+  /** Pages of the fake "my listings" collection, in fetch order. */
+  myListingsPages: Record<string, unknown>[][];
+  /** When set, every provider call throws it (connection-failure path). */
+  failWith: ReverbAdapterError | null;
+  /** Operation names, in call order. */
+  calls: string[];
+}
+
+export function fakeReverbState(overrides: Partial<FakeReverbState> = {}): FakeReverbState {
+  return {
+    listings: new Map(),
+    myListingsPages: [],
+    failWith: null,
+    calls: [],
+    ...overrides,
+  };
+}
+
+/**
+ * A {@link ReverbConnectionAdapter} whose provider client is a fake — the
+ * same "only the HTTP call is canned" discipline as `fakeEtsyConnectionAdapter`.
+ * UNLIKE Etsy's shared "application" adapter, this stands in for the
+ * PER-CONNECTION `ReverbAdapter` `reverb.ts` builds — a fresh fake per
+ * `state`, not one shared object across every connection.
+ */
+export function fakeReverbConnectionAdapter(
+  connectionId: string,
+  state: FakeReverbState,
+  options: { minIntervalSeconds?: number } = {},
+): ReverbConnectionAdapter {
+  let pageIndex = 0;
+
+  const adapter = {
+    async getListing(listingId: string) {
+      state.calls.push(`getListing:${listingId}`);
+      if (state.failWith !== null) throw state.failWith;
+      const payload = state.listings.get(listingId);
+      if (payload === undefined) {
+        throw new ReverbAdapterError("not_found", "fake listing not found", {
+          listingId,
+        });
+      }
+      return payload;
+    },
+    async getMyListings(): Promise<ReverbListPage> {
+      state.calls.push(`getMyListings:page${pageIndex}`);
+      if (state.failWith !== null) throw state.failWith;
+      const page = state.myListingsPages[pageIndex] ?? [];
+      const hasNext = pageIndex + 1 < state.myListingsPages.length;
+      const nextHref = hasNext
+        ? `https://api.reverb.com/api/my/listings?page=${pageIndex + 2}`
+        : null;
+      pageIndex += 1;
+      return { results: page, nextHref };
+    },
+    async getAccount() {
+      state.calls.push("getAccount");
+      if (state.failWith !== null) throw state.failWith;
+      return { raw: { id: 1 } };
+    },
+    stats() {
+      return {
+        rateBudget: { capacity: 5, refillPerSecond: 1, available: 5, pending: 0, acquired: 0, rejected: 0 },
+        requests: state.calls.length,
+      };
+    },
+  } as unknown as ReverbAdapter;
+
+  return {
+    connectionId,
+    sourceAccountKey: `reverb:${connectionId}`,
+    adapter,
+    minIntervalSeconds: options.minIntervalSeconds ?? 30,
   };
 }
 

@@ -363,6 +363,105 @@ describe("Etsy observation target types", () => {
 });
 
 /**
+ * loxep-g4t.3: `reverb_listing`/`reverb_shop` are the Reverb observation
+ * types, registered in `MONITOR_TARGET_TYPES` AND
+ * `monitorTargetConfigSchemas` TOGETHER in the same change, the same
+ * discipline the Etsy block above established. `reverb_shop` carries no
+ * shop identity of its own — the shop IS the target's connection.
+ */
+describe("Reverb observation target types", () => {
+  it("creates, reads, and updates a 'reverb_listing' target", async () => {
+    const created = await service.createTarget({
+      targetType: "reverb_listing",
+      name: "watch one Reverb listing",
+      intervalSeconds: 300,
+      config: { externalItemId: "987654321" },
+    });
+    expect(created.config).toEqual({ externalItemId: "987654321" });
+
+    const fetched = await service.getTarget(created.id);
+    expect(fetched.targetType).toBe("reverb_listing");
+
+    const updated = await service.updateTarget(created.id, {
+      config: { externalItemId: "111222333" },
+    });
+    expect(updated.config).toEqual({ externalItemId: "111222333" });
+
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects a 'reverb_listing' target with no externalItemId", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "reverb_listing",
+        name: "missing external id",
+        intervalSeconds: 300,
+        config: {},
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("creates, reads, and updates a 'reverb_shop' target with no identity of its own", async () => {
+    const created = await service.createTarget({
+      targetType: "reverb_shop",
+      name: "watch the connected Reverb account's listings",
+      intervalSeconds: 900,
+      config: { maxItems: 100 },
+    });
+    expect(created.config).toEqual({ maxItems: 100 });
+
+    const fetched = await service.getTarget(created.id);
+    expect(fetched.targetType).toBe("reverb_shop");
+
+    const updated = await service.updateTarget(created.id, { config: {} });
+    expect(updated.config).toEqual({});
+
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects an unrecognized key in either config (strict schemas)", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "reverb_listing",
+        name: "bad reverb_listing config",
+        intervalSeconds: 300,
+        config: { externalItemId: "1", shopExternalId: "not-a-reverb-field" },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+    await expect(
+      service.createTarget({
+        targetType: "reverb_shop",
+        name: "bad reverb_shop config",
+        intervalSeconds: 900,
+        config: { sellerUsername: "not-a-reverb-field" },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("lists targets filtered by 'reverb_shop' without disturbing 'reverb_listing' rows", async () => {
+    const listing = await service.createTarget({
+      targetType: "reverb_listing",
+      name: "reverb_listing filter probe",
+      intervalSeconds: 300,
+      config: { externalItemId: "1" },
+    });
+    const shop = await service.createTarget({
+      targetType: "reverb_shop",
+      name: "reverb_shop filter probe",
+      intervalSeconds: 900,
+      config: {},
+    });
+    const shopOnly = await service.listTargets({ targetType: "reverb_shop" });
+    const ids = shopOnly.map((row) => row.id);
+    expect(ids).toContain(shop.id);
+    expect(ids).not.toContain(listing.id);
+
+    await service.deleteTarget(listing.id);
+    await service.deleteTarget(shop.id);
+  });
+});
+
+/**
  * loxep-lmy.1: `infrastructure_domain_reconcile` is the Phase 7 recurring DNS
  * sweep type @loxep/infrastructure registers against this shared scheduling
  * mechanism — the THIRD domain to do so, after Market's own discovery types

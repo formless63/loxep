@@ -151,6 +151,42 @@ export {
 export type { CreateInfrastructureReconcilePollExecutorOptions } from "./infrastructure-poll-executor.ts";
 
 export {
+  BESZEL_CONNECTION_PROVIDER,
+  BESZEL_CREDENTIAL_TYPE,
+  DOCKHAND_CONNECTION_PROVIDER,
+  DOCKHAND_CREDENTIAL_TYPE,
+  containerHostPortFromDockhandAdapter,
+} from "./fleet.ts";
+export type { ContainerHostAdapterLike } from "./fleet.ts";
+
+export {
+  REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  REVERB_ADAPTER_CACHE_TTL_MS,
+  REVERB_CONNECTION_PROVIDER,
+  REVERB_CREDENTIAL_TYPE,
+  REVERB_RATE_BUDGET_CAPACITY,
+  REVERB_RATE_BUDGET_REFILL_PER_SECOND,
+  ReverbCredentialsMissingError,
+  createReverbAdapterFactory,
+  reverbRateBudgetIntervalFloorSeconds,
+} from "./reverb.ts";
+export type {
+  CreateReverbAdapterFactoryOptions,
+  ReverbAdapterConstructor,
+  ReverbAdapterFactory,
+  ReverbConnectionAdapter,
+  ReverbRateBudgetConfig,
+} from "./reverb.ts";
+
+export {
+  REVERB_LISTING_OBSERVATION_SOURCE,
+  REVERB_SHOP_DEFAULT_MAX_ITEMS,
+  REVERB_SHOP_OBSERVATION_SOURCE,
+  createReverbPollExecutor,
+} from "./reverb-poll-executor.ts";
+export type { CreateReverbPollExecutorOptions } from "./reverb-poll-executor.ts";
+
+export {
   LISTING_CONTEXT_CACHE_LIMIT,
   createListingContextCache,
 } from "./listing-context.ts";
@@ -186,6 +222,13 @@ export type {
   EbayTokenRefreshTasks,
   RefreshTokensTask,
 } from "./refresh-tokens.ts";
+
+export {
+  HEALTH_SWEEP_CRON_MATCH,
+  HEALTH_SWEEP_TASK_NAME,
+  createHealthSweepTasks,
+} from "./health-sweep.ts";
+export type { HealthSweepTask, HealthSweepTasks } from "./health-sweep.ts";
 
 export { buildCronItems, buildWorkerRegistry } from "./registry.ts";
 export type {

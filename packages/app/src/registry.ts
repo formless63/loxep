@@ -14,10 +14,12 @@
  * | `commerce.sync-woo-orders`  | @loxep/commerce      | on-demand order sync for one connection |
  * | `commerce.sync-ebay-orders` | @loxep/commerce      | the same, for an eBay seller account |
  * | `commerce.redact-order-payloads` | @loxep/commerce | ADR-0021 retention sweep (daily) |
+ * | `health.sweep`               | @loxep/app (mechanics in @loxep/domain) | Phase 8 m1 integration_health probe (5 min) |
  *
  * Cron: `maintenance.heartbeat` (@loxep/jobs' defaults),
  * `market.dispatch-due-monitors` (every minute), `ebay.refresh-tokens`
- * (every 15 minutes), `commerce.redact-order-payloads` (daily).
+ * (every 15 minutes), `commerce.redact-order-payloads` (daily),
+ * `health.sweep` (every 5 minutes).
  *
  * @loxep/commerce's ORDER SYNC deliberately defines no cron item — that
  * scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed by
@@ -48,6 +50,7 @@
  * woo_orders                                            → createWooOrderPollExecutor
  * ebay_orders                                           → createEbayOrderPollExecutor
  * etsy_listing | etsy_shop                              → createEtsyPollExecutor
+ * reverb_listing | reverb_shop                          → createReverbPollExecutor
  * infrastructure_domain_reconcile                       → createInfrastructureReconcilePollExecutor
  * ```
  *
@@ -71,6 +74,11 @@
  * `monitorTargetConfigSchemas` from the same change that adds this route, so
  * `createMonitorService`'s CRUD accepts them immediately — no follow-up bead
  * needed the way `ebay_orders` still has one.
+ *
+ * REVERB-REGISTRATION-NOTE(loxep-g4t.3): `reverb_listing`/`reverb_shop`
+ * follow the same discipline — both in `@loxep/market`'s
+ * `MONITOR_TARGET_TYPES` AND `monitorTargetConfigSchemas` from the same
+ * change that adds this route.
  *
  * `infrastructure_domain_reconcile` (Phase 7 milestone 1, loxep-lmy.1) is the
  * THIRD registrant against the shared scheduling model and, like
@@ -153,6 +161,7 @@ import {
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
+import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createListingContextCache } from "./listing-context.ts";
@@ -165,6 +174,7 @@ import {
 import type { CreateEbayPollExecutorOptions } from "./poll-executor.ts";
 import { createEbayTokenRefreshTasks } from "./refresh-tokens.ts";
 import type { AppCronItem } from "./refresh-tokens.ts";
+import { createReverbPollExecutor } from "./reverb-poll-executor.ts";
 import { buildAppServices } from "./services.ts";
 import type { AppServices } from "./services.ts";
 
@@ -231,6 +241,7 @@ export function buildCronItems(input: {
   marketDispatch: AppCronItem;
   ebayRefreshTokens: AppCronItem;
   redactOrderPayloads: CommerceCronItem;
+  healthSweep: AppCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -239,6 +250,7 @@ export function buildCronItems(input: {
     input.marketDispatch,
     input.ebayRefreshTokens,
     input.redactOrderPayloads,
+    input.healthSweep,
   ];
 }
 
@@ -337,6 +349,18 @@ export function buildWorkerRegistry(
   // `commerce-ebay-sync.test.ts` uses for `getEbayAdapterForConnection`.
   const infrastructureReconcilePollExecutor =
     createInfrastructureReconcilePollExecutor({ services });
+  // REVERB-ROUTE(loxep-g4t.3): one executor serves both m1 target types. Its
+  // adapter dependency (`services.getReverbAdapterForConnection`) is
+  // PER-CONNECTION, unlike Etsy's shared budget — see `reverb.ts`'s module
+  // doc. Registered in BOTH `@loxep/market`'s closed list AND this route in
+  // the same change, learning from the `ebay_orders` split-registration gap
+  // noted above the same way `etsy_listing`/`etsy_shop` already did.
+  const reverbPollExecutor = createReverbPollExecutor({
+    services,
+    enqueueDeliveriesForEvent: delivery.enqueueDeliveriesForEvent,
+    addJob: enqueue,
+    listings,
+  });
   // The archived-connection gate wraps the ROUTER, so every target type
   // inherits it (loxep-o7h) — see `createArchivedConnectionGate`.
   const pollExecutor: PollExecutor = createArchivedConnectionGate({
@@ -349,6 +373,8 @@ export function buildWorkerRegistry(
           : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
         etsy_listing: etsyPollExecutor,
         etsy_shop: etsyPollExecutor,
+        reverb_listing: reverbPollExecutor,
+        reverb_shop: reverbPollExecutor,
         [INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE]:
           infrastructureReconcilePollExecutor,
       },
@@ -374,6 +400,12 @@ export function buildWorkerRegistry(
   // target type is registered here.
   const infrastructureMail = createInfrastructureMailTasks({ services });
 
+  // --- fleet health (Phase 8 milestone 1, loxep-ovj.1) -----------------
+  // One recurring sweep, no monitor_targets row — see health-sweep.ts's
+  // module doc. `@loxep/domain` owns the registry/mechanics; this is only
+  // the Graphile Worker wrapper, the same shape `ebay.refresh-tokens` uses.
+  const health = createHealthSweepTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
@@ -381,6 +413,7 @@ export function buildWorkerRegistry(
     refresh.refreshTokensTask,
     ...commerce.tasks,
     ...infrastructureMail.tasks,
+    health.healthSweepTask,
   ]);
 
   return {
@@ -389,6 +422,7 @@ export function buildWorkerRegistry(
       marketDispatch: market.dispatchDueMonitorsCronItem,
       ebayRefreshTokens: refresh.refreshTokensCronItem,
       redactOrderPayloads: commerce.redactOrderPayloadsCronItem,
+      healthSweep: health.healthSweepCronItem,
     }),
     services,
     listings,

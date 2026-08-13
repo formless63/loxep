@@ -25,6 +25,7 @@ import type { EtsyKeysetStatus } from '@/server/etsy-oauth';
 export type IntegrationServiceId =
   | 'ebay'
   | 'etsy'
+  | 'reverb'
   | 'woocommerce'
   | 'medusa'
   | 'invoiceninja'
@@ -79,6 +80,7 @@ export interface IntegrationStatusInput {
 export type IntegrationAccountForm =
   | 'ebay-consent'
   | 'etsy-consent'
+  | 'reverb-api'
   | 'woo-api'
   | 'medusa-api'
   | 'invoiceninja-api'
@@ -250,6 +252,29 @@ export const integrationServices: IntegrationService[] = [
             }
           : undefined;
       return { tone: 'ready', label: 'Keyset configured', details, ...(warning && { warning }) };
+    }
+  },
+  {
+    id: 'reverb',
+    name: 'Reverb',
+    category: 'Marketplaces',
+    description:
+      'Watch listings and your own catalogue on Reverb, the musical-gear marketplace. Each account connects with a self-service Personal Access Token minted in your own Reverb account settings — no application review, no approval wait.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage accounts' },
+    accounts: {
+      provider: 'reverb',
+      kind: 'marketplace_account',
+      form: 'reverb-api',
+      addLabel: 'Add Reverb account',
+      formHint:
+        'The Personal Access Token is stored encrypted and never shown again. Reverb has no separate application keyset and no shop id to enter — the token itself identifies the account.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'reverb').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No accounts connected', details: [] };
     }
   },
   {

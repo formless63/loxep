@@ -43,6 +43,8 @@ import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
 import { createEtsyAdapterFactory } from "./etsy.ts";
 import type { EtsyAdapterFactory } from "./etsy.ts";
+import { createReverbAdapterFactory } from "./reverb.ts";
+import type { ReverbAdapterFactory } from "./reverb.ts";
 import { createMonitorSettingsReader } from "./settings.ts";
 import type { MonitorSettingsReader } from "./settings.ts";
 import { createWooAdapterFactory } from "./woo.ts";
@@ -92,6 +94,15 @@ export interface BuildAppServicesOptions {
    * eBay/Woo.
    */
   purelymailRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Reverb token bucket (loxep-g4t.3). There is
+   * no registered `integration.reverb.rate_budget` setting yet (matching
+   * Cloudflare's/Purelymail's own gap) — production always uses `reverb.ts`'s
+   * documented conservative-guess defaults; an explicit value here WINS,
+   * which is how tests get a wide-open budget without spending wall-clock
+   * time waiting on refills.
+   */
+  reverbRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -169,6 +180,17 @@ export interface AppServices {
   invalidatePurelymailAdapter: (connectionId: string) => void;
   /** The Purelymail interval floor implied by the DEFAULT/overridden budget. */
   purelymailIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Reverb adapter (Personal Access Token + budget,
+   * loxep-g4t.3). Per-CONNECTION like Cloudflare/Purelymail, not
+   * shared-per-installation like Etsy: Reverb has no application-level
+   * credential to pool a budget against — see `reverb.ts`'s module doc.
+   */
+  getReverbAdapterForConnection: ReverbAdapterFactory;
+  /** Drop a cached Reverb adapter (after an `auth`-class provider failure). */
+  invalidateReverbAdapter: (connectionId: string) => void;
+  /** The Reverb interval floor implied by the DEFAULT/overridden budget. */
+  reverbIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -258,6 +280,17 @@ export function buildAppServices(
       : {}),
   });
 
+  // PER-CONNECTION — see reverb.ts's module doc for why Reverb, unlike Etsy,
+  // has no application-level credential to force pooling a shared budget.
+  const reverb = createReverbAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.reverbRateBudget !== undefined
+      ? { rateBudget: options.reverbRateBudget }
+      : {}),
+  });
+
   let closed = false;
   return {
     config,
@@ -283,6 +316,9 @@ export function buildAppServices(
     getPurelymailAdapterForConnection: purelymail.getAdapterForConnection,
     invalidatePurelymailAdapter: purelymail.invalidate,
     purelymailIntervalFloorSeconds: purelymail.intervalFloorSeconds,
+    getReverbAdapterForConnection: reverb.getAdapterForConnection,
+    invalidateReverbAdapter: reverb.invalidate,
+    reverbIntervalFloorSeconds: reverb.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;
