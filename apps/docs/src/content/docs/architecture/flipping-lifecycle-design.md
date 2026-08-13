@@ -6,7 +6,9 @@ This document is the design for Loxep's **core operator loop** — the path a re
 
 It differs from those documents in one important way, and the difference sets the whole shape of the work.
 
-**Implementation status: M1 of this design is implemented.** The `/finance` workspace (`apps/web/src/config/workspaces.ts`, `apps/web/src/config/navigation/finance.ts`, `apps/web/src/routes/finance*`, `apps/web/src/features/finance/`) now exists: an expenses list and detail, one-screen quick entry (writing `status: 'recorded'` in one action, with `draft` reachable via "Save as draft"), void-and-re-record (never edit-in-place), receipt upload/gallery over `media_links`, and the missing-receipt/unallocated-expense reports on `/finance/overview` — all over `@loxep/accounting`'s `createExpensesService`/`createReceiptsService`/`createExpenseReports`, which shipped complete with zero callers before this milestone. **No migration was required**, exactly as [M1](#milestones) predicted. `M2` through `M6` — inventory, enrichment, documents/intake review, eBay purchase ingestion, and listings — remain DESIGN ONLY: no migration, Drizzle schema, service, route, or component beyond M1's is authorized by this page. Every column type, constraint, and provider call named below for the unshipped milestones must still be re-verified against current PostgreSQL/Drizzle/provider behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
+**Implementation status: M1 of this design is implemented.** The `/finance` workspace (`apps/web/src/config/workspaces.ts`, `apps/web/src/config/navigation/finance.ts`, `apps/web/src/routes/finance*`, `apps/web/src/features/finance/`) now exists: an expenses list and detail, one-screen quick entry (writing `status: 'recorded'` in one action, with `draft` reachable via "Save as draft"), void-and-re-record (never edit-in-place), receipt upload/gallery over `media_links`, and the missing-receipt/unallocated-expense reports on `/finance/overview` — all over `@loxep/accounting`'s `createExpensesService`/`createReceiptsService`/`createExpenseReports`, which shipped complete with zero callers before this milestone. **No migration was required**, exactly as [M1](#milestones) predicted.
+
+**M2 is UI-complete but its writes are blocked, and that is worth stating plainly.** The `/inventory` workspace (`apps/web/src/config/navigation/inventory.ts`, `apps/web/src/routes/inventory*`, `apps/web/src/features/inventory/`) now exists: a filterable stock list and item detail (state, location, cost basis, movements timeline, live `availableToSell`), locations, an acquisitions list and lot detail (cost components, landed cost by currency with `nonCapitalizedAmount` shown separately, a basis picker), a movements ledger, and the `/market` handoff — "I bought this" on `/market/items/$itemId`, prefilled from the watched item, plus a "we bought one" panel showing the reverse link. Every READ on these surfaces (`apps/web/src/server/inventory-functions.ts`) is a genuine, working query straight against `@loxep/db`'s shipped `inventory_items`/`acquisitions`/`acquisition_costs`/`inventory_movements`/`inventory_locations`/`acquisition_opportunity_links` tables — no business logic duplicated, only flat/joined selects (the one grouped aggregate mirrors `@loxep/inventory/acquisitions.ts`'s own `landedCost` query verbatim). But `apps/web/package.json` does not list `@loxep/inventory` as a dependency, unlike `@loxep/accounting` for M1, so every WRITE that needs the package's business logic — item creation (code generation, movement recording), acquisition creation (reference codes, attribution), cost allocation (the largest-remainder engine), and the "I bought this" three-call transaction (acquisition → item → `sourced_from` link) — is validated for real and then throws a descriptive error naming the exact one-line fix, rather than either duplicating that logic in `apps/web` or silently no-opping. `acquisition_opportunity_links` needed no migration: it shipped with Phase 4, exactly as the design below predicted, and the read side of the `/market` handoff (the reverse "we bought one" wire) works today because it needs only that shipped table, not the package. `M3` through `M6` — enrichment, documents/intake review, eBay purchase ingestion, and listings — remain DESIGN ONLY: no migration, Drizzle schema, service, route, or component beyond M1's and M2's is authorized by this page. Every column type, constraint, and provider call named below for the unshipped milestones must still be re-verified against current PostgreSQL/Drizzle/provider behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).
 
 ## The finding that reframes this phase
 
@@ -1095,12 +1097,15 @@ M1  Expense capture                   no migration. /finance workspace, expenses
                                       missing-receipt and unallocated reports. Lights up
                                       the already-wired posting pipeline.
 
-M2  Inventory workspace               no migration. Depends on M1 only for the workspace
-                                      pattern. Stock list, item detail, locations,
-                                      acquisitions + lot detail + cost allocation,
-                                      movements, and the six shipped read models that
-                                      nothing renders. Wires @loxep/inventory for the
-                                      first time.
+M2  Inventory workspace               no migration, none needed. UI-complete; writes
+                                      blocked on a one-line apps/web/package.json
+                                      dependency add, not yet done. Stock list, item
+                                      detail, locations, acquisitions + lot detail + a
+                                      cost allocation UI, movements, and the /market
+                                      handoff -- all reading real data straight off
+                                      @loxep/db. The six profitability read models
+                                      still render nothing: they need @loxep/inventory,
+                                      same blocker as every write.
 
 M3  Enrichment                        migration. Depends on M2. Description, sale_mode,
                                       package dims/weight, specifics, images, part-out.

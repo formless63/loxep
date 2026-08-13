@@ -1,0 +1,78 @@
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+
+/**
+ * /inventory workspace critical flow (loxep-dgf.2, M2): create an
+ * acquisition (the direct path — "create acquisition via the market handoff
+ * or direct" per the milestone's acceptance), add an item to it through the
+ * intake form, and confirm the row lands, in `Intake` status, in the stock
+ * table. Mirrors `finance.spec.ts`'s pattern for M1.
+ *
+ * `createAcquisition`/`createInventoryItem` (`@/server/inventory-functions.ts`)
+ * call the real `@loxep/inventory` services (`createAcquisitionsService`,
+ * `createItemsService`) through `@/server/admin.ts`, registered there behind
+ * the same `@vite-ignore` lazy-module pattern `@loxep/market` uses (see
+ * `admin.ts`'s `getInventoryModule` doc) — exactly the shape
+ * `QuickExpenseDialog`'s create flow exercises for `/finance`.
+ */
+
+const runId = Date.now();
+const acquisitionTitle = `E2E Estate Sale ${runId}`;
+const itemLabel = `E2E brass lamp ${runId}`;
+
+test.beforeAll(async ({ browser }) => {
+  const page = await browser.newPage({
+    baseURL: process.env['LOXEP_E2E_BASE_URL'] ?? 'http://localhost:3093',
+    storageState: undefined
+  });
+  await signInWithMagicLink(page, ADMIN_EMAIL);
+  await page.context().storageState({ path: ADMIN_STORAGE_STATE });
+  await page.close();
+});
+
+test.use({ storageState: ADMIN_STORAGE_STATE });
+
+function tableRow(page: Page, text: string): Locator {
+  return page.getByRole('row').filter({ hasText: text });
+}
+
+test('creates an acquisition, adds an item to it, and the item lands in the stock table', async ({
+  page
+}) => {
+  await page.goto('/inventory/acquisitions');
+  await expect(page.getByRole('heading', { name: 'Acquisitions' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'New acquisition' }).click();
+  const acquisitionDialog = page.getByRole('dialog');
+  await expect(acquisitionDialog.getByText('New acquisition')).toBeVisible();
+  await acquisitionDialog.getByLabel('Title *').fill(acquisitionTitle);
+  // Source (thrift/retail default) and currency (USD default) keep their
+  // quick-entry defaults — mirrors `QuickExpenseDialog`'s reasoning.
+  await acquisitionDialog.getByRole('button', { name: 'Create' }).click();
+  await expect(acquisitionDialog).toBeHidden();
+
+  const lotRow = tableRow(page, acquisitionTitle);
+  await expect(lotRow).toBeVisible();
+  await lotRow.getByRole('link').first().click();
+  await page.waitForURL('**/inventory/acquisitions/*');
+
+  await page.getByRole('button', { name: 'Add item to this lot' }).click();
+  const intakeDialog = page.getByRole('dialog');
+  await expect(intakeDialog.getByText('Add item to intake')).toBeVisible();
+  await intakeDialog.getByLabel('Description *').fill(itemLabel);
+  await intakeDialog.getByRole('button', { name: 'Add item' }).click();
+  await expect(intakeDialog).toBeHidden();
+
+  // The new row shows up in this lot's own item list, in Intake status.
+  const lotItemRow = tableRow(page, itemLabel);
+  await expect(lotItemRow).toBeVisible();
+  await expect(lotItemRow.getByText('Intake')).toBeVisible();
+
+  // And the intake review queue (`/inventory/stock?status=intake`, reachable
+  // from the "Intake review" nav entry) shows the same row.
+  await page.goto('/inventory/intake');
+  await page.waitForURL('**/inventory/stock**');
+  const stockRow = tableRow(page, itemLabel);
+  await expect(stockRow).toBeVisible();
+  await expect(stockRow.getByText('Intake')).toBeVisible();
+});

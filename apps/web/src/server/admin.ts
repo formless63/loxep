@@ -17,11 +17,17 @@
  * import so nothing here leaks into the client bundle.
  */
 import {
+  createBooksService,
   createExpenseReports,
   createExpensesService,
+  createFiscalPeriodsService,
+  createLedgerReports,
   createReceiptsService,
+  type BooksService,
   type ExpenseReports,
   type ExpensesService,
+  type FiscalPeriodsService,
+  type LedgerReports,
   type ReceiptsService
 } from '@loxep/accounting';
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
@@ -44,6 +50,13 @@ import {
 } from '@loxep/storage';
 import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
+import type {
+  AcquisitionsService,
+  ItemsService,
+  LocationsService,
+  MovementsService,
+  OpportunityLinksService
+} from '@loxep/inventory';
 import { AuthorizationError, requireRole } from '@loxep/auth';
 import { getRequestHeaders, setResponseStatus } from '@tanstack/react-start/server';
 import { getAuth } from '@/server/auth';
@@ -59,6 +72,16 @@ interface AdminRegistry {
   /** `/finance` (loxep-dgf.1): expenses lifecycle and the expense read models. Depends only on `db`, so it is built eagerly like the other domain services above. */
   expenses: ExpensesService;
   expenseReports: ExpenseReports;
+  /**
+   * `/finance/books` (loxep-cmo): accounting books, the effective-dated
+   * entity-to-book link and its roll-up rule, fiscal-period generation/close/
+   * reopen, and the trial-balance read model. All three depend only on `db`
+   * (verified against `@loxep/accounting`'s own `package.json`, same
+   * reasoning as `expenses` above), so they are built eagerly too.
+   */
+  books: BooksService;
+  fiscalPeriods: FiscalPeriodsService;
+  ledgerReports: LedgerReports;
   storageBackendsPromise?: Promise<StorageBackendsService>;
   mediaServicePromise?: Promise<MediaService>;
   /** Receipt attach/list/detach (loxep-dgf.1) — depends on `getMediaService()`, so it is built lazily like it. */
@@ -67,6 +90,20 @@ interface AdminRegistry {
   notificationsServicePromise?: Promise<NotificationService>;
   marketModulePromise?: Promise<typeof import('@loxep/market')>;
   monitorServicePromise?: Promise<MonitorService>;
+  /**
+   * `/inventory` (loxep-dgf.2). `@loxep/inventory/decimal.ts` imports from
+   * bare `@loxep/commerce`, whose index re-exports `tasks.ts`/`retention.ts`
+   * and so reaches `graphile-worker` (via `@loxep/jobs`) the same way
+   * `@loxep/market`/`@loxep/notifications` do — same `@vite-ignore` dynamic
+   * module treatment as {@link getMarketModule}, not the eager pattern
+   * `expenses`/`books` above use (those depend only on `db`).
+   */
+  inventoryModulePromise?: Promise<typeof import('@loxep/inventory')>;
+  itemsServicePromise?: Promise<ItemsService>;
+  acquisitionsServicePromise?: Promise<AcquisitionsService>;
+  locationsServicePromise?: Promise<LocationsService>;
+  movementsServicePromise?: Promise<MovementsService>;
+  opportunityLinksServicePromise?: Promise<OpportunityLinksService>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -98,7 +135,10 @@ function buildRegistry(): AdminRegistry {
     settings: createSettingsService({ db: handle.db }),
     secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
     expenses: createExpensesService({ db: handle.db }),
-    expenseReports: createExpenseReports({ db: handle.db })
+    expenseReports: createExpenseReports({ db: handle.db }),
+    books: createBooksService({ db: handle.db }),
+    fiscalPeriods: createFiscalPeriodsService({ db: handle.db }),
+    ledgerReports: createLedgerReports({ db: handle.db })
   };
 }
 
@@ -151,6 +191,21 @@ export function getExpensesService(): ExpensesService {
 /** The four expense read models (`listExpenses`, `unallocatedExpenses`, …), loxep-dgf.1. */
 export function getExpenseReports(): ExpenseReports {
   return getAdminServices().expenseReports;
+}
+
+/** Books, entity links, and posting-book routing (`/finance/books`), loxep-cmo. */
+export function getBooksService(): BooksService {
+  return getAdminServices().books;
+}
+
+/** Fiscal-period generation, close, and reopen (`/finance/books`), loxep-cmo. */
+export function getFiscalPeriodsService(): FiscalPeriodsService {
+  return getAdminServices().fiscalPeriods;
+}
+
+/** Trial balance and the other ledger read models (`/finance/books`), loxep-cmo. */
+export function getLedgerReports(): LedgerReports {
+  return getAdminServices().ledgerReports;
 }
 
 /**
@@ -226,6 +281,76 @@ export function getMonitorService(): Promise<MonitorService> {
     return market.createMonitorService({ db: registry.handle.db });
   })();
   return registry.monitorServicePromise;
+}
+
+/**
+ * Dynamically-loaded `@loxep/inventory` module, cached on the registry.
+ *
+ * `@loxep/inventory/decimal.ts` imports from bare `@loxep/commerce` (to
+ * reuse its money-rounding helpers rather than fork them — see that file's
+ * own doc), and `@loxep/commerce`'s index re-exports `tasks.ts`, which
+ * reaches `graphile-worker` via `@loxep/jobs`. Same SSR-bundling hazard as
+ * `@loxep/market`/`@loxep/notifications` — see `getNotificationsModule`'s
+ * doc above. The `@vite-ignore` variable specifier keeps it out of the
+ * bundle so Node resolves it from real node_modules.
+ */
+export function getInventoryModule(): Promise<typeof import('@loxep/inventory')> {
+  const registry = getAdminServices();
+  registry.inventoryModulePromise ??= (async () => {
+    const specifier = '@loxep/inventory';
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/inventory');
+  })();
+  return registry.inventoryModulePromise;
+}
+
+/** Items service (`/inventory/stock`, intake) — code generation, condition/grading, transfers. */
+export function getItemsService(): Promise<ItemsService> {
+  const registry = getAdminServices();
+  registry.itemsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createItemsService({ db: registry.handle.db });
+  })();
+  return registry.itemsServicePromise;
+}
+
+/** Acquisitions service (`/inventory/acquisitions`) — lots, cost components, the allocation engine. */
+export function getAcquisitionsService(): Promise<AcquisitionsService> {
+  const registry = getAdminServices();
+  registry.acquisitionsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createAcquisitionsService({ db: registry.handle.db });
+  })();
+  return registry.acquisitionsServicePromise;
+}
+
+/** Locations service (`/inventory/locations`) — the location tree. */
+export function getLocationsService(): Promise<LocationsService> {
+  const registry = getAdminServices();
+  registry.locationsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createLocationsService({ db: registry.handle.db });
+  })();
+  return registry.locationsServicePromise;
+}
+
+/** Movements service (`/inventory/movements`) — the append-only ledger and its single writer. */
+export function getMovementsService(): Promise<MovementsService> {
+  const registry = getAdminServices();
+  registry.movementsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createMovementsService({ db: registry.handle.db });
+  })();
+  return registry.movementsServicePromise;
+}
+
+/** Opportunity-links service — the `/market` → `/inventory` "I bought this" handoff's write side. */
+export function getOpportunityLinksService(): Promise<OpportunityLinksService> {
+  const registry = getAdminServices();
+  registry.opportunityLinksServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createOpportunityLinksService({ db: registry.handle.db });
+  })();
+  return registry.opportunityLinksServicePromise;
 }
 
 /** Current request's Better Auth session, or `null` when unauthenticated. */
