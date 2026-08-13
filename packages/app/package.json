@@ -27,6 +27,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@loxep/integration-beszel": "workspace:*",
+    "@loxep/integration-dockhand": "workspace:*",
     "@types/node": "24.13.3",
     "@types/pg": "8.21.0",
     "typescript": "5.9.3",

@@ -53,6 +53,27 @@
  * Minted tokens and the `/infrastructure` workspace (milestone 3) are
  * deliberately absent, as is any path that reads a stored mailbox password
  * back — `MailboxSecretWriter` has no read member at all.
+ *
+ * ## What Phase 8 adds (loxep-9j6)
+ *
+ * ```text
+ * container-host-port.ts   the container-host contract + desired-state planner
+ * ```
+ *
+ * One seam, and it is deliberately types-plus-a-pure-function: the owner's
+ * 2026-08-13 rule-13 carve-out lets Loxep reconcile a container manager's
+ * INVENTORY OF HOSTS (registering a machine writes a row in the manager's own
+ * table; it runs nothing on that machine), while container lifecycle verbs stay
+ * forbidden. It ships **with no migration**, because the join key is the
+ * already-unique host NAME on both sides rather than a stored provider id —
+ * see the module doc for the limitation that accepts, and for why
+ * `hosting_targets` gains no provider column.
+ *
+ * **Not yet wired to a job.** There is no `infrastructure.sync-container-hosts`
+ * task, because the desired state a caller would assemble depends on where the
+ * per-host connection detail lives, which is a `/infrastructure` surface
+ * question this issue does not answer. The port and planner exist so that
+ * milestone lands as wiring rather than as design.
  */
 export {
   InfrastructureError,
@@ -193,6 +214,18 @@ export type {
   MailboxTemplateRow,
   MailboxTemplatesService,
 } from "./mail.ts";
+
+export { planContainerHostOperations } from "./container-host-port.ts";
+export type {
+  ContainerHostApplyResult,
+  ContainerHostOperation,
+  ContainerHostPayload,
+  ContainerHostPlan,
+  ContainerHostProviderCapabilities,
+  ContainerHostProviderPort,
+  DesiredContainerHost,
+  ObservedContainerHost,
+} from "./container-host-port.ts";
 
 export type {
   CreateMailRoutingRuleInput,
