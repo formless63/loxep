@@ -31,8 +31,10 @@ import {
   type ConnectionDto,
   type ConnectionReferenceDto
 } from '@/server/admin-functions';
+import { disableOrderSync, enableOrderSync } from '@/server/order-sync-functions';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import { EbayConnectionActions } from '@/features/settings/components/ebay-connection-actions';
+import { isOrderSyncEligible, supportsOrderSync } from './order-sync-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -83,6 +85,19 @@ export function CellAction({ data }: { data: ConnectionDto }) {
       invalidate();
     },
     onError: (error) => toastError(error, 'Failed to archive account')
+  });
+
+  const orderSyncEnabled = data.orderSync?.enabled ?? false;
+  const orderSyncMutation = useMutation({
+    mutationFn: (action: 'enable' | 'disable') =>
+      action === 'enable'
+        ? enableOrderSync({ data: { connectionId: data.id } })
+        : disableOrderSync({ data: { connectionId: data.id } }),
+    onSuccess: (result) => {
+      toast.success(result.enabled ? 'Order sync enabled' : 'Order sync disabled');
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Failed to update order sync')
   });
 
   const deleteMutation = useMutation({
@@ -140,6 +155,24 @@ export function CellAction({ data }: { data: ConnectionDto }) {
               <Icons.eyeOff className='mr-2 h-4 w-4' /> Archive
             </DropdownMenuItem>
           )}
+          {!archived &&
+            supportsOrderSync(data) &&
+            (isOrderSyncEligible(data) || orderSyncEnabled) && (
+              <DropdownMenuItem
+                disabled={orderSyncMutation.isPending}
+                onClick={() => orderSyncMutation.mutate(orderSyncEnabled ? 'disable' : 'enable')}
+              >
+                {orderSyncEnabled ? (
+                  <>
+                    <Icons.slash className='mr-2 h-4 w-4' /> Disable order sync
+                  </>
+                ) : (
+                  <>
+                    <Icons.integrations className='mr-2 h-4 w-4' /> Enable order sync
+                  </>
+                )}
+              </DropdownMenuItem>
+            )}
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setConfirmingDelete(true)}>
             <Icons.trash className='mr-2 h-4 w-4' /> Delete

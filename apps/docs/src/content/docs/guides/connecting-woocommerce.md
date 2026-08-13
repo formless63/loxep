@@ -44,6 +44,12 @@ Fill in:
 
 Save. The store URL is kept as ordinary connection configuration and stays visible; the key pair is stored application-encrypted and is never displayed again. Re-entering the credentials later replaces them rather than revealing them.
 
+### Enable order sync
+
+Saving the connection does not start reading orders on its own. On **Settings → Connections**, an active store's row shows an **Order sync** column and an **Enable order sync** action in the row's menu — available on any active WooCommerce account, no extra setup required.
+
+Choosing it creates the store's order-sync schedule (or resumes it, if one already exists) and the column switches from **Off** to **Syncing**, later showing the time of the most recent successful sync. **Disable order sync** in the same menu turns it back off without discarding anything already ingested.
+
 ## When it does not work
 
 | Symptom | Usual cause |

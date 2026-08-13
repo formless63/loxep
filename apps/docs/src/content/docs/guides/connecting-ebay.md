@@ -128,6 +128,14 @@ Two things follow from how eBay works here:
 
 The action disappears once a connection holds the wider tier. **Reconnect** on an account that already has order access asks for order access again, so re-consenting never silently narrows an account.
 
+### Enable order sync
+
+Granting order access widens what the connection is *allowed* to read; it does not, by itself, start reading anything. Turn on ingestion separately: on **Settings → Connections**, the account's row shows an **Order sync** column and — once it holds the **Watchlist + order history** tier — an **Enable order sync** action in the row's menu.
+
+Choosing it creates the account's order-sync schedule (or resumes it, if one already exists) and the column switches from **Off** to **Syncing**, later showing the time of the most recent successful sync. **Disable order sync** in the same menu turns it back off without discarding anything already ingested.
+
+The action is withheld — and the column explains why — on any connection that has not yet granted order access. Complete [Adding order access later](#adding-order-access-later) first.
+
 ### Confirm it works
 
 On the connections page, use the eBay connection's **Validate** action. It makes one real authenticated call and reports the result:

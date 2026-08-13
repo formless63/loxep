@@ -21,6 +21,11 @@ import {
   ECONOMIC_ENTITY_KIND_VALUES,
   MARKET_EVENT_TYPE_VALUES
 } from '@/features/settings/constants';
+import {
+  EBAY_ORDERS_TARGET_TYPE,
+  WOO_ORDERS_TARGET_TYPE,
+  type OrderSyncStatusDto
+} from '@/server/order-sync-functions';
 
 /** JSON-serializable value — keeps server-fn return types serializable-typed. */
 export type JsonValue =
@@ -173,17 +178,55 @@ export interface ConnectionDto {
   lastErrorCode: string | null;
   createdAt: string;
   credentials: ConnectionCredentialDto[];
+  /** `woo_orders`/`ebay_orders` monitor-target status (loxep-cxh), or `null` when none exists yet. */
+  orderSync: OrderSyncStatusDto | null;
 }
 
 export const fetchConnections = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ConnectionDto[]> => {
     const { requireSession, getAdminServices } = await import('@/server/admin');
     await requireSession();
-    const { connections } = getAdminServices();
+    const { connections, handle } = getAdminServices();
     const rows = await connections.listConnections();
+
+    // Order-sync status folded into this DTO with one bulk query rather than
+    // one lookup per row (loxep-cxh) — `fetchConnections` already returns
+    // every connection in a single call, so a per-row `getOrderSyncStatus`
+    // round-trip would just be an avoidable N+1.
+    const orderSyncTargets =
+      rows.length === 0
+        ? []
+        : await handle.db.query.monitorTargets.findMany({
+            where: (table, { and, inArray }) =>
+              and(
+                inArray(table.targetType, [WOO_ORDERS_TARGET_TYPE, EBAY_ORDERS_TARGET_TYPE]),
+                inArray(
+                  table.connectionId,
+                  rows.map((row) => row.id)
+                )
+              ),
+            columns: {
+              id: true,
+              connectionId: true,
+              targetType: true,
+              enabled: true,
+              lastSuccessAt: true
+            },
+            orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)]
+          });
+    // One order-sync target per connection is the ensure/create invariant
+    // (loxep-cxh); first by creation order wins if that were ever violated.
+    const orderSyncByConnectionId = new Map<string, (typeof orderSyncTargets)[number]>();
+    for (const target of orderSyncTargets) {
+      if (target.connectionId !== null && !orderSyncByConnectionId.has(target.connectionId)) {
+        orderSyncByConnectionId.set(target.connectionId, target);
+      }
+    }
+
     return Promise.all(
       rows.map(async (row) => {
         const credentials = await connections.listConnectionCredentials(row.id);
+        const orderSyncTarget = orderSyncByConnectionId.get(row.id);
         return {
           id: row.id,
           provider: row.provider,
@@ -204,7 +247,16 @@ export const fetchConnections = createServerFn({ method: 'GET' }).handler(
             expiresAt: iso(credential.expiresAt),
             refreshAfter: iso(credential.refreshAfter),
             updatedAt: iso(credential.updatedAt)
-          }))
+          })),
+          orderSync:
+            orderSyncTarget === undefined
+              ? null
+              : {
+                  targetId: orderSyncTarget.id,
+                  targetType: orderSyncTarget.targetType as OrderSyncStatusDto['targetType'],
+                  enabled: orderSyncTarget.enabled,
+                  lastSuccessAt: iso(orderSyncTarget.lastSuccessAt)
+                }
         };
       })
     );

@@ -11,6 +11,7 @@ import type { ConnectionDto, EntityDto } from '@/server/admin-functions';
 import type { ConnectionStatus } from '@loxep/domain';
 import { AttributionCell } from './attribution-cell';
 import { CellAction } from './cell-action';
+import { OrderSyncStatusCell } from './order-sync-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -118,6 +119,11 @@ export function getColumns(
             ))}
           </div>
         )
+    },
+    {
+      id: 'orderSync',
+      header: 'Order sync',
+      cell: ({ row }) => <OrderSyncStatusCell connection={row.original} />
     },
     {
       id: 'lastSuccessAt',

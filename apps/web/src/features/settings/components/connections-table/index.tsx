@@ -50,7 +50,7 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const [addServiceId, setAddServiceId] = React.useState<string | null>(null);
 
   if (isPending || entitiesPending) {
-    return <DataTableSkeleton columnCount={7} filterCount={2} />;
+    return <DataTableSkeleton columnCount={8} filterCount={2} />;
   }
 
   if (isError) {
