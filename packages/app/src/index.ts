@@ -120,6 +120,37 @@ export {
 export type { CreateEtsyPollExecutorOptions } from "./etsy-poll-executor.ts";
 
 export {
+  CLOUDFLARE_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  CLOUDFLARE_ADAPTER_CACHE_TTL_MS,
+  CLOUDFLARE_CALLS_PER_SYNC,
+  CLOUDFLARE_CONNECTION_CONFIG_KEY,
+  CLOUDFLARE_CONNECTION_PROVIDER,
+  CLOUDFLARE_CREDENTIAL_TYPE,
+  CLOUDFLARE_RATE_BUDGET_CAPACITY,
+  CLOUDFLARE_RATE_BUDGET_REFILL_PER_SECOND,
+  CloudflareCredentialsMissingError,
+  cloudflareRateBudgetIntervalFloorSeconds,
+  createCloudflareAdapterFactory,
+  readCloudflareAccountId,
+} from "./cloudflare.ts";
+export type {
+  CloudflareAdapterConstructor,
+  CloudflareAdapterFactory,
+  CloudflareConnectionAdapter,
+  CloudflareRateBudgetConfig,
+  CreateCloudflareAdapterFactoryOptions,
+} from "./cloudflare.ts";
+
+export {
+  INFRASTRUCTURE_RECONCILE_POLL_MODE,
+  INFRASTRUCTURE_RECONCILE_POLL_TRIGGER,
+  cloudflareApplyResultRedactor,
+  createInfrastructureReconcilePollExecutor,
+  providerPortFromCloudflareAdapter,
+} from "./infrastructure-poll-executor.ts";
+export type { CreateInfrastructureReconcilePollExecutorOptions } from "./infrastructure-poll-executor.ts";
+
+export {
   LISTING_CONTEXT_CACHE_LIMIT,
   createListingContextCache,
 } from "./listing-context.ts";

@@ -48,6 +48,7 @@
  * woo_orders                                            → createWooOrderPollExecutor
  * ebay_orders                                           → createEbayOrderPollExecutor
  * etsy_listing | etsy_shop                              → createEtsyPollExecutor
+ * infrastructure_domain_reconcile                       → createInfrastructureReconcilePollExecutor
  * ```
  *
  * Each branch is built by the domain that owns the type and joined here,
@@ -70,6 +71,15 @@
  * `monitorTargetConfigSchemas` from the same change that adds this route, so
  * `createMonitorService`'s CRUD accepts them immediately — no follow-up bead
  * needed the way `ebay_orders` still has one.
+ *
+ * `infrastructure_domain_reconcile` (Phase 7 milestone 1, loxep-lmy.1) is the
+ * THIRD registrant against the shared scheduling model and, like
+ * `etsy_listing`/`etsy_shop`, was registered in `@loxep/market`'s
+ * `MONITOR_TARGET_TYPES` AND `monitorTargetConfigSchemas` in the same change
+ * that shipped the rest of the milestone — this route is the one piece that
+ * change could not land, because `@loxep/infrastructure`'s manifest did not
+ * exist yet for `@loxep/app` to depend on. See `createInfrastructureReconcilePollExecutor`'s
+ * module doc for the full wiring and why its mode is hard-coded to `'check'`.
  *
  * `createEtsyPollExecutor`'s adapter dependency is the ONE place in this
  * file's wiring where a shared, installation-wide resource (not a
@@ -124,6 +134,7 @@ import {
 import type { AddJob, JobsLogger, TaskRegistry } from "@loxep/jobs";
 import { createMarketTasks } from "@loxep/market";
 import type { PollExecutor } from "@loxep/market";
+import { INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE } from "@loxep/infrastructure";
 import {
   createDeliveryPipeline,
   createNtfyTransport,
@@ -142,6 +153,7 @@ import {
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
+import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -317,6 +329,13 @@ export function buildWorkerRegistry(
     addJob: enqueue,
     listings,
   });
+  // Phase 7 milestone 1 (loxep-lmy.1): the third registrant against the
+  // shared scheduling model. No provider-seam override option here — unlike
+  // `ebayOrders`/`discovery`, a test overrides the Cloudflare adapter through
+  // `services.getCloudflareAdapterForConnection`, exactly the pattern
+  // `commerce-ebay-sync.test.ts` uses for `getEbayAdapterForConnection`.
+  const infrastructureReconcilePollExecutor =
+    createInfrastructureReconcilePollExecutor({ services });
   // The archived-connection gate wraps the ROUTER, so every target type
   // inherits it (loxep-o7h) — see `createArchivedConnectionGate`.
   const pollExecutor: PollExecutor = createArchivedConnectionGate({
@@ -329,6 +348,8 @@ export function buildWorkerRegistry(
           : { [EBAY_ORDERS_TARGET_TYPE]: ebayOrderPollExecutor }),
         etsy_listing: etsyPollExecutor,
         etsy_shop: etsyPollExecutor,
+        [INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE]:
+          infrastructureReconcilePollExecutor,
       },
       fallback: ebayPollExecutor,
     }),

@@ -36,7 +36,9 @@ import type {
   EtsyListPage,
   EtsyUserAdapter,
 } from "../../integrations/etsy/src/index.ts";
+import type { CloudflareAdapter } from "@loxep/integration-cloudflare";
 import type {
+  CloudflareConnectionAdapter,
   EbayConnectionAdapter,
   EtsyConnectionAdapter,
   WooConnectionAdapter,
@@ -762,5 +764,269 @@ export function fakeEtsyConnectionAdapter(
         "fake Etsy connection has no stored user token",
       );
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflare fakes (Phase 7 milestone 1 composition-root wiring, loxep-lmy.1)
+// ---------------------------------------------------------------------------
+
+export interface FakeCloudflareRecord {
+  externalRecordId: string;
+  type: string;
+  name: string;
+  content: string;
+  ttlSeconds: number | null;
+  priority: number | null;
+  proxied: boolean;
+  proxiable: boolean;
+}
+
+/** An observed record with sensible defaults, for terse test setup. */
+export function fakeCloudflareRecord(
+  overrides: Partial<FakeCloudflareRecord> & { externalRecordId: string },
+): FakeCloudflareRecord {
+  return {
+    type: "A",
+    name: "@",
+    content: "203.0.113.10",
+    ttlSeconds: null,
+    priority: null,
+    proxied: false,
+    proxiable: true,
+    ...overrides,
+  };
+}
+
+/**
+ * One zone's fake provider state. Kept PER ZONE rather than per connection —
+ * unlike eBay/Woo/Etsy, one Cloudflare connection (one account/token)
+ * routinely fronts several managed domains, each its own zone, and the real
+ * adapter's `read`/`apply` are scoped by `externalZoneId` on every call. A
+ * flat per-connection record set would silently leak one domain's fixtures
+ * into another's poll in a multi-domain test.
+ */
+export interface FakeCloudflareZone {
+  zoneName: string;
+  externalZoneId: string;
+  records: Map<string, FakeCloudflareRecord>;
+  applyCalls: unknown[][];
+  readCalls: number;
+  /** When set, `read` throws an error carrying this `kind` (the provider-call-failure path). */
+  failReadWith: { kind: string; message: string } | null;
+}
+
+/** The whole fake Cloudflare ACCOUNT a connection's adapter serves: every zone it knows about. */
+export interface FakeCloudflareState {
+  zones: Map<string, FakeCloudflareZone>;
+}
+
+export function fakeCloudflareState(): FakeCloudflareState {
+  return { zones: new Map() };
+}
+
+/** Find (or lazily create) one zone's fake state, auto-vivifying on first touch. */
+function fakeCloudflareZoneFor(
+  state: FakeCloudflareState,
+  externalZoneId: string,
+  zoneName: string,
+): FakeCloudflareZone {
+  let zone = state.zones.get(externalZoneId);
+  if (zone === undefined) {
+    zone = { zoneName, externalZoneId, records: new Map(), applyCalls: [], readCalls: 0, failReadWith: null };
+    state.zones.set(externalZoneId, zone);
+  }
+  return zone;
+}
+
+/**
+ * Seed (or fetch) one zone's fake provider state for test setup BEFORE a
+ * poll — records, a `failReadWith` injection, and later assertions on
+ * `applyCalls`/`readCalls` all key off the {@link FakeCloudflareZone} this
+ * returns.
+ */
+export function fakeCloudflareZone(
+  state: FakeCloudflareState,
+  input: { zoneName: string; externalZoneId: string; records?: FakeCloudflareRecord[] },
+): FakeCloudflareZone {
+  const zone = fakeCloudflareZoneFor(state, input.externalZoneId, input.zoneName);
+  for (const record of input.records ?? []) zone.records.set(record.externalRecordId, record);
+  return zone;
+}
+
+let fakeCloudflareRecordSeq = 0;
+
+/**
+ * A {@link CloudflareConnectionAdapter} whose `adapter` implements only the
+ * four operations `infrastructure-poll-executor.ts`'s
+ * `providerPortFromCloudflareAdapter` forwards — `findZoneByName`, `read`,
+ * `apply`, `capabilities` — the same "only the touched surface" discipline as
+ * `fakeConnectionAdapter` (eBay). The stub logic mirrors
+ * `packages/infrastructure/test/helpers.ts`'s `createStubProvider` (natural
+ * key `type name content`, convergent creates/deletes for at-least-once
+ * replay, zone-scoped exactly as the real adapter is), kept as a LOCAL copy
+ * for the same reason every other fake in this file is local: a package's
+ * test directory is not part of its published surface.
+ */
+export function fakeCloudflareConnectionAdapter(
+  connectionId: string,
+  state: FakeCloudflareState,
+  options: { minIntervalSeconds?: number; accountId?: string | null } = {},
+): CloudflareConnectionAdapter {
+  const key = (record: { type: string; name: string; content: string }): string =>
+    `${record.type} ${record.name} ${record.content}`;
+  const sourceAccountKey = options.accountId
+    ? `cloudflare:${options.accountId}`
+    : "cloudflare:token-scoped";
+
+  const adapter = {
+    baseUrl: "https://api.cloudflare.test/client/v4",
+    sourceAccountKey,
+
+    async findZoneByName(name: string) {
+      const zone = [...state.zones.values()].find((candidate) => candidate.zoneName === name);
+      if (zone === undefined) return null;
+      return {
+        externalZoneId: zone.externalZoneId,
+        name: zone.zoneName,
+        status: "active",
+        nameservers: ["ns1.fake.test", "ns2.fake.test"],
+        accountId: options.accountId ?? null,
+        paused: false,
+      };
+    },
+
+    async read(subject: { externalZoneId: string; zoneName: string }) {
+      const zone = fakeCloudflareZoneFor(state, subject.externalZoneId, subject.zoneName);
+      zone.readCalls += 1;
+      if (zone.failReadWith !== null) {
+        const error = new Error(zone.failReadWith.message) as Error & { kind: string };
+        error.kind = zone.failReadWith.kind;
+        throw error;
+      }
+      return [...zone.records.values()];
+    },
+
+    async apply(input: {
+      externalZoneId: string;
+      zoneName: string;
+      operations: readonly Record<string, unknown>[];
+    }) {
+      const zone = fakeCloudflareZoneFor(state, input.externalZoneId, input.zoneName);
+      zone.applyCalls.push([...input.operations]);
+      const results: Record<string, unknown>[] = [];
+      for (const operation of input.operations) {
+        const kind = operation["kind"];
+        const record = operation["record"] as Record<string, unknown> | undefined;
+        if (kind === "create" && record !== undefined) {
+          const existing = [...zone.records.values()].find(
+            (candidate) =>
+              key(candidate) ===
+              key({
+                type: record["type"] as string,
+                name: record["name"] as string,
+                content: record["content"] as string,
+              }),
+          );
+          if (existing !== undefined) {
+            results.push({
+              kind: "create",
+              type: record["type"],
+              name: record["name"],
+              status: "already_present",
+              externalRecordId: existing.externalRecordId,
+            });
+            continue;
+          }
+          fakeCloudflareRecordSeq += 1;
+          const id = `fake-cf-rec-${fakeCloudflareRecordSeq}`;
+          zone.records.set(id, {
+            externalRecordId: id,
+            type: record["type"] as string,
+            name: record["name"] as string,
+            content: record["content"] as string,
+            ttlSeconds: (record["ttlSeconds"] as number | null) ?? null,
+            priority: (record["priority"] as number | null) ?? null,
+            proxied: record["proxied"] === true,
+            proxiable: ["A", "AAAA", "CNAME"].includes(record["type"] as string),
+          });
+          results.push({
+            kind: "create",
+            type: record["type"],
+            name: record["name"],
+            status: "applied",
+            externalRecordId: id,
+          });
+          continue;
+        }
+        if (kind === "update" && record !== undefined) {
+          const externalRecordId = operation["externalRecordId"] as string;
+          const existing = zone.records.get(externalRecordId);
+          if (existing === undefined) {
+            const error = new Error("fake cloudflare: no such record") as Error & { kind: string };
+            error.kind = "not_found";
+            throw error;
+          }
+          zone.records.set(externalRecordId, {
+            ...existing,
+            content: record["content"] as string,
+            ttlSeconds: (record["ttlSeconds"] as number | null) ?? null,
+            priority: (record["priority"] as number | null) ?? null,
+            proxied: record["proxied"] === true,
+          });
+          results.push({
+            kind: "update",
+            type: record["type"],
+            name: record["name"],
+            status: "applied",
+            externalRecordId,
+          });
+          continue;
+        }
+        const externalRecordId = operation["externalRecordId"] as string;
+        const recordShape = operation["record"] as Record<string, unknown>;
+        const present = zone.records.delete(externalRecordId);
+        results.push({
+          kind: "delete",
+          type: recordShape["type"],
+          name: recordShape["name"],
+          status: present ? "applied" : "already_absent",
+          externalRecordId,
+        });
+      }
+      return results;
+    },
+
+    capabilities() {
+      return {
+        provider: "cloudflare" as const,
+        proxying: true,
+        proxiableTypes: ["A", "AAAA", "CNAME"],
+        proxiedWildcards: true,
+        wildcardRecords: true,
+        automaticTtl: true,
+        minTtlSeconds: 60,
+        maxTtlSeconds: 86_400,
+        automaticCertificateLabelDepth: 1,
+      };
+    },
+
+    stats() {
+      const requests = [...state.zones.values()].reduce((sum, zone) => sum + zone.readCalls, 0);
+      return {
+        baseUrl: "https://api.cloudflare.test/client/v4",
+        sourceAccountKey,
+        rateBudget: { capacity: 8, refillPerSecond: 1, available: 8, pending: 0, acquired: 0, rejected: 0 },
+        requests,
+      };
+    },
+  } as unknown as CloudflareAdapter;
+
+  return {
+    connectionId,
+    accountId: options.accountId ?? null,
+    sourceAccountKey,
+    adapter,
+    minIntervalSeconds: options.minIntervalSeconds ?? 3600,
   };
 }

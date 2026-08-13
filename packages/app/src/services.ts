@@ -35,6 +35,8 @@ import type {
   SettingsService,
 } from "@loxep/domain";
 import type { JobsLogger } from "@loxep/jobs";
+import { createCloudflareAdapterFactory } from "./cloudflare.ts";
+import type { CloudflareAdapterFactory } from "./cloudflare.ts";
 import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
 import { createEtsyAdapterFactory } from "./etsy.ts";
@@ -72,6 +74,15 @@ export interface BuildAppServicesOptions {
    * use it for a wide-open budget.
    */
   etsyRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Cloudflare token bucket (Phase 7 milestone 1
+   * composition-root wiring, loxep-lmy.1). Production uses `cloudflare.ts`'s
+   * documented defaults (no registered-setting resolver is wired yet — a
+   * documented follow-up, matching Etsy's own `resolveRateBudget` gap); an
+   * explicit value here WINS, which is how tests get a wide-open budget
+   * without spending wall-clock time waiting on refills.
+   */
+  cloudflareRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -124,6 +135,18 @@ export interface AppServices {
   invalidateEtsyAdapter: (connectionId: string) => void;
   /** The interval floor implied by the shared Etsy budget. */
   etsyIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Cloudflare adapter (API token + account id + budget) —
+   * Phase 7 milestone 1's composition-root wiring (loxep-lmy.1). Per-
+   * CONNECTION, like eBay/Woo, not shared-per-installation like Etsy: see
+   * `cloudflare.ts`'s module doc for why Cloudflare's real limit does not
+   * force that shape the way Etsy's per-application limit does.
+   */
+  getCloudflareAdapterForConnection: CloudflareAdapterFactory;
+  /** Drop a cached Cloudflare adapter (after an `auth`-class provider failure). */
+  invalidateCloudflareAdapter: (connectionId: string) => void;
+  /** The Cloudflare interval floor implied by the DEFAULT/overridden budget. */
+  cloudflareIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -190,6 +213,17 @@ export function buildAppServices(
       : {}),
   });
 
+  // PER-CONNECTION — see cloudflare.ts's module doc for why Cloudflare's real
+  // limit does not force the shared-per-application shape Etsy needs.
+  const cloudflare = createCloudflareAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.cloudflareRateBudget !== undefined
+      ? { rateBudget: options.cloudflareRateBudget }
+      : {}),
+  });
+
   let closed = false;
   return {
     config,
@@ -209,6 +243,9 @@ export function buildAppServices(
     getEtsyAdapterForConnection: etsy.getAdapterForConnection,
     invalidateEtsyAdapter: etsy.invalidate,
     etsyIntervalFloorSeconds: etsy.intervalFloorSeconds,
+    getCloudflareAdapterForConnection: cloudflare.getAdapterForConnection,
+    invalidateCloudflareAdapter: cloudflare.invalidate,
+    cloudflareIntervalFloorSeconds: cloudflare.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;
