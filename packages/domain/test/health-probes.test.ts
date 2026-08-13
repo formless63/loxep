@@ -168,6 +168,63 @@ describe("runHealthSweep", () => {
     expect(result.probed).toBe(0);
     expect(await health.getHealth("connection", id)).toBeNull();
   });
+
+  it("writes the registry entry's own source when an outcome carries none (default registry path)", async () => {
+    const id = "00000000-0000-4000-8000-000000000040";
+    const registry: HealthSubjectRegistry = {
+      connection: {
+        source: "probe",
+        listCandidates: async () => [{ subjectId: id }],
+        // No `source` on the outcome — every entry in
+        // createDefaultHealthSubjectRegistry() is shaped exactly like this.
+        probe: async () => ({ status: "ok", detail: {} }),
+      },
+    };
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      registry,
+      now: new Date("2026-05-02T00:00:00Z"),
+    });
+    const row = await health.getHealth("connection", id);
+    expect(row?.source).toBe("probe");
+  });
+
+  it("lets one outcome override the registry entry's source (a mixed per-row `connection` dispatcher)", async () => {
+    // The shape loxep-rf4/loxep-hb7's @loxep/app composition uses: one
+    // `connection` entry whose `source` default is 'probe' (the derived
+    // last_success_at read most rows get), but a fleet-tool row's outcome
+    // reports 'adapter' because that probe read the provider's own API.
+    const probedRow = "00000000-0000-4000-8000-000000000041";
+    const adapterRow = "00000000-0000-4000-8000-000000000042";
+    const registry: HealthSubjectRegistry = {
+      connection: {
+        source: "probe",
+        listCandidates: async () => [
+          { subjectId: probedRow },
+          { subjectId: adapterRow },
+        ],
+        probe: async (_db, subjectId) => {
+          if (subjectId === adapterRow) {
+            return { status: "ok", detail: {}, source: "adapter" };
+          }
+          return { status: "ok", detail: {} };
+        },
+      },
+    };
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      registry,
+      now: new Date("2026-05-03T00:00:00Z"),
+    });
+    expect((await health.getHealth("connection", probedRow))?.source).toBe(
+      "probe",
+    );
+    expect((await health.getHealth("connection", adapterRow))?.source).toBe(
+      "adapter",
+    );
+  });
 });
 
 describe("runHealthSweep never drives retry/backoff on the owning tables", () => {

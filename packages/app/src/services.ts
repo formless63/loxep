@@ -35,6 +35,7 @@ import type {
   SettingsService,
 } from "@loxep/domain";
 import type { JobsLogger } from "@loxep/jobs";
+import { gatusRateBudgetSetting } from "@loxep/domain";
 import { createCloudflareAdapterFactory } from "./cloudflare.ts";
 import type { CloudflareAdapterFactory } from "./cloudflare.ts";
 import { createPurelymailAdapterFactory } from "./purelymail.ts";
@@ -49,6 +50,20 @@ import { createMonitorSettingsReader } from "./settings.ts";
 import type { MonitorSettingsReader } from "./settings.ts";
 import { createWooAdapterFactory } from "./woo.ts";
 import type { WooAdapterFactory } from "./woo.ts";
+import {
+  createBeszelAdapterFactory,
+  createDockhandAdapterFactory,
+  createGatusAdapterFactory,
+  createTailscaleAdapterFactory,
+  createTermixAdapterFactory,
+} from "./fleet.ts";
+import type {
+  BeszelAdapterFactory,
+  DockhandAdapterFactory,
+  GatusAdapterFactory,
+  TailscaleAdapterFactory,
+  TermixAdapterFactory,
+} from "./fleet.ts";
 
 export interface BuildAppServicesOptions {
   config: BootstrapConfig;
@@ -103,6 +118,48 @@ export interface BuildAppServicesOptions {
    * time waiting on refills.
    */
   reverbRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Beszel token bucket (loxep-rf4/loxep-y64).
+   * There is no registered `integration.beszel.rate_budget` setting yet
+   * (matching Cloudflare's/Purelymail's/Reverb's own gap) — production always
+   * uses `fleet.ts`'s documented defaults; an explicit value here WINS, which
+   * is how tests get a wide-open budget without spending wall-clock time
+   * waiting on refills.
+   */
+  beszelRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Dockhand token bucket (loxep-rf4/loxep-hb7).
+   * No registered `integration.dockhand.rate_budget` setting exists yet;
+   * production uses `fleet.ts`'s documented defaults (which already reserve
+   * most of the burst for the login exchange's `DOCKHAND_LOGIN_COST`); an
+   * explicit value here WINS, the same override-beats-default shape every
+   * other provider in this file uses.
+   */
+  dockhandRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Gatus token bucket (loxep-rf4/loxep-1au).
+   * UNLIKE Beszel/Dockhand/Tailscale/Termix, Gatus has a REGISTERED setting
+   * (`gatusRateBudgetSetting`, `integration.gatus.rate_budget`) — production
+   * reads it via `resolveRateBudget` below, falling back to `fleet.ts`'s
+   * documented defaults on a read failure; an explicit value here WINS over
+   * the setting, exactly like `ebayRateBudget`/`wooRateBudget` above.
+   */
+  gatusRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Tailscale token bucket (loxep-rf4/loxep-50t).
+   * No registered `integration.tailscale.rate_budget` setting exists yet;
+   * production uses `fleet.ts`'s documented defaults; an explicit value here
+   * WINS.
+   */
+  tailscaleRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Termix token bucket (loxep-rf4/loxep-wvm).
+   * No registered `integration.termix.rate_budget` setting exists yet;
+   * production uses `fleet.ts`'s documented defaults (deliberately gentle —
+   * Termix's login route is the one endpoint upstream documents a 429 on);
+   * an explicit value here WINS.
+   */
+  termixRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Cache lifetime for resolved application settings, in ms (default 15 000;
    * `0` reads through on every access — used by tests that flip a setting and
@@ -191,6 +248,67 @@ export interface AppServices {
   invalidateReverbAdapter: (connectionId: string) => void;
   /** The Reverb interval floor implied by the DEFAULT/overridden budget. */
   reverbIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Beszel adapter (readonly-user login + base URL +
+   * budget, loxep-rf4/loxep-y64). Per-CONNECTION, and — unlike
+   * Cloudflare/Purelymail/Reverb — the underlying cache carries NO TTL: see
+   * `fleet.ts`'s module doc for why an auth-token-caching fleet adapter must
+   * not be rebuilt on a schedule.
+   */
+  getBeszelAdapterForConnection: BeszelAdapterFactory;
+  /** Drop a cached Beszel adapter (after an `auth`-class provider failure, or an operator "test connection" action). */
+  invalidateBeszelAdapter: (connectionId: string) => void;
+  /** The Beszel interval floor implied by the DEFAULT/overridden budget. */
+  beszelIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Dockhand READ adapter (session login + base URL +
+   * budget, loxep-rf4/loxep-hb7). The same no-TTL caching discipline as
+   * Beszel, for the same reason — see `fleet.ts`. This is the READ half only;
+   * the host-intent reconciler (`infrastructure.reconcile-container-host`) is
+   * a later slice and lives outside this package's fence.
+   */
+  getDockhandAdapterForConnection: DockhandAdapterFactory;
+  /** Drop a cached Dockhand adapter (after an `auth`-class provider failure, or an operator "test connection" action). */
+  invalidateDockhandAdapter: (connectionId: string) => void;
+  /** The Dockhand interval floor implied by the DEFAULT/overridden budget. */
+  dockhandIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Gatus adapter (base URL + an OPTIONAL Basic-auth
+   * credential + budget, loxep-rf4/loxep-1au). Gatus is the one fleet
+   * provider with a REGISTERED rate-budget setting — see
+   * `gatusRateBudget`/`resolveRateBudget` below — and the one whose adapter
+   * cache uses an ordinary TTL, because rebuilding it costs no auth
+   * round-trip (`fleet.ts`'s module doc).
+   */
+  getGatusAdapterForConnection: GatusAdapterFactory;
+  /** Drop a cached Gatus adapter (after an `auth`-class provider failure, or an operator "test connection" action). */
+  invalidateGatusAdapter: (connectionId: string) => void;
+  /** The Gatus interval floor implied by the DEFAULT/overridden budget. */
+  gatusIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Tailscale adapter (an API access token OR an OAuth
+   * client + an optional tailnet name + budget, loxep-rf4/loxep-50t). The
+   * same no-TTL caching discipline as Beszel/Dockhand/Termix — an
+   * `oauth_client`-mode adapter caches a one-hour access token in memory that
+   * a scheduled rebuild would discard early.
+   */
+  getTailscaleAdapterForConnection: TailscaleAdapterFactory;
+  /** Drop a cached Tailscale adapter (after an `auth`-class provider failure — including a stale API access token — or an operator "test connection" action). */
+  invalidateTailscaleAdapter: (connectionId: string) => void;
+  /** The Tailscale interval floor implied by the DEFAULT/overridden budget. */
+  tailscaleIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Termix adapter (login + base URL + budget,
+   * loxep-rf4/loxep-wvm). The strongest instance of the no-TTL caching
+   * discipline in this file: Termix's login route is the one endpoint
+   * upstream documents a 429 on, with no published threshold or duration —
+   * see `fleet.ts`'s module doc.
+   */
+  getTermixAdapterForConnection: TermixAdapterFactory;
+  /** Drop a cached Termix adapter (after an `auth`-class provider failure, or an operator "test connection" action). */
+  invalidateTermixAdapter: (connectionId: string) => void;
+  /** The Termix interval floor implied by the DEFAULT/overridden budget. */
+  termixIntervalFloorSeconds: number;
   /** Release the database pool. Idempotent. */
   close: () => Promise<void>;
 }
@@ -291,6 +409,71 @@ export function buildAppServices(
       : {}),
   });
 
+  // PER-CONNECTION, no-TTL cache (see fleet.ts's module doc — Beszel's
+  // adapter caches a PocketBase token, so rebuilding on a schedule would
+  // perform ~288 logins/day for nothing). No registered rate-budget setting
+  // yet.
+  const beszel = createBeszelAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.beszelRateBudget !== undefined
+      ? { rateBudget: options.beszelRateBudget }
+      : {}),
+  });
+
+  // PER-CONNECTION, no-TTL cache — Dockhand's session cookie is the same
+  // correctness constraint as Beszel's token, sharpened by Dockhand's
+  // documented five-failed-logins account lockout. No registered rate-budget
+  // setting yet.
+  const dockhand = createDockhandAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.dockhandRateBudget !== undefined
+      ? { rateBudget: options.dockhandRateBudget }
+      : {}),
+  });
+
+  // PER-CONNECTION, ordinary TTL cache (fleet.ts: Gatus has no login
+  // exchange, so a rebuild costs no auth round-trip — caching here is for the
+  // rate budget only). Gatus is the one fleet provider with a REGISTERED
+  // setting, resolved the way eBay/Woo resolve their own.
+  const gatus = createGatusAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.gatusRateBudget !== undefined
+      ? { rateBudget: options.gatusRateBudget }
+      : {}),
+    resolveRateBudget: async () => (await monitorSettings.service.get(gatusRateBudgetSetting)),
+  });
+
+  // PER-CONNECTION, no-TTL cache — an `oauth_client`-mode adapter caches a
+  // one-hour access token in memory that a scheduled rebuild would discard
+  // early. No registered rate-budget setting yet.
+  const tailscale = createTailscaleAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.tailscaleRateBudget !== undefined
+      ? { rateBudget: options.tailscaleRateBudget }
+      : {}),
+  });
+
+  // PER-CONNECTION, no-TTL cache — the strongest instance of this file's
+  // caching-as-correctness argument: Termix's login route is the one
+  // endpoint upstream documents a 429 on. No registered rate-budget setting
+  // yet.
+  const termix = createTermixAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.termixRateBudget !== undefined
+      ? { rateBudget: options.termixRateBudget }
+      : {}),
+  });
+
   let closed = false;
   return {
     config,
@@ -319,6 +502,21 @@ export function buildAppServices(
     getReverbAdapterForConnection: reverb.getAdapterForConnection,
     invalidateReverbAdapter: reverb.invalidate,
     reverbIntervalFloorSeconds: reverb.intervalFloorSeconds,
+    getBeszelAdapterForConnection: beszel.getAdapterForConnection,
+    invalidateBeszelAdapter: beszel.invalidate,
+    beszelIntervalFloorSeconds: beszel.intervalFloorSeconds,
+    getDockhandAdapterForConnection: dockhand.getAdapterForConnection,
+    invalidateDockhandAdapter: dockhand.invalidate,
+    dockhandIntervalFloorSeconds: dockhand.intervalFloorSeconds,
+    getGatusAdapterForConnection: gatus.getAdapterForConnection,
+    invalidateGatusAdapter: gatus.invalidate,
+    gatusIntervalFloorSeconds: gatus.intervalFloorSeconds,
+    getTailscaleAdapterForConnection: tailscale.getAdapterForConnection,
+    invalidateTailscaleAdapter: tailscale.invalidate,
+    tailscaleIntervalFloorSeconds: tailscale.intervalFloorSeconds,
+    getTermixAdapterForConnection: termix.getAdapterForConnection,
+    invalidateTermixAdapter: termix.invalidate,
+    termixIntervalFloorSeconds: termix.intervalFloorSeconds,
     close: async () => {
       if (closed) return;
       closed = true;

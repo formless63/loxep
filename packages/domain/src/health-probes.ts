@@ -109,6 +109,30 @@ export function isHealthCheckDue(
 export interface HealthProbeOutcome {
   status: HealthStatus;
   detail?: Record<string, unknown>;
+  /**
+   * Overrides {@link HealthSubjectRegistryEntry.source} for this one outcome.
+   *
+   * `source` on the registry entry is per subject TYPE, which is correct for
+   * every entry in {@link createDefaultHealthSubjectRegistry} — a
+   * `notification_endpoint` probe is always `'probe'`, a `connection` probe
+   * derived from `connections.last_success_at` is always `'probe'`. But
+   * `@loxep/app`'s composed registry (loxep-rf4/loxep-hb7) gives `connection`
+   * a SINGLE entry that dispatches per row: a fleet-tool connection (Beszel,
+   * Dockhand, Gatus, Tailscale, Termix) reads the provider's own API through
+   * an adapter, while every other connection still gets the derived
+   * `last_success_at` read. Those two outcomes are not the same kind of fact
+   * and must not share one label:
+   *
+   * - `'probe'` — Loxep CHECKED something itself (an unauthenticated HTTP
+   *   GET, or a derived read of a column Loxep already owns).
+   * - `'adapter'` — Loxep READ a companion tool's own API through its
+   *   integration adapter, using a stored credential.
+   *
+   * Left `undefined`, {@link runHealthSweep} falls back to the registry
+   * entry's own `source` — every existing caller (the default registry, and
+   * every test built against it) is unaffected.
+   */
+  source?: HealthSource;
 }
 
 export interface HealthSubjectCandidate {
@@ -534,7 +558,11 @@ export async function runHealthSweep(
         subjectType,
         subjectId: candidate.subjectId,
         status: outcome.status,
-        source: registryEntry.source,
+        // `outcome.source` wins when a per-row dispatcher (a mixed
+        // `connection` registry composed in `@loxep/app`) needs to label an
+        // adapter read differently from the entry's own default — see
+        // `HealthProbeOutcome.source`'s doc.
+        source: outcome.source ?? registryEntry.source,
         checkedAt: now,
         detail: outcome.detail ?? {},
       });
