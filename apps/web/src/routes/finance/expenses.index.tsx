@@ -29,7 +29,7 @@ const expensesSearchSchema = z.object({
   quickEntry: z.boolean().optional()
 });
 
-export const Route = createFileRoute('/finance/expenses')({
+export const Route = createFileRoute('/finance/expenses/')({
   validateSearch: zodValidator(expensesSearchSchema),
   component: FinanceExpenses
 });

@@ -71,7 +71,10 @@ test('a recorded expense offers void-and-re-record, never an edit affordance', a
   const voidDialog = page.getByRole('dialog').filter({ hasText: 'Void' });
   await voidDialog.getByLabel('Reason *').fill(`e2e correction ${runId}`);
   await voidDialog.getByRole('button', { name: 'Void expense' }).click();
-  await expect(voidDialog).toBeHidden();
+  // The re-record dialog opens automatically and its description references
+  // the voided row, so `hasText: 'Void'` matches it too — assert succession
+  // (the void form's Reason field is gone) rather than dialog absence.
+  await expect(page.getByLabel('Reason *')).toBeHidden();
 
   // Voiding is the correction path, not a delete: the row stays as evidence.
   await expect(page.getByText('Void', { exact: true })).toBeVisible();
