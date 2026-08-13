@@ -6,7 +6,7 @@ This document is the physical schema design for [Phase 5 — Financial foundatio
 
 It **extends** the foundation and both prior designs. Where an existing table, convention, or ADR already answers a question, that answer is reused rather than restated differently. Nothing here changes an already-implemented table, and nothing here alters a table Phase 3 or Phase 4 designed — every reference into an earlier phase is an outbound foreign key or an unenforced provenance stamp added by Phase 5.
 
-**Implementation status: ONE MILESTONE of this design is implemented, PROVISIONALLY — expenses and receipts, and nothing else.** Migration `0006_expenses_and_counterparties.sql`, `packages/db/src/schema/expenses.ts`, and `packages/accounting` exist and create **two of this document's twenty-two tables**. The other twenty — books, the chart of accounts, dimensions, fiscal periods, the journal, posting rules, payouts, banking, reconciliation, and sales-tax facts — remain **design only**, because all three [OWNER-REVIEW-CRITICAL open questions](#open-questions) are unresolved and each is unrecoverable after a single entry posts. See [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial) for exactly what shipped, what diverged, and what is still on paper.
+**Implementation status: TWO MILESTONES of this design are implemented, PROVISIONALLY — expenses and receipts, and now the financial core.** Migration `0006_expenses_and_counterparties.sql` created expenses and their allocations; migration `0009_accounting_books_chart_and_journal.sql` created **books, the effective-dated book-to-entity link, the chart of accounts, dimensions, fiscal periods, and the double-entry journal** — eleven of this document's twenty-two tables in total. The second milestone was unblocked by the [owner's answers](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved) to all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, and not one day before. The remaining eleven tables — posting rules, source links, payouts, banking, reconciliation, and sales-tax facts — are **design only**. See [Provisional implementation decisions](#provisional-implementation-decisions) for exactly what shipped, what diverged, and what is still on paper.
 
 The original preamble is retained for the record: *Design work only. No migration, Drizzle schema, or accounting service code is authorized by this page; the exact column types and constraints must be re-verified against the current PostgreSQL/Drizzle behavior immediately before implementation, per the [dependency policy](../../development/dependency-policy/).*
 
@@ -1315,13 +1315,21 @@ financial_accounts index(ledger_account_id) where not null
 
 Not indexed on purpose: `journal_entries.status` (low cardinality, always filtered with a date range), `journal_lines.currency` unpartialled (one value dominates), `ledger_accounts.system_key` (the partial unique already serves it), `expenses.payment_method`.
 
-## Provisional implementation decisions (partial)
+## Provisional implementation decisions
 
 Every decision in this section is **PROVISIONAL**: implemented per this document's own recommendation under an owner directive, pending review. Each is marked `PROVISIONAL` at the code that implements it, so nothing here can drift out of sight.
 
-This section is **scoped to the expenses-and-receipts milestone**. It says nothing about the rest of Phase 5, because none of the rest of Phase 5 was built.
+Two milestones are recorded, in the order they shipped:
 
-### What shipped
+```text
+milestone 1  expenses and receipts            2 tables, migration 0006
+milestone 2  books, chart, journal            9 tables, migration 0009
+still design only                            11 tables
+```
+
+Milestone 2 could not have shipped earlier: it was blocked on all three OWNER-REVIEW-CRITICAL questions, which the owner [answered on 2026-08-12](#owner-answers-2026-08-12--the-three-critical-questions-are-resolved).
+
+### Milestone 1 — what shipped (expenses and receipts)
 
 ```text
 migration      packages/db/migrations/0006_expenses_and_counterparties.sql
@@ -1339,34 +1347,14 @@ tests          packages/accounting/test/             (87 tests, real PostgreSQL)
                packages/db/test/schema.test.ts       (deferred-table assertions)
 ```
 
-### What is still design-only
+### Milestone 1 — the open questions it touched, as implemented
 
-**Twenty of this document's twenty-two tables**, and every capability that depends on them:
-
-```text
-accounting_books, book_entity_links            OQ1 unresolved
-ledger_accounts, accounting_dimensions,
-  accounting_dimension_values, fiscal_periods  no book to hang them from
-journal_entries, journal_lines,
-  journal_line_dimensions                      OQ2 and OQ4 unresolved
-posting_rules, posting_rule_versions,
-  posting_rule_lines, journal_entry_source_links
-financial_accounts, payouts, payout_lines
-bank_statement_imports, bank_transactions,
-  reconciliation_matches
-sales_tax_facts
-```
-
-Consequently there is **no double entry, no chart of accounts, no period close, no trial balance, no statement, no posting rule, no COGS posting, no clearing account, no payout reconciliation, and no tax fact.** `packages/db/test/schema.test.ts` asserts each of those table names is absent, so an accidental `accounting_books` fails a test rather than quietly deciding OQ1.
-
-### The open questions this milestone touched, as implemented
-
-Only these. OQ1, OQ2, OQ3, OQ4, OQ5, OQ6, OQ7, OQ9, OQ10, OQ11, OQ12, and OQ13 are **untouched and still open** — nothing was built that could resolve them.
+Only these. Everything else was untouched at the time, because nothing had been built that could resolve it.
 
 - **OQ8 (unenforced source-fact references), partially.** The seam between an expense and a future journal entry is a **source-fact identity**, not a column: `('expense', expenses.id)`, exported as `EXPENSE_SOURCE_FACT_TYPE` / `expenseSourceFact()`. `expenses` gains no `journal_entry_id`, no `posting_key`, and no `posted_at`, and a test asserts their absence. This is the recommendation working in the direction it was argued for — because the link is an identity rather than a reference, the seam is *complete today* and the ledger, when it arrives, only has to read. `postingKeyFor()` is deliberately **not** implemented: the key embeds the rule version, and a helper that guessed a version would encode exactly the silent-swallow failure OQ2 warns about.
 - **OQ14 (which package owns this), against this document's own recommendation.** Phase 5 recommended expenses in `@loxep/domain`; they shipped in **`@loxep/accounting`**, per [Phase 6's proposed general rule](../services-billing-schema-design/#open-questions) under which expenses fail the inbound-edge test anywhere else. Both documents flag this as the reviewer's first test of that rule. It is a file move to reverse.
 
-### Divergences from the draft
+### Milestone 1 — divergences from the draft
 
 - **`expenses.status` defaults to `draft`, not `recorded`.** The shipped lifecycle locks a row at `recorded`, so a DDL default of `recorded` would drop an insert that omitted the column straight into the immutable state. `create()` still accepts `recorded` explicitly for the type-it-in-and-done case.
 - **Only `draft` is mutable, and there is no `reopen`.** The draft sketches the status column and says nothing about edits. The strict reading was chosen because loosening a lock later is a one-line change while tightening one after a year of silent post-hoc edits means auditing history to find out which numbers were ever true. A recorded expense is corrected by voiding it and recording the corrected fact — the same posture the ledger takes for a posted entry.
@@ -1379,18 +1367,129 @@ Only these. OQ1, OQ2, OQ3, OQ4, OQ5, OQ6, OQ7, OQ9, OQ10, OQ11, OQ12, and OQ13 a
 - **Receipt attachment is idempotent in `@loxep/accounting`, not in `@loxep/storage`.** `MediaService.addLink` raises `23505` on the 0004 natural key; `ReceiptsService.attach` absorbs that one violation and returns the existing link, because jobs are at-least-once. Teaching the shared media service to swallow conflicts would change behaviour for every other consumer to fix a rule only this one has.
 - **`accounting.default_economic_entity` is named but NOT registered.** Registration is an edit to `@loxep/domain`'s shipped settings registry, which this slice does not own; the installation default is a parameter to `resolveExpenseAttribution` instead. The signature does not change when the key is registered.
 
-### Verified at implementation time
+### Milestone 1 — verified at implementation time
 
 Against drizzle-kit 0.31.10 and `timescale/timescaledb-ha:pg18.4-ts2.29.1-all`, everything generated correctly from the Drizzle schema and **nothing needed hand-written SQL or was weakened**: `num_nonnulls` `CHECK`s, partial indexes with `<>` and `is not null` predicates, `DESC NULLS LAST` index ordering, and `date` columns in `{ mode: "string" }`.
 
 One implementation-level trap worth recording for the next phase: `db.execute(<string>)` returns rows under Drizzle's own type-parser overrides, and a `timestamptz` arrives as a **string**, not a `Date`. Row mappers built over `execute` must convert rather than cast — a cast compiles and then hands a string to a caller whose type says `Date`. `sql.ts` owns `toDate` / `toDateOrNull` / `toCalendarDate` for that reason.
 
-### What a reviewer should push back on first
+### Milestone 1 — what a reviewer should push back on first
 
 1. **The edit lock.** `draft`-only mutability is stricter than the draft says. It is cheap to loosen and expensive to add later, which is why it was chosen this way — but it is a product decision, not a schema one.
 2. **The `>= 1` target check on allocations.** It forbids a row nothing could read, and it is a constraint the draft did not sketch.
 3. **`@loxep/accounting` rather than `@loxep/domain`.** A package boundary, and the first live test of Phase 6's proposed domain-to-package rule.
 4. **`status` defaulting to `draft`.** Trivial to reverse before data exists, awkward after.
+
+### Milestone 2 — what shipped (books, chart of accounts, journal)
+
+```text
+migration      packages/db/migrations/0009_accounting_books_chart_and_journal.sql
+schema         packages/db/src/schema/accounting.ts   (9 tables, 0 altered)
+services       packages/accounting/src/               (@loxep/accounting)
+  currency.ts        the USD-only refusal, and the seam it names
+  books.ts           books, the effective-dated entity link, routing + roll-up
+  chart.ts           chart CRUD, system-account rules, normalBalanceOf
+  chart-template.ts  the code-owned starter chart, copied once per book
+  periods.ts         generation, resolution, the four-state close
+  journal.ts         draft/post/void/reverse, idempotency, balance, dimensions
+  ledger-reports.ts  trial balance, account balance, activity, entity coverage
+tests          packages/accounting/test/              (207 tests total, +120)
+                 ledger-schema.test.ts   39  the DDL, through raw SQL
+                 books.test.ts           27  books, chart, links, routing
+                 periods.test.ts         14  generation and closing
+                 journal.test.ts         30  posting, idempotency, reversal
+                 ledger-reports.test.ts  10  incl. the end-to-end clearing fixture
+               packages/db/test/schema.test.ts        (presence, exclusions, triggers)
+```
+
+The nine tables are exactly this document's "Migration A": `accounting_books`, `book_entity_links`, `ledger_accounts`, `accounting_dimensions`, `accounting_dimension_values`, `fiscal_periods`, `journal_entries`, `journal_lines`, `journal_line_dimensions`. **No existing table gained a column**, including `expenses`.
+
+### Milestone 2 — the owner's three answers, made physical
+
+```text
+1 book granularity     book_entity_links(link_role, effective_from/to) plus an
+                       EXCLUDE USING gist that permits at most ONE
+                       posting_primary book per entity per day. Routing walks
+                       the entity, then its ANCESTORS: a child entity with no
+                       link of its own posts into its parent's book, which is
+                       what "included in / part of" means in ledger terms.
+                       linkEntity() enforces the rule in BOTH directions —
+                       a child may not name a different book than its parent's,
+                       and a parent may not be linked while a descendant posts
+                       elsewhere over the same dates.
+2 rule mutability      posted entries are immutable (BEFORE triggers on entries
+                       and lines); corrections are reverseEntry(), which posts a
+                       negated linked entry and stamps the original `reversed`.
+3 functional currency   USD-only refused at the service boundary with an error
+                       naming the seam; journal_lines still carries currency,
+                       amount, functional_currency, functional_amount, fx_rate,
+                       fx_rate_source, fx_rate_at, all populated (unity) rather
+                       than null. No CHECK pins USD into the DDL.
+```
+
+### Milestone 2 — the open questions it resolved, as implemented
+
+- **OQ4 (per-currency balance enforcement) — the recommendation, exactly.** A `DEFERRABLE INITIALLY DEFERRED` constraint-trigger pair (`journal_lines_balanced`, `journal_entries_balanced`) re-sums the affected entry at COMMIT, per transaction currency and again per functional currency, and refuses a posted entry with no lines. Drafts are exempt. The service checks the same invariant first so the ordinary mistake fails at the call site with the offending currency and total; the trigger is the guarantee, not the error message.
+- **OQ5 (soft close) — the recommendation, with the authorization question left to the owner.** All four states ship. `closed`/`locked` refuse every posting; `soft_closed` refuses an ordinary one and permits an explicitly authorized backdated posting that MUST carry `is_backdated = true`. Enforcement is the service **and** a `BEFORE INSERT OR UPDATE` trigger, which additionally verifies that a posted entry's stamped period is the one whose range contains its `entry_date`. **Whether backdating is `admin`-only is still open**: `@loxep/accounting` models no roles and takes an explicit `allowBackdated` parameter, so gating it is the web layer's decision and `admin`-only remains the recommendation.
+- **OQ6 (signed amount) — the recommendation.** One signed `amount`; debit/credit are derived once, in `ledger-reports.ts`, as `greatest(amount, 0)` / `greatest(-amount, 0)`.
+- **OQ7 (entity as a column) — the recommendation.** `journal_lines.economic_entity_id` is a real foreign key; classes/departments use the generic dimension tables with the junction. Required dimensions are enforced at the posting transition, never on a draft.
+- **OQ8 (unenforced source-fact references) — the recommendation, now in both directions.** `journal_entries.source_fact_type` / `source_fact_id` carry no foreign key, a `num_nonnulls(...) <> 1` CHECK refuses a half-written stamp, and `findBySourceFact()` answers "did this fact post?" without one. `expenses` still gains no `journal_entry_id`.
+- **OQ12 (cash-basis label) — the recommendation.** `accounting_basis` ships, defaults to `accrual`, and nothing branches on it. A book may be labelled `cash`; no cash-basis rule set exists, and the label is honest rather than aspirational.
+- **OQ13 (closing entries) — the recommendation.** None are stored. There is no retained-earnings account in the shipped chart, and `opening_balance_equity` is the only equity account seeded.
+- **OQ14 (package ownership) — the recommendation, this time.** Books, chart, dimensions, periods, the journal, and the ledger read models are all in `@loxep/accounting`, which is what OQ14 recommends. Expenses remain there too, which is still the divergence milestone 1 recorded.
+
+OQ9, OQ10, and OQ11 remain **untouched**: they belong to payouts, tax facts, and bank import, none of which exist.
+
+### Milestone 2 — divergences from the draft, and decisions it did not sketch
+
+- **`journal_entries.posting_rule_version_id` is OMITTED.** `posting_rule_versions` does not exist, and a column pointing at a table that does not exist is worse than no column — this document's own rule. Its migration plan already activates that foreign key in "Migration B", together with the paired `(entry_source = 'posting_rule') = (version_id is not null)` CHECK. `entry_source`'s CHECK keeps its unreachable `posting_rule` member anyway, following the `expenses.status = 'posted'` precedent; the service refuses to write it.
+- **The `posted` → `reversed` status stamp is a WHITELISTED update, and the draft does not reconcile that with immutability.** The draft says posted entries are immutable *and* gives `journal_entries.status` a `reversed` member, which nothing could ever set. The trigger permits exactly one update on a posted row — `status` to `reversed` with `updated_at`, compared through `to_jsonb(NEW) - 'status' - 'updated_at' = to_jsonb(OLD) - …` so that nothing else can ride along. A reversed entry's **lines are untouched and still count in every balance**; the reversal's own lines net them out, and `reversed` is a marker rather than a report filter.
+- **`journal_lines` immutability guards INSERT as well as UPDATE and DELETE.** The draft says posted lines are immutable, which reads as "no edits". Adding a *balanced pair* of lines to a posted entry would slip past the deferred balance check while restating a month someone has already read, so lines are written while the entry is a draft and the entry is posted afterwards. The posting service follows the same order.
+- **Reversing a reversal is REFUSED (the draft is silent).** A retried reversal is idempotent and returns the first one; reversing the reversal itself raises. A double negation is indistinguishable from the original entry while carrying provenance that says otherwise, and the honest expression of "we reversed that by mistake" is a fresh entry stating what is true.
+- **`buyer_fee_income` is a system account the draft's key table does not list.** Phase 3 shipped `order_fees.fee_direction`, which its own design did not have: a `seller_charge` is a deduction from proceeds and posts to `marketplace_fees`, while a `buyer_surcharge` is money the buyer paid that is already inside the order total. Posting the second as a fee expense would understate income by exactly the amount the buyer covered — the error every Phase 4 contribution read model already avoids. The chart needs an income account for it or the P&L and the item-level contribution figure disagree by a real amount.
+- **`ledger_accounts.parent_account_id` is a COMPOSITE foreign key.** The draft sketches a single-column self-reference; the same denormalized-book trick that protects `journal_lines` makes a cross-book roll-up header structurally impossible, and costs nothing because `MATCH SIMPLE` skips the constraint when the parent is null.
+- **`journal_entries.fiscal_period_id` is a COMPOSITE foreign key too**, for the same reason: an entry stamped with another book's March is a class of error no read model could detect.
+- **Both of `journal_lines`' entry references cascade.** The draft cascades only the single-column one. Mixing a cascading and a non-cascading reference to the same parent row makes deleting a draft depend on referential-trigger firing order; making both cascade removes the question, and only drafts are ever deleted.
+- **`accounting_books.next_entry_number > 0` and `journal_lines.line_number > 0` are CHECKs the draft does not sketch.** A counter at zero mints numbers a later increment repeats, which is exactly the gaplessness the counter exists to provide.
+- **A fiscal year is labelled by the calendar year it STARTS in.** `FY2026` for a book running July 2026 → June 2027. Both conventions exist; this one makes `fiscal_year` derivable from `starts_on` without knowing the book's configuration, and degrades to the obvious answer for a January start. Period generation is one SQL statement anchored on the year's start date, so a book starting on the 31st still produces contiguous, non-overlapping months.
+- **`createBook` seeds the chart and one fiscal year by default.** The three are useless apart, and the chart and periods are separate idempotent transactions so that a failure while seeding twenty accounts leaves a usable book rather than none.
+- **A system account may not be ARCHIVED.** The draft says it may never be deleted; archiving has the same effect on rule resolution, so it is refused with the reason. Renaming, re-coding, and reparenting stay free.
+- **A system key must be a member of the closed `LEDGER_SYSTEM_KEYS` set.** An invented handle is one no rule will ever resolve, which reads as working configuration and behaves as a silent suspense posting.
+- **`accounting.default_book_id` is NAMED but not registered**, exactly as `accounting.default_economic_entity` was in milestone 1: the installation default is a parameter, and registering the key in `@loxep/domain`'s settings registry is an edit this slice does not own.
+
+### Milestone 2 — verified at implementation time
+
+Against **drizzle-kit 0.31.10 / drizzle-orm 0.45.2** and `timescale/timescaledb-ha:pg18.4-ts2.29.1-all` (PostgreSQL 18.4), composite foreign keys, partial unique indexes, `num_nonnulls` CHECKs, expression index predicates, and explicit constraint names all generate correctly, and **nothing was weakened to fit**. Four constraints are beyond drizzle-kit and are hand-written at the end of the migration: the two `EXCLUDE USING gist` constraints, the deferred balance constraint-trigger pair, and the immutability plus period-guard triggers.
+
+**`btree_gist` is available in the deployment image** (version 1.8, verified before relying on it), so the design's documented weaker fallback — a partial unique on open-ended rows plus a service-level overlap check — was **not** needed and is not used.
+
+One trap worth recording: a `daterange` with an inclusive upper bound of `'infinity'::date` is legal and canonicalizes to `[from,infinity]`, which is what makes the open-ended half of the routing exclusion work.
+
+### Milestone 2 — what a reviewer should push back on first
+
+1. **The `posted` → `reversed` whitelist.** It is the only mutation a posted entry ever receives, and the draft did not say it should exist. The alternative is leaving `reversed` unreachable and discovering a reversal only through `reverses_entry_id`.
+2. **Refusing to reverse a reversal.** Defensible either way; the draft is silent.
+3. **The roll-up enforcement in `linkEntity`.** It refuses configurations an operator might reasonably want (a DBA with its own book while its parent has one), on the strength of the owner's answer that a child's book IS its parent's. Loosening it is a service change with no migration.
+4. **`buyer_fee_income` in the shipped chart.** A system key the design's own table does not list, added because Phase 3's shipped reality requires it.
+5. **Fiscal years labelled by their starting year.**
+
+### What is still design-only
+
+**Eleven of this document's twenty-two tables**, and every capability that depends on them:
+
+```text
+posting_rules, posting_rule_versions,
+  posting_rule_lines                     the declarative rule model
+journal_entry_source_links               multi-fact provenance
+financial_accounts, payouts, payout_lines
+bank_statement_imports, bank_transactions,
+  reconciliation_matches
+sales_tax_facts
+```
+
+Consequently there is still **no automatic posting from operational facts, no COGS-on-depletion rule, no payout or clearing settlement, no bank import, no reconciliation, no tax fact, and no balance sheet or P&L statement object** — the trial balance, account balances, and account activity are the read models this milestone ships. `packages/db/test/schema.test.ts` asserts each absent table name, so an accidental `posting_rules` fails a test rather than quietly deciding the rule-versioning model.
+
+The clearing-account pattern is nonetheless **already proven**: `ledger-reports.test.ts` posts an order, its fees, a refund, a depletion, a payout, and a bank deposit by hand — the exact entries the rules milestone will generate — and asserts that `marketplace_clearing`, `facilitator_tax_clearing`, and `undeposited_funds` all return to exactly zero and that suspense was never touched.
 
 ## Open questions
 
@@ -1404,7 +1503,7 @@ Each item is a genuinely unresolved decision with a recommendation, not a placeh
 
 Phase 5 implementation is unblocked on these three; the remaining open questions below keep their recommendations and are resolvable during implementation per the provisional-decision policy.
 
-**Only OQ8 and OQ14 have been touched by implementation** (see [Provisional implementation decisions (partial)](#provisional-implementation-decisions-partial)); every other question below is untouched and fully open, because the milestone that shipped could not resolve it.
+**OQ4, OQ5, OQ6, OQ7, OQ8, OQ12, OQ13, and OQ14 have been implemented per their own recommendation and marked PROVISIONAL** (see [Provisional implementation decisions](#provisional-implementation-decisions)). OQ9, OQ10, and OQ11 are untouched and fully open, because payouts, tax facts, and bank import do not exist. Every question is retained verbatim below, because the recommendation is not the same thing as the answer and the review needs the original reasoning — and because OQ5 still contains one genuinely unanswered part: whether backdating into a soft-closed period is `admin`-only.
 
 1. **OWNER-REVIEW-CRITICAL — Book granularity and `book_entity_links` semantics.** How many books does a real installation have, and does the entity link *route* postings (scope of inclusion) or merely *describe* contents (reporting label)? *Recommendation: scope of inclusion, effective-dated, with `link_role in ('posting_primary','reporting_only')` and an exclusion constraint guaranteeing at most one primary book per entity per day; facts with no entity fall back to an installation default book, and facts with neither enter an unpostable backlog rather than being guessed into a book.* Routing has to live somewhere, and every other candidate location — a single default book, the posting rule, or the connection — either fails on the second book or re-introduces the mutable-configuration-rewrites-history defect Phase 3 explicitly rejected. The residual question the owner must answer is the practical one: is the intended installation one book containing the LLC and its DBAs plus a second book for personal activity, or one book for everything, or one per legal entity? The schema supports all three, but the *default* the product ships and the onboarding flow it builds should match reality, and getting it wrong means operators create the wrong number of books before there is any data to migrate.
 

@@ -64,6 +64,13 @@
       "when": 1786573677690,
       "tag": "0008_user_display_name",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786579776941,
+      "tag": "0009_accounting_books_chart_and_journal",
+      "breakpoints": true
     }
   ]
 }

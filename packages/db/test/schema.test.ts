@@ -203,13 +203,14 @@ describe("foundation schema", () => {
     );
   });
 
-  it("creates the migration 0006 tables and no more of Phase 5 or Phase 6", async () => {
-    // Migration 0006 is two PARTIAL slices: expenses out of Phase 5 (2 of 22
-    // tables) and counterparties out of Phase 6 (4 of 19). The absent tables
-    // are absent because their designs' OWNER-REVIEW-CRITICAL open questions
-    // are unresolved, so their names are asserted here — an accidental
-    // `accounting_books` would mean the book-cardinality decision was made by
-    // an implementer rather than by the owner.
+  it("creates the shipped Phase 5/Phase 6 tables and no more", async () => {
+    // Migration 0006 shipped two PARTIAL slices — expenses out of Phase 5 and
+    // counterparties out of Phase 6 — and migration 0009 added Phase 5's
+    // financial core (9 more of that design's 22 tables) once the owner
+    // answered its three OWNER-REVIEW-CRITICAL questions on 2026-08-12. The
+    // still-absent names are asserted because each belongs to a milestone
+    // whose decisions have not been made: an accidental `posting_rules` would
+    // mean the rule-versioning model was chosen by an implementer.
     const result = await handle.pool.query<{ table_name: string }>(
       `select table_name from information_schema.tables
         where table_schema = 'public'`,
@@ -222,21 +223,27 @@ describe("foundation schema", () => {
       "counterparty_contacts",
       "contact_channels",
       "counterparty_entity_roles",
-    ]) {
-      expect(tables).toContain(shipped);
-    }
-    for (const deferred of [
       "accounting_books",
       "book_entity_links",
       "ledger_accounts",
       "accounting_dimensions",
+      "accounting_dimension_values",
       "fiscal_periods",
       "journal_entries",
       "journal_lines",
+      "journal_line_dimensions",
+    ]) {
+      expect(tables).toContain(shipped);
+    }
+    for (const deferred of [
       "posting_rules",
+      "posting_rule_versions",
+      "posting_rule_lines",
       "journal_entry_source_links",
       "financial_accounts",
       "payouts",
+      "payout_lines",
+      "bank_statement_imports",
       "bank_transactions",
       "reconciliation_matches",
       "sales_tax_facts",
@@ -254,6 +261,53 @@ describe("foundation schema", () => {
     ]) {
       expect(tables).not.toContain(deferred);
     }
+  });
+
+  it("keeps the book/entity boundary physical (ADR-0017)", async () => {
+    // The single most-repeated prohibition in the documentation, asserted at
+    // the foundation level: migration 0009 is the one that would have broken
+    // it, because it is the migration where books first exist.
+    const result = await handle.pool.query<{
+      table_name: string;
+      column_name: string;
+    }>(
+      `select table_name, column_name from information_schema.columns
+        where table_name in ('accounting_books', 'economic_entities')`,
+    );
+    const columns = result.rows.map(
+      (row) => `${row.table_name}.${row.column_name}`,
+    );
+    expect(columns).not.toContain("accounting_books.economic_entity_id");
+    expect(columns).not.toContain("economic_entities.accounting_book_id");
+  });
+
+  it("installs btree_gist, both ledger exclusions, and the five ledger triggers", async () => {
+    const extension = await handle.pool.query<{ extname: string }>(
+      `select extname from pg_extension where extname = 'btree_gist'`,
+    );
+    expect(extension.rows).toHaveLength(1);
+
+    const exclusions = await handle.pool.query<{ conname: string }>(
+      `select conname from pg_constraint where contype = 'x' order by conname`,
+    );
+    expect(exclusions.rows.map((row) => row.conname)).toEqual([
+      "book_entity_links_primary_no_overlap",
+      "fiscal_periods_no_overlap",
+    ]);
+
+    const triggers = await handle.pool.query<{ tgname: string }>(
+      `select tgname from pg_trigger
+        where tgrelid in ('journal_entries'::regclass, 'journal_lines'::regclass)
+          and not tgisinternal
+        order by tgname`,
+    );
+    expect(triggers.rows.map((row) => row.tgname)).toEqual([
+      "journal_entries_balanced",
+      "journal_entries_immutable",
+      "journal_entries_period_guard",
+      "journal_lines_balanced",
+      "journal_lines_immutable",
+    ]);
   });
 
   it("keeps the counterparty/economic-entity boundary physical (ADR-0017)", async () => {

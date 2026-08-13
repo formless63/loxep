@@ -26,32 +26,36 @@
  * Instants that genuinely are instants (`entity_attributed_at`, `created_at`,
  * `updated_at`) stay `timestamptz` with semantic names.
  *
- * ## Columns the design sketches and this migration deliberately OMITS
+ * ## Columns the design sketches and migration 0006 deliberately OMITTED
  *
  * ```text
- * expenses.accounting_book_id       accounting_books does not exist
- * expenses.financial_account_id     financial_accounts does not exist
- * expense_allocations.ledger_account_id      ledger_accounts does not exist
- * expense_allocations.dimension_value_id     accounting_dimension_values ditto
+ * expenses.accounting_book_id       book override; TABLE NOW EXISTS (0009)
+ * expenses.financial_account_id     financial_accounts still does not exist
+ * expense_allocations.ledger_account_id      NOW EXISTS (0009)
+ * expense_allocations.dimension_value_id     NOW EXISTS (0009)
  * ```
  *
- * This follows the design's own rule, stated in the same section it states the
- * columns: *"A column pointing at a table that does not exist is worse than no
- * column."* Each is additive when its target table lands, and none of them is
- * load-bearing for what this slice does.
+ * They were omitted under the design's own rule, stated in the same section it
+ * states the columns: *"A column pointing at a table that does not exist is
+ * worse than no column."* Migration 0009 landed books, the chart, and
+ * dimensions, so three of the four now have targets — and they are STILL
+ * absent, because adding them is an `ALTER` on a shipped table that belongs
+ * with the posting-rule milestone that will actually read them. Each remains
+ * additive; none is load-bearing for what expenses do today. The book an
+ * expense posts to is routed from its entity exactly as every other fact's is.
  *
  * ## The posting seam
  *
  * There is no `journal_entry_id`, no `posting_key`, and no FK into any ledger
- * table, and their absence is the design working rather than the design
- * missing. Phase 5 posts through **source-fact identity**: an entry carries
+ * table — still true now that migration 0009 has created the ledger, and their
+ * absence is the design working rather than the design missing. Phase 5 posts through **source-fact identity**: an entry carries
  * `source_fact_type` + `source_fact_id`, and its idempotency key is
  * `'pr:' || rule_code || ':v' || version || ':' || source_fact_type || ':' ||
  * source_fact_id`. The seam this table therefore owes the future ledger is a
  * STABLE IDENTITY, and it has one: `('expense', expenses.id)`. That identity is
  * expressed in code as `EXPENSE_SOURCE_FACT_TYPE` / `expenseSourceFact()` in
  * `@loxep/accounting`, and `status = 'posted'` is the state a posting engine
- * will one day set. Nothing in this slice can reach it.
+ * will set. Nothing but that engine may reach it.
  *
  * ## PROVISIONAL DECISIONS
  *

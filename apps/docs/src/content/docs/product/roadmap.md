@@ -132,12 +132,12 @@ Goal: create trustworthy financial facts without making the ledger the only repr
 - Payouts and clearing-account model.
 - Bank transaction ingestion/import path.
 - Reconciliation foundation.
-- Explicit `accounting_books` model separate from economic entities.
-- Book-to-economic-entity relationship that supports multiple economic entities/operating identities sharing one book.
-- Chart of accounts and any required accounting dimensions/classes/departments.
-- Double-entry journal.
+- Explicit `accounting_books` model separate from economic entities. *(implemented provisionally: `accounting_books` with no `economic_entity_id`, ever — ownership points inward from `book_entity_links`. A book carries its functional currency, accounting basis, fiscal-year start, and a gapless entry-number counter.)*
+- Book-to-economic-entity relationship that supports multiple economic entities/operating identities sharing one book. *(implemented provisionally: `book_entity_links`, effective-dated, with `posting_primary`/`reporting_only` roles and an exclusion constraint permitting at most one primary book per entity per day. Routing walks the entity and then its ancestors, so an assumed name's activity lands in its parent company's book while staying separately reportable — the owner's answer, enforced in both directions.)*
+- Chart of accounts and any required accounting dimensions/classes/departments. *(implemented provisionally: one `ledger_accounts` chart per book, seeded from a code-owned template with stable `system_key` handles; `accounting_dimensions` and their values ship EMPTY, because the economic entity is the primary separation mechanism and it is a column on the line.)*
+- Double-entry journal. *(implemented provisionally: `journal_entries` and `journal_lines` with signed amounts, composite same-book foreign keys, gapless per-book numbering, a deferred per-currency balance constraint trigger, posted-entry immutability, soft-close period enforcement, and reversal-and-repost as the only correction path.)*
 - Declarative posting-rule model.
-- Core financial statements/reports.
+- Core financial statements/reports. *(partially implemented: the trial balance, account balances, account activity, and the entity-dimension coverage gate ship as read models. The balance sheet and P&L objects wait for the posting rules that would populate them.)*
 - Sales-tax fact model and marketplace-facilitator handling.
 - Inventory valuation, revaluation, and COGS posting, plus the aging/turnover/carrying-cost reporting derived from Phase 4's cost basis. Phase 4 stores what was paid; forming a judgement about what stock is worth requires a reporting date, a policy, and a book to post to.
 - The expense model that consumes Phase 4's non-capitalized `acquisition_costs` rows.
@@ -146,7 +146,9 @@ Do not assume one economic entity equals one accounting book. An LLC and several
 
 The physical schema for this phase — books and the effective-dated book-to-entity link, the per-book chart of accounts and dimensions, fiscal periods and closing semantics, the double-entry journal, declarative posting rules, payouts and clearing accounts, expenses, bank ingestion and reconciliation, sales-tax facts, and the statement read models — is designed in [Financial Foundation Schema Design (Phase 5)](../../architecture/financial-schema-design/).
 
-**One milestone of that design is implemented provisionally — expenses and receipts, two of its twenty-two tables.** Everything else in the list above is still design only, because all three of that document's OWNER-REVIEW-CRITICAL open questions (book granularity and link semantics, posting-rule mutability and the re-post policy, and functional currency) are unresolved, and each is unrecoverable after a single entry posts. There is deliberately **no ledger yet**: an expense's link to a future journal entry is a documented source-fact identity (`('expense', expenses.id)`), not a column, so nothing had to be guessed. What shipped and what diverged is recorded in that document's [Provisional implementation decisions (partial)](../../architecture/financial-schema-design/#provisional-implementation-decisions-partial).
+**Two milestones of that design are implemented provisionally — expenses and receipts, then the financial core: eleven of its twenty-two tables.** The second was blocked until the owner answered all three OWNER-REVIEW-CRITICAL questions on 2026-08-12, because each is unrecoverable after a single entry posts. The answers: books are toggleable per economic entity with a child entity's postings rolling up into its parent's book; corrections are always reversal plus repost, never mutation; and the build is USD-only with the per-line conversion seam kept in the schema so another currency can be wired in later without restating anything.
+
+The ledger stays **downstream of reality** and the seam between them is unchanged: a fact's link to its entry is a source-fact identity (`('expense', expenses.id)`), deliberately without a foreign key, so a posted entry survives the deletion of its source and `expenses` gains no `journal_entry_id`. What still does not exist is the posting-rule model that would drive entries from operational facts automatically, plus payouts, banking, reconciliation, and tax facts. What shipped and what diverged is recorded in that document's [Provisional implementation decisions](../../architecture/financial-schema-design/#provisional-implementation-decisions).
 
 ## Phase 6 — Customers, projects, services, and billing
 

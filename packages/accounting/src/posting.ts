@@ -1,20 +1,19 @@
 /**
- * The posting seam: what an expense owes a ledger that does not exist yet.
+ * The posting seam: what an expense owes the ledger.
  *
  * ## Why this module is three constants and two functions
  *
- * Phase 5's design creates twenty-two tables. This slice creates two, and it
- * stops precisely where the three OWNER-REVIEW-CRITICAL open questions begin —
- * book granularity, posting-rule mutability, and functional currency — because
- * each of those is unrecoverable after the first entry posts. So there is no
- * `journal_entries`, no `posting_rules`, no `accounting_books`, and therefore
- * no column on `expenses` that could point at any of them.
+ * The ledger now exists — `accounting_books`, `ledger_accounts`,
+ * `fiscal_periods`, `journal_entries`, and `journal_lines` shipped in migration
+ * 0009 — and `expenses` still carries **no** `journal_entry_id`, no
+ * `posted_at`, and no `posting_key`. That is not an oversight left over from
+ * the milestone that predated the journal; it is how Phase 5 links facts to
+ * entries, and the arrival of the journal is what confirms it.
  *
- * The temptation this module exists to refuse is adding one anyway: a
- * `journal_entry_id uuid null`, a `posted_at`, a `posting_key`. Every one of
- * those would be a column pointing at a table that does not exist — the exact
- * shape the design names as worse than no column — and every one would have to
- * be re-decided when the ledger lands.
+ * The temptation this module exists to refuse is adding one of those columns
+ * now that there is something to point at. Every one would duplicate a link the
+ * entry already owns, and every one would have to be kept in step with an entry
+ * that may be reversed and re-posted under a corrected rule.
  *
  * ## What the seam actually is
  *
@@ -37,45 +36,47 @@
  * is already set twice in shipped tables (`market_events.rule_id`,
  * `acquisition_opportunity_links.opportunity_rule_id`).
  *
- * Because the link is an identity rather than a reference, **the seam is
- * complete today.** Everything a future posting engine needs from this side
- * already exists: a stable uuid that is never reused, a discriminator string,
- * and a status column with a `posted` member reserved for the engine to set.
- * Nothing here has to change when the ledger arrives; the ledger only has to
- * read.
+ * Because the link is an identity rather than a reference, the seam was
+ * **complete before the ledger existed**, and nothing on this side changed when
+ * it arrived: a stable uuid that is never reused, a discriminator string, and a
+ * status column with a `posted` member reserved for the engine. The journal
+ * reads it — `createJournalService().findBySourceFact('expense', id)` answers
+ * "did this expense post?" without a foreign key in either direction.
  *
  * ## What is deliberately absent
  *
- * `postingKeyFor()` is NOT exported and cannot be written correctly here,
- * because the key includes `rule_code` and the rule VERSION, and the rule
- * version being inside the key is the whole point of it: without the version, a
+ * `postingKeyFor()` is STILL not exported, and the journal milestone did not
+ * change that: the key includes `rule_code` and the rule VERSION, and the
+ * version being inside the key is the whole point of it. Without it, a
  * deliberate re-post under a corrected rule is silently swallowed by the
  * idempotency unique — the worst possible failure, because the operator sees a
- * successful job and an unchanged ledger. A helper here that guessed a version
- * would encode exactly that bug. The key belongs to the posting engine, which
- * owns rules and versions.
+ * successful job and an unchanged ledger. `postEntry` therefore takes the key
+ * from its caller and mints none. It belongs to the posting-rule milestone,
+ * which owns rules and versions.
  *
- * Likewise absent: `source_fact_fingerprint`. It is a hash over exactly the
- * fields of a fact that A RULE consumed, and no rule exists to say which
- * fields those are.
+ * Likewise absent: `source_fact_fingerprint`. The COLUMN exists on
+ * `journal_entries` and a caller may write one, but this module computes none:
+ * it is a hash over exactly the fields of a fact that A RULE consumed, and no
+ * rule exists yet to say which fields those are.
  */
 import type { ExpenseStatus } from "@loxep/db/schema";
 
 /**
  * The `journal_entries.source_fact_type` discriminator for an expense.
  *
- * A Loxep-owned string, matched against a `CHECK` on `posting_rules` that will
- * be written when posting rules are. Phase 5's design lists the fact types it
- * expects and `expense` is one of them.
+ * A Loxep-owned string, written into `journal_entries.source_fact_type` and
+ * matched against a `CHECK` on `posting_rules` when those are written. Phase
+ * 5's design lists the fact types it expects and `expense` is one of them.
  */
 export const EXPENSE_SOURCE_FACT_TYPE = "expense";
 
 /**
- * The status a posting engine sets, and nothing in this slice can reach.
+ * The status a posting engine sets, and nothing else may.
  *
- * `@loxep/accounting`'s expense service refuses to write it: the status means
- * "a journal entry exists for this expense", and asserting that while no
- * journal exists would make the first real posting run's backlog query lie.
+ * `@loxep/accounting`'s expense service still refuses to write it. The status
+ * means "a journal entry exists for this expense", and only the thing that
+ * writes the entry is entitled to assert that — a rule engine, in the next
+ * milestone. Setting it from anywhere else makes the posting backlog lie.
  */
 export const POSTED_STATUS: ExpenseStatus = "posted";
 

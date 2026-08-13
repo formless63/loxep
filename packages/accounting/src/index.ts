@@ -1,29 +1,42 @@
 /**
- * @loxep/accounting — expenses, their flexible cost attribution, and the seam a
- * future ledger will post them through.
+ * @loxep/accounting — the general ledger, and the expenses that feed it.
  *
- * ## This package is a deliberate fraction of Phase 5
- *
- * The [Financial Foundation Schema Design](../../../apps/docs) specifies
- * twenty-two tables across four domains. This package ships **two**, and stops
- * exactly where that document's three OWNER-REVIEW-CRITICAL open questions
- * begin. There is no `accounting_books`, no chart of accounts, no dimension, no
- * fiscal period, no journal, no posting rule, no payout, no bank import, no
- * reconciliation, and no sales-tax fact — and their absence is a decision, not
- * a backlog:
+ * ## What this package now owns
  *
  * ```text
- * OQ1  book granularity and whether book_entity_links ROUTE or DESCRIBE
- * OQ2  posting-rule mutability, and reverse-and-repost versus mutation
- * OQ3  functional currency, and whether it can ever change
+ * books.ts           accounting books, the effective-dated entity link, and
+ *                    the routing rule (including the parent roll-up)
+ * chart.ts           the per-book chart of accounts
+ * chart-template.ts  the code-owned starter chart, copied once per book
+ * periods.ts         fiscal periods, generation, and the four-state close
+ * journal.ts         drafting, posting, idempotency, and reversal
+ * ledger-reports.ts  trial balance, account balances, activity, entity slice
+ * expenses.ts        expenses and their flexible cost attribution
+ * receipts.ts        receipt evidence through media_links
+ * reports.ts         the expense read models
+ * posting.ts         the source-fact seam between a fact and an entry
  * ```
  *
- * Each is unrecoverable after a single entry posts. Expenses are the one part
- * of Phase 5 whose usefulness does not depend on any of them: an expense is an
- * operational fact about money that left the business, it is worth recording
- * whether or not a book exists to post it to, and the ledger — when it arrives
- * — reads it through an unenforced source-fact stamp rather than a foreign key.
- * See `posting.ts`, which is this package's entire statement about the ledger.
+ * ## Two of Phase 5's four milestones
+ *
+ * The [Financial Foundation Schema Design](../../../apps/docs) specifies
+ * twenty-two tables across four domains. Eleven exist: expenses and their
+ * allocations, then books, the chart, dimensions, periods, and the journal.
+ * The rest are later milestones and their absence is still a decision:
+ *
+ * ```text
+ * posting_rules / versions / lines        the declarative rule model
+ * journal_entry_source_links              multi-fact provenance
+ * financial_accounts / payouts / banking  money movement
+ * reconciliation_matches                  match state
+ * sales_tax_facts                         the facilitator distinction
+ * ```
+ *
+ * The three OWNER-REVIEW-CRITICAL questions that blocked the ledger were
+ * answered on 2026-08-12, and every one of them is physical here: books are
+ * toggleable per entity with a child's book rolling up to its parent's;
+ * corrections are reversal plus repost and posted entries are immutable; the
+ * build is USD-only with the per-line conversion seam kept intact.
  *
  * ## Why expenses live here and not in `@loxep/domain`
  *
@@ -53,12 +66,16 @@
  * only `draft` is mutable; there is no reopen
  * ```
  *
- * ## What this package does NOT do
+ * ## What this package still does NOT do
  *
- * No double entry, no debits or credits, no trial balance, no statements, no
- * period close, no tax calculation or filing, no reimbursement workflow, no
- * vendor bills, no AP, no OCR, and no currency conversion anywhere. A grouped
- * total always carries its currency; nothing is ever summed across two.
+ * No declarative posting rules and therefore no automatic posting from
+ * operational facts; no payouts, banking, or reconciliation; no tax
+ * calculation or filing; no reimbursement workflow, vendor bills, or AP; no
+ * OCR; no balance sheet or P&L statement objects (the trial balance and
+ * account balances are the read models this milestone ships); no stored
+ * closing entries or retained-earnings roll; and **no currency conversion
+ * anywhere** — the seam exists, unused, and every expense total still carries
+ * its own currency rather than being summed across two.
  */
 
 export {
@@ -137,3 +154,85 @@ export type {
   ExpenseTotalRow,
   UnallocatedExpenseRow,
 } from "./reports.ts";
+
+/* ------------------------------------------------------------ the ledger */
+
+export {
+  BookRoutingError,
+  FiscalPeriodClosedError,
+  LedgerImmutableError,
+  UnbalancedEntryError,
+  UnsupportedCurrencyError,
+} from "./errors.ts";
+
+export {
+  DEFAULT_FUNCTIONAL_CURRENCY,
+  SUPPORTED_FUNCTIONAL_CURRENCIES,
+  assertSupportedCurrency,
+  isSupportedCurrency,
+  normalizeCurrency,
+} from "./currency.ts";
+export type { SupportedFunctionalCurrency } from "./currency.ts";
+
+export { DEFAULT_CHART_TEMPLATE } from "./chart-template.ts";
+export type { ChartTemplateAccount } from "./chart-template.ts";
+
+export {
+  ACCOUNTING_SETTING_KEYS,
+  DEFAULT_BOOK_SETTING_KEY,
+  createBooksService,
+} from "./books.ts";
+export type {
+  AccountingBookRow,
+  BookEntityLinkRow,
+  BookRouting,
+  BooksService,
+  CreateBookInput,
+  LinkEntityInput,
+  PostingBookSource,
+} from "./books.ts";
+
+export { createAccountsService, normalBalanceOf } from "./chart.ts";
+export type {
+  AccountsService,
+  CreateAccountInput,
+  LedgerAccountRow,
+  UpdateAccountInput,
+} from "./chart.ts";
+
+export {
+  assertPeriodAcceptsPosting,
+  createFiscalPeriodsService,
+  fiscalYearFor,
+  fiscalYearStartDate,
+  isExclusionViolation,
+  noPeriodError,
+  periodCodeFor,
+} from "./periods.ts";
+export type {
+  FiscalPeriodRow,
+  FiscalPeriodsService,
+  GenerateFiscalYearInput,
+} from "./periods.ts";
+
+export { assertBalanced, createJournalService } from "./journal.ts";
+export type {
+  CreateDraftInput,
+  JournalEntryFilter,
+  JournalEntryRow,
+  JournalLineInput,
+  JournalLineRow,
+  JournalService,
+  PostEntryInput,
+  PostedEntry,
+} from "./journal.ts";
+
+export { createLedgerReports } from "./ledger-reports.ts";
+export type {
+  AccountActivityRow,
+  AccountBalance,
+  LedgerReportFilter,
+  LedgerReports,
+  TrialBalance,
+  TrialBalanceRow,
+} from "./ledger-reports.ts";

@@ -1,6 +1,7 @@
 /**
  * Expenses and their flexible cost attribution — the Costs and Expenses half of
- * Phase 5, shipped without any of the ledger it will eventually post into.
+ * Phase 5. The ledger now exists alongside it (see `journal.ts`), and nothing
+ * here posts into it: that is the posting-rule milestone's job.
  *
  * ## The lifecycle, deliberately small
  *
@@ -66,9 +67,10 @@
  * ## PROVISIONAL
  *
  * Everything here implements the financial design's own recommendations under
- * an owner directive, pending review. Nothing in this module creates a book, an
+ * an owner directive, pending review. Nothing in THIS module creates a book, an
  * account, a dimension, a period, or a journal entry, and nothing sets
- * `status = 'posted'` — see `posting.ts` for the seam.
+ * `status = 'posted'` — see `posting.ts` for the seam, and `journal.ts` for the
+ * ledger that reads it.
  */
 import { createAuditService } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
@@ -769,8 +771,8 @@ export function createExpensesService(options: {
           throw new ExpenseNotEditableError(
             `expense "${before.referenceCode}" is posted; a posted fact is ` +
               "corrected by a reversing entry in the ledger, not by voiding " +
-              "the source. No ledger exists in this slice, so this state is " +
-              "currently unreachable.",
+              "the source. Only a posting engine sets this status, so nothing " +
+              "in this milestone can reach it.",
           );
         }
         if (before.status === "void") return before;

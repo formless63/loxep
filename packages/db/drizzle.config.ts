@@ -31,5 +31,6 @@ export default defineConfig({
     "./src/schema/inventory.ts",
     "./src/schema/expenses.ts",
     "./src/schema/counterparties.ts",
+    "./src/schema/accounting.ts",
   ],
 });

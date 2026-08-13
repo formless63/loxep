@@ -129,9 +129,10 @@ describe("expenses schema (migration 0006)", () => {
     });
 
     it("has NO ledger, book, journal, or posting column", async () => {
-      // The seam is a source-fact identity, not a foreign key. If any of these
-      // ever appears, the posting decision was made without the open questions
-      // being answered.
+      // The seam is a source-fact identity, not a foreign key — and it stays
+      // one now that migration 0009 has created books, the chart, dimensions,
+      // and the journal. If any of these ever appears, an expense has been
+      // given a second, driftable record of where it posted.
       const result = await scratch.handle.pool.query<{ column_name: string }>(
         `select column_name from information_schema.columns
           where table_name in ('expenses', 'expense_allocations')`,

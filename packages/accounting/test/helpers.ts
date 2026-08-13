@@ -102,6 +102,26 @@ export async function seedEntity(
   return id;
 }
 
+/**
+ * An assumed name INSIDE another entity — the shape the owner's book answer is
+ * about. Its activity is viewable on its own and its totals land in the
+ * parent's book.
+ */
+export async function seedChildEntity(
+  scratch: ScratchDb,
+  name: string,
+  parentEntityId: string,
+  kind = "assumed_name",
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(economicEntities)
+    .values({ name, kind, parentEntityId })
+    .returning({ id: economicEntities.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("child entity insert returned no row");
+  return id;
+}
+
 /** A Better Auth user row usable as an FK-valid actor (ADR-0020). */
 export async function seedUser(
   scratch: ScratchDb,

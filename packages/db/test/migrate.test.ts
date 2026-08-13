@@ -18,7 +18,7 @@ import {
  * 0006 expenses and counterparties, 0007 order-payload retention,
  * 0008 user display name.
  */
-const MIGRATION_FILE_COUNT = 9;
+const MIGRATION_FILE_COUNT = 10;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
