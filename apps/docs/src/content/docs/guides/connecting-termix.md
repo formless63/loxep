@@ -2,13 +2,11 @@
 title: Connecting Termix
 ---
 
-:::note[Connectable today; the read below does not run yet]
-The catalog card and connection form described here exist and work. What does not exist yet is anything that *calls* the adapter: no scheduled probe and no on-demand validate action construct `createTermixAdapter` in production, so a saved connection's health shows "unknown (never succeeded)" indefinitely rather than the host reads this page describes. Tracked as `loxep-rf4`. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
-:::
-
-[Termix](https://termix.site) is a self-hosted SSH host and remote-desktop manager. Loxep reads **its SSH host inventory and active terminal sessions**, so the fleet view can show which hosts Termix knows about and terminal-access evidence for them alongside everything else Loxep knows about the same machines.
+[Termix](https://termix.site) is a self-hosted SSH host and remote-desktop manager. Loxep signs in to prove the stored login and, best-effort, counts the SSH hosts Termix knows about; reading its host inventory and active terminal sessions in enough detail to attribute them to specific fleet machines is designed but not yet built (see the note below).
 
 Loxep never opens a terminal, manages Docker, controls a systemd service, sends a process signal, or touches a file through Termix. Termix's own surface is large — it covers all of those — and Loxep's restraint is enforced entirely in Loxep's own code: no function it exports is capable of any of them, not "capable but unused."
+
+Once connected, `health.sweep` (a five-minute recurring job) signs in and re-checks the current-user identity on its own schedule, so the connection's health status stays current without anything to trigger by hand.
 
 ## What you will need
 
@@ -42,11 +40,9 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 | Loxep shows | Where it comes from |
 |---|---|
 | Whether the stored login was accepted | Termix's own current-user identity endpoint |
-| One row per SSH host Termix knows about | Termix's host inventory |
-| Best-effort connectivity per host | Termix's host-status read |
-| Active terminal sessions, including ones shared with the account by another user | Termix's active-sessions read |
+| The connection's own status, and — best-effort, never affecting that status — how many SSH hosts Termix reports | Termix's own current-user check, then a best-effort read of its host inventory |
 
-Termix publishes no schema for its host and host-status responses, so a handful of fields here are read defensively and may not appear on every instance or version; Loxep degrades a missing field to blank rather than failing the whole read.
+This is a single connection-level status today, not a per-host list: Loxep proves the login and, best-effort, counts Termix's known hosts, but does not yet render one row per host anywhere, and does not read host connectivity or active terminal sessions at all in production — the adapter carries that capability (Termix's response shapes there are largely undocumented upstream), but nothing calls it yet. Termix publishes no schema for its host-inventory response, so a handful of fields are read defensively when they are read at all; Loxep degrades a missing field to blank rather than failing the whole call.
 
 ## When it does not work
 
@@ -54,7 +50,6 @@ Termix publishes no schema for its host and host-status responses, so a handful 
 |---|---|
 | Authentication fails with correct-looking credentials | Verify the account can sign in to Termix's own web UI with the same username and password. |
 | Repeated login failures | Termix rate-limits login attempts; wait and re-verify the password before retrying. |
-| Host list works, connectivity is blank for every host | Expected on some versions — Termix's status response shape is not published; report it so the adapter's field-name guesses can be corrected. |
 | "Unreachable from Loxep" | The instance is on a private network, behind a tunnel, or on an address your browser can reach and the Loxep server cannot — a network-topology problem, not a credential one. |
 
 ## Related

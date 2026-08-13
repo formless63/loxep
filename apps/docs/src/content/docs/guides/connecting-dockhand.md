@@ -2,16 +2,12 @@
 title: Connecting Dockhand
 ---
 
-:::note[Not yet available in the running product]
-This guide describes the intended flow. `@loxep/integration-dockhand` (the read + host-intent adapter) has shipped, but `/settings/integrations` has no Dockhand catalog card and `/settings/connections` has no "Add Dockhand instance" form yet — a Dockhand credential cannot be pasted into Loxep today, and `planContainerHostOperations` has no runtime caller. Tracked as `loxep-rf4`. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
-:::
-
 [Dockhand](https://finsys-dockhand.mintlify.app) manages Docker hosts, containers, and Compose stacks. Loxep connects to it for two things, and the difference between them is the whole design:
 
-- **Reading.** Which hosts Dockhand manages, what containers are on them, and which stacks are running. This appears in Loxep's fleet view alongside everything else it knows about the same machine.
-- **Registering hosts.** Loxep can add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS.
+- **Reading.** Loxep signs in and, on every `health.sweep` cycle (five minutes), proves the credential and counts the hosts Dockhand manages. This is live today.
+- **Registering hosts.** Loxep can, by design, add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS. **This half is designed but not yet built:** there is no registration form in the product yet, and nothing calls `planContainerHostOperations` outside its own tests. See the [integrations status page](../../product/integrations-status/) for the current state. The rest of this guide's "Registering a host from Loxep" section describes the intended flow, not something you can do today.
 
-**Loxep never starts, stops, restarts, execs into, deploys, or redeploys anything.** Those buttons live in Dockhand, where they belong, with your own session and Dockhand's own permissions. Loxep's fleet view links out to them. This is not a feature gap to be filled later: it is a boundary the codebase enforces with a test that fails if an adapter ever grows a lifecycle call.
+**Loxep never starts, stops, restarts, execs into, deploys, or redeploys anything.** Those buttons live in Dockhand, where they belong, with your own session and Dockhand's own permissions. This is not a feature gap to be filled later: it is a boundary the codebase enforces with a test that fails if an adapter ever grows a lifecycle call.
 
 ## What you will need
 
@@ -30,10 +26,12 @@ Dockhand publishes no API keys, personal access tokens, or service accounts — 
 
    | Permission | Why Loxep needs it |
    |---|---|
-   | `environments:view` | Read the list of managed hosts |
-   | `environments:edit` | Register and update hosts (see below) |
-   | `containers:view` | Read container state for the fleet view |
-   | `stacks:view` | Read stack state for the fleet view |
+   | `environments:view` | Read the list of managed hosts — this is what powers the connection's health status today |
+   | `environments:edit` | Register and update hosts — reserved for the not-yet-built registration feature described below |
+   | `containers:view` | Read per-host container state — reserved for a future fleet-detail read, not called by anything yet |
+   | `stacks:view` | Read per-host stack state — reserved for a future fleet-detail read, not called by anything yet |
+
+All four are still worth granting now: the account is a one-time setup, and Loxep never asks for more than these regardless of which reads are wired yet.
 
 :::caution[Do not reuse your own admin account]
 A Dockhand session that can list containers can also start and stop them. Loxep's restraint is enforced in Loxep's own code, not by Dockhand's session — so a stored admin credential would be a much larger secret than the integration needs. Use a purpose-made account.
@@ -60,7 +58,11 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 
 ## Registering a host from Loxep
 
-Dockhand calls a managed Docker host an **environment**. Loxep calls it a hosting target. They are the same thing, and Loxep can create and update the Dockhand side of it.
+:::note[Designed, not yet built]
+Nothing below this point exists in the running product yet — there is no registration form in Loxep today, and `planContainerHostOperations`, the function that would apply these changes to Dockhand, has no caller outside its own tests. This section documents the intended design so the permission you granted above (`environments:edit`) makes sense; see the [integrations status page](../../product/integrations-status/) for the current state.
+:::
+
+Dockhand calls a managed Docker host an **environment**. Loxep calls it a hosting target. They are the same thing, and Loxep is designed to create and update the Dockhand side of it.
 
 This is the one place Loxep writes to Dockhand, and it is worth being precise about why it is allowed when starting a container is not: registering a host writes a row in Dockhand's own database describing how to reach a machine. **Nothing executes on that machine.** Starting a container runs code on it. That is the line.
 
@@ -85,9 +87,6 @@ TLS material and Hawser tokens are **write-only**: Loxep can send them when you 
 | Symptom | Usual cause |
 |---|---|
 | Authentication fails, then keeps failing | The account may be locked out from repeated attempts. Wait a minute, verify the password in Dockhand directly, then re-save it in Loxep. |
-| Host list works, containers or stacks are empty | Containers and stacks are read per host. Check `containers:view` and `stacks:view` on the account. |
-| Host registration is unavailable | The account lacks `environments:edit`. |
-| A host you renamed shows up twice | Expected — see the matching note above. Rename on both sides. |
 | "Unreachable from Loxep" | Dockhand is on a private network, behind a tunnel, or on an address your browser can reach and the Loxep server cannot. A network-topology problem, not a credential one. |
 | Fields go blank after a Dockhand upgrade | Dockhand's API is unversioned and ships frequently, promising only that changes are additive. Loxep reads every field defensively; report a blank field so the adapter can be updated. |
 

@@ -34,6 +34,14 @@ Fill in:
 
 Save. The backend URL is kept as ordinary connection configuration and stays visible; the key is stored application-encrypted and is never displayed again.
 
+### Enable order sync
+
+Saving the connection does not start reading orders on its own. On **Settings → Connections**, an active backend's row shows an **Order sync** column and an **Enable order sync** action in the row's menu — available on any active Medusa account, no extra setup required.
+
+Choosing it creates the backend's order-sync schedule (or resumes it, if one already exists) and the column switches from **Off** to **Syncing**, later showing the time of the most recent successful sync. **Disable order sync** in the same menu turns it back off without discarding anything already ingested.
+
+Medusa's `total`/`original_total` distinction is handled for you: an order's ledger amount is taken from `original_total` and never changes when a refund is later recorded against it, and its refunded amount is tracked separately.
+
 ## When it does not work
 
 | Symptom | Usual cause |

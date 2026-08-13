@@ -2,13 +2,11 @@
 title: Connecting Gatus
 ---
 
-:::note[Connectable today; the read below does not run yet]
-The catalog card and connection form described here exist, and the read adapter (`createGatusAdapter`) shipped. What does not exist yet is anything that *calls* it: no scheduled probe and no on-demand validate action construct it in production, so a saved connection's health shows "unknown (never succeeded)" indefinitely rather than the endpoint-status reads this page describes. Tracked as `loxep-rf4`. This is the opposite direction from [Publishing health to Gatus](../gatus-health-push/), which already runs on a schedule. See the [integrations status page](../../product/integrations-status/) for the current, source-checked state of every provider.
-:::
-
-[Gatus](https://github.com/TwiN/gatus) is a self-hosted status/uptime monitor. Loxep reads **one line per endpoint Gatus is already watching — is it up, and how fresh is that claim** — and links out to Gatus for everything else, the same discipline it applies to [Beszel](../connecting-beszel/).
+[Gatus](https://github.com/TwiN/gatus) is a self-hosted status/uptime monitor. Loxep reads **how many of the endpoints Gatus is already watching are up, and how fresh that claim is** — and links out to Gatus for everything else, the same discipline it applies to [Beszel](../connecting-beszel/).
 
 Loxep never writes to a Gatus instance's configuration. Gatus's endpoints, conditions, and alerting are files the operator authors and Gatus itself hot-reloads every 30 seconds; Loxep only ever reads what is already declared. The one Gatus write path that exists — publishing Loxep's own health outward — is a separate, deliberate feature covered in [Publishing health to Gatus](../gatus-health-push/), not this guide.
+
+Once connected, `health.sweep` (a five-minute recurring job) reads this connection on its own schedule, so the status below stays current without anything to trigger by hand. If you have also set up [Publishing health to Gatus](../gatus-health-push/) and this connection points at the same instance, the read leg additionally checks — as one extra request, at most — that the push's configured endpoint key actually exists on this instance, so a typo in that key no longer fails silently.
 
 ## What you will need
 
@@ -24,12 +22,12 @@ Gatus's own YAML `security` block decides what Loxep can read, and Loxep works w
 |---|---|
 | None at all | The read API is fully open. Leave the username/password fields blank. |
 | `security.basic` | Loxep sends the username/password below as an ordinary Basic auth header on every read. |
-| `security.oidc` | OIDC only ever grants a browser session cookie — there is no credential a background reader could hold. Loxep automatically falls back to Gatus's unauthenticated per-endpoint routes instead, which need no login at all. Leave the username/password fields blank. |
+| `security.oidc` | OIDC only ever grants a browser session cookie — there is no credential a background reader could hold. Loxep cannot make the credential-proving statuses read at all here, so the connection's status instead comes from Gatus's unauthenticated `/health` liveness path. Leave the username/password fields blank. |
 
 Loxep decides which mode applies by probing the instance's own unauthenticated `/api/v1/config` endpoint on every read. **The connection always shows which mode it is reading in.** Silently falling back to a partial view of a status page and calling it a full read is the one failure this integration is designed never to produce — a green dashboard you cannot trust is worse than one that tells you it is only looking at part of the picture.
 
 :::note[OIDC mode reads less]
-In `security.basic` or no-security mode, Loxep reads every endpoint's current status in one call. In `security.oidc` mode, Loxep can only read the uptime and average response time of endpoints whose keys it already knows — the ones your fleet records point at. It cannot discover new endpoints on its own in this mode, because that discovery route is the one behind OIDC.
+In `security.basic` or no-security mode, Loxep's connection status is computed from every endpoint's current status in one call, so an endpoint going down is reflected. In `security.oidc` mode, Loxep can only confirm the Gatus process itself is alive — it says nothing about individual endpoints. The unauthenticated per-endpoint uptime/response-time routes the adapter can also read exist for a future per-endpoint linking feature that has not shipped yet; today the only per-endpoint read that actually happens, in any mode, is the narrow heartbeat check described below.
 :::
 
 ## In Loxep
@@ -49,12 +47,11 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 
 | Loxep shows | Where it comes from | Which security mode |
 |---|---|---|
-| Whether Gatus itself is reachable | Gatus's own unauthenticated `/health` process-liveness path | Every mode |
 | Which security mode the instance is in | The unauthenticated `/api/v1/config` probe | Every mode |
-| One row per endpoint, with its latest status | `/api/v1/endpoints/statuses` | No security, or `security.basic` only |
-| Uptime and average response time per known endpoint | The unauthenticated per-endpoint uptime/response-time routes | Every mode — the fallback when OIDC is configured |
+| The connection's own status, and how many known endpoints are up vs. failing | `/api/v1/endpoints/statuses`, read on every sweep | No security, or `security.basic` only |
+| Whether Gatus itself is reachable at all | Gatus's own unauthenticated `/health` process-liveness path | `security.oidc` only — the one call left once the credential-proving statuses read is unavailable |
 
-Every status is rendered with its age, the same discipline [Connecting Beszel](../connecting-beszel/) uses: a status with no visible age is one you would over-trust.
+This is a single connection-level status today, not a per-endpoint list: Loxep counts up-vs-failing endpoints to compute it, but does not yet render one row per endpoint anywhere. Every status is rendered with its age, the same discipline [Connecting Beszel](../connecting-beszel/) uses: a status with no visible age is one you would over-trust.
 
 ## Alerts stay in Gatus
 
@@ -65,9 +62,8 @@ Gatus's own alerting (`ntfy`, `custom` webhooks, and everything else it supports
 | Symptom | Usual cause |
 |---|---|
 | Connection saves, but every read fails with an authentication error | The instance uses `security.basic` and the username/password below do not match its YAML — or the fields were left blank against a Basic-secured instance. |
-| Connection reads only uptime/response-time, never the full status list | The instance uses `security.oidc`. This is expected, not a failure — see the note above. |
+| Connection status only ever reflects whether Gatus is alive, never individual endpoints | The instance uses `security.oidc`. This is expected, not a failure — see the note above. |
 | "Unreachable from Loxep" | The instance is on a private network, behind a tunnel, or on an address your browser can reach and the Loxep server cannot. This is a network-topology problem, not a credential problem. |
-| An endpoint you expect to see is missing from uptime/response-time reads | Those routes need the endpoint's exact Gatus key (`<sanitized group>_<sanitized name>`) already known to Loxep — see [Publishing health to Gatus](../gatus-health-push/#step-1--declare-the-endpoint-in-gatus) for the sanitization rule Gatus applies to group/endpoint names. |
 
 ## Related
 

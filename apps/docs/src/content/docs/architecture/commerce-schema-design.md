@@ -129,7 +129,7 @@ An order is the opposite kind of thing. It is a private, account-scoped record. 
 
 The design does not weaken the key to fix this, because a key that ingestion cannot always compute reliably is worse than a duplicate it can detect. Instead:
 
-- every order carries `source_account_key text not null` — an adapter-computed provider-specific account scope string (`ebay:<sellerId>`, `woocommerce:<siteUrl>`, `medusa:<storeId>`), stored as an ordinary fact, not as a constraint;
+- every order carries `source_account_key text not null` — an adapter-computed provider-specific account scope string (`ebay:<sellerId>`, `woocommerce:<siteUrl>`, `medusa:<baseUrl>` — implemented as the backend's normalized base URL rather than a store id, since a Medusa backend exposes no store-scoped identifier the adapter can read cheaply), stored as an ordinary fact, not as a constraint;
 - a non-unique index on `(provider, source_account_key, external_order_id)` makes cross-connection duplicates **detectable** by a diagnostic query and an integration-health surface;
 - `orders.duplicate_of_order_id uuid null references orders(id)` lets an operator (or an adapter that is certain) mark a row as a known duplicate of the canonical order. Reporting excludes rows where it is non-null. The ingested evidence is never deleted.
 

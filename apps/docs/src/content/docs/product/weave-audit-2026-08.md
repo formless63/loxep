@@ -72,6 +72,8 @@ This is the exact inverse of the [fleet design's](../../architecture/fleet-obser
 
 **On `hosting_target` ↔ adapter identity:** the join holds for exactly one provider. Dockhand's `DockhandHostFact.name` is non-nullable and `hosting_targets.name` is unique — `planContainerHostOperations` already joins on it. Tailscale (`name`/`hostname`/`addresses`), Termix (`name`/`ip`, field names UNVERIFIED), Beszel (`name`/`host`, UNVERIFIED), and Gatus (whose `key` names a *monitor*, not a host) do **not** carry a reliably joinable host identity. The right answer is the design's own: a link-mediated join through `external_resources`/`resource_links` (the planned vocabulary — `beszel/system`, `gatus/endpoint`, `tailscale/device`, `termix/host` against `hosting_target`) with the operator making the match once in the GUI. Do not build fuzzy name matching.
 
+**Status (2026-08-13, `loxep-rf4`): CLOSED for the minimal wiring this finding asked for.** All three numbered items shipped: a fleet-aware `connection` health-subject registry (`createFleetHealthSubjectRegistry`, `packages/app/src/fleet-health.ts`) dispatches each of the five fleet providers to its own credential-proving adapter probe every `health.sweep` cycle and is now the sole writer of `connections.last_success_at`/`last_error_at` for providers with no poll executor — the permanent `unknown (never_succeeded)` row this finding described no longer happens. Beszel and Dockhand gained catalog entries and guided login forms, closing the inverted half of the table above. Migration `0021` also shipped the `external_resources` idempotency fix this finding's identity discussion assumed as a prerequisite. **What did not ship, and remains exactly this finding's item 3:** the fleet-detail evidence panel and the `resource_links`-mediated per-resource identity join (one row per Beszel system / Dockhand host / Gatus endpoint / Tailscale device / Termix host) — that is design-complete (`loxep-y64`/`loxep-hb7`/`loxep-1au`/`loxep-50t`/`loxep-wvm`) but unbuilt, and Dockhand's host-registration write leg is unbuilt with it. Connection-level health is real; per-resource fleet observability is still a later slice.
+
 ### 5. Notifications are schema-bound to market events — every new event class is un-notifiable
 
 **Owner value: the owner's stated day-one loop for each domain ("tell me when something needs me") cannot be configured for anything shipped since Phase 2.**
@@ -140,7 +142,7 @@ Ordered by owner value per unit of effort:
 
 1. **Wire the posting engine** — `accounting.post-facts` worker task + on-write posting from the web actions that create facts, a posting-backlog panel on `/finance/overview`, and (stretch) trial-balance drill-down to journal lines.
 2. **Close the four toast seams** and fix the receipt-attachment bug (findings 2 and 3) — the cheapest visible-quality win in the audit.
-3. **Fleet minimal wiring** — adapter-backed health probes for tailscale/termix/gatus connections; Beszel/Dockhand catalog entries; the fleet-detail evidence panel with status/provenance/age over a `resource_links`-mediated identity join.
+3. **Fleet minimal wiring** — *(shipped 2026-08-13 as `loxep-rf4`, see finding 4's status note: adapter-backed health probes for all five fleet connections, plus Beszel/Dockhand catalog entries.)* Still open: the fleet-detail evidence panel with status/provenance/age over a `resource_links`-mediated identity join.
 4. **Dashboard refresh** — intake-drafts and documents-review tiles, a listed/sold read, drift/fleet in the ops band, and the two ops-band honesty fixes.
 5. **Notification generalization** — the small schema/design decision that unblocks every non-market event class, plus health-transition detection in the sweep (cheap now, impossible to backfill).
 6. **An orders surface** in `/commerce`.
@@ -150,7 +152,7 @@ Ordered by owner value per unit of effort:
 
 Flagged so the next wave does not build them by default:
 
-- **Termix active-sessions GUI panel** — the response shapes are explicitly UNVERIFIED upstream; the deep link is the right surface until the API documents them.
+- **Termix active-sessions GUI panel** — correction: this line overstated the case when it was first written. Two of Termix's three reads (`GET /host/db/host`, `GET /status`) are genuinely UNVERIFIED — no schema anywhere in the spec. The third, `GET /open-tabs/active-sessions`, is fully specified in the generated `openapi.json` (`Termix-SSH/Docs`, regenerated 2026-08-06); the "UNVERIFIED" label never applied to it. The practical conclusion still stands, for a different and better reason: a generated spec is not a live instance, and this same doc repo has already proven drift-prone — its per-operation `.mdx` pages still show the path as `/ssh/db/host` while the current `openapi.json` has it at `/host/db/host` (see [Fleet Observability Design](../../architecture/fleet-observability-design/#tailscale-and-termix-in-detail--amended-2026-08-13)). The deep link is the right surface until a live probe confirms the shape, not because the shape is undocumented.
 - **Netdata / Cockpit / Uptime-Kuma adapters** — the design's tier verdicts stand; link-and-probe only.
 - **Gatus `suites` routes** — not until the `endpoints` reads prove insufficient.
 - **Iframe embedding of any fleet tool** — upstream blocks or disclaims it in every case examined.
