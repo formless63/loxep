@@ -3,7 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { etsyKeysetStatusQuery } from '@/features/settings/api/queries';
 import EtsyKeysetDialog from '@/features/settings/components/etsy-keyset-dialog';
-import { IntegrationCard } from '@/features/settings/components/integration-card';
+import {
+  IntegrationCard,
+  IntegrationEnabledToggle
+} from '@/features/settings/components/integration-card';
 import {
   getIntegrationService,
   type IntegrationStatusInput
@@ -12,14 +15,17 @@ import {
 /**
  * The Etsy catalog card, admin-only, hosting the ONE global Etsy application
  * keyset (`storeEtsyKeyset` / `ETSY_KEYSET_SECRET_KEY` in
- * `@/server/etsy-oauth`) — mirrors `EbayIntegrationCard`'s shape exactly.
- * Every Etsy shop shares it, which is why it is set up here rather than
- * against any one shop on the connections page.
+ * `@/server/etsy-oauth`) — mirrors `EbayIntegrationCard`'s shape exactly,
+ * including the `enabled`/`isAdmin` visibility toggle (loxep-dgg).
  */
 export default function EtsyIntegrationCard({
-  statusInput
+  statusInput,
+  isAdmin,
+  enabled
 }: {
   statusInput: Omit<IntegrationStatusInput, 'etsyKeyset'>;
+  isAdmin: boolean;
+  enabled: boolean;
 }) {
   const { data, isPending } = useQuery(etsyKeysetStatusQuery);
   const [dialogOpen, setDialogOpen] = React.useState(false);
@@ -32,10 +38,20 @@ export default function EtsyIntegrationCard({
       description={service.description}
       status={status}
       isPending={isPending}
+      disabled={!enabled}
       action={
-        <Button size='sm' variant='outline' onClick={() => setDialogOpen(true)}>
-          {data?.configured ? 'Rotate keyset' : 'Set up keyset'}
-        </Button>
+        <>
+          <Button size='sm' variant='outline' onClick={() => setDialogOpen(true)}>
+            {data?.configured ? 'Rotate keyset' : 'Set up keyset'}
+          </Button>
+          {isAdmin && (
+            <IntegrationEnabledToggle
+              serviceId={service.id}
+              serviceName={service.name}
+              enabled={enabled}
+            />
+          )}
+        </>
       }
     >
       {data?.configured === true && (

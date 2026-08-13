@@ -14,7 +14,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
-import { GATUS_PUSH_SECRET_KEY, gatusPushSetting } from '@loxep/domain';
+import { GATUS_PUSH_SECRET_KEY, gatusPushSetting, integrationsEnabledSetting } from '@loxep/domain';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { MarketEventType } from '@loxep/market';
@@ -1333,6 +1333,64 @@ export const updateApplicationSetting = createServerFn({ method: 'POST' })
       value: entry.value as JsonValue,
       updatedAt: iso(entry.updatedAt)
     };
+  });
+
+// ---------------------------------------------------------------------------
+// Integration catalog visibility (loxep-dgg)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `integrations.enabled` map: which integration ids are hidden from the
+ * catalog grid, connection-add options, and any other provider-enumerating
+ * surface. Member-readable — the catalog itself is member-visible — so
+ * `/settings/integrations` and `/settings/connections` can filter for every
+ * signed-in user, not only admins. An id absent from the map, or mapped
+ * `true`, is shown; only an explicit `false` hides it. See
+ * `integrationsEnabledSetting`'s own doc in `@loxep/domain` for the full
+ * PROVISIONAL-default reasoning (all-on, so an absent setting never hides a
+ * provider an existing operator already uses).
+ */
+export const fetchIntegrationsEnabled = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<Record<string, boolean>> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    return getAdminServices().settings.get(integrationsEnabledSetting);
+  }
+);
+
+const setIntegrationEnabledInput = z.strictObject({
+  id: z.string().min(1),
+  enabled: z.boolean()
+});
+
+/**
+ * Admin toggle for ONE integration's catalog visibility (loxep-dgg). Reads
+ * the current map, then either deletes the id (re-enabling — the map's own
+ * "absence means shown" rule keeps the stored map minimal and future-proof,
+ * see the setting's doc) or sets it to `false` (disabling), and writes the
+ * whole map back through the registered setting's own schema.
+ *
+ * This is a DISPLAY toggle only: it never touches `connections` rows or
+ * worker job state. An already-connected provider's existing connections
+ * keep syncing and its jobs keep running exactly as before either way —
+ * disabling only changes what the catalog and connection-add surfaces show.
+ */
+export const setIntegrationEnabled = createServerFn({ method: 'POST' })
+  .inputValidator(setIntegrationEnabledInput)
+  .handler(async ({ data }): Promise<Record<string, boolean>> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { settings } = getAdminServices();
+
+    const current = await settings.get(integrationsEnabledSetting);
+    const next = { ...current };
+    if (data.enabled) {
+      delete next[data.id];
+    } else {
+      next[data.id] = false;
+    }
+
+    return settings.set(integrationsEnabledSetting, next, { actorUserId: session.user.id });
   });
 
 // ---------------------------------------------------------------------------

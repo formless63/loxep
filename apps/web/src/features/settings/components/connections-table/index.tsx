@@ -16,17 +16,29 @@ import {
   connectionsQuery,
   ebayKeysetStatusQuery,
   entitiesQuery,
-  etsyKeysetStatusQuery
+  etsyKeysetStatusQuery,
+  integrationsEnabledQuery
 } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ConnectionAddDialog from '@/features/settings/components/connection-add-dialog';
 import { IntegrationStatusBadges } from '@/features/settings/components/integration-card';
+import { ToneBadge } from '@/features/settings/components/status-tone';
 import {
   connectableIntegrationServices,
+  isIntegrationEnabled,
+  type IntegrationEnabledMap,
   type IntegrationService,
   type IntegrationStatusInput
 } from '@/features/settings/integrations-catalog';
 import { getColumns } from './columns';
+
+/**
+ * Explanatory text for both the "why is Add account disabled" caption and
+ * the header chip's tooltip — kept as one string (loxep-dgg) so the two
+ * surfaces never drift apart.
+ */
+const PROVIDER_DISABLED_EXPLANATION =
+  'This integration is disabled in this installation’s catalog. Existing accounts keep syncing unchanged; enable it again from the Integrations page to add another.';
 
 const CLIENT_COLUMNS: ClientColumnSpec<ConnectionDto>[] = [
   { id: 'name', accessor: (row) => row.name, filterVariant: 'text' },
@@ -51,6 +63,12 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   // Admin-only server function: same reasoning as ebayKeyset above, for
   // whether adding an Etsy shop can work at all.
   const { data: etsyKeyset } = useQuery({ ...etsyKeysetStatusQuery, enabled: isAdmin });
+  // Member-readable (loxep-dgg): filters which services offer "Add account"
+  // and flags existing connections of a disabled provider. Missing/loading
+  // reads as the empty map, i.e. everything enabled — the same
+  // absence-means-visible default the setting itself ships with.
+  const { data: enabledMap } = useQuery(integrationsEnabledQuery);
+  const catalogEnabledMap: IntegrationEnabledMap = enabledMap ?? {};
   const [addServiceId, setAddServiceId] = React.useState<string | null>(null);
 
   if (isPending || entitiesPending) {
@@ -83,8 +101,20 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const uncatalogued = connections.filter(
     (connection) => !catalogProviders.has(connection.provider)
   );
+  // A disabled provider (loxep-dgg) is hidden from "connection-add options"
+  // entirely when it has no existing accounts — that's exactly what hiding
+  // it means. When it DOES have existing accounts, the section stays so
+  // those accounts remain visible and flagged; only the "Add account" action
+  // is blocked (see ServiceSection below).
+  const visibleServices = connectableIntegrationServices.filter((service) => {
+    if (isIntegrationEnabled(catalogEnabledMap, service.id)) return true;
+    return connections.some((connection) => connection.provider === service.accounts?.provider);
+  });
   const addService =
-    connectableIntegrationServices.find((service) => service.id === addServiceId) ?? null;
+    visibleServices.find(
+      (service) =>
+        service.id === addServiceId && isIntegrationEnabled(catalogEnabledMap, service.id)
+    ) ?? null;
 
   return (
     <div className='flex flex-col gap-8'>
@@ -98,7 +128,7 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
         </p>
       )}
 
-      {connectableIntegrationServices.map((service) => (
+      {visibleServices.map((service) => (
         <ServiceSection
           key={service.id}
           service={service}
@@ -108,6 +138,7 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
           entities={entities ?? []}
           statusInput={statusInput}
           isAdmin={isAdmin}
+          isDisabled={!isIntegrationEnabled(catalogEnabledMap, service.id)}
           onAddAccount={() => setAddServiceId(service.id)}
         />
       ))}
@@ -142,13 +173,23 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-/** One service's accounts plus its guarded "Add account" action. */
+/**
+ * One service's accounts plus its guarded "Add account" action.
+ *
+ * `isDisabled` (loxep-dgg) means this provider is hidden from the catalog by
+ * the `integrations.enabled` setting. It never changes what is rendered
+ * below the header — existing connections keep showing (and syncing)
+ * exactly as before — it only flags the header and blocks new "Add account"
+ * clicks, mirroring the existing `blockedReason` UI other unmet
+ * prerequisites already use.
+ */
 function ServiceSection({
   service,
   connections,
   entities,
   statusInput,
   isAdmin,
+  isDisabled,
   onAddAccount
 }: {
   service: IntegrationService;
@@ -156,15 +197,25 @@ function ServiceSection({
   entities: EntityDto[];
   statusInput: IntegrationStatusInput;
   isAdmin: boolean;
+  isDisabled: boolean;
   onAddAccount: () => void;
 }) {
-  const blockedReason = service.accounts?.blockedReason(statusInput) ?? null;
+  const blockedReason = isDisabled
+    ? PROVIDER_DISABLED_EXPLANATION
+    : (service.accounts?.blockedReason(statusInput) ?? null);
 
   return (
     <section className='flex flex-col gap-3'>
       <div className='flex flex-wrap items-start justify-between gap-2'>
         <div className='flex flex-col gap-1'>
-          <h2 className='text-lg font-medium'>{service.name}</h2>
+          <div className='flex flex-wrap items-center gap-2'>
+            <h2 className='text-lg font-medium'>{service.name}</h2>
+            {isDisabled && (
+              <ToneBadge tone='warning' title={PROVIDER_DISABLED_EXPLANATION}>
+                Disabled here
+              </ToneBadge>
+            )}
+          </div>
           <IntegrationStatusBadges status={service.status(statusInput)} />
         </div>
         {isAdmin && (

@@ -645,3 +645,41 @@ export function integrationServiceForProvider(provider: string): IntegrationServ
 export const connectableIntegrationServices: IntegrationService[] = integrationServices.filter(
   (service) => service.accounts !== null
 );
+
+// -----------------------------------------------------------------------------
+// Catalog visibility (loxep-dgg) — the `integrations.enabled` setting's shape
+// mirrored client-side, plus the filtering logic every provider-enumerating
+// surface (the catalog grid, connection-add options) shares.
+// -----------------------------------------------------------------------------
+
+/**
+ * Client-side mirror of the `integrations.enabled` application setting
+ * (`@loxep/domain`'s `integrationsEnabledSetting`). An id ABSENT from the
+ * map, or mapped `true`, is enabled; only an explicit `false` disables it —
+ * see that setting's own doc comment for why absence means visible.
+ */
+export type IntegrationEnabledMap = Record<string, boolean>;
+
+/** Whether `id` is enabled under `map`, applying the absence-means-visible rule. */
+export function isIntegrationEnabled(
+  map: IntegrationEnabledMap,
+  id: IntegrationServiceId
+): boolean {
+  return map[id] !== false;
+}
+
+/**
+ * Filters a list of catalog services down to the enabled ones, unless
+ * `includeDisabled` is set (the catalog grid's "Show disabled" affordance).
+ * Order is preserved. Shared by every surface that enumerates the catalog to
+ * decide what to show/offer, so disabling a provider hides it consistently
+ * everywhere rather than surface-by-surface.
+ */
+export function filterIntegrationServices(
+  services: IntegrationService[],
+  enabledMap: IntegrationEnabledMap,
+  { includeDisabled = false }: { includeDisabled?: boolean } = {}
+): IntegrationService[] {
+  if (includeDisabled) return services;
+  return services.filter((service) => isIntegrationEnabled(enabledMap, service.id));
+}

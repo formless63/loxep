@@ -457,6 +457,65 @@ export const gatusRateBudgetSetting = defineSetting({
  */
 export const GATUS_PUSH_SECRET_KEY = "infrastructure.gatus_push.default";
 
+/**
+ * Per-integration catalog visibility (loxep-dgg): whether each entry in
+ * `apps/web`'s integrations catalog (`integrations-catalog.ts`) shows on
+ * `/settings/integrations`, is offered as an "Add account" choice on
+ * `/settings/connections`, and appears anywhere else the catalog is
+ * enumerated. With 14+ providers, showing every entry by default makes both
+ * surfaces hard to scan; this setting lets an operator curate what they see.
+ *
+ * This is a DISPLAY preference, never a kill switch — the load-bearing rule
+ * the design insists on. `integrations-catalog.ts` stays the single source
+ * of what a provider IS; this setting is state layered on top of it. Toggling
+ * a provider off here does NOT touch its `connections` rows, its worker
+ * polling/sync jobs, or its data: an already-connected provider's existing
+ * connections keep syncing and its jobs keep running exactly as before. The
+ * operator-facing surfaces are expected to say so — a chip/badge on the
+ * connection rather than a silent stop — because "disabled" here means
+ * "hidden from the picker," not "turned off."
+ *
+ * Map semantics: a key ABSENT from the map, or explicitly `true`, means
+ * shown; only an explicit `false` hides that integration. This id-level
+ * "absence means visible" rule is deliberate, not just a convenience for the
+ * empty-map default below — it also means a FUTURE catalog addition is
+ * visible by default even against an installation that has already
+ * customized this setting, without requiring a migration of the stored map.
+ *
+ * Keys are `IntegrationServiceId` values from `apps/web`'s catalog (`'ebay'`,
+ * `'etsy'`, `'woocommerce'`, …), but this module cannot import an `apps/web`
+ * type without inverting the dependency direction, so the schema accepts any
+ * non-empty string key. A key that does not match a current catalog entry is
+ * simply inert (nothing reads it) until a future catalog id reuses it.
+ *
+ * DEFAULT (PROVISIONAL — owner note, loxep-dgg): all-on, i.e. an EMPTY map.
+ * The bead deliberately left "sensible minimal set" vs. "all-on" open; this
+ * ships all-on because an ABSENT setting must not hide a provider an
+ * operator already uses — the safe default for an upgrade-in-place
+ * installation is everything visible, exactly like `orderPayloadRetentionSetting`
+ * and `gatusPushSetting` above ship toward "never surprise an existing
+ * install" rather than a guessed ideal. A curated, minimal-by-default catalog
+ * is a fresh-install nicety, not a safety requirement, and it can be revisited
+ * once real operators have actually lived with the messy 14+-entry catalog
+ * this bead exists to fix. Do not change this default silently; if it is
+ * revisited, update this comment, the bead, and the docs together.
+ */
+export const integrationsEnabledSetting = defineSetting({
+  key: "integrations.enabled",
+  schema: z.record(z.string().min(1), z.boolean()),
+  description:
+    "Per-integration catalog visibility: which entries in the integrations " +
+    "catalog show on /settings/integrations, connection-add surfaces, and " +
+    "any other place the catalog is enumerated. A key absent from this map, " +
+    "or mapped true, is shown; only an explicit false hides it. Display " +
+    "preference only, never a kill switch — a disabled provider's existing " +
+    "connections keep syncing and its jobs keep running unchanged. DEFAULT " +
+    "(PROVISIONAL, loxep-dgg): all-on (empty map), because an absent " +
+    "setting must not hide a provider an existing operator already uses",
+  schemaVersion: 1,
+  defaultValue: {},
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -470,4 +529,5 @@ export const registeredApplicationSettings = [
   inventoryDefaultSaleModeSetting,
   gatusPushSetting,
   gatusRateBudgetSetting,
+  integrationsEnabledSetting,
 ] as const;

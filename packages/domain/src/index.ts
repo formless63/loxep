@@ -54,6 +54,7 @@ export {
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
   gatusRateBudgetSetting,
+  integrationsEnabledSetting,
   inventoryDefaultSaleModeSetting,
   inventoryMediaLimitsSetting,
   monitorDefaultsSetting,

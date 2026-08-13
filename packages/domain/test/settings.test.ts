@@ -17,6 +17,7 @@ import {
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
   gatusRateBudgetSetting,
+  integrationsEnabledSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
@@ -533,5 +534,85 @@ describe("Phase 8 milestone 4 Gatus read-adapter rate budget", () => {
       gatusRateBudgetSetting.schema.safeParse({ capacity: 5000, refillPerSecond: 2 })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("integrations.enabled catalog-visibility setting (loxep-dgg)", () => {
+  it("is registered under the documented key", () => {
+    expect(integrationsEnabledSetting.key).toBe("integrations.enabled");
+    expect(registeredApplicationSettings).toContain(integrationsEnabledSetting);
+  });
+
+  // PROVISIONAL default (owner note, loxep-dgg): all-on via an EMPTY map, not
+  // a curated minimal set — an absent setting must never hide a provider an
+  // existing operator already uses. See this setting's own doc comment in
+  // settings-defaults.ts for the full reasoning and the "revisit later" note.
+  it("ships all-on: an EMPTY map, PROVISIONAL default", () => {
+    expect(integrationsEnabledSetting.defaultValue).toEqual({});
+  });
+
+  it("accepts a map of arbitrary string ids to booleans", () => {
+    expect(
+      integrationsEnabledSetting.schema.safeParse({
+        ebay: true,
+        etsy: false,
+        "some-future-provider": true,
+      }).success,
+    ).toBe(true);
+    // The empty default itself must validate.
+    expect(integrationsEnabledSetting.schema.safeParse({}).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects non-boolean values and non-object shapes", () => {
+    expect(
+      integrationsEnabledSetting.schema.safeParse({ ebay: "false" }).success,
+    ).toBe(false);
+    expect(
+      integrationsEnabledSetting.schema.safeParse({ ebay: 0 }).success,
+    ).toBe(false);
+    expect(integrationsEnabledSetting.schema.safeParse("ebay").success).toBe(
+      false,
+    );
+    expect(integrationsEnabledSetting.schema.safeParse(null).success).toBe(
+      false,
+    );
+    expect(integrationsEnabledSetting.schema.safeParse([]).success).toBe(
+      false,
+    );
+  });
+
+  it("round-trips through the settings service like every other registered setting", async () => {
+    const dbName = scratchDbName("loxep_test_domain_integrations_enabled");
+    const databaseUrl = await createScratchDb(dbName);
+    try {
+      await runMigrations({ databaseUrl, logger: silentLogger });
+      const handle = createDb(databaseUrl);
+      try {
+        const service = createSettingsService({ db: handle.db });
+
+        // Unset: default (all-on) applies.
+        await expect(
+          service.get(integrationsEnabledSetting),
+        ).resolves.toEqual({});
+
+        // Explicitly hiding one provider leaves every other id implicitly
+        // enabled (absence-means-visible), not just the ones already known.
+        const written = await service.set(
+          integrationsEnabledSetting,
+          { termix: false },
+          {},
+        );
+        expect(written).toEqual({ termix: false });
+        await expect(
+          service.get(integrationsEnabledSetting),
+        ).resolves.toEqual({ termix: false });
+      } finally {
+        await closeDb(handle);
+      }
+    } finally {
+      await dropScratchDb(dbName);
+    }
   });
 });

@@ -7,6 +7,7 @@ import {
   fetchGatusPushSettings,
   fetchHealthReport,
   fetchIntegrationHealth,
+  fetchIntegrationsEnabled,
   fetchMonitorTargetOptions,
   fetchNotificationDeliveries,
   fetchNotificationEndpoints,
@@ -96,6 +97,16 @@ export const applicationSettingsQuery = queryOptions({
 export const gatusPushSettingsQuery = queryOptions({
   queryKey: ['settings', 'gatus-push'],
   queryFn: () => fetchGatusPushSettings()
+});
+
+/**
+ * The `integrations.enabled` catalog-visibility map (loxep-dgg). Member-
+ * readable: every provider-enumerating surface (catalog grid, connection-add
+ * options) filters by this, not only the admin-only toggle that writes it.
+ */
+export const integrationsEnabledQuery = queryOptions({
+  queryKey: ['settings', 'integrations-enabled'],
+  queryFn: () => fetchIntegrationsEnabled()
 });
 
 export const notificationEndpointsQuery = queryOptions({
