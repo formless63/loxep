@@ -4,6 +4,7 @@ import {
   fetchConnections,
   fetchEntities,
   fetchFirstAdminBootstrap,
+  fetchGatusPushSettings,
   fetchHealthReport,
   fetchIntegrationHealth,
   fetchMonitorTargetOptions,
@@ -89,6 +90,12 @@ export const firstAdminBootstrapQuery = queryOptions({
 export const applicationSettingsQuery = queryOptions({
   queryKey: ['settings', 'application-settings'],
   queryFn: () => fetchApplicationSettings()
+});
+
+/** Phase 8 milestone 2 (loxep-ovj.2): the Gatus outward push configuration. */
+export const gatusPushSettingsQuery = queryOptions({
+  queryKey: ['settings', 'gatus-push'],
+  queryFn: () => fetchGatusPushSettings()
 });
 
 export const notificationEndpointsQuery = queryOptions({

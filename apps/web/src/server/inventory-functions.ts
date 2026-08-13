@@ -907,6 +907,12 @@ export interface AcquisitionListItemDto {
   itemCount: number;
   acquiredAt: string;
   createdAt: string;
+  /**
+   * Set when this lot came from a connector sync (e.g. eBay purchase-history
+   * ingestion, loxep-dgf.5) rather than an operator typing it in — the
+   * "imported, review it" signal the acquisitions list badges on `sourceKind`.
+   */
+  connectionId: string | null;
 }
 
 const acquisitionFilterInput = z.strictObject({
@@ -961,7 +967,8 @@ export const fetchAcquisitions = createServerFn({ method: 'GET' })
       costAllocationStatus: row.costAllocationStatus,
       itemCount: itemCountByAcquisitionId.get(row.id) ?? 0,
       acquiredAt: iso(row.acquiredAt),
-      createdAt: iso(row.createdAt)
+      createdAt: iso(row.createdAt),
+      connectionId: row.connectionId
     }));
   });
 

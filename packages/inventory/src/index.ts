@@ -134,6 +134,35 @@ export type {
   LandedCostGroup,
 } from "./acquisitions.ts";
 
+export {
+  DEFAULT_PURCHASE_SYNC_ENTRIES_PER_PAGE,
+  DEFAULT_PURCHASE_SYNC_INTERVAL_SECONDS,
+  DEFAULT_PURCHASE_SYNC_MAX_PAGES,
+  EBAY_PURCHASES_TARGET_TYPE,
+  PURCHASE_SYNC_CONFIG_KEY,
+  createEbayPurchaseSync,
+  createPurchaseIngestionService,
+  ensurePurchaseSyncTarget,
+  purchaseSyncStateSchema,
+  purchaseSyncTargetConfigSchema,
+  readPurchaseSyncCursor,
+  writePurchaseSyncCursor,
+} from "./purchase-sync.ts";
+export type {
+  EbayPurchaseFactLike,
+  EbayPurchasePageIterator,
+  EbayPurchaseSyncService,
+  EnsurePurchaseSyncTargetInput,
+  IngestEbayPurchaseInput,
+  IngestEbayPurchaseResult,
+  PurchaseIngestionService,
+  PurchaseSyncCursor,
+  PurchaseSyncState,
+  PurchaseSyncTargetConfig,
+  SyncEbayPurchasesInput,
+  SyncEbayPurchasesResult,
+} from "./purchase-sync.ts";
+
 export { createItemsService } from "./items.ts";
 export type {
   CreateItemInput,

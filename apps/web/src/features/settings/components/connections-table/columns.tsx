@@ -13,6 +13,7 @@ import type { ConnectionStatus } from '@loxep/domain';
 import { AttributionCell } from './attribution-cell';
 import { CellAction } from './cell-action';
 import { OrderSyncStatusCell } from './order-sync-cell';
+import { PurchaseSyncStatusCell } from './purchase-sync-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -125,6 +126,11 @@ export function getColumns(
       id: 'orderSync',
       header: 'Order sync',
       cell: ({ row }) => <OrderSyncStatusCell connection={row.original} />
+    },
+    {
+      id: 'purchaseSync',
+      header: 'Purchase sync',
+      cell: ({ row }) => <PurchaseSyncStatusCell connection={row.original} />
     },
     {
       id: 'lastSuccessAt',

@@ -14,6 +14,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
+import { GATUS_PUSH_SECRET_KEY, gatusPushSetting } from '@loxep/domain';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { MarketEventType } from '@loxep/market';
@@ -26,6 +27,10 @@ import {
   WOO_ORDERS_TARGET_TYPE,
   type OrderSyncStatusDto
 } from '@/server/order-sync-functions';
+import {
+  EBAY_PURCHASES_TARGET_TYPE,
+  type PurchaseSyncStatusDto
+} from '@/server/purchase-sync-functions';
 
 /** JSON-serializable value — keeps server-fn return types serializable-typed. */
 export type JsonValue =
@@ -151,6 +156,90 @@ export const fetchIntegrationHealth = createServerFn({ method: 'GET' }).handler(
 );
 
 // ---------------------------------------------------------------------------
+// Gatus outward health push (Phase 8 milestone 2, loxep-ovj.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Non-secret half of `infrastructure.gatus_push` plus whether a push token
+ * is stored (never the token itself) — same "settings echo, secrets don't"
+ * split every other credential-bearing form in this file uses.
+ */
+export interface GatusPushSettingsDto {
+  enabled: boolean;
+  baseUrl: string | null;
+  endpointKey: string | null;
+  hasToken: boolean;
+}
+
+export const fetchGatusPushSettings = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<GatusPushSettingsDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { settings, secrets } = getAdminServices();
+    const [value, storedSecrets] = await Promise.all([
+      settings.get(gatusPushSetting),
+      secrets.listSecrets()
+    ]);
+    return {
+      enabled: value.enabled,
+      baseUrl: value.baseUrl,
+      endpointKey: value.endpointKey,
+      hasToken: storedSecrets.some((secret) => secret.secretKey === GATUS_PUSH_SECRET_KEY)
+    };
+  }
+);
+
+const updateGatusPushSettingsInput = z.strictObject({
+  enabled: z.boolean(),
+  baseUrl: z.url().nullable(),
+  endpointKey: z
+    .string()
+    .min(3)
+    .regex(
+      /^[A-Za-z0-9_-]+_[A-Za-z0-9_-]+$/u,
+      'must look like <GROUP_NAME>_<ENDPOINT_NAME>, matching the gatus external-endpoints declaration'
+    )
+    .nullable(),
+  /** Write-only: sent once, stored through the encrypted secrets service. */
+  token: z.string().trim().min(1).optional()
+});
+
+/**
+ * Admin write for the Gatus push configuration. The non-secret fields
+ * (`enabled`/`baseUrl`/`endpointKey`) go through the same registered-setting
+ * write path every other application setting uses; the token, when present,
+ * rotates the separate encrypted secret `infrastructure.gatus_push.default`
+ * (purpose `token`) — omitting it leaves the currently stored token
+ * untouched, the same write-only rotation `updateNotificationEndpoint` uses.
+ */
+export const updateGatusPushSettings = createServerFn({ method: 'POST' })
+  .inputValidator(updateGatusPushSettingsInput)
+  .handler(async ({ data }): Promise<GatusPushSettingsDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { settings, secrets } = getAdminServices();
+    const { token, ...value } = data;
+
+    await settings.set(gatusPushSetting, value, { actorUserId: session.user.id });
+    if (token !== undefined) {
+      await secrets.setSecret({
+        secretKey: GATUS_PUSH_SECRET_KEY,
+        purpose: 'token',
+        payload: { token },
+        actorUserId: session.user.id
+      });
+    }
+
+    const storedSecrets = await secrets.listSecrets();
+    return {
+      enabled: value.enabled,
+      baseUrl: value.baseUrl,
+      endpointKey: value.endpointKey,
+      hasToken: storedSecrets.some((secret) => secret.secretKey === GATUS_PUSH_SECRET_KEY)
+    };
+  });
+
+// ---------------------------------------------------------------------------
 // Economic entities (loxep-e51.4)
 // ---------------------------------------------------------------------------
 
@@ -264,6 +353,8 @@ export interface ConnectionDto {
   credentials: ConnectionCredentialDto[];
   /** `woo_orders`/`ebay_orders` monitor-target status (loxep-cxh), or `null` when none exists yet. */
   orderSync: OrderSyncStatusDto | null;
+  /** `ebay_purchases` monitor-target status (loxep-dgf.5), or `null` when none exists yet. */
+  purchaseSync: PurchaseSyncStatusDto | null;
 }
 
 export const fetchConnections = createServerFn({ method: 'GET' }).handler(
@@ -273,10 +364,10 @@ export const fetchConnections = createServerFn({ method: 'GET' }).handler(
     const { connections, handle } = getAdminServices();
     const rows = await connections.listConnections();
 
-    // Order-sync status folded into this DTO with one bulk query rather than
-    // one lookup per row (loxep-cxh) — `fetchConnections` already returns
-    // every connection in a single call, so a per-row `getOrderSyncStatus`
-    // round-trip would just be an avoidable N+1.
+    // Order-sync AND purchase-sync status folded into this DTO with one bulk
+    // query each rather than one lookup per row (loxep-cxh, loxep-dgf.5) —
+    // `fetchConnections` already returns every connection in a single call,
+    // so a per-row status round-trip would just be an avoidable N+1.
     const orderSyncTargets =
       rows.length === 0
         ? []
@@ -307,10 +398,39 @@ export const fetchConnections = createServerFn({ method: 'GET' }).handler(
       }
     }
 
+    // Same shape, one `ebay_purchases` target per connection (loxep-dgf.5).
+    const purchaseSyncTargets =
+      rows.length === 0
+        ? []
+        : await handle.db.query.monitorTargets.findMany({
+            where: (table, { and, eq, inArray }) =>
+              and(
+                eq(table.targetType, EBAY_PURCHASES_TARGET_TYPE),
+                inArray(
+                  table.connectionId,
+                  rows.map((row) => row.id)
+                )
+              ),
+            columns: {
+              id: true,
+              connectionId: true,
+              enabled: true,
+              lastSuccessAt: true
+            },
+            orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)]
+          });
+    const purchaseSyncByConnectionId = new Map<string, (typeof purchaseSyncTargets)[number]>();
+    for (const target of purchaseSyncTargets) {
+      if (target.connectionId !== null && !purchaseSyncByConnectionId.has(target.connectionId)) {
+        purchaseSyncByConnectionId.set(target.connectionId, target);
+      }
+    }
+
     return Promise.all(
       rows.map(async (row) => {
         const credentials = await connections.listConnectionCredentials(row.id);
         const orderSyncTarget = orderSyncByConnectionId.get(row.id);
+        const purchaseSyncTarget = purchaseSyncByConnectionId.get(row.id);
         return {
           id: row.id,
           provider: row.provider,
@@ -340,7 +460,15 @@ export const fetchConnections = createServerFn({ method: 'GET' }).handler(
                   targetType: orderSyncTarget.targetType as OrderSyncStatusDto['targetType'],
                   enabled: orderSyncTarget.enabled,
                   lastSuccessAt: iso(orderSyncTarget.lastSuccessAt)
-                }
+                },
+          purchaseSync:
+            purchaseSyncTarget === undefined
+              ? null
+              : ({
+                  targetId: purchaseSyncTarget.id,
+                  enabled: purchaseSyncTarget.enabled,
+                  lastSuccessAt: iso(purchaseSyncTarget.lastSuccessAt)
+                } satisfies PurchaseSyncStatusDto)
         };
       })
     );

@@ -15,11 +15,28 @@
  * | `commerce.sync-ebay-orders` | @loxep/commerce      | the same, for an eBay seller account |
  * | `commerce.redact-order-payloads` | @loxep/commerce | ADR-0021 retention sweep (daily) |
  * | `health.sweep`               | @loxep/app (mechanics in @loxep/domain) | Phase 8 m1 integration_health probe (5 min) |
+ * | `infrastructure.gatus-push`  | @loxep/app            | Phase 8 m2 outward Gatus health push (5 min) |
+ * | `inventory.sync-ebay-purchases` | @loxep/app (mechanics in @loxep/inventory) | on-demand eBay purchase-history sync for one connection |
+ * | `infrastructure.sync-token-policy` | @loxep/app (mechanics in @loxep/infrastructure) | Phase 7 m3 DNS-token zone-scope policy rebuild (on-demand, scope-change-triggered) |
+ *
+ * `infrastructure.sync-proxy-resource` (Phase 7 m3's OTHER reserved task
+ * name, `@loxep/infrastructure`'s `tasks.ts`) is DELIBERATELY NOT registered
+ * here. Nothing enqueues it — no service calls `SYNC_PROXY_RESOURCE_TASK`
+ * anywhere in the graph — because it needs `@loxep/integration-pangolin`'s
+ * org/site/resource model, which does not exist. Registering a handler with
+ * no caller and no adapter to drive would be dead code masquerading as
+ * readiness; the honest state is "enqueue this task name and Graphile Worker
+ * fails the job as unrecognized," exactly the way an unrecognized task
+ * already fails today. Wiring both the calling service and this route
+ * together, when the Pangolin package lands, is the correct next step — see
+ * `tasks.ts`'s own module doc.
  *
  * Cron: `maintenance.heartbeat` (@loxep/jobs' defaults),
  * `market.dispatch-due-monitors` (every minute), `ebay.refresh-tokens`
  * (every 15 minutes), `commerce.redact-order-payloads` (daily),
- * `health.sweep` (every 5 minutes).
+ * `health.sweep` (every 5 minutes), `infrastructure.gatus-push` (every 5
+ * minutes, piggybacking on `health.sweep`'s own cadence — see
+ * `gatus-push.ts`'s module doc).
  *
  * @loxep/commerce's ORDER SYNC deliberately defines no cron item — that
  * scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed by
@@ -51,6 +68,7 @@
  * ebay_orders                                           → createEbayOrderPollExecutor
  * etsy_listing | etsy_shop                              → createEtsyPollExecutor
  * reverb_listing | reverb_shop                          → createReverbPollExecutor
+ * ebay_purchases                                        → createEbayPurchasePollExecutor
  * infrastructure_domain_reconcile                       → createInfrastructureReconcilePollExecutor
  * ```
  *
@@ -93,6 +111,19 @@
  * file's wiring where a shared, installation-wide resource (not a
  * per-connection one) feeds a poll route — see `services.ts`/`etsy.ts`'s
  * module docs for why Etsy's rate limit forces that shape.
+ *
+ * EBAY-PURCHASES-ROUTE(loxep-dgf.5): `ebay_purchases` (Flipping milestone 5)
+ * is registered in `@loxep/market`'s `MONITOR_TARGET_TYPES` AND
+ * `monitorTargetConfigSchemas`, the same discipline the Etsy/Reverb/
+ * infrastructure blocks above establish — but its route here shipped in a
+ * LATER change than its registration, for the same reason
+ * `infrastructure_domain_reconcile`'s did: `@loxep/app`'s `package.json` did
+ * not yet declare `@loxep/inventory`, the domain package that owns the type,
+ * as a dependency. That gap is now closed and this is the route. See
+ * `inventory-ebay.ts`'s module doc for the full account and why its
+ * `SYNC_EBAY_PURCHASES_TASK_NAME` on-demand task is defined THERE rather
+ * than in `@loxep/inventory` (which takes no `@loxep/jobs` dependency,
+ * mirroring `health.sweep`/`infrastructure.gatus-push`).
  *
  * The `commerce.sync-*-orders` TASKS are registered alongside the routes and
  * share the very same sync service instances. They are not how scheduled
@@ -142,6 +173,8 @@ import {
 import type { AddJob, JobsLogger, TaskRegistry } from "@loxep/jobs";
 import { createMarketTasks } from "@loxep/market";
 import type { PollExecutor } from "@loxep/market";
+import { EBAY_PURCHASES_TARGET_TYPE } from "@loxep/inventory";
+import type { EbayPurchasePageIterator } from "@loxep/inventory";
 import { INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE } from "@loxep/infrastructure";
 import {
   createDeliveryPipeline,
@@ -161,9 +194,15 @@ import {
 } from "./commerce-ebay.ts";
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
+import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
+import { createInfrastructureTokenTasks } from "./infrastructure-token.ts";
+import {
+  createEbayPurchasePollExecutor,
+  createInventoryPurchaseSyncTasks,
+} from "./inventory-ebay.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -214,6 +253,14 @@ export interface BuildWorkerRegistryOptions {
    * the sweep real provider payloads.
    */
   orderPayloadRedactors?: OrderPayloadRedactors;
+  /**
+   * Provider seam for `ebay_purchases` (loxep-dgf.5). Defaults to
+   * `createEbayPurchasePageIterator(services)`, which binds
+   * `@loxep/integration-ebay`'s `fetchAllWonPurchases` to this composition's
+   * adapter factory. A test supplies canned pages here instead of stubbing
+   * `GetMyeBayBuying`.
+   */
+  ebayPurchases?: EbayPurchasePageIterator;
 }
 
 export interface WorkerComposition {
@@ -242,6 +289,7 @@ export function buildCronItems(input: {
   ebayRefreshTokens: AppCronItem;
   redactOrderPayloads: CommerceCronItem;
   healthSweep: AppCronItem;
+  gatusPush: AppCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -251,6 +299,7 @@ export function buildCronItems(input: {
     input.ebayRefreshTokens,
     input.redactOrderPayloads,
     input.healthSweep,
+    input.gatusPush,
   ];
 }
 
@@ -312,6 +361,17 @@ export function buildWorkerRegistry(
       options.orderPayloadRedactors ?? createOrderPayloadRedactors(),
   });
 
+  // --- inventory (Flipping M5, loxep-dgf.5) ----------------------------
+  // Same "built before the market tasks" reasoning as commerce above: its
+  // sync service is what the `ebay_purchases` poll route and the
+  // `inventory.sync-ebay-purchases` on-demand task share.
+  const inventoryPurchases = createInventoryPurchaseSyncTasks({
+    services,
+    ...(options.ebayPurchases !== undefined
+      ? { fetchPurchases: options.ebayPurchases }
+      : {}),
+  });
+
   // --- market ---------------------------------------------------------
   const ebayPollExecutor = createEbayPollExecutor({
     services,
@@ -333,6 +393,13 @@ export function buildWorkerRegistry(
     commerce.ebaySync === null
       ? null
       : createEbayOrderPollExecutor({ services, sync: commerce.ebaySync });
+  // Flipping M5 (loxep-dgf.5): `ebay_purchases`, sharing the ONE purchase-
+  // sync service instance the `inventory.sync-ebay-purchases` task also
+  // runs — see `inventory-ebay.ts`'s module doc.
+  const ebayPurchasePollExecutor = createEbayPurchasePollExecutor({
+    services,
+    sync: inventoryPurchases.sync,
+  });
   // Etsy (loxep-g4t.1): one executor serves both m1 target types. Its
   // adapter dependency (`services.getEtsyAdapterForConnection`) is backed by
   // the SHARED, installation-wide rate budget — see `etsy.ts`'s module doc.
@@ -375,6 +442,7 @@ export function buildWorkerRegistry(
         etsy_shop: etsyPollExecutor,
         reverb_listing: reverbPollExecutor,
         reverb_shop: reverbPollExecutor,
+        [EBAY_PURCHASES_TARGET_TYPE]: ebayPurchasePollExecutor,
         [INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE]:
           infrastructureReconcilePollExecutor,
       },
@@ -400,11 +468,27 @@ export function buildWorkerRegistry(
   // target type is registered here.
   const infrastructureMail = createInfrastructureMailTasks({ services });
 
+  // --- infrastructure DNS-token policy sync (Phase 7 milestone 3, loxep-lmy.3)
+  // One on-demand task, no poll-executor route and no cron item — it is
+  // enqueued transactionally by `@loxep/infrastructure`'s `tokens.ts`
+  // (`setZones` / `mint` with initial zones), never claimed by the
+  // dispatcher. `mint`/`roll` are NOT wired here — see
+  // `infrastructure-token.ts`'s module doc for the HARD CONSTRAINT that
+  // keeps them a request-scoped `apps/web` action instead.
+  const infrastructureTokens = createInfrastructureTokenTasks({ services });
+
   // --- fleet health (Phase 8 milestone 1, loxep-ovj.1) -----------------
   // One recurring sweep, no monitor_targets row — see health-sweep.ts's
   // module doc. `@loxep/domain` owns the registry/mechanics; this is only
   // the Graphile Worker wrapper, the same shape `ebay.refresh-tokens` uses.
   const health = createHealthSweepTasks({ services });
+
+  // --- Gatus outward push (Phase 8 milestone 2, loxep-ovj.2) ------------
+  // Publishes Loxep's own overall health to the operator's Gatus instance —
+  // the ONE mutating call this composition ever makes to a fleet tool, and
+  // the direction runs opposite every other integration here. See
+  // gatus-push.ts's module doc.
+  const gatusPush = createGatusPushTasks({ services });
 
   const registry = createTaskRegistry([
     heartbeatTask,
@@ -412,8 +496,11 @@ export function buildWorkerRegistry(
     delivery.deliverTask,
     refresh.refreshTokensTask,
     ...commerce.tasks,
+    inventoryPurchases.syncEbayPurchasesTask,
     ...infrastructureMail.tasks,
+    ...infrastructureTokens.tasks,
     health.healthSweepTask,
+    gatusPush.gatusPushTask,
   ]);
 
   return {
@@ -423,6 +510,7 @@ export function buildWorkerRegistry(
       ebayRefreshTokens: refresh.refreshTokensCronItem,
       redactOrderPayloads: commerce.redactOrderPayloadsCronItem,
       healthSweep: health.healthSweepCronItem,
+      gatusPush: gatusPush.gatusPushCronItem,
     }),
     services,
     listings,

@@ -442,6 +442,15 @@ export interface FakeEbayState {
   items: Map<string, Record<string, unknown>>;
   /** Raw Trading watch-list `Item` payloads. */
   watchlist: Record<string, unknown>[];
+  /**
+   * Raw Trading `GetMyeBayBuying` `WonList` `OrderTransaction` payloads
+   * (loxep-dgf.5). Returned ALONGSIDE `watchlist` in the same canned
+   * `GetMyeBayBuying` response — real eBay would only populate the container
+   * the request actually asked for, but `tradingCall` here ignores the
+   * request `fields` (see its module doc), and returning both is harmless:
+   * `mapWatchlistResponse`/`mapWonListResponse` each read only their own key.
+   */
+  wonList: Record<string, unknown>[];
   /** Raw Browse `ItemSummary` payloads a search returns. */
   searchSummaries: Record<string, unknown>[];
   /** Seller username → the raw `ItemSummary` payloads that seller has. */
@@ -464,6 +473,7 @@ export function fakeEbayState(
   return {
     items: new Map(),
     watchlist: [],
+    wonList: [],
     searchSummaries: [],
     sellerSummaries: new Map(),
     searchWarnings: [],
@@ -642,6 +652,14 @@ export function fakeConnectionAdapter(
           PaginationResult: {
             TotalNumberOfPages: 1,
             TotalNumberOfEntries: state.watchlist.length,
+          },
+        },
+        // loxep-dgf.5: WonList alongside WatchList — see FakeEbayState.wonList.
+        WonList: {
+          OrderTransactionArray: { OrderTransaction: state.wonList },
+          PaginationResult: {
+            TotalNumberOfPages: 1,
+            TotalNumberOfEntries: state.wonList.length,
           },
         },
       };

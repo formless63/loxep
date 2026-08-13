@@ -69,3 +69,16 @@ export function numericLiteral(value: string): string {
 export function uuidList(values: readonly string[]): string {
   return values.map(uuidLiteral).join(", ");
 }
+
+/**
+ * `jsonb` literal for a JSON-serializable value. Re-declared from
+ * `@loxep/commerce`'s equivalent (module-internal, unexported there) for the
+ * same reason every other helper in this file is — see the module doc.
+ */
+export function jsonbLiteral(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) {
+    throw new InventoryValidationError("value is not JSON-serializable");
+  }
+  return `${textLiteral(json)}::jsonb`;
+}

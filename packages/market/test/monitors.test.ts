@@ -250,6 +250,99 @@ describe("commerce order-sync target types", () => {
 });
 
 /**
+ * loxep-dgf.5: `ebay_purchases` is the Flipping milestone 5 buy-side type
+ * @loxep/inventory registers against this shared scheduling mechanism (see
+ * `monitors.ts`'s module doc). Registered in `MONITOR_TARGET_TYPES` AND
+ * `monitorTargetConfigSchemas` TOGETHER in the same change, deliberately not
+ * repeating the `ebay_orders` split-registration gap — same discipline as the
+ * commerce block above and the Etsy/Reverb blocks below. `ebay_purchases`
+ * carries no identity of its own — the eBay account IS the target's
+ * connection — and its cursor lives under `purchaseSync`, a namespace
+ * distinct from commerce's `commerceSync` even though both are order-shaped
+ * facts, because @loxep/inventory and @loxep/commerce are separate
+ * registrants.
+ */
+describe("eBay purchase-sync target type", () => {
+  it("accepts the null watermark @loxep/inventory writes after a zero-purchase sync (regression)", async () => {
+    // Same historical bug class as the `ebay_orders`/`woo_orders` case above:
+    // the cursor writer records `lastPurchasedAt: null` after a sync that saw
+    // no purchases, and a schema that rejects that null poisons the target's
+    // own config on its next read.
+    const created = await service.createTarget({
+      targetType: "ebay_purchases",
+      name: "ebay_purchases null-watermark",
+      intervalSeconds: 14400,
+    });
+    const updated = await service.updateTarget(created.id, {
+      config: { purchaseSync: { lastPurchasedAt: null, lastPurchaseCount: 0 } },
+    });
+    expect(
+      (updated.config as { purchaseSync?: { lastPurchasedAt?: string | null } })
+        .purchaseSync?.lastPurchasedAt,
+    ).toBeNull();
+    await service.deleteTarget(created.id);
+  });
+
+  it("creates, reads, and updates an 'ebay_purchases' target with a purchaseSync-shaped config", async () => {
+    const created = await service.createTarget({
+      targetType: "ebay_purchases",
+      name: "ebay_purchases sync",
+      intervalSeconds: 14400,
+    });
+    // A freshly created purchase-sync target has no cursor yet.
+    expect(created.config).toEqual({});
+
+    const fetched = await service.getTarget(created.id);
+    expect(fetched.targetType).toBe("ebay_purchases");
+
+    const cursor = {
+      lastPurchasedAt: "2026-08-10T00:00:00.000Z",
+      lastSyncedAt: "2026-08-13T00:00:00.000Z",
+      lastPurchaseCount: 3,
+      maxPages: 10,
+      entriesPerPage: 100,
+    };
+    const updated = await service.updateTarget(created.id, {
+      config: { purchaseSync: cursor },
+    });
+    expect(updated.config).toEqual({ purchaseSync: cursor });
+
+    await service.deleteTarget(created.id);
+  });
+
+  it("rejects an unrecognized key in an 'ebay_purchases' config (strict schema)", async () => {
+    await expect(
+      service.createTarget({
+        targetType: "ebay_purchases",
+        name: "bad ebay_purchases config",
+        intervalSeconds: 14400,
+        config: { externalItemId: "not-a-purchase-sync-field" },
+      }),
+    ).rejects.toThrow(MarketValidationError);
+  });
+
+  it("lists targets filtered by 'ebay_purchases' without disturbing 'ebay_orders' rows", async () => {
+    const orders = await service.createTarget({
+      targetType: "ebay_orders",
+      name: "ebay_orders filter probe",
+      intervalSeconds: 900,
+    });
+    const purchases = await service.createTarget({
+      targetType: "ebay_purchases",
+      name: "ebay_purchases filter probe",
+      intervalSeconds: 14400,
+    });
+    const purchasesOnly = await service.listTargets({ targetType: "ebay_purchases" });
+    const ids = purchasesOnly.map((row) => row.id);
+    expect(ids).toContain(purchases.id);
+    expect(ids).not.toContain(orders.id);
+
+    await service.deleteTarget(orders.id);
+    await service.deleteTarget(purchases.id);
+  });
+});
+
+/**
  * loxep-g4t.1: `etsy_listing`/`etsy_shop` are the Etsy observation types,
  * registered in `MONITOR_TARGET_TYPES` AND `monitorTargetConfigSchemas`
  * TOGETHER in the same change — deliberately not repeating the

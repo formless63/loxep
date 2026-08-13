@@ -216,6 +216,22 @@ export type {
 } from "./orders.ts";
 
 export {
+  DEFAULT_WON_LIST_ENTRIES_PER_PAGE,
+  WON_LIST_CALL_NAME,
+  fetchAllWonPurchases,
+  fetchWonList,
+  groupWonListEntries,
+  mapWonListResponse,
+  mapWonListTransaction,
+} from "./purchases.ts";
+export type {
+  EbayPurchaseFact,
+  EbayPurchaseLineFact,
+  EbayWonListPage,
+  FetchWonListInput,
+} from "./purchases.ts";
+
+export {
   OBSERVATION_HASH_FIELDS,
   observationStateHash,
   snapshotToObservation,

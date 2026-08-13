@@ -14,14 +14,17 @@ import {
   ENSURE_MAIL_DOMAIN_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
   SYNC_MAILBOXES_TASK,
+  SYNC_TOKEN_POLICY_TASK,
 } from "@loxep/infrastructure";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import {
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  GATUS_PUSH_TASK_NAME,
   HEALTH_SWEEP_TASK_NAME,
   REFRESH_TOKENS_TASK_NAME,
+  SYNC_EBAY_PURCHASES_TASK_NAME,
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
   WOO_PAGES_PER_SYNC,
   buildWorkerRegistry,
@@ -71,6 +74,10 @@ describe("buildWorkerRegistry", () => {
         SYNC_WOO_ORDERS_TASK_NAME,
         SYNC_EBAY_ORDERS_TASK_NAME,
         REDACT_ORDER_PAYLOADS_TASK_NAME,
+        // Flipping M5 (loxep-dgf.5): the on-demand eBay purchase-history sync
+        // task, sharing the `ebay_orders`-style split — SCHEDULED polling is
+        // the `ebay_purchases` monitor-target route, not this task.
+        SYNC_EBAY_PURCHASES_TASK_NAME,
         // Phase 7 milestone 2 (loxep-lmy.2). Three tasks and no fourth poll
         // route: ownership verification is a bounded, self-terminating poll,
         // which the infrastructure design classifies as NOT scheduling, so it
@@ -78,10 +85,18 @@ describe("buildWorkerRegistry", () => {
         ENSURE_MAIL_DOMAIN_TASK,
         POLL_MAIL_OWNERSHIP_TASK,
         SYNC_MAILBOXES_TASK,
+        // Phase 7 milestone 3 (loxep-lmy.3): the on-demand DNS-token
+        // zone-scope policy sync — enqueued by `tokens.ts`'s `setZones`/
+        // `mint`, never claimed by the dispatcher. `sync-proxy-resource` is
+        // deliberately NOT registered; see `registry.ts`'s module doc.
+        SYNC_TOKEN_POLICY_TASK,
         "maintenance.heartbeat",
         // Phase 8 milestone 1 (loxep-ovj.1): the one recurring integration
         // health sweep, no monitor_targets row.
         HEALTH_SWEEP_TASK_NAME,
+        // Phase 8 milestone 2 (loxep-ovj.2): the outward Gatus health push,
+        // piggybacking on the same 5-minute cadence.
+        GATUS_PUSH_TASK_NAME,
       ].sort(),
     );
 
@@ -90,12 +105,16 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain(DISPATCH_TASK_NAME);
     expect(cronTasks).toContain(REFRESH_TOKENS_TASK_NAME);
     expect(cronTasks).toContain(HEALTH_SWEEP_TASK_NAME);
+    expect(cronTasks).toContain(GATUS_PUSH_TASK_NAME);
     // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
     // scheduled work is a `woo_orders` / `ebay_orders` monitor target the
     // market dispatcher claims, which is the whole point of registering a
     // target type rather than adding a second scheduler.
     expect(cronTasks).not.toContain(SYNC_WOO_ORDERS_TASK_NAME);
     expect(cronTasks).not.toContain(SYNC_EBAY_ORDERS_TASK_NAME);
+    // Same rule for `ebay_purchases`: it is an `ebay_purchases` monitor
+    // target the market dispatcher claims, not a cron item.
+    expect(cronTasks).not.toContain(SYNC_EBAY_PURCHASES_TASK_NAME);
     // The ADR-0021 retention sweep IS cron-driven, and is the one commerce
     // job that is: a retention window is a wall-clock fact about stored rows,
     // not something any connection polls.

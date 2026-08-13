@@ -6,24 +6,31 @@
  * `SupportedMonitorTargetType` is deliberately a local literal union, not an
  * import of `@loxep/market`'s `MonitorTargetType` — so a future addition to
  * that package's type fails typechecking HERE (the `satisfies` below) rather
- * than silently drifting. As of loxep-itn, `@loxep/market`'s
- * `MONITOR_TARGET_TYPES` carries all six members: the four Phase 2 discovery
- * types (`ebay_item`/`ebay_watchlist`/`ebay_search`/`ebay_seller`, which poll
- * through the same claim/backoff/adaptive machinery, `monitors.ts`'s doc) plus
+ * than silently drifting. This union does not track every member of
+ * `@loxep/market`'s `MONITOR_TARGET_TYPES` (which also carries the Etsy/
+ * Reverb discovery types and `infrastructure_domain_reconcile`, not surfaced
+ * on the market workspace) — it covers the four Phase 2 discovery types
+ * (`ebay_item`/`ebay_watchlist`/`ebay_search`/`ebay_seller`, which poll
+ * through the same claim/backoff/adaptive machinery, `monitors.ts`'s doc),
  * the two Phase 3 COMMERCE order-sync types (`woo_orders`/`ebay_orders`,
- * registered by `@loxep/commerce`, not owned by `@loxep/market`).
- * `monitorTargetTypeLabel` still falls back to the raw stored value for any
- * other `monitor_targets.target_type` value, so a type this union hasn't
- * caught up to yet displays instead of erroring.
+ * registered by `@loxep/commerce`), and `ebay_purchases` (Flipping milestone
+ * 5, loxep-dgf.5, registered by `@loxep/inventory` — see that package's
+ * `purchase-sync.ts`). `monitorTargetTypeLabel` still falls back to the raw
+ * stored value for any other `monitor_targets.target_type` value, so a type
+ * this union hasn't caught up to yet displays instead of erroring.
  *
- * The order-sync types are labeled/filterable like any other monitor row, but
- * are EXCLUDED from the create dialog's type dropdown
- * (`manuallyCreatableMonitorTargetTypeOptions`): they are created by
- * `@loxep/commerce`'s connection-bound sync bootstrap
- * (`ensureWooOrderSyncTarget`/`ensureEbayOrderSyncTarget`, one target per
- * connection found-or-created on first sync), never by an operator picking a
- * type here — the dialog's create schema has no fields for them and manual
- * creation would risk a duplicate/unwired row.
+ * The order-sync AND purchase-sync types are labeled/filterable like any
+ * other monitor row, but are EXCLUDED from the create dialog's type dropdown
+ * (`manuallyCreatableMonitorTargetTypeOptions`): they are created by their
+ * owning domain's connection-bound sync bootstrap
+ * (`ensureWooOrderSyncTarget`/`ensureEbayOrderSyncTarget`/
+ * `ensurePurchaseSyncTarget`, one target per connection found-or-created on
+ * first sync), never by an operator picking a type here — the dialog's create
+ * schema has no fields for them and manual creation would risk a
+ * duplicate/unwired row. As of this writing NOTHING in apps/web actually
+ * calls `ensurePurchaseSyncTarget` yet (no settings toggle shipped with
+ * loxep-dgf.5 — see that bead's notes), so no `ebay_purchases` row can exist
+ * today; the exclusion is here so the dropdown is correct the day one does.
  */
 import { Icons } from '@/components/icons';
 import type { badgeVariants } from '@/components/ui/badge';
@@ -38,7 +45,8 @@ export type SupportedMonitorTargetType =
   | 'ebay_search'
   | 'ebay_seller'
   | 'woo_orders'
-  | 'ebay_orders';
+  | 'ebay_orders'
+  | 'ebay_purchases';
 
 const MONITOR_TARGET_TYPE_LABELS = {
   ebay_item: 'eBay item',
@@ -46,7 +54,8 @@ const MONITOR_TARGET_TYPE_LABELS = {
   ebay_search: 'eBay search',
   ebay_seller: 'eBay seller',
   woo_orders: 'WooCommerce orders',
-  ebay_orders: 'eBay orders'
+  ebay_orders: 'eBay orders',
+  ebay_purchases: 'eBay purchases'
 } satisfies Record<SupportedMonitorTargetType, string>;
 
 export const MONITOR_TARGET_TYPE_VALUES = Object.keys(
@@ -64,7 +73,8 @@ export const monitorTargetTypeOptions = MONITOR_TARGET_TYPE_VALUES.map((value) =
  */
 const ORDER_SYNC_MONITOR_TARGET_TYPES: ReadonlySet<SupportedMonitorTargetType> = new Set([
   'woo_orders',
-  'ebay_orders'
+  'ebay_orders',
+  'ebay_purchases'
 ]);
 
 /**

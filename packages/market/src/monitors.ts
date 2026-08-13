@@ -119,6 +119,26 @@ import {
  * `woo_orders`/`etsy_orders` use. See
  * `apps/docs/src/content/docs/architecture/reverb-integration-design.md`.
  */
+/**
+ * PURCHASE-TARGET-TYPE(loxep-dgf.5): `ebay_purchases` is the Flipping
+ * milestone 5 buy-side type — `GetMyeBayBuying`'s `WonList` container,
+ * registered by `@loxep/inventory`, executed by `@loxep/inventory`. It is in
+ * this closed list AND `monitorTargetConfigSchemas` TOGETHER, in the same
+ * change, deliberately learning from the `ebay_orders` split-registration gap
+ * this module's doc calls out above (same discipline as `etsy_listing`/
+ * `etsy_shop`, `reverb_listing`/`reverb_shop`, and
+ * `infrastructure_domain_reconcile`).
+ *
+ * UNLIKE those four, no `packages/app` poll route exists for it yet:
+ * `@loxep/app`'s `package.json` does not declare `@loxep/inventory` as a
+ * dependency, so its executor cannot be added without a dependency edit
+ * outside this change's write fence. Registering the type here is still
+ * correct and non-harmful in the meantime — `createMonitorService` CRUD
+ * works, and NOTHING currently creates an `ebay_purchases` row (no settings
+ * UI, no app-side `ensureTarget` caller shipped with this change either), so
+ * the routing gap has no live consequence until both land together. See
+ * `@loxep/inventory`'s `purchase-sync.ts` module doc for the full account.
+ */
 export const MONITOR_TARGET_TYPES = [
   "ebay_watchlist",
   "ebay_item",
@@ -130,6 +150,7 @@ export const MONITOR_TARGET_TYPES = [
   "etsy_shop",
   "reverb_listing",
   "reverb_shop",
+  "ebay_purchases",
   "infrastructure_domain_reconcile",
 ] as const;
 export type MonitorTargetType = (typeof MONITOR_TARGET_TYPES)[number];
@@ -316,6 +337,48 @@ export const commerceSyncStateSchema = z.strictObject({
 export type CommerceSyncState = z.infer<typeof commerceSyncStateSchema>;
 
 /**
+ * Namespaced `config` key @loxep/inventory owns on an `ebay_purchases` row.
+ * Declared here only so this package can name the key it must NOT interpret
+ * — the same rule `COMMERCE_SYNC_CONFIG_KEY`/`INFRA_SYNC_CONFIG_KEY` state.
+ */
+export const PURCHASE_SYNC_CONFIG_KEY = "purchaseSync";
+
+/**
+ * The stored form of @loxep/inventory's `ebay_purchases` sync cursor.
+ *
+ * RE-DECLARED, NOT IMPORTED — the same discipline as
+ * {@link commerceSyncStateSchema}/{@link infraSyncStateSchema}, for the same
+ * reason: @loxep/market owns the scheduling mechanism and must not depend on
+ * a domain that registers against it. @loxep/inventory's own
+ * `purchaseSyncStateSchema` stays the AUTHORITY; this copy exists so the
+ * monitor service can validate a config it is asked to store.
+ */
+export const purchaseSyncStateSchema = z.strictObject({
+  /**
+   * Diagnostic watermark, NOT currently used to filter the provider request
+   * (Trading's `WonList` has no documented incremental date filter). `null`
+   * is a legitimate stored value — @loxep/inventory's sync writes it
+   * explicitly after a run that saw zero purchases — and this field is
+   * `nullable().optional()` for the exact reason
+   * `commerceSyncStateSchema.modifiedAfter` documents: a schema that REJECTS
+   * a stored `null` poisons the target's own config on its next read (the
+   * `ebay_orders` null-watermark bug, 2026-08-13 — this copy is written
+   * deliberately nullable from the start rather than repeating that fix).
+   */
+  lastPurchasedAt: z.iso.datetime().nullable().optional(),
+  /** When the last successful sync finished. */
+  lastSyncedAt: z.iso.datetime().optional(),
+  /** Purchase facts ingested by the last sync (diagnostic only). */
+  lastPurchaseCount: z.number().int().nonnegative().optional(),
+  /** Page budget override for this connection. */
+  maxPages: z.number().int().min(1).max(100).optional(),
+  /** Per-page size override for this connection. */
+  entriesPerPage: z.number().int().min(1).max(200).optional(),
+});
+
+export type PurchaseSyncState = z.infer<typeof purchaseSyncStateSchema>;
+
+/**
  * Per-target-type `config` validation. Provider adapters extend these
  * without changing the scheduling model — Phase 2's `ebay_search` and
  * `ebay_seller` add no columns and no tables.
@@ -446,6 +509,18 @@ export const monitorTargetConfigSchemas = {
    */
   reverb_shop: z.strictObject({
     maxItems: z.number().int().positive().max(1000).optional(),
+    [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
+  }),
+  /**
+   * One eBay account's incremental PURCHASE-HISTORY sync (Flipping milestone
+   * 5, loxep-dgf.5, PROVISIONAL). Registered by @loxep/inventory, executed by
+   * @loxep/inventory (pending the `packages/app` route — see the
+   * `ebay_purchases` note on {@link MONITOR_TARGET_TYPES}). Structurally the
+   * same "no identity of its own, only cursor/cap" shape `woo_orders`/
+   * `ebay_orders` use — the account is the target's connection.
+   */
+  ebay_purchases: z.strictObject({
+    [PURCHASE_SYNC_CONFIG_KEY]: purchaseSyncStateSchema.optional(),
     [ADAPTIVE_CONFIG_KEY]: adaptiveConfigSchema.optional(),
   }),
   /**

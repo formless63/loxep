@@ -120,6 +120,14 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
             <Badge variant={costAllocationStatusTone(data.costAllocationStatus)}>
               costs {costAllocationStatusLabel(data.costAllocationStatus)}
             </Badge>
+            {data.connectionId !== null && (
+              <Badge
+                variant='secondary'
+                title='Ingested from a connected account (e.g. eBay purchase history); review its costs before allocating'
+              >
+                Imported — needs review
+              </Badge>
+            )}
           </CardTitle>
           <p className='text-muted-foreground text-sm'>{data.title}</p>
         </CardHeader>
@@ -140,19 +148,27 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
             {data.receivedAt ? formatDate(data.receivedAt) : '—'}
           </DetailRow>
           <DetailRow label='Expected items'>{data.expectedItemCount ?? '—'}</DetailRow>
-          {data.externalReference && (
-            <DetailRow label='Reference'>
-              <a
-                href={data.externalReference}
-                target='_blank'
-                rel='noreferrer'
-                className='inline-flex items-center gap-1 text-primary hover:underline'
-              >
-                {data.externalReference}
-                <Icons.externalLink className='h-3 w-3' />
-              </a>
-            </DetailRow>
-          )}
+          {data.externalReference &&
+            (/^https?:\/\//.test(data.externalReference) ? (
+              <DetailRow label='Reference'>
+                <a
+                  href={data.externalReference}
+                  target='_blank'
+                  rel='noreferrer'
+                  className='inline-flex items-center gap-1 text-primary hover:underline'
+                >
+                  {data.externalReference}
+                  <Icons.externalLink className='h-3 w-3' />
+                </a>
+              </DetailRow>
+            ) : (
+              // A connector-ingested reference (e.g. an eBay order id, loxep-dgf.5)
+              // is an opaque provider identifier, not a URL — rendering it as a
+              // link would produce a broken/misleading href.
+              <DetailRow label='Reference'>
+                <span className='font-mono'>{data.externalReference}</span>
+              </DetailRow>
+            ))}
           {data.notes && <DetailRow label='Notes'>{data.notes}</DetailRow>}
         </CardContent>
       </Card>

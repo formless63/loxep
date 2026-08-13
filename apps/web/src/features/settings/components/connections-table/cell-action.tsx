@@ -32,9 +32,11 @@ import {
   type ConnectionReferenceDto
 } from '@/server/admin-functions';
 import { disableOrderSync, enableOrderSync } from '@/server/order-sync-functions';
+import { disablePurchaseSync, enablePurchaseSync } from '@/server/purchase-sync-functions';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import { EbayConnectionActions } from '@/features/settings/components/ebay-connection-actions';
 import { isOrderSyncEligible, supportsOrderSync } from './order-sync-cell';
+import { isPurchaseSyncEligible, supportsPurchaseSync } from './purchase-sync-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -98,6 +100,19 @@ export function CellAction({ data }: { data: ConnectionDto }) {
       invalidate();
     },
     onError: (error) => toastError(error, 'Failed to update order sync')
+  });
+
+  const purchaseSyncEnabled = data.purchaseSync?.enabled ?? false;
+  const purchaseSyncMutation = useMutation({
+    mutationFn: (action: 'enable' | 'disable') =>
+      action === 'enable'
+        ? enablePurchaseSync({ data: { connectionId: data.id } })
+        : disablePurchaseSync({ data: { connectionId: data.id } }),
+    onSuccess: (result) => {
+      toast.success(result.enabled ? 'Purchase sync enabled' : 'Purchase sync disabled');
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Failed to update purchase sync')
   });
 
   const deleteMutation = useMutation({
@@ -169,6 +184,26 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 ) : (
                   <>
                     <Icons.integrations className='mr-2 h-4 w-4' /> Enable order sync
+                  </>
+                )}
+              </DropdownMenuItem>
+            )}
+          {!archived &&
+            supportsPurchaseSync(data) &&
+            (isPurchaseSyncEligible(data) || purchaseSyncEnabled) && (
+              <DropdownMenuItem
+                disabled={purchaseSyncMutation.isPending}
+                onClick={() =>
+                  purchaseSyncMutation.mutate(purchaseSyncEnabled ? 'disable' : 'enable')
+                }
+              >
+                {purchaseSyncEnabled ? (
+                  <>
+                    <Icons.slash className='mr-2 h-4 w-4' /> Disable purchase sync
+                  </>
+                ) : (
+                  <>
+                    <Icons.integrations className='mr-2 h-4 w-4' /> Enable purchase sync
                   </>
                 )}
               </DropdownMenuItem>

@@ -337,6 +337,20 @@ Partial, so the hundreds of hand-entered acquisitions with neither column are un
 
 Cadence should be measured in hours, not the 60-second monitor baseline. Purchase history is not a price feed.
 
+#### Implementation status (loxep-dgf.5)
+
+Shipped, live-unverified, mapper-and-service-only:
+
+- **Mapper** — `packages/integrations/ebay/src/purchases.ts` maps `GetMyeBayBuying`'s `WonList` container into the Loxep-owned `EbayPurchaseFact`/`EbayPurchaseLineFact` shapes described above, including the checkout-grouping rule (`groupWonListEntries`, one fact per `Order.OrderID`, or a synthetic `txn:<TransactionID>` key for a standalone purchase). Its container shape is **design-derived, not live-verified** — the same sandbox defect `watchlist.ts` documents (`Ack: Success`, no container at all) applies to `WonList` too, so this ships fixture-tested only, exactly as the watchlist vertical did, pending a production account.
+- **Ingestion service** — `packages/inventory/src/purchase-sync.ts` (`createPurchaseIngestionService`, `createEbayPurchaseSync`) writes a `provider_objects` row per purchase (`object_type = 'ebay.purchase'`), then a `draft` `acquisitions` row plus `acquisition_costs` rows (goods/inbound_freight/sales_tax) exactly per the mapping table above, and stops — no `inventory_items` are ever minted by this path. `@loxep/documents`' M4 intake-candidate queue (loxep-dgf.4) had not shipped when this landed, so the reviewable unit today is the `draft` acquisition itself, not a per-line candidate; nothing here needs to change when M4 lands.
+- **Scheduling registration** — `ebay_purchases` and its `purchaseSync`-namespaced config schema (nullable watermark, per the `ebay_orders` null-watermark lesson) are registered together in `@loxep/market`'s `MONITOR_TARGET_TYPES`/`monitorTargetConfigSchemas`.
+- **UI** — the existing `/inventory/acquisitions` list and detail views already generalize over `sourceKind`/`status` (`online_marketplace`/`draft` need no new labels), so a connector-ingested lot is filterable today. What this change adds is an "Imported" badge wherever `connectionId` is set, and a fix to the detail view's `externalReference` renderer, which previously always rendered that field as a clickable URL — wrong for an opaque eBay order id.
+
+**Two pieces are explicitly NOT shipped, both flagged rather than silently skipped:**
+
+1. **No `@loxep/app` poll executor.** The design calls for an executor in `@loxep/app` routing `ebay_purchases` to `@loxep/inventory`'s sync service, mirroring `ebay_orders`' `commerce-ebay.ts` exactly. `@loxep/app`'s `package.json` does not declare `@loxep/inventory` as a dependency (unlike `@loxep/commerce`, which it already depends on), so the executor cannot be wired without a `package.json` edit and a `bun install` relink — both outside a mapper/service change's write fence. Nothing is broken by the gap: `ensurePurchaseSyncTarget`/`syncConnection` work today via direct invocation; what does not yet work is SCHEDULED polling, because no route claims an `ebay_purchases` target, and no settings UI creates one yet either. Follow-up: add the dependency line, add `packages/app/src/inventory-ebay.ts` (structural mirror of `commerce-ebay.ts`), add the routing table entry, add a per-connection enable/disable surface (mirroring `apps/web/src/server/order-sync-functions.ts`'s `enableOrderSync`/`disableOrderSync`).
+2. **No `acquisitions_connection_external_ref_uq` migration.** The idempotency check in `ingestEbayPurchase` is an application-level look-then-insert (`select … where connection_id = … and external_reference = …` before the insert), not the partial unique index this section specifies. That is safe against sequential re-polls but not against two genuinely concurrent syncs of the same connection. Follow-up: the one-index migration described above.
+
 ### 2b. Receipt and invoice parsing
 
 #### The parser interface

@@ -42,8 +42,18 @@ export const columns: ColumnDef<DataTableFeatures, AcquisitionListItemDto>[] = [
     accessorKey: 'sourceKind',
     enableSorting: false,
     header: 'Source',
-    cell: ({ cell }) => (
-      <Badge variant='outline'>{acquisitionSourceKindLabel(cell.getValue<string>())}</Badge>
+    cell: ({ row, cell }) => (
+      <div className='flex items-center gap-1.5'>
+        <Badge variant='outline'>{acquisitionSourceKindLabel(cell.getValue<string>())}</Badge>
+        {row.original.connectionId !== null && (
+          <Badge
+            variant='secondary'
+            title='Ingested from a connected account; review before it becomes stock'
+          >
+            Imported
+          </Badge>
+        )}
+      </div>
     ),
     enableColumnFilter: true,
     meta: {

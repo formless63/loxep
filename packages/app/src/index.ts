@@ -230,6 +230,37 @@ export {
 } from "./health-sweep.ts";
 export type { HealthSweepTask, HealthSweepTasks } from "./health-sweep.ts";
 
+export {
+  SYNC_EBAY_PURCHASES_TASK_NAME,
+  createEbayPurchasePageIterator,
+  createEbayPurchasePollExecutor,
+  createInventoryPurchaseSyncTasks,
+  ebayPurchaseSyncJobKey,
+  enqueueEbayPurchaseSync,
+} from "./inventory-ebay.ts";
+export type {
+  CreateEbayPurchasePollExecutorOptions,
+  EbayPurchaseSyncTasks,
+  SyncEbayPurchasesTask,
+} from "./inventory-ebay.ts";
+
+export {
+  GATUS_PUSH_CRON_MATCH,
+  GATUS_PUSH_SECRET_KEY,
+  GATUS_PUSH_TASK_NAME,
+  createGatusPushTasks,
+  pushGatusHealth,
+  worstHealthStatus,
+} from "./gatus-push.ts";
+export type {
+  GatusPushFetch,
+  GatusPushKind,
+  GatusPushOutcome,
+  GatusPushTask,
+  GatusPushTasks,
+  PushGatusHealthOptions,
+} from "./gatus-push.ts";
+
 export { buildCronItems, buildWorkerRegistry } from "./registry.ts";
 export type {
   BuildWorkerRegistryOptions,
