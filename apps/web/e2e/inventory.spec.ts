@@ -96,9 +96,11 @@ test('creates an acquisition, adds an item to it, and the item lands in the stoc
   // regardless of status.
   await stockRow.getByRole('link').first().click();
   await page.waitForURL('**/inventory/stock/*');
-  await expect(page.getByText('Intake', { exact: true })).toBeVisible();
+  // The enriched detail page shows the status in more than one place
+  // (header badge, status card), so assert presence, not uniqueness.
+  await expect(page.getByText('Intake', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: 'Complete review' }).click();
-  await expect(page.getByText('Available', { exact: true })).toBeVisible();
+  await expect(page.getByText('Available', { exact: true }).first()).toBeVisible();
   await expect(page.getByRole('button', { name: 'Complete review' })).toHaveCount(0);
 
   // --- M3 enrichment (loxep-dgf.3): set package dimensions/weight and a
