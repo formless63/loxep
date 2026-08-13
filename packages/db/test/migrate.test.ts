@@ -18,12 +18,9 @@ import {
  * 0006 expenses and counterparties, 0007 order-payload retention,
  * 0008 user display name, 0009 accounting books, chart, and journal,
  * 0010 posting rules and journal source links,
- * 0011 projects, time entries, billing rates, material uses, and sites,
- * 0012 infrastructure control plane (Phase 7 milestone 1): hosting targets,
- *      managed domains, DNS records, reconcile runs and steps, drift
- *      findings, and the provider-operation idempotency ledger.
+ * 0011 projects, time entries, billing rates, material uses, and sites.
  */
-const MIGRATION_FILE_COUNT = 13;
+const MIGRATION_FILE_COUNT = 12;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
