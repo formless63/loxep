@@ -16,6 +16,14 @@
  * This module is server-only. Server-function handlers reach it via dynamic
  * import so nothing here leaks into the client bundle.
  */
+import {
+  createExpenseReports,
+  createExpensesService,
+  createReceiptsService,
+  type ExpenseReports,
+  type ExpensesService,
+  type ReceiptsService
+} from '@loxep/accounting';
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createDb, type DbHandle } from '@loxep/db';
 import {
@@ -48,8 +56,13 @@ interface AdminRegistry {
   settings: SettingsService;
   /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
   secrets: SecretsService;
+  /** `/finance` (loxep-dgf.1): expenses lifecycle and the expense read models. Depends only on `db`, so it is built eagerly like the other domain services above. */
+  expenses: ExpensesService;
+  expenseReports: ExpenseReports;
   storageBackendsPromise?: Promise<StorageBackendsService>;
   mediaServicePromise?: Promise<MediaService>;
+  /** Receipt attach/list/detach (loxep-dgf.1) — depends on `getMediaService()`, so it is built lazily like it. */
+  receiptsServicePromise?: Promise<ReceiptsService>;
   notificationsModulePromise?: Promise<typeof import('@loxep/notifications')>;
   notificationsServicePromise?: Promise<NotificationService>;
   marketModulePromise?: Promise<typeof import('@loxep/market')>;
@@ -83,7 +96,9 @@ function buildRegistry(): AdminRegistry {
     entities: createEconomicEntitiesService({ db: handle.db }),
     connections: createConnectionsService({ db: handle.db, keyring: config.keyring }),
     settings: createSettingsService({ db: handle.db }),
-    secrets: createSecretsService({ db: handle.db, keyring: config.keyring })
+    secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
+    expenses: createExpensesService({ db: handle.db }),
+    expenseReports: createExpenseReports({ db: handle.db })
   };
 }
 
@@ -126,6 +141,30 @@ export function getMediaService(): Promise<MediaService> {
     return createMediaService({ db: registry.handle.db, backends });
   })();
   return registry.mediaServicePromise;
+}
+
+/** Expense lifecycle service (`/finance/expenses`), loxep-dgf.1. */
+export function getExpensesService(): ExpensesService {
+  return getAdminServices().expenses;
+}
+
+/** The four expense read models (`listExpenses`, `unallocatedExpenses`, …), loxep-dgf.1. */
+export function getExpenseReports(): ExpenseReports {
+  return getAdminServices().expenseReports;
+}
+
+/**
+ * Receipt attach/list/detach over `media_links` (loxep-dgf.1), cached on the
+ * registry. Depends on {@link getMediaService}, so it is built lazily the
+ * same way.
+ */
+export function getReceiptsService(): Promise<ReceiptsService> {
+  const registry = getAdminServices();
+  registry.receiptsServicePromise ??= (async () => {
+    const media = await getMediaService();
+    return createReceiptsService({ db: registry.handle.db, media });
+  })();
+  return registry.receiptsServicePromise;
 }
 
 /**

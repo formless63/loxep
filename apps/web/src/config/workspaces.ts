@@ -1,10 +1,11 @@
 import type { NavGroup } from '@/types';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
+import { financeNavGroups } from '@/config/navigation/finance';
 import { marketNavGroups } from '@/config/navigation/market';
 import { settingsNavGroups } from '@/config/navigation/settings';
 import { starterNavGroups } from '@/config/navigation/starter';
 
-export type WorkspaceId = 'dashboard' | 'market' | 'settings' | 'starter';
+export type WorkspaceId = 'dashboard' | 'market' | 'finance' | 'settings' | 'starter';
 
 export type Workspace = {
   id: WorkspaceId;
@@ -31,6 +32,14 @@ export const workspaces: Workspace[] = [
     root: '/market',
     defaultPath: '/market/overview',
     navGroups: marketNavGroups
+  },
+  {
+    id: 'finance',
+    label: 'Finance',
+    description: 'Expense capture, receipts, and the expense reports',
+    root: '/finance',
+    defaultPath: '/finance/overview',
+    navGroups: financeNavGroups
   },
   {
     id: 'settings',

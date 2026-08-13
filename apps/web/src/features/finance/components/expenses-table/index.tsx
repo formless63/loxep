@@ -1,0 +1,212 @@
+import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from '@/components/ui/empty';
+import { Button } from '@/components/ui/button';
+import { DataTable } from '@/components/ui/table/data-table';
+import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
+import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
+import { Icons } from '@/components/icons';
+import { useDataTable } from '@/hooks/use-data-table';
+import { parseSortingState } from '@/lib/parsers';
+import { expensesQuery, type ExpenseFilterParams } from '@/features/finance/api/queries';
+import { entitiesQuery } from '@/features/settings/api/queries';
+import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import type { EntityDto } from '@/server/admin-functions';
+import type { ExpenseListItemDto } from '@/server/expense-functions';
+import type { ExpenseStatus } from '@/features/finance/constants';
+import { UNATTRIBUTED_ENTITY_VALUE } from '@/features/finance/constants';
+import { sortRows } from '@/features/market/lib/sort-rows';
+import { createColumns } from './columns';
+
+const COLUMN_IDS = [
+  'expenseDate',
+  'referenceCode',
+  'payeeName',
+  'category',
+  'economicEntityId',
+  'amount',
+  'paymentMethod',
+  'status',
+  'receiptCount'
+];
+
+const DEFAULT_PAGE_SIZE = 10;
+
+/**
+ * `fetchExpenses` (`@loxep/accounting/reports.ts` `listExpenses`) has no
+ * offset/cursor, only a `limit` — this table mirrors `/market/monitors`'
+ * shape: the server does the filtering the service actually supports
+ * (entity/date/category/status), the table sorts/pages the (bounded) result
+ * client-side.
+ */
+export default function ExpensesTable() {
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const navigate = useNavigate() as (opts: {
+    search: (prev: Record<string, unknown>) => Record<string, unknown>;
+    replace?: boolean;
+  }) => Promise<void>;
+
+  const category = search.category as string | undefined;
+  const economicEntityIdParam = search.economicEntityId as string | undefined;
+  const statusParam = search.status as string | undefined;
+  const from = search.from as string | undefined;
+  const to = search.to as string | undefined;
+
+  const filter: ExpenseFilterParams = {
+    ...(category ? { category } : {}),
+    ...(economicEntityIdParam
+      ? {
+          economicEntityId:
+            economicEntityIdParam === UNATTRIBUTED_ENTITY_VALUE ? null : economicEntityIdParam
+        }
+      : {}),
+    ...(statusParam ? { statuses: statusParam.split(',') as ExpenseStatus[] } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {})
+  };
+
+  const { data: entities } = useQuery(entitiesQuery);
+  const { data, isPending, isError, error, refetch } = useQuery(expensesQuery(filter));
+
+  if (isPending || entities === undefined) {
+    return <DataTableSkeleton columnCount={9} filterCount={3} />;
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorAlert error={error} title='Could not load expenses' onRetry={() => refetch()} />
+    );
+  }
+
+  return (
+    <div className='flex flex-col gap-4'>
+      <div className='flex flex-wrap items-end gap-4'>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='expenses-from'>From</Label>
+          <Input
+            id='expenses-from'
+            type='date'
+            value={from ?? ''}
+            onChange={(event) => {
+              const value = event.target.value;
+              void navigate({
+                search: (prev) => ({ ...prev, page: 1, from: value === '' ? undefined : value }),
+                replace: true
+              });
+            }}
+          />
+        </div>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='expenses-to'>To</Label>
+          <Input
+            id='expenses-to'
+            type='date'
+            value={to ?? ''}
+            onChange={(event) => {
+              const value = event.target.value;
+              void navigate({
+                search: (prev) => ({ ...prev, page: 1, to: value === '' ? undefined : value }),
+                replace: true
+              });
+            }}
+          />
+        </div>
+        {(from || to) && (
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={() =>
+              void navigate({
+                search: (prev) => ({ ...prev, page: 1, from: undefined, to: undefined }),
+                replace: true
+              })
+            }
+          >
+            Clear dates
+          </Button>
+        )}
+      </div>
+
+      {data.length === 0 ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant='icon'>
+              <Icons.fees />
+            </EmptyMedia>
+            <EmptyTitle>No expenses</EmptyTitle>
+            <EmptyDescription>
+              Every dollar that leaves gets captured here — card, cash, marketplace balance, or
+              anything else. Record one with the quick-entry action, reachable from the command
+              palette too.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button
+              size='sm'
+              onClick={() =>
+                void navigate({ search: (prev) => ({ ...prev, quickEntry: true }), replace: true })
+              }
+            >
+              <Icons.add />
+              New expense
+            </Button>
+          </EmptyContent>
+        </Empty>
+      ) : (
+        <ExpensesDataTable expenses={data} entities={entities} />
+      )}
+    </div>
+  );
+}
+
+function ExpensesDataTable({
+  expenses,
+  entities
+}: {
+  expenses: ExpenseListItemDto[];
+  entities: EntityDto[];
+}) {
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const page = (search.page as number) ?? 1;
+  const perPage = (search.perPage as number) ?? DEFAULT_PAGE_SIZE;
+  const sortStr = search.sort as string | undefined;
+
+  const columns = React.useMemo(() => createColumns(entities), [entities]);
+
+  const sorting = parseSortingState<ExpenseListItemDto>(sortStr, COLUMN_IDS);
+  const sorted = sortRows(expenses, sorting, {
+    expenseDate: (row) => row.expenseDate,
+    referenceCode: (row) => row.referenceCode,
+    amount: (row) => Number(row.amount)
+  });
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));
+  const pageRows = sorted.slice((page - 1) * perPage, page * perPage);
+
+  const { table } = useDataTable({
+    data: pageRows,
+    columns,
+    pageCount,
+    shallow: true,
+    debounceMs: 500,
+    initialState: {
+      pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE }
+    }
+  });
+
+  return (
+    <DataTable table={table}>
+      <DataTableToolbar table={table} />
+    </DataTable>
+  );
+}

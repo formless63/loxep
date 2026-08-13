@@ -15,7 +15,8 @@ The repository already has the first workspace roots:
 /market/*       market workspace — monitors, watched items, market events
 /inventory/*    inventory workspace — stock, acquisitions, intake, cost basis (arriving through Phase 9)
 /commerce/*     commerce workspace — catalog, channel listings, orders (arriving through Phase 9)
-/finance/*      finance workspace — expenses, receipts, imports (arriving through Phase 9)
+/finance/*      finance workspace — expense capture, receipts, and expense reports live
+               (M1); CSV import and the acquisition seam arrive in a later milestone
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
 ```
