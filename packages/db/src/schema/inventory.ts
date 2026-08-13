@@ -596,6 +596,22 @@ export const acquisitions = pgTable(
     index("acquisitions_open_cost_allocation_idx")
       .on(table.costAllocationStatus)
       .where(sql`${table.costAllocationStatus} <> 'final'`),
+    /**
+     * Purchase-ingestion idempotency (flipping-lifecycle-design.md section
+     * 2a, loxep-k5p). Partial so the many hand-entered acquisitions with
+     * neither column are unaffected; unique because unlike a cross-connection
+     * order duplicate, this key is not adapter-guessed — it is the connection
+     * Loxep chose and the id the provider assigned, always available
+     * together for a connector-sourced purchase. Lets
+     * `@loxep/inventory`'s `ingestEbayPurchase` rely on `ON CONFLICT` instead
+     * of a look-then-insert race against concurrent syncs of the same
+     * connection.
+     */
+    uniqueIndex("acquisitions_connection_external_ref_uq")
+      .on(table.connectionId, table.externalReference)
+      .where(
+        sql`${table.connectionId} is not null and ${table.externalReference} is not null`,
+      ),
   ],
 );
 

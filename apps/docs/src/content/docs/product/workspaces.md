@@ -18,7 +18,12 @@ The repository already has the first workspace roots:
                creation, cost allocation) are validated but blocked pending one
                apps/web dependency add; enrichment and intake review's other two
                producers arrive in later milestones
-/commerce/*     commerce workspace — catalog, channel listings, orders (arriving through Phase 9)
+/commerce/*     commerce workspace — catalog and manual/offline channel listings live
+               (M6, loxep-dgf.6): overview, listings list + detail, the read-only
+               catalog, an item-detail listings panel (the /inventory ↔ /commerce
+               weave), and manual sale recording (design open question 7,
+               PROVISIONAL — see the flipping design doc). Connector-synced
+               listings and orders have no surface yet — a later milestone
 /finance/*      finance workspace — expense capture, receipts, and expense reports live
                (M1); books/chart-of-accounts/fiscal-period administration
                (`/finance/books`) lives too — create a book, link entities, generate

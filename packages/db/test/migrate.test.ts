@@ -40,8 +40,21 @@ import {
  *      is never a fact: candidates carry a disposition and an unenforced
  *      target_kind/target_id STAMP, never a foreign key into expenses,
  *      acquisitions, or inventory_items. No existing table gains a column.
+ * 0018 purchase idempotency (Flipping lifecycle design 2a, loxep-k5p): one
+ *      partial unique index, acquisitions_connection_external_ref_uq on
+ *      acquisitions (connection_id, external_reference) where both are not
+ *      null. Closes the eBay-purchase-ingestion concurrent-sync race
+ *      loxep-dgf.5 flagged; no column added, no other table touched.
+ * 0019 manual and draft listings (Flipping lifecycle M6, loxep-dgf.6):
+ *      channel_listings gains listing_code (backfilled, then unique) and
+ *      relaxes connection_id/external_listing_id to nullable behind a
+ *      partial unique index (NULLS NOT DISTINCT WHERE external_listing_id
+ *      is not null) and channel_listings_manual_connection_check.
+ *      orders.connection_id is relaxed the same way (design open question 7,
+ *      PROVISIONAL), with orders_manual_connection_check and the existing
+ *      unique widened to NULLS NOT DISTINCT (no partial WHERE needed there).
  */
-const MIGRATION_FILE_COUNT = 18;
+const MIGRATION_FILE_COUNT = 20;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

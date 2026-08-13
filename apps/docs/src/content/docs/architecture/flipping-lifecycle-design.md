@@ -694,7 +694,7 @@ A Facebook Marketplace listing has no Loxep connection and no external listing i
 
 **Option 2 — a separate `manual_listings` table.** Rejected. Two tables meaning one thing: every cross-channel report becomes a union, `order_lines.channel_listing_id` can point at only one of them, and the ask was explicitly for offline listings to be **first-class**, which a parallel table is the definition of not being.
 
-**Option 3 — relax `channel_listings` so a listing may have no connection.** Recommended.
+**Option 3 — relax `channel_listings` so a listing may have no connection.** Recommended, and IMPLEMENTED (loxep-dgf.6, migration 0019).
 
 #### The recommended shape
 
@@ -740,11 +740,11 @@ price, currency, quantity_available, listed_at, ended_at         (unchanged)
 
 `channel` carries the surface. It stays `text` with a TypeScript union and no `CHECK`, matching how `provider` and `channel` already behave, because the list of places a person can sell a thing locally is open and will grow.
 
-#### The gap this leaves, stated rather than papered over
+#### The gap this leaves, stated rather than papered over — CLOSED SINCE, PROVISIONALLY
 
-**A manual listing cannot yet record its own sale**, because `orders.connection_id` is `NOT NULL` and Phase 3 explicitly declined to create the manual-order path. Marking a manually-listed item sold today can write a `depletion_sale` movement with a null `order_line_id` — the column is nullable and the movement writer permits it — but that produces cost with no proceeds, and every profitability read model would report the item as pure loss.
+**A manual listing could not record its own sale** as of this document's original text, because `orders.connection_id` was `NOT NULL` and Phase 3 explicitly declined to create the manual-order path. Marking a manually-listed item sold would have written a `depletion_sale` movement with a null `order_line_id` — the column is nullable and the movement writer permits it — but that produces cost with no proceeds, and every profitability read model would report the item as pure loss.
 
-This is [OQ7](#open-questions) and it is **OWNER-REVIEW-CRITICAL**, because `orders` is the most load-bearing table in the installation and the choice between a nullable `connection_id` and a synthetic connection is not reversible after rows exist. The loop is genuinely incomplete without it, and it is deliberately not decided here.
+**Resolved since (loxep-dgf.6, migration 0019), under an explicit owner directive to implement [OQ7](#open-questions)'s own recommendation and mark it PROVISIONAL for review**, because `orders` is the most load-bearing table in the installation and the choice between a nullable `connection_id` and a synthetic connection is not reversible after rows exist — the directive resolves that unrecoverability risk by taking the recommended, symmetric shape rather than by leaving the question open. `orders.connection_id` is now nullable, tied by `orders_manual_connection_check` to `provider = 'manual'`, exactly mirroring `channel_listings_manual_connection_check` above. `@loxep/commerce/src/manual-sales.ts`'s `createManualSalesService` writes a real `orders` + `order_lines` row for a manual sale (`source_account_key = 'manual:default'` — a self-hosted installation has exactly one manual "account", so a fixed constant IS the design's `manual:<installation>` shape, not a placeholder), and `/commerce/listings/:id`'s "Record sale" action calls it. The loop now closes for the manual channel: `depletion_sale` posts against a real `order_line_id`, so realized contribution is no longer misreported as pure loss.
 
 ### 4b. The bridge to Loxep-managed listing authoring
 
@@ -1020,15 +1020,23 @@ M5  eBay purchases
     7. create unique index acquisitions_connection_external_ref_uq
          (partial; see 2a). NO column added to any Phase 4 table.
 
-M6  listings
+M6  listings — SHIPPED as migration 0019_manual_and_draft_listings.sql
     8. alter channel_listings: add listing_code text (nullable first)
     9. backfill listing_code for existing rows
    10. alter channel_listings: listing_code set not null; add unique
    11. alter channel_listings: connection_id drop not null;
-                               external_listing_id drop not null
-   12. drop the old unique constraint; create the partial unique index
-       (nulls not distinct, where external_listing_id is not null)
-   13. add channel_listings_manual_connection_check
+                               external_listing_id drop not null;
+                               orders: connection_id drop not null
+                               (OQ7, added to this migration — not in the
+                               original sketch, which predates OQ7 being
+                               resolved)
+   12. drop the old channel_listings/orders unique constraints; create
+       channel_listings' partial unique index (nulls not distinct, where
+       external_listing_id is not null); recreate orders' unique with
+       nulls not distinct (no partial WHERE needed — external_order_id
+       stays not null for every row)
+   13. add channel_listings_manual_connection_check and
+       orders_manual_connection_check
 ```
 
 Steps 8–10 are the three-step nullable-backfill-notnull dance and must stay three steps; there is no safe single-statement form. Steps 11–13 must be one migration, because between dropping the `NOT NULL` and adding the `CHECK` there is a window in which a connection-less non-manual row is insertable.
@@ -1044,8 +1052,15 @@ inventory_items    6 columns, all nullable or defaulted. Argued in section 3.
 channel_listings   1 column (listing_code) + 2 NOT NULL relaxations. Argued in 4a.
 expenses           NONE. The expense work needs no schema at all.
 acquisitions       NONE. One partial unique index, no column.
-orders             NONE, emphatically. The manual-order question is OQ7 and is not
-                   answered here.
+orders             ONE column, an exception to this design's original text: OQ7 was
+                   resolved PROVISIONALLY (loxep-dgf.6, migration 0019) and
+                   `connection_id` is now nullable, tied by `orders_manual_connection_check`
+                   to `provider = 'manual'`. When this design was written the
+                   line here read "NONE, emphatically. The manual-order
+                   question is OQ7 and is not answered here" — preserved
+                   below as the original text, since OQ7's own entry in
+                   "Open questions" records the resolution and the reasoning
+                   for it.
 marketplace_items / market_events
                    NONE, emphatically. Unchanged from Phase 4: our decisions must not
                    contaminate entity-neutral public-fact tables. The link points
@@ -1077,9 +1092,13 @@ Each is a genuinely unresolved decision with a recommendation, not a placeholder
 
 5. **Should `channel_listings` reference an inventory item directly?** **OWNER-REVIEW-CRITICAL.** This design says no and mints a catalog item at listing time instead ([4b](#4b-the-bridge-to-loxep-managed-listing-authoring)). *Recommendation: mint the catalog item; zero migration; the chain closes with existing tables.* But it decides what a channel listing IS — a publication of a SKU, or a publication of a unit — and for one-of-a-kind resale the second reading is arguably truer. Getting this wrong is not fatal (adding `inventory_item_id` later is additive) but it will have produced a catalog item per listed unit by then, and those rows do not un-create themselves.
 
+   **Resolved per the recommendation, PROVISIONALLY (loxep-dgf.6):** the recommendation is what shipped, unchanged, zero migration to `catalog_items` or `channel_listings.catalog_item_id`. `findOrCreateCatalogItemBySku` (`@loxep/commerce/src/catalog.ts`) mints `kind = 'simple'`, `sku = inventory_items.item_code` the first time an item is listed, and every read that needs to go from a listing back to its physical unit (the manual sale recorder, the item-detail listings panel) does so by joining `catalog_items.sku = inventory_items.item_code` — a real join, not a stored FK, which is exactly the additive exit this open question already named. It is marked PROVISIONAL rather than fully closed because the SKU-based join is a convention enforced by the minting code path, not a database constraint; the named exit (`channel_listings.inventory_item_id uuid null`) remains available if the convention proves too weak in practice.
+
 6. **Typed specifics: is `value_numeric` worth a column?** *Recommendation: yes, as a shadow of `value`, populated only on a clean parse, with nothing derived from it.* The alternative is a cast in every range query, which is both slower and unindexable. The risk is that it drifts from `value` if anything ever writes one without the other; the mitigation is that exactly one service writes specifics, which is the same single-writer argument that makes `quantity_on_hand` safe.
 
 7. **How does a manual/offline listing record its sale?** **OWNER-REVIEW-CRITICAL.** `orders.connection_id` is `NOT NULL` and Phase 3 declined to create the manual path, naming both options: a synthetic connection, or a nullable column with `unique nulls not distinct`. *Recommendation: the nullable column, mirroring exactly what this design does to `channel_listings` — `connection_id` nullable, `provider = 'manual'`, `source_account_key = 'manual:<installation>'`, the existing unique widened to `NULLS NOT DISTINCT`, and a `CHECK` tying the two states together.* The symmetry is the argument: the same wall, the same shape, the same answer, applied twice. But `orders` carries every financial figure in the installation and this design deliberately does not touch it, so the decision is the owner's. **Until it is made, the manual-listing loop ends at "listed" and cannot report a realized outcome**, and any milestone that ships manual listings must say so on the surface rather than showing a zero.
+
+   **Resolved per the recommendation, PROVISIONALLY (loxep-dgf.6, migration 0019), under an explicit owner directive** to implement every open question a shipping milestone depends on per that question's own recommendation and mark the result PROVISIONAL for review — exactly the recommendation above, unchanged: `orders.connection_id` nullable, `orders_manual_connection_check` tying it to `provider = 'manual'`, the existing `orders_connection_provider_external_order_uq` widened with `NULLS NOT DISTINCT` (no partial `WHERE` needed there — unlike `channel_listings`, `orders.external_order_id` stays `NOT NULL` for every row, manual included, so the plain three-column tuple is always fully populated). `source_account_key = 'manual:default'` is a fixed constant, not a per-installation-derived value: a self-hosted Loxep has exactly one manual "account" (the implementation contract's "no SaaS multi-tenancy" rule), so there is nothing to disambiguate. `@loxep/commerce/src/manual-sales.ts`'s `createManualSalesService.recordManualSale` writes the order and its one line, and the `apps/web` `/commerce/listings/:id` "Record sale" action composes it with the real `@loxep/inventory` `reserve` + `depleteOnFulfillment` calls (the cross-package write, orchestrated at the web layer exactly like `createAcquisitionFromMarketItem` already does for the `/market` → `/inventory` handoff). The manual-listing loop no longer ends at "listed" — it can report a realized outcome. Marked PROVISIONAL, not fully closed, because it was implemented under directive rather than owner sign-off on the live schema change to `orders`; an owner review may still choose the synthetic-connection alternative, though every row written since would need to be reconsidered under that reading.
 
 8. **Should a CSV import row's fingerprint ever become a constraint?** *Recommendation: no — warn, never block,* consistent with `orders`' detect-don't-constrain answer. Two identical coffees on one day are a real thing that happens. Revisit only if operators report duplicate expenses in practice, which is a concrete trigger rather than a vague later.
 
@@ -1163,10 +1182,20 @@ M5  eBay purchase ingestion           migration (one index). Depends on M4 (cand
                                       target type, the sync service, the connection
                                       toggle.
 
-M6  Listings                          migration. Depends on M3 (the mapping needs the
-                                      enrichment fields). /commerce workspace, manual
-                                      channel listings, the inventory-to-draft mapping,
-                                      draft authoring. Gated on OQ5 and OQ7.
+M6  Listings                          migration 0019. Depends on M3 (the mapping needs
+                                      the enrichment fields). IMPLEMENTED for manual/
+                                      offline channel listings: /commerce workspace
+                                      (overview, listings, catalog), the
+                                      inventory-to-draft mapping (`@loxep/commerce/src/listing-draft.ts`'s
+                                      pure `mapItemToDraftListing`), manual listing
+                                      create/edit, an item-detail listings panel (the
+                                      weave), and manual sale recording. OQ5 and OQ7 are
+                                      both resolved PROVISIONALLY — see 4a/4b and
+                                      "Open questions" below, which now record the
+                                      decision actually shipped rather than only a
+                                      recommendation. Per-provider publish (the eBay/Woo/
+                                      Medusa write side named in 4b) remains OUT OF
+                                      SCOPE, unchanged.
 ```
 
 The `/market` handoff ("I bought this") rides on M2, because that is the first milestone in which there is an acquisition intake surface to hand off to.

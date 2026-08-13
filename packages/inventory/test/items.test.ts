@@ -342,6 +342,43 @@ describe("inventory items", () => {
     );
   });
 
+  /* -------------------------------------------- markListed (loxep-dgf.6) */
+
+  it("markListed sets listed_at and advances available -> listed", async () => {
+    const item = await items().create({ label: "a lamp", currency: "USD" });
+    await items().completeIntakeReview(item.id);
+
+    const listed = await items().markListed(item.id);
+    expect(listed.status).toBe("listed");
+    expect(listed.listedAt).not.toBeNull();
+
+    // A second listing (a re-list, a second channel) leaves the original
+    // listed_at alone and the status stays "listed".
+    const relisted = await items().markListed(item.id);
+    expect(relisted.status).toBe("listed");
+    expect(relisted.listedAt?.getTime()).toBe(listed.listedAt?.getTime());
+  });
+
+  it("markListed refuses an item still in intake review — do not stomp intake", async () => {
+    const item = await items().create({ label: "unreviewed", currency: "USD" });
+    expect(item.status).toBe("intake");
+    await expect(items().markListed(item.id)).rejects.toThrow(InventoryValidationError);
+  });
+
+  it("markListed refuses a written-off, archived, or depleted item", async () => {
+    const item = await items().create({ label: "gone", currency: "USD" });
+    await items().completeIntakeReview(item.id);
+    await movements().record({
+      inventoryItemId: item.id,
+      movementKind: "disposal",
+      quantity: "-1",
+      deduplicationKey: `test:disposal:${item.id}`,
+    });
+    const depleted = await items().get(item.id);
+    expect(depleted.status).toBe("depleted");
+    await expect(items().markListed(item.id)).rejects.toThrow(InventoryConflictError);
+  });
+
   it("leaves the ledger and the cache in agreement after every operation above", async () => {
     const result = await movements().reconcile();
     expect(result.drift).toHaveLength(0);

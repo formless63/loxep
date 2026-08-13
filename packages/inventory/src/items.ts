@@ -377,6 +377,23 @@ export interface ItemsService {
    * since been listed, sold, or written off.
    */
   completeIntakeReview: (inventoryItemId: string) => Promise<InventoryItemRow>;
+  /**
+   * Called when `@loxep/commerce` creates a `channel_listings` row for this
+   * item (design 4b, loxep-dgf.6, "the weave" → "Inventory to listings").
+   * `listed_at` exists and NOTHING wrote it before this — it is what the
+   * aging read model needs. Set once: a second listing (a re-list, a second
+   * channel) leaves the original `listed_at` alone.
+   *
+   * Refuses on `intake` — do not stomp intake, mirroring
+   * {@link completeIntakeReview}'s own reasoning: leaving review is a human
+   * decision, and creating a listing must not silently perform it as a side
+   * effect. Also refuses on the three terminal/no-stock states
+   * (`written_off`, `archived`, `depleted`) — there is nothing left to sell.
+   * Otherwise advances `available` to `listed`; `listed`/`reserved`/
+   * `partially_depleted` are left exactly as {@link deriveItemStatus} would
+   * leave them — a channel state that outlives a balance change.
+   */
+  markListed: (inventoryItemId: string) => Promise<InventoryItemRow>;
 }
 
 export function createItemsService(options: { db: LoxepDb }): ItemsService {
@@ -490,7 +507,7 @@ export function createItemsService(options: { db: LoxepDb }): ItemsService {
             }
             return row;
           },
-          { label: "item code" },
+          { label: "item code", onConstraint: "inventory_items_item_code_uq" },
         );
 
         if (value.receive) {
@@ -729,7 +746,7 @@ export function createItemsService(options: { db: LoxepDb }): ItemsService {
               }
               return row;
             },
-            { label: "item code" },
+            { label: "item code", onConstraint: "inventory_items_item_code_uq" },
           );
 
           await recordMovement(tx, {
@@ -1059,6 +1076,37 @@ export function createItemsService(options: { db: LoxepDb }): ItemsService {
         );
         return loadItem(tx, inventoryItemId);
       }),
+
+    markListed: async (inventoryItemId) =>
+      db.transaction(async (tx) => {
+        const item = await loadItem(tx, inventoryItemId);
+        if (item.status === "intake") {
+          throw new InventoryValidationError(
+            `cannot list "${item.itemCode}": it is still in intake review — ` +
+              "complete review before creating a listing; a listing must " +
+              "never silently exit intake as a side effect",
+          );
+        }
+        if (
+          item.status === "written_off" ||
+          item.status === "archived" ||
+          item.status === "depleted"
+        ) {
+          throw new InventoryConflictError(
+            `cannot list "${item.itemCode}": its status is "${item.status}", ` +
+              "which has nothing left to sell",
+          );
+        }
+        const nextStatus = item.status === "available" ? "listed" : item.status;
+        await tx.execute(
+          `update inventory_items
+              set status = ${textLiteral(nextStatus)},
+                  listed_at = coalesce(listed_at, now()),
+                  updated_at = now()
+            where id = ${uuidLiteral(inventoryItemId)}`,
+        );
+        return loadItem(tx, inventoryItemId);
+      }),
   };
 }
 
@@ -1196,7 +1244,7 @@ async function splitItem(
       }
       return row;
     },
-    { label: "item code" },
+    { label: "item code", onConstraint: "inventory_items_item_code_uq" },
   );
 
   // The source keeps only the remainder of its basis; the moved share went

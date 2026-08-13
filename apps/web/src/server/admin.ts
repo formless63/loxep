@@ -72,6 +72,7 @@ import {
 } from '@loxep/infrastructure';
 import type {
   AcquisitionsService,
+  AllocationsService,
   InventoryMediaService,
   ItemsService,
   LocationsService,
@@ -127,6 +128,8 @@ interface AdminRegistry {
   acquisitionsServicePromise?: Promise<AcquisitionsService>;
   locationsServicePromise?: Promise<LocationsService>;
   movementsServicePromise?: Promise<MovementsService>;
+  /** Reservations + depletion-on-fulfillment (`/commerce` manual sale recording, loxep-dgf.6). */
+  allocationsServicePromise?: Promise<AllocationsService>;
   opportunityLinksServicePromise?: Promise<OpportunityLinksService>;
   /** Typed key/value item specifics (`/inventory/stock/$id`, loxep-dgf.3). */
   specificsServicePromise?: Promise<SpecificsService>;
@@ -500,6 +503,16 @@ export function getMovementsService(): Promise<MovementsService> {
     return inventory.createMovementsService({ db: registry.handle.db });
   })();
   return registry.movementsServicePromise;
+}
+
+/** Allocations service — reservations + depletion-on-fulfillment (`/commerce` manual sale recording, loxep-dgf.6). */
+export function getAllocationsService(): Promise<AllocationsService> {
+  const registry = getAdminServices();
+  registry.allocationsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createAllocationsService({ db: registry.handle.db });
+  })();
+  return registry.allocationsServicePromise;
 }
 
 /** Opportunity-links service — the `/market` → `/inventory` "I bought this" handoff's write side. */

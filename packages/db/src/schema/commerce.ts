@@ -40,6 +40,29 @@
  * 8. buyer identity is `buyer_external_id` + display name only; payload
  *    retention policy remains an open POLICY question and no retention logic
  *    exists here.
+ *
+ * ## Migration 0019 additions (loxep-dgf.6, Flipping M6 — manual/offline
+ * channel listings and the inventory-to-draft bridge)
+ *
+ * Design: `flipping-lifecycle-design.md` section 4. Two more open questions
+ * resolved under the same owner directive as above, both tagged PROVISIONAL
+ * at the column or table they affect:
+ *
+ * 9. (design open question 5) `channel_listings` does NOT gain an
+ *    `inventory_item_id`. A catalog item is minted at listing time instead
+ *    (`kind = 'simple'`, `sku = inventory_items.item_code`) when the item has
+ *    none. `channel_listings.connection_id` and `.external_listing_id`
+ *    become nullable, tied by `channel_listings_manual_connection_check` to
+ *    `provider = 'manual'`; `listing_code` is the new Loxep-owned scannable
+ *    identifier, required on every row (manual, draft, and connector-synced
+ *    alike);
+ * 10. (design open question 7) `orders.connection_id` becomes nullable,
+ *    mirroring exactly what 9 does to `channel_listings` — tied by
+ *    `orders_manual_connection_check` to `provider = 'manual'`, with
+ *    `source_account_key = 'manual:<installation>'` written by the manual
+ *    sale recorder. This is what lets a manual/offline listing record its
+ *    own sale; before this migration it could not (the honesty requirement
+ *    the design names).
  */
 import { sql } from "drizzle-orm";
 import {
@@ -236,6 +259,30 @@ export const CHANNEL_LISTING_STATUSES = [
 ] as const;
 export type ChannelListingStatus = (typeof CHANNEL_LISTING_STATUSES)[number];
 
+/**
+ * `channel_listings.provider` / `orders.provider` value for a manual/offline
+ * listing or sale (design 4a, OQ7 — migration 0019).
+ */
+export const MANUAL_PROVIDER = "manual";
+
+/**
+ * Loxep-named surfaces for a MANUAL/offline `channel_listings.channel` value
+ * (design 4a). `channel` itself stays `text` with no `CHECK`, matching how
+ * `provider`/`channel` already behave for every connector — the list of
+ * places a person can sell a thing locally is open and will grow. This union
+ * exists for the UI's channel picker only.
+ */
+export const MANUAL_LISTING_CHANNELS = [
+  "facebook_marketplace",
+  "craigslist",
+  "offerup",
+  "in_person",
+  "local_pickup",
+  "consignment_shop",
+  "other",
+] as const;
+export type ManualListingChannel = (typeof MANUAL_LISTING_CHANNELS)[number];
+
 /* ---------------------------------------------------------- catalog items */
 
 /**
@@ -328,16 +375,36 @@ export const channelListings = pgTable(
   "channel_listings",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    /**
+     * PROVISIONAL (migration 0019, design 4a): the Loxep-owned scannable
+     * identifier — `LST-2026-0042`, minted by `@loxep/commerce`'s listing
+     * code machinery (the fourth use of the `codes.ts` pattern after
+     * acquisitions, inventory_items, and expenses). Required on EVERY row,
+     * not only manual ones: it is also what a Loxep-authored draft of any
+     * provider is identified by before a channel has assigned anything.
+     */
+    listingCode: text("listing_code").notNull(),
     catalogItemId: uuid("catalog_item_id")
       .notNull()
       .references(() => catalogItems.id),
-    connectionId: uuid("connection_id")
-      .notNull()
-      .references(() => connections.id),
+    /**
+     * PROVISIONAL (migration 0019, design open question 5 resolved "no"):
+     * nullable, tied by `channel_listings_manual_connection_check` to
+     * `provider = 'manual'`. A Facebook Marketplace or Craigslist listing
+     * has no Loxep connection.
+     */
+    connectionId: uuid("connection_id").references(() => connections.id),
     provider: text("provider").notNull(),
     channel: text("channel").notNull(),
     marketplace: text("marketplace"),
-    externalListingId: text("external_listing_id").notNull(),
+    /**
+     * PROVISIONAL (migration 0019): nullable — a manual listing or a
+     * Loxep-authored DRAFT (any provider) has none yet. Publish is then a
+     * plain UPDATE of this column into its final value; the partial unique
+     * index below starts covering the row the moment it is non-null, with no
+     * key churn on the row's own identity.
+     */
+    externalListingId: text("external_listing_id"),
     externalVariationId: text("external_variation_id"),
     /** Opportunistic link to the observed public fact; never a precondition. */
     marketplaceItemId: uuid("marketplace_item_id").references(
@@ -366,14 +433,32 @@ export const channelListings = pgTable(
       .defaultNow(),
   },
   (table) => [
-    unique("channel_listings_connection_listing_variation_uq")
+    /**
+     * PROVISIONAL (migration 0019): widened from a table `UNIQUE` to a
+     * PARTIAL unique index so a manual/draft row (`external_listing_id`
+     * null) never collides. `NULLS NOT DISTINCT` combined with a partial
+     * `WHERE` is not expressible through Drizzle Kit as of this migration —
+     * `IndexBuilder` (what `uniqueIndex()` returns) has no
+     * `.nullsNotDistinct()` method, only the non-partial `unique()` builder
+     * does. The actual constraint is hand-written in
+     * `migrations/0019_manual_and_draft_listings.sql`
+     * (`NULLS NOT DISTINCT ... WHERE external_listing_id is not null`); this
+     * declaration is the closest Drizzle-Kit-diffable shape and must not
+     * drift from it.
+     */
+    uniqueIndex("channel_listings_connection_listing_variation_uq")
       .on(
         table.connectionId,
         table.provider,
         table.externalListingId,
         table.externalVariationId,
       )
-      .nullsNotDistinct(),
+      .where(sql`${table.externalListingId} is not null`),
+    unique("channel_listings_listing_code_uq").on(table.listingCode),
+    check(
+      "channel_listings_manual_connection_check",
+      sql`(${table.provider} = 'manual') = (${table.connectionId} is null)`,
+    ),
     index("channel_listings_catalog_item_id_idx").on(table.catalogItemId),
     index("channel_listings_connection_id_status_idx").on(
       table.connectionId,
@@ -451,10 +536,16 @@ export const orders = pgTable(
   "orders",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    /** `not null`: Phase 3 ingestion is the only way an order can arrive. */
-    connectionId: uuid("connection_id")
-      .notNull()
-      .references(() => connections.id),
+    /**
+     * PROVISIONAL (migration 0019, design open question 7, resolved per the
+     * design's own recommendation — mirrors exactly what 4a does to
+     * `channel_listings`): nullable, tied by `orders_manual_connection_check`
+     * to `provider = 'manual'`. This is what lets a manual/offline listing
+     * record its own sale; `source_account_key = 'manual:<installation>'`
+     * is written by the manual sale recorder in the same shape a connector's
+     * `<provider>:<account>` key already takes.
+     */
+    connectionId: uuid("connection_id").references(() => connections.id),
     /** Adapter family: `ebay`, `woocommerce`, `medusa`. */
     provider: text("provider").notNull(),
     /** The selling surface as Loxep names it for cross-channel reporting. */
@@ -534,14 +625,27 @@ export const orders = pgTable(
   },
   (table) => [
     // The upsert probe itself; the constraint IS the index.
-    unique("orders_connection_provider_external_order_uq").on(
-      table.connectionId,
-      table.provider,
-      table.externalOrderId,
-    ),
+    // PROVISIONAL (migration 0019): NULLS NOT DISTINCT so multiple manual
+    // orders (connection_id null) stay individually unique by
+    // (provider, external_order_id) rather than colliding on the null —
+    // mirrors channel_listings' rule. No partial WHERE is needed here
+    // (unlike channel_listings' index): external_order_id stays NOT NULL
+    // for every row, manual included, so the plain three-column tuple is
+    // always fully populated and `unique().nullsNotDistinct()` alone
+    // expresses it — no hand-written SQL required for this one.
+    unique("orders_connection_provider_external_order_uq")
+      .on(table.connectionId, table.provider, table.externalOrderId)
+      .nullsNotDistinct(),
     check(
       "orders_entity_attribution_source_check",
       sql`${table.entityAttributionSource} in ('manual', 'connection_default', 'unattributed')`,
+    ),
+    // PROVISIONAL (migration 0019, design open question 7): see
+    // `channel_listings_manual_connection_check` — the same kind/reference
+    // consistency pattern, applied to orders.
+    check(
+      "orders_manual_connection_check",
+      sql`(${table.provider} = 'manual') = (${table.connectionId} is null)`,
     ),
     // Ingestion path: "what changed since" for incremental sync.
     index("orders_connection_id_provider_updated_at_idx").on(

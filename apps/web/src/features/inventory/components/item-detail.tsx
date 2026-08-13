@@ -16,6 +16,7 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { formatDate, formatDateTime, formatMoney, formatQuantity, formatScore } from '@/lib/format';
 import { inventoryItemQuery } from '@/features/inventory/api/queries';
+import InventoryItemListingsPanel from '@/features/commerce/components/inventory-item-listings-panel';
 import ImageGallery from '@/features/inventory/components/image-gallery';
 import ItemEnrichmentPanel from '@/features/inventory/components/item-enrichment-panel';
 import SpecificsEditor from '@/features/inventory/components/specifics-editor';
@@ -149,6 +150,15 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
       </Card>
 
       <ItemEnrichmentPanel item={data} />
+
+      <InventoryItemListingsPanel
+        inventoryItemId={data.id}
+        itemCode={data.itemCode}
+        itemLabel={data.label}
+        itemStatus={data.status}
+        currency={data.currency}
+        estimatedValueAmount={data.estimatedValueAmount}
+      />
 
       <Card>
         <CardHeader>

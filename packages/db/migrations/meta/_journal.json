@@ -127,6 +127,20 @@
       "when": 1786623617104,
       "tag": "0017_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786626865684,
+      "tag": "0018_purchase_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786627411169,
+      "tag": "0019_manual_and_draft_listings",
+      "breakpoints": true
     }
   ]
 }

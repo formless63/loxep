@@ -106,6 +106,19 @@ export function subtractDecimals(a: string, b: string): string {
   return formatScaled(rescale(left, scale) - rescale(right, scale), scale);
 }
 
+/**
+ * Exact `a * b`, widened to `numeric(20,6)` (design 4a/OQ7's manual sale
+ * recorder: `unitPrice * quantity` for a line the operator typed in, where
+ * both operands are exact and the product must be too — never a `Number`
+ * multiplication).
+ */
+export function multiplyDecimals(a: string, b: string): string {
+  const left = parseScaled(a);
+  const right = parseScaled(b);
+  const product = left.units * right.units;
+  return toMoneyString(formatScaled(product, left.scale + right.scale));
+}
+
 /** Magnitude (`"-12.50"` → `"12.50"`). */
 export function absDecimal(value: string): string {
   return value.startsWith("-") ? value.slice(1) : value;

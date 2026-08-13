@@ -5,7 +5,11 @@ import type { WooProductFact } from "@loxep/integration-woo";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCatalogService } from "../src/catalog.ts";
 import type { CatalogService } from "../src/catalog.ts";
-import { CommerceConflictError, CommerceValidationError } from "../src/errors.ts";
+import {
+  CommerceConflictError,
+  CommerceNotFoundError,
+  CommerceValidationError,
+} from "../src/errors.ts";
 import { createMigratedScratchDb, seedConnection, seedEntity } from "./helpers.ts";
 import type { ScratchDb } from "./helpers.ts";
 
@@ -234,6 +238,150 @@ describe("catalog and channel listings", () => {
         ],
       });
       expect(suggestions).toHaveLength(0);
+    });
+  });
+
+  describe("listing_code (design 4a, migration 0019)", () => {
+    it("mints a listing_code on a connector-synced insert and never touches it on re-sync", async () => {
+      const item = await catalog.createCatalogItem({
+        sku: "SKU-CODE-A",
+        name: "Coded widget",
+      });
+      const first = await catalog.upsertChannelListing({
+        catalogItemId: item.id,
+        connectionId,
+        provider: "woocommerce",
+        channel: "woocommerce",
+        externalListingId: "1000",
+      });
+      expect(first.listingCode).toMatch(/^LST-\d{4}-\d{4}$/);
+
+      const second = await catalog.upsertChannelListing({
+        catalogItemId: item.id,
+        connectionId,
+        provider: "woocommerce",
+        channel: "woocommerce",
+        externalListingId: "1000",
+        status: "ended",
+      });
+      expect(second.listingCode).toBe(first.listingCode);
+    });
+
+    it("mints distinct codes for two connector listings", async () => {
+      const item = await catalog.createCatalogItem({
+        sku: "SKU-CODE-B",
+        name: "Another coded widget",
+      });
+      const a = await catalog.upsertChannelListing({
+        catalogItemId: item.id,
+        connectionId,
+        provider: "woocommerce",
+        channel: "woocommerce",
+        externalListingId: "1001",
+      });
+      const b = await catalog.upsertChannelListing({
+        catalogItemId: item.id,
+        connectionId,
+        provider: "woocommerce",
+        channel: "woocommerce",
+        externalListingId: "1002",
+      });
+      expect(a.listingCode).not.toBe(b.listingCode);
+    });
+  });
+
+  describe("manual listings (design 4a/4b, migration 0019)", () => {
+    it("creates a manual listing with no connection and a minted listing_code", async () => {
+      const item = await catalog.createCatalogItem({
+        sku: "SKU-MANUAL-A",
+        name: "Manually listed widget",
+      });
+      const listing = await catalog.createManualListing({
+        catalogItemId: item.id,
+        channel: "facebook_marketplace",
+        listingTitle: "Vintage brass lamp",
+        price: "45.00",
+        currency: "usd",
+        status: "active",
+      });
+      expect(listing.provider).toBe("manual");
+      expect(listing.connectionId).toBeNull();
+      expect(listing.externalListingId).toBeNull();
+      expect(listing.listingCode).toMatch(/^LST-\d{4}-\d{4}$/);
+      expect(listing.currency).toBe("USD");
+      expect(listing.quantityAvailable).toBe(1);
+      expect(listing.listedAt).not.toBeNull();
+    });
+
+    it("defaults to draft with no listedAt until the operator marks it active", async () => {
+      const item = await catalog.createCatalogItem({
+        sku: "SKU-MANUAL-B",
+        name: "Draft widget",
+      });
+      const listing = await catalog.createManualListing({
+        catalogItemId: item.id,
+        channel: "craigslist",
+      });
+      expect(listing.status).toBe("draft");
+      expect(listing.listedAt).toBeNull();
+    });
+
+    it("rejects an unknown catalog item", async () => {
+      await expect(
+        catalog.createManualListing({
+          catalogItemId: "00000000-0000-0000-0000-000000000000",
+          channel: "in_person",
+        }),
+      ).rejects.toBeInstanceOf(CommerceNotFoundError);
+    });
+
+    it("never collides with a connector-synced row: the partial unique index only covers rows with an external_listing_id", async () => {
+      const item = await catalog.createCatalogItem({
+        sku: "SKU-MANUAL-C",
+        name: "Two manual listings, one item",
+      });
+      const first = await catalog.createManualListing({
+        catalogItemId: item.id,
+        channel: "offerup",
+      });
+      const second = await catalog.createManualListing({
+        catalogItemId: item.id,
+        channel: "offerup",
+      });
+      expect(second.id).not.toBe(first.id);
+      expect(second.listingCode).not.toBe(first.listingCode);
+    });
+  });
+
+  describe("findOrCreateCatalogItemBySku", () => {
+    it("finds an existing catalog item rather than minting a duplicate", async () => {
+      const existing = await catalog.createCatalogItem({
+        sku: "SKU-FIND-A",
+        name: "Already catalogued",
+      });
+      const resolved = await catalog.findOrCreateCatalogItemBySku({
+        sku: "SKU-FIND-A",
+        name: "Would-be duplicate name",
+      });
+      expect(resolved.id).toBe(existing.id);
+      expect(resolved.name).toBe("Already catalogued");
+    });
+
+    it("mints a simple catalog item at listing time when none exists", async () => {
+      const minted = await catalog.findOrCreateCatalogItemBySku({
+        sku: "ITM-7Q3KX",
+        name: "Brass lamp",
+        economicEntityId: entityId,
+      });
+      expect(minted.kind).toBe("simple");
+      expect(minted.status).toBe("active");
+      expect(minted.economicEntityId).toBe(entityId);
+
+      const again = await catalog.findOrCreateCatalogItemBySku({
+        sku: "ITM-7Q3KX",
+        name: "Brass lamp",
+      });
+      expect(again.id).toBe(minted.id);
     });
   });
 });

@@ -40,15 +40,44 @@ import type {
   CatalogItemStatus,
   ChannelListingStatus,
 } from "@loxep/db/schema";
+import { MANUAL_PROVIDER } from "@loxep/db/schema";
 import type { WooProductFact } from "@loxep/integration-woo";
 import { z } from "zod";
+import { listingCode as formatListingCode, withCodeRetry } from "./codes.ts";
 import {
   CommerceConflictError,
   CommerceNotFoundError,
   CommerceValidationError,
 } from "./errors.ts";
-import { uuidLiteral } from "./sql.ts";
+import {
+  nullable,
+  numericLiteral,
+  textLiteral,
+  timestamptzLiteral,
+  uuidLiteral,
+} from "./sql.ts";
 import { WOO_PROVIDER } from "./woo.ts";
+
+type Tx = Parameters<Parameters<LoxepDb["transaction"]>[0]>[0];
+
+/**
+ * `LST-<year>-<seq>`, derived per year from the rows that already exist —
+ * the same shape `packages/accounting/src/expenses.ts`'s
+ * `generateReferenceCode` and `packages/inventory/src/acquisitions.ts`'s
+ * `nextSequence` use. Required on EVERY insert, connector-synced rows
+ * included: `listing_code` is `NOT NULL` for the whole table (design 4a).
+ */
+async function generateListingCode(tx: Tx, year: number): Promise<string> {
+  const result = await tx.execute(
+    `select coalesce(max(
+              (substring(listing_code from '^LST-[0-9]{4}-([0-9]+)$'))::integer
+            ), 0)::text as max_seq
+       from channel_listings
+      where listing_code like ${textLiteral(`LST-${year}-`)} || '%'`,
+  );
+  const next = Number(result.rows[0]?.["max_seq"] ?? "0") + 1;
+  return formatListingCode(year, next);
+}
 
 export type CatalogItemRow = typeof catalogItems.$inferSelect;
 export type ChannelListingRow = typeof channelListings.$inferSelect;
@@ -127,10 +156,34 @@ const upsertChannelListingSchema = z.strictObject({
   endedAt: z.date().nullish(),
 });
 
+/**
+ * A manual/offline listing (design 4a) or a Loxep-authored DRAFT of any
+ * provider — the same object at different points in its life (4b). No
+ * `connectionId`/`externalListingId` here on purpose: the whole point of the
+ * manual/draft shape is that neither exists yet.
+ */
+const createManualListingSchema = z.strictObject({
+  catalogItemId: z.uuid(),
+  channel: z.string().min(1),
+  provider: z.string().min(1).default(MANUAL_PROVIDER),
+  status: z
+    .enum(["draft", "active", "ended", "sold_out", "unknown"])
+    .default("draft"),
+  listingUrl: z.string().min(1).nullish(),
+  listingTitle: z.string().min(1).nullish(),
+  currency: currencyCode.nullish(),
+  price: decimalString.nullish(),
+  quantityAvailable: z.number().int().nullish(),
+  listedAt: z.date().nullish(),
+});
+
 export type CreateCatalogItemInput = z.input<typeof createCatalogItemSchema>;
 export type UpdateCatalogItemInput = z.input<typeof updateCatalogItemSchema>;
 export type UpsertChannelListingInput = z.input<
   typeof upsertChannelListingSchema
+>;
+export type CreateManualListingInput = z.input<
+  typeof createManualListingSchema
 >;
 
 /* ------------------------------------------------------------ suggestions */
@@ -192,6 +245,28 @@ export interface CatalogService {
   upsertChannelListing: (
     input: UpsertChannelListingInput,
   ) => Promise<ChannelListingRow>;
+  /**
+   * A manual/offline listing (design 4a) or a Loxep-authored draft of any
+   * provider (4b) — `provider = 'manual'` and `connectionId = null` by
+   * default, or an explicit `provider` for a future-milestone draft. Mints
+   * `listing_code` the same way {@link upsertChannelListing} does.
+   */
+  createManualListing: (
+    input: CreateManualListingInput,
+  ) => Promise<ChannelListingRow>;
+  /**
+   * The "cheap answer" to design open question 5: find a catalog item by
+   * SKU, or mint one (`kind = 'simple'`) when none exists — the operation
+   * `createManualListing`'s caller runs first, giving it a `catalogItemId`
+   * to pass in. Exposed separately (rather than folded into
+   * `createManualListing`) because the same "mint at listing time" rule will
+   * apply to a future connector publish flow too.
+   */
+  findOrCreateCatalogItemBySku: (input: {
+    sku: string;
+    name: string;
+    economicEntityId?: string | null;
+  }) => Promise<CatalogItemRow>;
   getChannelListing: (channelListingId: string) => Promise<ChannelListingRow>;
   listChannelListings: (filter?: {
     connectionId?: string;
@@ -438,34 +513,164 @@ export function createCatalogService(options: {
       lastSyncedAt: now,
       updatedAt: now,
     };
-    const inserted = await db
-      .insert(channelListings)
-      .values({
-        connectionId: listing.connectionId,
-        provider: listing.provider,
-        externalListingId: listing.externalListingId,
-        externalVariationId: listing.externalVariationId ?? null,
-        ...mutable,
-        firstIngestedAt: now,
-        createdAt: now,
-      })
-      .onConflictDoUpdate({
-        // NULLS NOT DISTINCT on the constraint is what makes a non-variant
-        // listing (null variation) converge instead of duplicating.
-        target: [
-          channelListings.connectionId,
-          channelListings.provider,
-          channelListings.externalListingId,
-          channelListings.externalVariationId,
-        ],
-        set: mutable,
-      })
-      .returning();
-    const row = inserted[0];
-    if (row === undefined) {
-      throw new CommerceNotFoundError("channel listing upsert returned no row");
+    // Raw SQL rather than Drizzle's `.onConflictDoUpdate()`: PostgreSQL only
+    // considers a PARTIAL unique index as an ON CONFLICT arbiter when the
+    // inference specification repeats the index's own predicate
+    // (`WHERE external_listing_id is not null`, design 4a), and expressing
+    // that predicate through Drizzle needs its `sql` template tag — a
+    // `drizzle-orm` import this package deliberately does not take (see
+    // `sql.ts`'s module doc). `listing_code` is `NOT NULL` on every row, so
+    // the INSERT needs one even though this path never reads it back on a
+    // re-sync — the `DO UPDATE SET` below deliberately omits it, so an
+    // existing row's code is never touched.
+    return withCodeRetry(
+      () =>
+        db.transaction(async (tx) => {
+          const year = now.getUTCFullYear();
+          const code = await generateListingCode(tx, year);
+          const result = await tx.execute(
+            `insert into channel_listings (
+               listing_code, catalog_item_id, connection_id, provider, channel,
+               marketplace, external_listing_id, external_variation_id,
+               marketplace_item_id, status, listing_url, listing_title,
+               currency, price, quantity_available, listed_at, ended_at,
+               first_ingested_at, last_synced_at, created_at, updated_at
+             ) values (
+               ${textLiteral(code)}, ${uuidLiteral(listing.catalogItemId)},
+               ${uuidLiteral(listing.connectionId)}, ${textLiteral(listing.provider)},
+               ${textLiteral(listing.channel)}, ${nullable(mutable.marketplace, textLiteral)},
+               ${textLiteral(listing.externalListingId)},
+               ${nullable(listing.externalVariationId ?? null, textLiteral)},
+               ${nullable(mutable.marketplaceItemId, uuidLiteral)},
+               ${textLiteral(mutable.status)}, ${nullable(mutable.listingUrl, textLiteral)},
+               ${nullable(mutable.listingTitle, textLiteral)},
+               ${nullable(mutable.currency, textLiteral)}, ${nullable(mutable.price, numericLiteral)},
+               ${mutable.quantityAvailable === null ? "null" : Math.trunc(mutable.quantityAvailable)},
+               ${nullable(mutable.listedAt, timestamptzLiteral)},
+               ${nullable(mutable.endedAt, timestamptzLiteral)},
+               now(), now(), now(), now()
+             )
+             on conflict (connection_id, provider, external_listing_id, external_variation_id)
+               where external_listing_id is not null
+             do update set
+               catalog_item_id = excluded.catalog_item_id,
+               channel = excluded.channel,
+               marketplace = excluded.marketplace,
+               marketplace_item_id = excluded.marketplace_item_id,
+               status = excluded.status,
+               listing_url = excluded.listing_url,
+               listing_title = excluded.listing_title,
+               currency = excluded.currency,
+               price = excluded.price,
+               quantity_available = excluded.quantity_available,
+               listed_at = excluded.listed_at,
+               ended_at = excluded.ended_at,
+               last_synced_at = now(),
+               updated_at = now()
+             returning id`,
+          );
+          const id = result.rows[0]?.["id"] as string | undefined;
+          if (id === undefined) {
+            throw new CommerceNotFoundError(
+              "channel listing upsert returned no row",
+            );
+          }
+          const row = await tx.query.channelListings.findFirst({
+            where: (table, { eq }) => eq(table.id, id),
+          });
+          if (row === undefined) {
+            throw new CommerceNotFoundError(
+              "channel listing upsert returned no row",
+            );
+          }
+          return row;
+        }),
+      { label: "listing code" },
+    );
+  }
+
+  async function createManualListing(
+    input: CreateManualListingInput,
+  ): Promise<ChannelListingRow> {
+    const parsed = createManualListingSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new CommerceValidationError(
+        `invalid manual listing: ${issuesOf(parsed.error)}`,
+      );
     }
-    return row;
+    const listing = parsed.data;
+    // catalog_items.id is a real FK; a bad id fails loudly here rather than
+    // as an opaque insert error.
+    await getCatalogItem(listing.catalogItemId);
+    const now = new Date();
+    return withCodeRetry(
+      () =>
+        db.transaction(async (tx) => {
+          const code = await generateListingCode(tx, now.getUTCFullYear());
+          const inserted = await tx
+            .insert(channelListings)
+            .values({
+              listingCode: code,
+              catalogItemId: listing.catalogItemId,
+              connectionId: null,
+              provider: listing.provider,
+              channel: listing.channel,
+              externalListingId: null,
+              externalVariationId: null,
+              status: listing.status,
+              listingUrl: listing.listingUrl ?? null,
+              listingTitle: listing.listingTitle ?? null,
+              currency: listing.currency?.toUpperCase() ?? null,
+              price: listing.price ?? null,
+              // Defaults to 1, not null: a manual listing is almost always
+              // one physical unit, and `recordManualSale` (`manual-sales.ts`)
+              // needs a starting count to decrement so it can tell "still
+              // for sale" from "sold out" without guessing.
+              quantityAvailable: listing.quantityAvailable ?? 1,
+              listedAt: listing.listedAt ?? (listing.status === "active" ? now : null),
+              firstIngestedAt: now,
+              lastSyncedAt: now,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning();
+          const row = inserted[0];
+          if (row === undefined) {
+            throw new CommerceNotFoundError(
+              "manual listing insert returned no row",
+            );
+          }
+          return row;
+        }),
+      { label: "listing code" },
+    );
+  }
+
+  async function findOrCreateCatalogItemBySku(input: {
+    sku: string;
+    name: string;
+    economicEntityId?: string | null;
+  }): Promise<CatalogItemRow> {
+    const existing = await findCatalogItemBySku(input.sku);
+    if (existing !== null) return existing;
+    try {
+      return await createCatalogItem({
+        sku: input.sku,
+        name: input.name,
+        kind: "simple",
+        status: "active",
+        economicEntityId: input.economicEntityId ?? null,
+      });
+    } catch (error) {
+      // Two operators listing the same freshly-minted SKU at once: the
+      // insert lost the race, so the row the other one created IS the
+      // answer.
+      if (error instanceof CommerceConflictError) {
+        const raced = await findCatalogItemBySku(input.sku);
+        if (raced !== null) return raced;
+      }
+      throw error;
+    }
   }
 
   async function listChannelListings(filter?: {
@@ -609,6 +814,8 @@ export function createCatalogService(options: {
     updateCatalogItem,
     archiveCatalogItem,
     upsertChannelListing,
+    createManualListing,
+    findOrCreateCatalogItemBySku,
     getChannelListing,
     listChannelListings,
     linkMarketplaceItem,

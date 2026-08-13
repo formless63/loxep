@@ -47,6 +47,28 @@ export function timestamptzLiteral(value: Date): string {
 }
 
 /**
+ * `numeric(20,6)` literal for a plain decimal string. Money and quantities
+ * never cross into SQL as a JavaScript `number` (implementation contract),
+ * and this is the only door they go through.
+ */
+export function numericLiteral(value: string): string {
+  if (!/^-?\d+(\.\d+)?$/.test(value)) {
+    throw new CommerceValidationError(
+      "expected a plain decimal string (no exponent notation)",
+    );
+  }
+  return `${value}::numeric(20, 6)`;
+}
+
+/** `null`, or the wrapped literal for a present value — for building an optional-column INSERT/UPDATE assignment list. */
+export function nullable<T>(
+  value: T | null | undefined,
+  literal: (value: T) => string,
+): string {
+  return value === null || value === undefined ? "null" : literal(value);
+}
+
+/**
  * `jsonb` literal for a JSON-serializable value. Serialization goes through
  * {@link textLiteral}, so quotes and backslashes inside the JSON are escaped
  * by the same single rule as any other text literal.

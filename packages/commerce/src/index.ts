@@ -65,6 +65,7 @@ export {
   divideDecimals,
   isDecimalString,
   isZeroDecimal,
+  multiplyDecimals,
   subtractDecimals,
   sumDecimals,
   toMoneyString,
@@ -113,9 +114,28 @@ export type {
   ChannelListingCandidate,
   ChannelListingRow,
   CreateCatalogItemInput,
+  CreateManualListingInput,
   UpdateCatalogItemInput,
   UpsertChannelListingInput,
 } from "./catalog.ts";
+
+/** Manual/offline listings and drafts (design 4a/4b, loxep-dgf.6, migration 0019). */
+export { listingCode, withCodeRetry } from "./codes.ts";
+export { mapItemToDraftListing } from "./listing-draft.ts";
+export type {
+  DraftListing,
+  DraftListingSourceItem,
+  DraftListingSourceMedia,
+  DraftListingSourceSpecific,
+  DraftListingSpecific,
+  MapItemToDraftListingInput,
+} from "./listing-draft.ts";
+export { MANUAL_SOURCE_ACCOUNT_KEY, createManualSalesService } from "./manual-sales.ts";
+export type {
+  ManualSalesService,
+  RecordManualSaleInput,
+  RecordManualSaleResult,
+} from "./manual-sales.ts";
 
 export { CONTRIBUTION_LABEL, entityAttributionReport, orderSummary } from "./reports.ts";
 export type {

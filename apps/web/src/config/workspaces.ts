@@ -1,4 +1,5 @@
 import type { NavGroup } from '@/types';
+import { commerceNavGroups } from '@/config/navigation/commerce';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
 import { financeNavGroups } from '@/config/navigation/finance';
 import { infrastructureNavGroups } from '@/config/navigation/infrastructure';
@@ -12,6 +13,7 @@ export type WorkspaceId =
   | 'market'
   | 'finance'
   | 'inventory'
+  | 'commerce'
   | 'infrastructure'
   | 'settings'
   | 'starter';
@@ -57,6 +59,14 @@ export const workspaces: Workspace[] = [
     root: '/inventory',
     defaultPath: '/inventory/overview',
     navGroups: inventoryNavGroups
+  },
+  {
+    id: 'commerce',
+    label: 'Commerce',
+    description: 'Catalog, channel listings, and manual/offline sales',
+    root: '/commerce',
+    defaultPath: '/commerce/overview',
+    navGroups: commerceNavGroups
   },
   {
     id: 'infrastructure',
