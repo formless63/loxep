@@ -102,6 +102,10 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
         }
       }),
     onSuccess: (result) => {
+      // The created expense ids themselves are surfaced non-transiently, not
+      // just in this toast: `invalidate()` refetches the document, and each
+      // now-confirmed row in `CandidatesTable` renders its `targetKind`/
+      // `targetId` as a link to `/finance/expenses/$id` (loxep-0l5).
       toast.success(`Confirmed ${result.expenseIds.length} expense(s)`);
       invalidate();
     },

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,7 @@ export default function BuyThisDialog({
   item: MarketItemDetailDto;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { data: eventsPage } = useQuery(itemEventsQuery(item.id, 0, 'desc'));
 
   const latestOpportunity = React.useMemo(() => {
@@ -82,10 +84,14 @@ export default function BuyThisDialog({
           targetPriceAmount: observation?.price ?? null
         }
       }),
-    onSuccess: () => {
-      toast.success('Recorded — check /inventory/stock');
-      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+    onSuccess: async (result) => {
+      toast.success(`Recorded as ${result.acquisitionReferenceCode}`);
+      await queryClient.invalidateQueries({ queryKey: ['inventory'] });
       onOpenChange(false);
+      await navigate({
+        to: '/inventory/acquisitions/$id',
+        params: { id: result.acquisitionId }
+      });
     },
     onError: (error) => toastError(error, 'Could not record the purchase')
   });

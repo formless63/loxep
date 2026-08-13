@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -68,6 +69,7 @@ export default function ManualListingForm({
   prefill?: ManualListingFormPrefill;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const needsPicker = prefill === undefined;
   const { data: items } = useQuery({
     ...inventoryItemsQuery({ status: 'available' }),
@@ -98,11 +100,14 @@ export default function ManualListingForm({
           currency: values.currency.toUpperCase()
         }
       }),
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       toast.success(`Listed as ${result.listingCode}`);
-      void queryClient.invalidateQueries({ queryKey: ['commerce'] });
-      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['commerce'] }),
+        queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      ]);
       onOpenChange(false);
+      await navigate({ to: '/commerce/listings/$id', params: { id: result.id } });
     },
     onError: (error) => toastError(error, 'Could not create the listing')
   });

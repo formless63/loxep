@@ -1,4 +1,5 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
+import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import {
   Select,
@@ -90,12 +91,27 @@ export function createColumns(
       cell: ({ row }) => {
         const confirmed = row.original.confirmedAt !== null;
         if (confirmed) {
-          return (
+          const badge = (
             <Badge variant='success'>
               <Icons.check />
               {dispositionLabel(row.original.disposition)}
             </Badge>
           );
+          // `targetKind`/`targetId` are stamped by `confirmLinesAsExpense` —
+          // link out to the record this line became rather than dead-ending
+          // on the badge (loxep-0l5/loxep-4mg).
+          if (row.original.targetKind === 'expense' && row.original.targetId) {
+            return (
+              <Link
+                to='/finance/expenses/$id'
+                params={{ id: row.original.targetId }}
+                className='inline-flex hover:underline'
+              >
+                {badge}
+              </Link>
+            );
+          }
+          return badge;
         }
         return (
           <Select

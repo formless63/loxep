@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -24,6 +25,7 @@ import {
 } from '@/features/commerce/constants';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import RecordSaleForm from '@/features/commerce/components/record-sale-form';
+import type { RecordManualSaleResultDto } from '@/server/commerce-functions';
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -37,6 +39,11 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 export default function ListingDetail({ listingId }: { listingId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(channelListingQuery(listingId));
   const [saleOpen, setSaleOpen] = React.useState(false);
+  // Kept for as long as this page stays open — the oversell flag a sale
+  // returns has nowhere durable to link to yet (no `/commerce/orders`
+  // route), so this is the non-transient surface for it past the toast
+  // (loxep-0l5).
+  const [lastSale, setLastSale] = React.useState<RecordManualSaleResultDto | null>(null);
 
   if (isPending) {
     return <div className='text-muted-foreground text-sm'>Loading…</div>;
@@ -116,7 +123,27 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
         <CardHeader>
           <CardTitle className='text-base'>Sales</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className='flex flex-col gap-4'>
+          {lastSale?.oversell && (
+            <Alert variant='destructive'>
+              <Icons.warning />
+              <AlertTitle>That sale oversold this item</AlertTitle>
+              <AlertDescription>
+                The linked inventory unit's on-hand quantity went negative.{' '}
+                {data.inventoryItemId ? (
+                  <Link
+                    to='/inventory/stock/$id'
+                    params={{ id: data.inventoryItemId }}
+                    className='underline'
+                  >
+                    Check {data.inventoryItemCode}
+                  </Link>
+                ) : (
+                  'Check the linked inventory item.'
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
           {data.sales.length === 0 ? (
             <p className='text-muted-foreground text-sm'>
               {isManual
@@ -138,6 +165,11 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
                   <TableRow key={sale.orderLineId}>
                     <TableCell className='tabular-nums'>
                       {formatQuantity(Number(sale.quantity))}
+                      {lastSale?.oversell && lastSale.orderLineId === sale.orderLineId && (
+                        <Badge variant='destructive' className='ml-2'>
+                          Oversell
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell className='text-right tabular-nums'>
                       {formatMoney(sale.unitPrice, sale.currency)}
@@ -162,6 +194,7 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
           onOpenChange={setSaleOpen}
           channelListingId={data.id}
           defaultUnitPrice={data.price}
+          onRecorded={setLastSale}
         />
       )}
     </div>

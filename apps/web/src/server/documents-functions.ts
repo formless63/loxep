@@ -486,16 +486,35 @@ export const confirmLinesAsExpense = createServerFn({ method: 'POST' })
     })
   )
   .handler(async ({ data }): Promise<{ expenseIds: string[]; skipped: number }> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const { requireSession, getAdminServices, getStorageBackendsService } =
+      await import('@/server/admin');
     const session = await requireSession();
-    const { createExpensesService } = await import('@loxep/accounting');
+    const { createExpensesService, createReceiptsService } = await import('@loxep/accounting');
+    const { createMediaService } = await import('@loxep/storage');
     const { handle } = getAdminServices();
 
     return handle.db.transaction(async (tx) => {
-      // Re-instantiated against THIS transaction (not the singleton from
-      // `admin.ts`) so the expense write and the candidate stamp below commit
-      // or roll back together — see the module doc.
+      // Re-instantiated against THIS transaction (not the singletons from
+      // `admin.ts`) so the expense write, the receipt attachment, and the
+      // candidate stamp below commit or roll back together — see the module
+      // doc. `backends` itself needs no tx binding: `ReceiptsService.attach`
+      // only reaches `MediaService.addLink`, a plain insert that never touches
+      // a storage driver.
       const expensesService = createExpensesService({ db: tx });
+      const backends = await getStorageBackendsService();
+      const media = createMediaService({ db: tx, backends });
+      const receiptsService = createReceiptsService({ db: tx, media });
+
+      // The confirmed source document's receipt image, if it has one — every
+      // expense line confirmed out of this document gets it attached below,
+      // closing the seam where a confirmed, receipt-backed expense used to
+      // read as "missing" on the receipts report (loxep-4mg).
+      const documentRow = await tx.execute(
+        `select media_object_id from documents where id = ${uuidLiteral(data.documentId)}`
+      );
+      const sourceMediaObjectId =
+        (documentRow.rows[0]?.['media_object_id'] as string | null) ?? null;
+
       const expenseIds: string[] = [];
       let skipped = 0;
 
@@ -536,6 +555,15 @@ export const confirmLinesAsExpense = createServerFn({ method: 'POST' })
           createdByUserId: session.user.id
         });
         expenseIds.push(expense.id);
+
+        if (sourceMediaObjectId !== null) {
+          await receiptsService.attach({
+            expenseId: expense.id,
+            mediaObjectId: sourceMediaObjectId,
+            purpose: 'receipt',
+            actorUserId: session.user.id
+          });
+        }
 
         await tx.execute(
           `update document_line_candidates

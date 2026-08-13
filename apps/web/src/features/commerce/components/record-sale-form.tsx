@@ -13,7 +13,10 @@ import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
-import { recordManualListingSale } from '@/server/commerce-functions';
+import {
+  recordManualListingSale,
+  type RecordManualSaleResultDto
+} from '@/server/commerce-functions';
 
 const recordSaleSchema = z.object({
   quantity: z
@@ -35,17 +38,26 @@ type RecordSaleFormValues = z.infer<typeof recordSaleSchema>;
  * inventory unit. Only ever shown for `provider = 'manual'` listings that
  * are not already `sold_out`/`ended` — the caller (`ListingDetail`) enforces
  * that.
+ *
+ * There is no `/commerce/orders` route yet (see the roadmap), so
+ * `orderId`/`orderLineId` have nowhere to link to today — `onRecorded`
+ * hands the full result (including the `oversell` flag) back to
+ * `ListingDetail`, which already renders the created line in its Sales
+ * panel and is where the oversell warning is kept visible non-transiently,
+ * past the toast.
  */
 export default function RecordSaleForm({
   open,
   onOpenChange,
   channelListingId,
-  defaultUnitPrice
+  defaultUnitPrice,
+  onRecorded
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   channelListingId: string;
   defaultUnitPrice?: string | null;
+  onRecorded?: (result: RecordManualSaleResultDto) => void;
 }) {
   const queryClient = useQueryClient();
 
@@ -58,6 +70,7 @@ export default function RecordSaleForm({
       toast.success(result.oversell ? 'Sale recorded — flagged as an oversell' : 'Sale recorded');
       void queryClient.invalidateQueries({ queryKey: ['commerce'] });
       void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      onRecorded?.(result);
       onOpenChange(false);
     },
     onError: (error) => toastError(error, 'Could not record the sale')

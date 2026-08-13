@@ -47,6 +47,35 @@ function tableRow(page: Page, text: string): Locator {
   return page.getByRole('row').filter({ hasText: text });
 }
 
+/**
+ * Receipt upload (unlike inline CSV staging) writes a media object, which
+ * needs a registered storage backend — the harness DB starts with none
+ * (`/api/documents/upload` answers 409 no-storage-backend otherwise).
+ * Registers a local backend through the real settings flow, idempotently.
+ */
+async function ensureStorageBackend(page: Page): Promise<void> {
+  await page.goto('/settings/storage');
+  const registerButton = page.getByRole('button', { name: 'Register backend' });
+  await expect(registerButton.first()).toBeVisible();
+  if ((await page.getByText('No storage backends').count()) > 0) {
+    await registerButton.first().click();
+    const storageDialog = page.getByRole('dialog');
+    await storageDialog.getByLabel('Name *').fill('e2e-media');
+    await storageDialog.getByLabel('Root directory *').fill('/tmp/loxep-e2e-media');
+    await storageDialog.getByLabel('Make default backend').click();
+    await storageDialog.getByRole('button', { name: 'Register backend' }).click();
+    await expect(storageDialog).toBeHidden();
+  }
+}
+
+/** A minimal valid 1x1 PNG — the upload path only checks MIME/size, it never decodes the image. */
+function pngFixture(): Buffer {
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64'
+  );
+}
+
 test('CSV import: upload, map, preview, stage, and confirm a row into a recorded expense', async ({
   page
 }) => {
@@ -117,22 +146,7 @@ test('CSV import: upload, map, preview, stage, and confirm a row into a recorded
 });
 
 test('a document with no confirmed lines can be discarded', async ({ page }) => {
-  // Receipt upload (unlike inline CSV staging) writes a media object, which
-  // needs a registered storage backend — the harness DB starts with none
-  // (`/api/documents/upload` answers 409 no-storage-backend otherwise).
-  // Register a local backend through the real settings flow, idempotently.
-  await page.goto('/settings/storage');
-  const registerButton = page.getByRole('button', { name: 'Register backend' });
-  await expect(registerButton.first()).toBeVisible();
-  if ((await page.getByText('No storage backends').count()) > 0) {
-    await registerButton.first().click();
-    const storageDialog = page.getByRole('dialog');
-    await storageDialog.getByLabel('Name *').fill('e2e-media');
-    await storageDialog.getByLabel('Root directory *').fill('/tmp/loxep-e2e-media');
-    await storageDialog.getByLabel('Make default backend').click();
-    await storageDialog.getByRole('button', { name: 'Register backend' }).click();
-    await expect(storageDialog).toBeHidden();
-  }
+  await ensureStorageBackend(page);
 
   await page.goto('/finance/import');
   await page.getByRole('tab', { name: 'Receipt / invoice' }).click();
@@ -141,16 +155,56 @@ test('a document with no confirmed lines can be discarded', async ({ page }) => 
   await fileInput.setInputFiles({
     name: `e2e-discard-${runId}.png`,
     mimeType: 'image/png',
-    // A minimal valid 1x1 PNG — the upload path only checks MIME/size, it
-    // never decodes the image (no OCR backend ships this milestone).
-    buffer: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      'base64'
-    )
+    buffer: pngFixture()
   });
 
   await expect(page.getByText('0 of 0 line(s) confirmed')).toBeVisible();
   await page.getByRole('button', { name: 'Discard document' }).click();
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
   await expect(page.getByText('Document discarded')).toBeVisible();
+});
+
+test('confirming a receipt-backed line attaches the receipt, so it never lands in Missing receipts', async ({
+  page
+}) => {
+  // Regression for loxep-4mg: `confirmLinesAsExpense` used to create the
+  // expense without writing the `media_links` row the receipt image needs,
+  // so a confirmed, receipt-backed expense read as "missing" on
+  // `/finance/overview`'s Missing receipts card despite its image sitting
+  // one table away on the `documents` row.
+  await ensureStorageBackend(page);
+
+  await page.goto('/finance/import');
+  await page.getByRole('tab', { name: 'Receipt / invoice' }).click();
+
+  const fileInput = page.locator('input[type="file"]').first();
+  await fileInput.setInputFiles({
+    name: `e2e-receipt-${runId}.png`,
+    mimeType: 'image/png',
+    buffer: pngFixture()
+  });
+
+  // A receipt/invoice upload gets no automatic candidate lines (no OCR
+  // backend ships this milestone) — transcribe one by hand.
+  await expect(page.getByText('0 of 0 line(s) confirmed')).toBeVisible();
+  const main = page.getByRole('main');
+  const receiptCategory = `e2e-receipt-${runId}`;
+  await main.getByLabel('Description *').fill(`E2E receipt line ${runId}`);
+  await main.getByLabel('Amount *').fill('42.00');
+  await main.getByRole('button', { name: 'Add line' }).click();
+  await expect(page.getByText('0 of 1 line(s) confirmed')).toBeVisible();
+
+  await main.getByLabel('Category *').fill(receiptCategory);
+  await main.getByRole('button', { name: /Confirm 1 as expense/ }).click();
+  await expect(page.getByText('1 of 1 line(s) confirmed')).toBeVisible();
+
+  // The confirmed expense exists…
+  await page.goto('/finance/expenses');
+  await expect(tableRow(page, receiptCategory)).toBeVisible();
+
+  // …and, because its source document had a receipt image, it does NOT
+  // appear as missing paper.
+  await page.goto('/finance/overview');
+  await expect(page.getByRole('heading', { name: 'Missing receipts' })).toBeVisible();
+  await expect(page.getByText(receiptCategory)).toHaveCount(0);
 });

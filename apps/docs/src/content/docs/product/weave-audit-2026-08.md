@@ -25,6 +25,8 @@ The domain layer is far ahead of its own wiring. Two seams got dedicated bidirec
 
 Minimal wiring: an `accounting.post-facts` worker task (add `@loxep/accounting` to `@loxep/app`) sweeping unposted facts through `evaluateFacts`, plus a posting-backlog panel on `/finance/overview`. Tracked as **loxep-a-series bead (P1)** — see the bead list at the end.
 
+**Status addendum (2026-08-13, loxep-6fm):** the `accounting.post-facts` worker task shipped (`packages/app/src/accounting-posting.ts`, registered in `registry.ts`, PROVISIONAL 5-minute cadence — the design names no trigger mechanics; see `financial-schema-design.md`'s new "Milestone 5 — the pump" section). `@loxep/app` now depends on `@loxep/accounting`; `expense-functions.ts:60`'s comment is corrected to reflect that the engine exists and runs, while explaining why `expenses.status` still never reaches `posted` by design. A real archived-book gap in `posting-engine.ts` was found and fixed in the process (an entity routed to a disabled book previously threw instead of backlogging). **Still open:** the posting-backlog panel on `/finance/overview` and the trial-balance drill-down (the rest of this finding's minimal wiring and its STRETCH item) are not part of this pass.
+
 ### 2. Four toasts discard the ids that close the flipping loop
 
 **Owner value: the cheapest fix in this audit — four `onSuccess` handlers — closes most of the loop's navigational gap.**
@@ -82,10 +84,12 @@ This is the exact inverse of the [fleet design's](../../architecture/fleet-obser
 | Document awaiting confirmation | `documents.status` | no |
 | Manual sale recorded / listing sold | `orders` row | no |
 | DNS drift found / disappeared | `dns_drift_findings` — `recordRun` computes new/`disappeared` transitions **inside one transaction and discards them** | no |
-| Integration health degraded | **transition not even detectable**: `integration_health` overwrites in place with no prior value | no |
+| Integration health degraded | transition now **detectable** (`integration_health.previous_status`/`status_changed_at`, migration `0020`) — still not notifiable, nothing consumes the transition yet | no |
 | Mail reconciler failure, monitor backoff, connection/token errors | `reconcile_runs`, `monitor_targets`, `connections.last_error_*` | no |
 
-Etsy and Reverb are the counter-example: both poll executors call the same `enqueueDeliveriesForEvent` bridge and are fully covered. Two small adjacent facts: `new_listing` has no case in `render.ts` (falls to the generic ISO-timestamp fallback — the one discovery event an operator most wants enriched), and an opportunity rule's name/score never reaches the message. This finding needs a small design decision (nullable `market_event_id` + subject columns, or a general `app_events` table) before code — and the health-transition half needs the sweep to compare before overwriting, which is cheap now and impossible to backfill later.
+Etsy and Reverb are the counter-example: both poll executors call the same `enqueueDeliveriesForEvent` bridge and are fully covered. Two small adjacent facts: `new_listing` has no case in `render.ts` (falls to the generic ISO-timestamp fallback — the one discovery event an operator most wants enriched), and an opportunity rule's name/score never reaches the message. This finding needs a small design decision (nullable `market_event_id` + subject columns, or a general `app_events` table) before code — and the health-transition half needed the sweep to compare before overwriting, which was cheap now and impossible to backfill later.
+
+**Status (2026-08-13, loxep-oii):** the cheap, non-backfillable half shipped — `integration_health` gained nullable `previous_status`/`status_changed_at` (migration `0020`), and `upsertHealth` now records them exactly when the incoming status differs from the stored one, leaving both alone on an unchanged status. `/settings` overview's Integration health table renders a "Changed" column off `status_changed_at`. This makes the transition **observable**, not **notifiable** — the `notification_deliveries`/`market_event_id` design decision and the rest of this finding's gap table remain open, deferred work.
 
 ### 6. The dashboard predates six of the domains it should summarize
 
