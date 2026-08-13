@@ -16,6 +16,8 @@ Because companion projects evolve quickly, API/version/licensing claims must be 
 
 ## Knowledge, documentation, and notes
 
+**Surveyed and designed in [Knowledge and Task Companion Integration Design](../../architecture/knowledge-tasks-integration-design/) (2026-08-13).** That page carries the verified license/API table for this whole category, the integration shape, and the milestones. Two of the dispositions below were changed by it — read it before acting on this section.
+
 ### Outline
 
 **Role:** strong knowledge-base integration candidate.
@@ -29,11 +31,25 @@ Potential Loxep integration:
 
 Outline remains independently deployed. Its current license/API behavior must be checked before implementation; Loxep should never treat an external companion's license as inherited from Loxep.
 
+**QUALIFIED 2026-08-13 — the license/API check above was performed.** Outline's API is excellent and free in self-hosting: 113 documented endpoints, ~60 webhook event types, API keys plus OAuth 2.0 with scopes, and free OIDC. **But Outline is BUSL 1.1, not open source, until its 2030-07-13 change date to Apache-2.0.** Its Additional Use Grant permits a Loxep operator's own use outright and bars only reselling a "Document Service", so it remains a legitimate recommendation — it is simply not an open-source one. The [design page](../../architecture/knowledge-tasks-integration-design/#the-two-finalists-and-the-honest-trade-between-them) recommends **BookStack** (MIT, comparable API, no paid gating) as the first adapter and Outline as the co-supported alternative, and leaves the choice as an owner decision.
+
+### BookStack
+
+**Role:** recommended first knowledge-base adapter, added 2026-08-13.
+
+BookStack was absent from this document until the [category survey](../../architecture/knowledge-tasks-integration-design/#category-a-survey-living-documentation-and-knowledge-platforms) found it has the best-documented API of any candidate — a self-documenting REST surface at `/api/docs` and `/api/docs.json` on every instance, ~50 webhook event types, and free OIDC/SAML/LDAP — under an unmodified MIT license with **no paid tier of any kind**. Its costs are honest: MySQL/MariaDB rather than PostgreSQL, no official container image, per-page editing rather than multiplayer co-editing, and a severe single-maintainer bus factor mitigated by the MIT license itself.
+
 ### AFFiNE
 
 **Role:** evaluation candidate for users wanting a more open canvas/document-oriented workspace.
 
 Potential value includes documents, whiteboards/canvas, tables, and knowledge-management workflows. A first-class adapter should wait for a stable supported external API rather than relying on undocumented internal endpoints.
+
+**OVERTURNED 2026-08-13 — the wait described above has no end condition.** The disposition is left visible rather than deleted, because the reasoning that produced it was sound and only the facts were missing. Verified against upstream: AFFiNE's GraphQL API exposes document **metadata and permissions only** — `DocType` carries `id, title, summary, mode, public` and **no body field**, and `Query` has zero document-content fields. Document content is a Yjs CRDT synced over WebSocket, so there is no stable external API to wait for; writing a page programmatically means reimplementing a client. Separately, `packages/backend/server/LICENSE` is an **"AFFiNE Enterprise Edition License"** requiring a seat subscription for production use, so the server half is not open source even though the client is MIT. **AFFiNE is not a viable document-integration target** and should not be carried forward as a pending evaluation.
+
+### Docmost, AppFlowy, SiYuan, Wiki.js, Alexandrie
+
+Also surveyed and **not recommended today**, each for a specific verified reason — Docmost gates its API and all SSO behind an enterprise license; AppFlowy's free self-hosted tier is one user seat; SiYuan has no user model in Docker mode; Wiki.js's v3 rewrite has never shipped a release. **Alexandrie** (MIT, RustFS-native storage, the best storage-model fit of any candidate) is **watch-tier purely for want of API documentation** — its Go/Gin routes exist but no endpoint reference or OpenAPI spec is published anywhere, and its "Kanban boards" are a JSON blob on a document with no task entity, so it is not a task-management candidate. See the [survey table](../../architecture/knowledge-tasks-integration-design/#category-a-survey-living-documentation-and-knowledge-platforms) for citations.
 
 ### Generic external resources
 
@@ -59,7 +75,11 @@ resource_links
 
 Provider-specific adapters can add richer actions where APIs permit them.
 
+Both tables shipped in Phase 0. The concrete `provider` / `external_type` / `resource_type` / `purpose` vocabulary for knowledge and task companions is fixed in the [integration design](../../architecture/knowledge-tasks-integration-design/#the-integration-shape), alongside the rule that `metadata` holds sync metadata only and never a copy of a document body or task description.
+
 ## Task and project management
+
+**Surveyed and designed in [Knowledge and Task Companion Integration Design](../../architecture/knowledge-tasks-integration-design/) (2026-08-13).** Vikunja's disposition below is **confirmed** by that survey; the page adds the verified license/API comparison against Planka, OpenProject, Leantime, Taiga, and Focalboard, plus the integration shape and milestones.
 
 ### Vikunja
 
@@ -76,6 +96,20 @@ Potential Loxep integration:
 - provide a later migration/import path if native Loxep task management eventually supersedes it.
 
 The integration boundary must preserve other task systems later rather than placing Vikunja-specific IDs throughout domain tables.
+
+**CONFIRMED 2026-08-13, with one correction and one caveat.** The correction: `@loxep/work` now owns projects, time entries, billing rates, and the unbilled-work queue, so the framing above — Vikunja as a stand-in "before Loxep's native Projects/Tasks domains are complete" — understates the split. What Loxep genuinely lacks is the **task, kanban, assignee, and due-date layer**, and that is what Vikunja supplies. Verified: AGPL-3.0, an **OpenAPI 3.1** surface at `/api/v2/openapi.json`, HMAC-SHA256-signed webhooks with a documented event taxonomy, API tokens with per-route scoping, free multi-provider OIDC, and **two containers**. Vikunja's paid Pro tier gates exactly three things — the admin panel, **time tracking**, and audit logs — and time tracking is precisely the capability Loxep must own rather than delegate, so the free build loses nothing this integration wants. The caveat: Vikunja is effectively a one-maintainer project, which is an [open question](../../architecture/knowledge-tasks-integration-design/#open-questions) for the owner at the tier where a stored credential exists.
+
+Also worth recording, because it constrains the bullet above: *"consume supported webhook/API updates"* requires an **inbound webhook receiver that Loxep does not have**. That capability is welded to the same `/api/v1` decision [Phase 8](../../architecture/fleet-observability-design/#open-questions) defers, and must not be answered separately here.
+
+### OpenProject
+
+**Role:** documented alternative for operators wanting a full project-management suite, and the only surveyed tool where **one** documented API covers both a wiki and a work tracker.
+
+GPL-3.0 with enterprise features gated at runtime — notably **SSO/SAML/OIDC**, which is a paid tier — and nine Compose services. It is the honest answer to "one companion instead of two" and is recorded as such rather than recommended, because it overlaps `@loxep/work`'s own projects far more than Vikunja does.
+
+### Not recommended
+
+**Planka** relicensed away from MIT to the non-OSI "PLANKA Community License 1.1", whose fair-use grant bars operating it as a hosted service for commercial gain. **Focalboard** is unmaintained — its README states so and it has moved to a community organization. **Leantime** offers only JSON-RPC with no machine-readable spec, and **Taiga** (MPL-2.0, and alive despite its reputation) is in caretaker mode with eight services including two RabbitMQ instances.
 
 ## Billing and customer-facing invoicing
 
