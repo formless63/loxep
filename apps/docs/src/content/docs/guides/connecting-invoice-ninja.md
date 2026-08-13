@@ -4,7 +4,7 @@ title: Connecting Invoice Ninja
 
 A self-hosted Invoice Ninja instance connects with a **company API token** issued in its own admin settings. There is no consent screen and no installation-wide setup: each instance is one connection.
 
-Unlike eBay, WooCommerce, and Medusa, this connection is not a channel Loxep polls or scans. Invoice Ninja is a **billing companion**: Loxep owns the source facts, the decision that work was billed, the seller and counterparty, and the amounts, while Invoice Ninja owns rendering, delivery, reminders, payment collection, and the customer-visible invoice number. Connecting an instance here only stores its address and credential — pushing an actual invoice is a separate, on-demand action, and is not wired up yet (tracked separately from this connection).
+Unlike eBay, WooCommerce, and Medusa, this connection is not a channel Loxep polls or scans. Invoice Ninja is a **billing companion**: Loxep owns the source facts, the decision that work was billed, the seller and counterparty, and the amounts, while Invoice Ninja owns rendering, delivery, reminders, payment collection, and the customer-visible invoice number. Connecting an instance here only stores its address and credential — pushing an actual draft invoice is a separate, on-demand action; see [Pushing a draft invoice](#pushing-a-draft-invoice) below.
 
 ## What you will need
 
@@ -41,6 +41,18 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 | The URL is rejected before anything is sent | The instance URL must be a full URL including `https://`. |
 | Authentication is refused (`Invalid token`) | The token was revoked, regenerated, or belongs to a different instance. Create a new one. |
 | The instance is unreachable | Invoice Ninja instances are frequently run without a public TLS-terminated address during development; Loxep requires `https://` and will not connect to a plain-`http://` instance. |
+
+## Pushing a draft invoice
+
+Once at least one Invoice Ninja connection exists, **Finance → Overview** shows a **Push draft to Invoice Ninja** action. The dialog it opens lets an administrator choose the connection, a counterparty, an optional project, and a list of line items (description, quantity, unit cost), then submits them as one draft invoice.
+
+**The idempotency guard runs first.** Loxep checks whether the chosen counterparty (or project, when one is given) already has an open draft push on record — the `external_resources`/`resource_links` linkage the [Services & Billing Schema Design](../../architecture/services-billing-schema-design/#what-shipped--the-invoice-ninja-adapter-and-on-demand-push-loxep-v5r4-loxep-v5r5) uses everywhere else. If one exists, the dialog shows it and submitting again reuses the existing link rather than pushing a second draft.
+
+**Line items** default to hand entry (description, quantity, unit cost), or **Load unbilled work** appends Loxep's own unbilled time entries and material uses for the selected counterparty/project as editable rows — review them (a time entry whose bill rate was never resolved loads with a blank unit cost) before submitting. This read has no way to tell whether a loaded row is already covered by an open draft push elsewhere, since the table that would make that check possible (`invoice_line_sources`) does not exist yet; the idempotency guard above is the safety net for that case, not this list.
+
+**Past the guard**, Loxep resolves the connection's stored credential and instance URL, creates (or reuses) the counterparty's Invoice Ninja client, creates the draft invoice, and records both linkages. The recorded link URLs are a best-effort guess at Invoice Ninja's own admin-UI routes, not independently confirmed against a live push in this environment — see the schema design doc's implementation record for the exact caveat.
+
+Loxep never pulls the draft back into itself and never issues it (`markInvoiceSent`, the design's approved→issued transition) — sending, reminding, and collecting payment on the draft happens inside Invoice Ninja, same as every other invoice there.
 
 ## Removing an instance
 

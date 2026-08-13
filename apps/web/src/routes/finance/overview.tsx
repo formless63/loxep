@@ -1,15 +1,22 @@
 import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { useSuspenseQuery } from '@tanstack/react-query';
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Icons } from '@/components/icons';
 import { formatQuantity } from '@/lib/format';
 import { FinancePage } from '@/features/finance/components/finance-page';
 import {
   MissingReceiptsList,
   UnallocatedExpensesList
 } from '@/features/finance/components/expense-reports';
-import { missingReceiptsQuery, unallocatedExpensesQuery } from '@/features/finance/api/queries';
+import PushDraftInvoiceDialog from '@/features/finance/components/push-draft-invoice-dialog';
+import {
+  invoiceNinjaConnectionsQuery,
+  missingReceiptsQuery,
+  unallocatedExpensesQuery
+} from '@/features/finance/api/queries';
 
 export const Route = createFileRoute('/finance/overview')({
   loader: async ({ context: { queryClient } }) => {
@@ -78,11 +85,35 @@ function OverviewData() {
   );
 }
 
+/**
+ * The "Push draft to Invoice Ninja" action (loxep-v5r.5) only appears once at
+ * least one `provider='invoiceninja'` connection exists — there is nothing
+ * useful to push to otherwise, and the connection picker inside the dialog
+ * would just show its own empty state.
+ */
+function InvoiceNinjaPushAction() {
+  const connectionsQuery = useQuery(invoiceNinjaConnectionsQuery);
+  const [open, setOpen] = React.useState(false);
+
+  if ((connectionsQuery.data ?? []).length === 0) return null;
+
+  return (
+    <>
+      <Button variant='outline' size='sm' onClick={() => setOpen(true)}>
+        <Icons.send />
+        Push draft to Invoice Ninja
+      </Button>
+      <PushDraftInvoiceDialog open={open} onOpenChange={setOpen} />
+    </>
+  );
+}
+
 function FinanceOverview() {
   return (
     <FinancePage
       title='Finance'
       description='Expense capture, receipts, and the expense reports. Money spent on goods for resale is not an expense — it belongs to the acquisition, arriving in a later milestone.'
+      actions={<InvoiceNinjaPushAction />}
     >
       <React.Suspense fallback={<OverviewSkeleton />}>
         <OverviewData />
