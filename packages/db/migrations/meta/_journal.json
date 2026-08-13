@@ -148,6 +148,13 @@
       "when": 1786641824970,
       "tag": "0020_integration_health_status_transitions",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786655574997,
+      "tag": "0021_external_resources_idempotency",
+      "breakpoints": true
     }
   ]
 }

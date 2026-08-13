@@ -60,8 +60,16 @@ import {
  *      history table — one prior value per subject, same one-row-per-
  *      subject shape as the rest of the table. Three CHECKs extend the
  *      table's existing biconditional discipline to the new pair.
+ * 0021 external_resources idempotency (loxep-uhs, blocking finding from the
+ *      Beszel weave design loxep-y64): one partial unique index,
+ *      external_resources_provider_type_external_id_uq on external_resources
+ *      (provider, external_type, external_id) where external_id is not
+ *      null. Closes the scheduled-discovery duplicate-row race so
+ *      @loxep/domain's new upsertExternalResource has an ON CONFLICT
+ *      target; tier-1 links with a null external_id are unaffected. No
+ *      column added, no other table touched.
  */
-const MIGRATION_FILE_COUNT = 21;
+const MIGRATION_FILE_COUNT = 22;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

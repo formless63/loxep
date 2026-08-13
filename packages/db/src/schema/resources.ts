@@ -10,27 +10,52 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { connections } from "./connections.ts";
 import { emptyJsonObject } from "./settings.ts";
 
-export const externalResources = pgTable("external_resources", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  provider: text("provider").notNull(),
-  connectionId: uuid("connection_id").references(() => connections.id),
-  externalType: text("external_type").notNull(),
-  externalId: text("external_id"),
-  url: text("url").notNull(),
-  title: text("title"),
-  metadata: jsonb("metadata").notNull().default(emptyJsonObject),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const externalResources = pgTable(
+  "external_resources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    provider: text("provider").notNull(),
+    connectionId: uuid("connection_id").references(() => connections.id),
+    externalType: text("external_type").notNull(),
+    externalId: text("external_id"),
+    url: text("url").notNull(),
+    title: text("title"),
+    metadata: jsonb("metadata").notNull().default(emptyJsonObject),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    /**
+     * Idempotency key for scheduled adapter-driven discovery (loxep-uhs):
+     * without this, a Beszel/Gatus/Tailscale/Dockhand/Termix poll that
+     * re-observes the same provider object every sweep would INSERT a fresh
+     * `external_resources` row each time, and each duplicate would become a
+     * separate `integration_health` subject. `registerExternalResource`
+     * remains a plain insert for tier-1 operator-typed links (see its doc
+     * comment); `upsertExternalResource` in `@loxep/domain` targets this
+     * index.
+     *
+     * Partial on `external_id is not null`: tier-1 links frequently have no
+     * external id at all (a hand-entered URL has nothing to key on), and
+     * those rows must stay free to repeat — the index only closes the case
+     * where a provider-assigned id genuinely identifies one external object.
+     */
+    uniqueIndex("external_resources_provider_type_external_id_uq")
+      .on(table.provider, table.externalType, table.externalId)
+      .where(sql`${table.externalId} is not null`),
+  ],
+);
 
 /**
  * Attachment of one external companion resource to one Loxep-side resource,

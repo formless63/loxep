@@ -1,0 +1,38 @@
+-- external_resources idempotency for scheduled adapter-driven discovery
+-- (loxep-uhs, blocking finding from the Beszel weave design loxep-y64,
+-- applies equally to Gatus/Dockhand/Tailscale/Termix discovery).
+--
+-- `external_resources` shipped in migration 0000 with no unique constraint
+-- on `(provider, external_type, external_id)`, and `@loxep/domain`'s
+-- `registerExternalResource` unconditionally INSERTs. A scheduled
+-- adapter-driven discovery read (Beszel systems, Gatus endpoints, Tailscale
+-- devices, Dockhand environments, Termix hosts) re-observing the same
+-- provider object every ~5-minute sweep would therefore duplicate a row on
+-- every poll, and each duplicate becomes a separate `integration_health`
+-- subject. This blocks every per-resource slice of the rf4 wave.
+--
+-- Partial, not total: tier-1 operator-typed companion links (the "Add a
+-- companion link" UI, `registerExternalResource`/`createLink`) frequently
+-- carry a NULL `external_id` — a hand-entered URL has nothing to key on —
+-- and several such rows for the same `(provider, external_type)` must
+-- remain legal. The index only closes the case a provider-assigned id
+-- genuinely identifies one external object, which is exactly the case
+-- adapter-driven discovery needs for `ON CONFLICT` to work.
+--
+-- Safe on a populated table: at implementation time `external_resources`
+-- has no adapter-driven discovery writers yet (Beszel/Gatus/Tailscale/
+-- Dockhand/Termix ingestion all ship after this bead, per the rf4 wave's
+-- dependency on loxep-uhs) — every existing row was written by
+-- `registerExternalResource`/`createLink` through tier-1 UI flows, which are
+-- one row per user action and have no reason to repeat an identical
+-- `(provider, external_type, external_id)` triple with a non-null
+-- `external_id`. Even so, this is a fresh-in-practice constraint: if a
+-- future environment somehow already held a violating pair, index creation
+-- fails loudly (not silently) and the fix is a one-time dedup, not a design
+-- change.
+--
+-- Drizzle-generated: `bun --cwd packages/db generate` emitted this single
+-- `CREATE UNIQUE INDEX ... WHERE ...` statement for the `uniqueIndex(...)
+-- .where(...)` added to `packages/db/src/schema/resources.ts` — nothing had
+-- to be hand-written.
+CREATE UNIQUE INDEX "external_resources_provider_type_external_id_uq" ON "external_resources" USING btree ("provider","external_type","external_id") WHERE "external_resources"."external_id" is not null;

@@ -10,14 +10,20 @@
  * "three designs now scope the same link service" open question. Those
  * consumers add their own resource-kind registrations (a `RESOURCE_LINK_
  * RESOURCE_TYPES` entry, where relevant) and surface wiring — never a second
- * `registerExternalResource`/`attachLink`/`detachLink`/`listLinksFor`.
+ * `registerExternalResource`/`upsertExternalResource`/`attachLink`/
+ * `detachLink`/`listLinksFor`.
  *
- * ## No migration
+ * ## Migrations
  *
  * `external_resources` and `resource_links` shipped in migration 0000
  * (constrained — the `(external_resource_id, resource_type, resource_id,
- * purpose)` unique key and its index — in 0004, loxep-dyx). This module is
- * the first `@loxep/domain` service layered on top of them. See
+ * purpose)` unique key and its index — in 0004, loxep-dyx). This module was
+ * the first `@loxep/domain` service layered on top of them, and it remains
+ * the only one: `external_resources` later gained a second constraint, the
+ * partial `external_resources_provider_type_external_id_uq` unique index
+ * (migration 0021, loxep-uhs) that `upsertExternalResource` targets — see
+ * that verb's doc comment for why the index (and the verb) had to be
+ * partial. See
  * `apps/docs/.../architecture/fleet-observability-design.md#the-link-model-and-its-vocabulary`
  * for the fixed fleet-tool link vocabulary a future consumer follows, and
  * the knowledge-tasks design's mirrored section for the content-tool
@@ -165,6 +171,36 @@ export interface ResourceLinksService {
     input: RegisterExternalResourceInput,
   ) => Promise<ExternalResourceRow>;
   /**
+   * Records or refreshes one companion object, keyed on
+   * `(provider, externalType, externalId)` (loxep-uhs). This is the verb
+   * scheduled adapter-driven discovery (Beszel systems, Gatus endpoints,
+   * Tailscale devices, Dockhand environments, Termix hosts) must call on
+   * every sweep instead of `registerExternalResource`: a re-observed object
+   * refreshes its `url`/`title`/`metadata`/`connectionId` in place via
+   * `ON CONFLICT ... DO UPDATE` against the
+   * `external_resources_provider_type_external_id_uq` partial unique index,
+   * rather than inserting a fresh row (and a fresh `integration_health`
+   * subject) every 5 minutes.
+   *
+   * Naming: the bead that requested this named two candidate verbs,
+   * `upsertExternalResource` and `refreshExternalResource`. This module
+   * picks `upsertExternalResource` — it is a plain upsert (insert-or-update
+   * on a natural key), not a refresh of an existing, known row, and the name
+   * should say what the SQL does.
+   *
+   * Throws {@link DomainValidationError} when `externalId` is null, absent,
+   * or blank: the unique index this upserts against is partial
+   * (`WHERE external_id IS NOT NULL`), so a null external id has no
+   * `ON CONFLICT` target and cannot be upserted against — there would be no
+   * way to tell "insert a new row" from "update the existing one" for two
+   * calls that both carry a null id. Callers with no external id (tier-1
+   * operator-typed companion links entered by hand) must keep using
+   * `registerExternalResource`, which is unchanged and still a plain insert.
+   */
+  upsertExternalResource: (
+    input: RegisterExternalResourceInput,
+  ) => Promise<ExternalResourceRow>;
+  /**
    * Attaches an already-registered external resource to a Loxep record.
    * Idempotent: an at-least-once retry with the same
    * `(externalResourceId, resourceType, resourceId, purpose)` is a no-op,
@@ -228,6 +264,26 @@ function toCompanionLink(
 }
 
 const urlSchema = z.url();
+
+/**
+ * Local literal helpers for the one hand-written statement below
+ * (`upsertExternalResource`'s `ON CONFLICT ... WHERE ... DO UPDATE`, which
+ * the Drizzle insert builder cannot express without a `drizzle-orm` `sql`
+ * tag this package deliberately does not depend on — see the module doc).
+ * `textLiteral`/`uuidLiteral` already cover the non-null case; these three
+ * wrap them for the nullable/JSON columns this one query needs.
+ */
+function nullableTextLiteral(value: string | null): string {
+  return value === null ? "null" : textLiteral(value);
+}
+
+function nullableUuidLiteral(value: string | null): string {
+  return value === null ? "null" : uuidLiteral(value);
+}
+
+function jsonbLiteral(value: Record<string, unknown>): string {
+  return `${textLiteral(JSON.stringify(value))}::jsonb`;
+}
 
 function assertResourceType(
   resourceType: string,
@@ -322,6 +378,82 @@ export function createResourceLinksService(options: {
     await insertLink(db, input);
   }
 
+  async function upsertExternalResource(
+    input: RegisterExternalResourceInput,
+  ): Promise<ExternalResourceRow> {
+    const provider = requireNonEmpty(input.provider, "provider");
+    const externalType = requireNonEmpty(input.externalType, "externalType");
+    const externalId = input.externalId?.trim();
+    if (externalId === undefined || externalId === "") {
+      throw new DomainValidationError(
+        "upsertExternalResource requires a non-empty externalId — it " +
+          "targets the external_resources_provider_type_external_id_uq " +
+          "partial index (WHERE external_id IS NOT NULL), so a null " +
+          "external id has no ON CONFLICT target; callers with no " +
+          "external id must use registerExternalResource instead",
+      );
+    }
+    const parsedUrl = urlSchema.safeParse(input.url.trim());
+    if (!parsedUrl.success) {
+      throw new DomainValidationError("url must be a valid absolute URL");
+    }
+    const title = input.title?.trim();
+    const metadata = input.metadata ?? {};
+
+    // Hand-written SQL, not the insert builder: `ON CONFLICT (...) WHERE ...
+    // DO UPDATE` against a partial unique index needs a `targetWhere`
+    // expressed with drizzle-orm's `sql` tag, and this package deliberately
+    // takes no direct `drizzle-orm` dependency (see the module doc and
+    // `sql.ts`). `excluded.*` refreshes exactly the columns the module doc
+    // promises — url, title, metadata, connection_id — plus updated_at;
+    // provider/external_type/external_id are the conflict target and never
+    // change on update, and created_at is left untouched.
+    const result = await db.execute(
+      `insert into external_resources
+          (provider, connection_id, external_type, external_id, url, title, metadata)
+        values (
+          ${textLiteral(provider)},
+          ${nullableUuidLiteral(input.connectionId ?? null)},
+          ${textLiteral(externalType)},
+          ${textLiteral(externalId)},
+          ${textLiteral(parsedUrl.data)},
+          ${nullableTextLiteral(title === undefined || title === "" ? null : title)},
+          ${jsonbLiteral(metadata)}
+        )
+        on conflict (provider, external_type, external_id)
+          where external_id is not null
+        do update set
+          url = excluded.url,
+          title = excluded.title,
+          metadata = excluded.metadata,
+          connection_id = excluded.connection_id,
+          updated_at = now()
+        returning id, provider, connection_id, external_type, external_id,
+                  url, title, metadata, created_at, updated_at`,
+    );
+    const row = result.rows[0];
+    if (row === undefined) {
+      throw new Error("external_resources upsert returned no row");
+    }
+    // `db.execute` on a hand-written string does not carry the schema-aware
+    // Date coercion the typed insert/query builders apply, so `created_at`/
+    // `updated_at` can arrive as driver-native timestamp strings rather than
+    // `Date` instances — normalize explicitly to keep this row shape-
+    // compatible with `toExternalResourceRow`'s `ExternalResourceRow`.
+    return {
+      id: row["id"] as string,
+      provider: row["provider"] as string,
+      connectionId: row["connection_id"] as string | null,
+      externalType: row["external_type"] as string,
+      externalId: row["external_id"] as string | null,
+      url: row["url"] as string,
+      title: row["title"] as string | null,
+      metadata: row["metadata"] as Record<string, unknown>,
+      createdAt: new Date(row["created_at"] as string | Date),
+      updatedAt: new Date(row["updated_at"] as string | Date),
+    };
+  }
+
   async function createLink(input: CreateLinkInput): Promise<CompanionLink> {
     return db.transaction(async (tx) => {
       const resource = await insertExternalResource(tx, input);
@@ -396,6 +528,7 @@ export function createResourceLinksService(options: {
 
   return {
     registerExternalResource,
+    upsertExternalResource,
     attachLink,
     createLink,
     listLinksFor,
