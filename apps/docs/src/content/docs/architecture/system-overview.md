@@ -75,7 +75,7 @@ The smallest supported deployment is intentionally simple:
                 +---------------------+
 ```
 
-`LOXEP_MODE=all` means one Loxep container provides interactive web and background-worker capability as **one Node.js process** with Graphile Worker embedded in-process; there is no in-container process supervisor. Schema migration is an explicit invocation of the same image (conceptually `loxep migrate`) rather than a side effect of process startup, and the default Compose stack runs it as a one-shot step before the application starts. See ADR-0018 for the runtime-process, migration-ownership, and liveness/readiness decisions.
+`LOXEP_MODE=all` means one Loxep container provides interactive web and background-worker capability as **one Node.js process** with Graphile Worker embedded in-process; there is no in-container process supervisor. Schema migration is an explicit invocation of the same image (conceptually `loxep migrate`) rather than a side effect of process startup — executed by exec into the running application container, never as a separate Compose service (ADR-0018 as amended 2026-08-13: no one-shot containers). See ADR-0018 for the runtime-process, migration-ownership, and liveness/readiness decisions.
 
 ## Installation, users, and economic entities
 

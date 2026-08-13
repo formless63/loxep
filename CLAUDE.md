@@ -19,13 +19,13 @@ Source-of-truth order when documents disagree: accepted ADRs → architecture do
 The repo-root Compose stack is the primary way the app runs. Configuration comes from the **root `.env`** (`cp .env.example .env`; generate `LOXEP_KEYRING` and `LOXEP_AUTH_SECRET` with `head -c 32 /dev/urandom | base64`).
 
 ```bash
-docker compose up -d --build        # postgres → one-shot `migrate` → loxep (LOXEP_MODE=all)
+docker compose up -d --build        # loxep-db (postgres) → loxep (LOXEP_MODE=all)
 docker compose logs -f loxep        # app logs (structured JSON)
-docker compose run --rm migrate     # re-run migrations explicitly after a schema change
+docker compose exec loxep node bin/loxep.ts migrate   # explicit migrations (never a separate container)
 docker compose --profile rustfs up -d   # optional S3-compatible companion
 ```
 
-The app lands on `http://localhost:3020` (readiness `/health/ready`). `migrate` is a separate one-shot service using the same image; the app service waits on `service_completed_successfully` and **startup never migrates** (ADR-0018). The bundled DB image is `timescale/timescaledb-ha:pg18.4-ts2.29.1-all`. `compose.override.yml` adds `host.docker.internal` so magic links can reach a host Mailpit.
+The app lands on `http://localhost:3020` (readiness `/health/ready`). **Startup never migrates** (ADR-0018 as amended): there is no migrate service and no one-shot containers — the stack is exactly the named containers `loxep` + `loxep-db`; run migrations by exec into the running app container (readiness fails with a pending count until you do). The bundled DB image is `timescale/timescaledb-ha:pg18.4-ts2.29.1-all`. `compose.override.yml` adds `host.docker.internal` so magic links can reach a host Mailpit.
 
 `bun run dev` is the **fast UI loop** — Vite dev server on port 3020 (strictPort, host 0.0.0.0), web-only, reading `apps/web/.env`. Use it for frontend work; use Compose for anything touching runtime modes, workers, or migrations. The two both bind 3020, so run one at a time.
 

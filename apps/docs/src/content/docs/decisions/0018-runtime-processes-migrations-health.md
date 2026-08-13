@@ -38,7 +38,7 @@ loxep start --mode=worker
 Rules:
 
 - Normal `web`/`worker`/`all` startup **never mutates schema**. Startup verifies that the database is at the expected migration state and fails readiness with a clear diagnostic when it is behind.
-- The default Compose stack runs a one-shot migration service/step (same image, migrate command) before the application service starts.
+- **AMENDED 2026-08-13 (owner ruling):** the Compose stack defines **no migration service and no one-shot containers of any kind** — a lingering exited container is not an acceptable artifact of a deploy. The sanctioned mechanism is an explicit exec into the already-running application container (`docker compose exec loxep node bin/loxep.ts migrate`), or an equivalent direct invocation (`bun run migrate`) outside Compose. The application boots safely against an unmigrated database (readiness fails with the pending count until the operator migrates), so `up` before `migrate` is a stable, observable state, and the compose stack contains exactly the named containers `loxep` and `loxep-db` (plus opted-in profiles). The original text below records the superseded mechanism for history: *"The default Compose stack runs a one-shot migration service/step (same image, migrate command) before the application service starts."*
 - Migration invocations take a PostgreSQL advisory lock so two concurrent invocations cannot interleave; the second waits or exits cleanly with "already migrated."
 - Reviewed, version-controlled Drizzle migrations remain the artifact per ADR-0006. Exact Drizzle migrator/advisory-lock mechanics are verified against current upstream documentation at implementation time.
 

@@ -289,7 +289,7 @@ object-storage   -> shared S3-compatible backend
 
 No Redis, message broker, or separate analytical database is required.
 
-Implemented as `docker/Dockerfile` (multi-stage: Bun build/install stages, `node:24-slim` non-root runtime running `bin/loxep.ts` via native type stripping) and repo-root `compose.yml`: `postgres` (TimescaleDB Community), a one-shot `migrate` service (same image, explicit `migrate` command per ADR-0018 — application startup never migrates), the `loxep` service with `/health/ready` healthchecks, and the optional `rustfs` Compose profile. Bootstrap configuration comes from a repo-root `.env` (template: `.env.example`); the README covers the quick start.
+Implemented as `docker/Dockerfile` (multi-stage: Bun build/install stages, `node:24-slim` non-root runtime running `bin/loxep.ts` via native type stripping) and repo-root `compose.yml`: `loxep-db` (TimescaleDB Community) and the `loxep` service with `/health/ready` healthchecks, plus the optional `rustfs` Compose profile — migrations run by exec into the running `loxep` container (ADR-0018 as amended: startup never migrates, and no one-shot migrate service exists). Bootstrap configuration comes from a repo-root `.env` (template: `.env.example`); the README covers the quick start.
 
 ## Explicit Phase 0 non-goals
 

@@ -20,7 +20,7 @@ name: ${LOXEP_DEV_PROJECT:-loxep-dev}
 
 services:
   loxep-dev-db:
-    container_name: ${LOXEP_DEV_DB_NAME:-loxep-dev-db}
+    container_name: ${LOXEP_DEV_DB_NAME:-loxep-db-dev}
     image: timescale/timescaledb-ha:pg18.4-ts2.29.1-all
     ports:
       - "${LOXEP_DEV_DB_PORT:-5433}:5432"

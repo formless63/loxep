@@ -1,12 +1,18 @@
-# Loxep default deployment stack (ADR-0013 / ADR-0018).
+# Loxep default deployment stack (ADR-0013 / ADR-0018 as amended).
 #
 #   cp .env.example .env    # then fill in the required values
 #   docker compose up -d
+#   docker compose exec loxep node bin/loxep.ts migrate   # explicit, advisory-locked
 #
-# Services: loxep (LOXEP_MODE=all) + postgres (TimescaleDB), with a one-shot
-# `migrate` service that applies schema migrations before the app starts —
-# application startup itself never migrates (ADR-0018). The optional `rustfs`
-# profile adds a generic S3-compatible object-storage companion (ADR-0014):
+# Services: loxep (LOXEP_MODE=all) + loxep-db (TimescaleDB). Exactly these
+# containers and no others — no one-shot service containers (ADR-0018
+# amendment: migrations run by exec into the running app container, never as
+# a separate compose service). The app boots safely against an unmigrated
+# database: readiness fails with a pending-count message until the operator
+# runs the migrate command above; startup itself never mutates schema.
+#
+# The optional `rustfs` profile adds a generic S3-compatible object-storage
+# companion (ADR-0014):
 #   docker compose --profile rustfs up -d
 #
 # Scale-out later uses this same image with LOXEP_MODE=web / LOXEP_MODE=worker
@@ -20,6 +26,7 @@ services:
     # deliberate: the observation hypertable's columnstore policy requires
     # Community capabilities (ADR-0002). Not exposed to the host by default.
     image: timescale/timescaledb-ha:pg18.4-ts2.29.1-all
+    container_name: loxep-db
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: loxep
@@ -33,27 +40,12 @@ services:
       retries: 30
     restart: unless-stopped
 
-  # One-shot migration step: same image, explicit `migrate` command
-  # (ADR-0018 — schema mutation is an operator-visible deployment step).
-  migrate:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: ${LOXEP_IMAGE:-loxep}
-    command: ["migrate"]
-    env_file: .env
-    environment:
-      LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
-
   loxep:
     build:
       context: .
       dockerfile: docker/Dockerfile
     image: ${LOXEP_IMAGE:-loxep}
+    container_name: loxep
     env_file: .env
     environment:
       LOXEP_DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/loxep
@@ -65,8 +57,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch(`http://127.0.0.1:$${process.env.LOXEP_PORT ?? 3020}/health/ready`).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 10s
@@ -81,6 +71,7 @@ services:
   rustfs:
     profiles: ["rustfs"]
     image: rustfs/rustfs:1.0.0-rc.1
+    container_name: loxep-rustfs
     environment:
       RUSTFS_VOLUMES: /data
       RUSTFS_ADDRESS: 0.0.0.0:9000
