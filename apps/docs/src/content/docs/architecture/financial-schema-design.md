@@ -1476,6 +1476,17 @@ One trap worth recording: a `daterange` with an inclusive upper bound of `'infin
 4. **`buyer_fee_income` in the shipped chart.** A system key the design's own table does not list, added because Phase 3's shipped reality requires it.
 5. **Fiscal years labelled by their starting year.**
 
+### Milestone 2's admin surface (`/finance/books`, loxep-cmo)
+
+The nine tables and the `@loxep/accounting` services above shipped with zero UI callers, the same situation milestone 1 was in before `/finance/expenses` existed. `/finance/books` closes that gap: a `DataTable` list (code, name, functional currency, active entity-link count, the fiscal period covering today), a create dialog, and a book detail page composing entity-link management, fiscal-year generation, period open/close/reopen, and a trial-balance panel. Every write goes through `apps/web/src/server/books-functions.ts` behind `requireAdmin`; reads (including the trial balance) are `requireSession`.
+
+Two things worth recording because they are compositional rather than schema decisions:
+
+- **`createBook` is called once, unmodified, from the UI's create-book handler.** The service already composes the row insert, the code-owned starter chart (`seedDefaultChart`), and the first fiscal year (`generateFiscalYear`) behind `seedChart`/`generatePeriods`, both defaulting `true`. The surface does not re-sequence those calls or offer a currency picker — functional currency stays fixed at USD (owner answer 3) with the dialog naming the seam rather than hiding it.
+- **No backdating UI exists.** OQ5's authorization question — whether `allowBackdated` is `admin`-only or member-reachable — is still open (see Milestone 2's "what shipped" above); the period-close dialog offers `soft_closed`/`closed`/`locked` as ordinary transitions and nothing calls the backdated-posting path, so the open question stays open rather than being answered by omission of a checkbox nobody asked for.
+
+This closes the dashboard Financial band's "no books surface to link to yet" gap (`apps/web/src/features/dashboard/components/financial-band.tsx`): its no-book Empty state now links to `/finance/books`, and the e2e suite (`apps/web/e2e/books.spec.ts`) asserts the band actually fills in once a book and its first fiscal year exist.
+
 ### Milestone 3 — what shipped (posting rules and statements)
 
 ```text

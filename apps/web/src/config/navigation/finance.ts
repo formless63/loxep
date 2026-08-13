@@ -49,5 +49,18 @@ export const financeNavGroups: NavGroup[] = [
         items: []
       }
     ]
+  },
+  {
+    label: 'Books',
+    items: [
+      {
+        title: 'Books',
+        url: '/finance/books',
+        icon: 'ledger',
+        isActive: false,
+        shortcut: ['g', 'b'],
+        items: []
+      }
+    ]
   }
 ];

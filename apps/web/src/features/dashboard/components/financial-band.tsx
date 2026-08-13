@@ -9,14 +9,15 @@
  *
  * The band has two honest empty states rather than one fabricated zero:
  *
- * - **No book exists.** Nothing has been posted anywhere, and there is no
- *   books surface to link to yet — the Empty says so instead of pointing at
- *   a page that does not exist.
+ * - **No book exists.** Nothing has been posted anywhere; the Empty links to
+ *   `/finance/books` (loxep-cmo), where a book can be created in one step —
+ *   the starter chart and first fiscal year come with it.
  * - **A book exists but no fiscal period covers today.** Periods are
  *   generated per fiscal year; without one there is no window to report, so
  *   the figures are absent rather than silently widened to "all time".
  */
 import { Bar, BarChart, XAxis, YAxis } from 'recharts';
+import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -74,8 +75,12 @@ function NoBookCard() {
             <EmptyTitle>Nothing has been posted to a ledger</EmptyTitle>
             <EmptyDescription>
               An income statement needs an accounting book, its chart of accounts, and a fiscal
-              year. The books administration surface is not built yet — books are created through
-              the accounting service today, and this band fills in on its own once one exists.
+              year. Create one from{' '}
+              <Link to='/finance/books' className='underline underline-offset-2'>
+                Books
+              </Link>{' '}
+              — it seeds the starter chart and opens the first fiscal year in the same step, and
+              this band fills in on its own once it exists.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

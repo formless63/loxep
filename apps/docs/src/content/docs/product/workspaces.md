@@ -13,10 +13,17 @@ The repository already has the first workspace roots:
 ```text
 /dashboard/*    the product home — money, market, operations, and the ledger
 /market/*       market workspace — monitors, watched items, market events
-/inventory/*    inventory workspace — stock, acquisitions, intake, cost basis (arriving through Phase 9)
+/inventory/*    inventory workspace — stock, locations, acquisitions, movements, and the
+               /market handoff live (M2), reading real data; writes (intake, lot
+               creation, cost allocation) are validated but blocked pending one
+               apps/web dependency add; enrichment and intake review's other two
+               producers arrive in later milestones
 /commerce/*     commerce workspace — catalog, channel listings, orders (arriving through Phase 9)
 /finance/*      finance workspace — expense capture, receipts, and expense reports live
-               (M1); CSV import and the acquisition seam arrive in a later milestone
+               (M1); books/chart-of-accounts/fiscal-period administration
+               (`/finance/books`) lives too — create a book, link entities, generate
+               fiscal years, open/close/reopen periods, and read the trial balance;
+               CSV import and the acquisition seam arrive in a later milestone
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
 ```
@@ -126,7 +133,7 @@ It is **not** `/settings`. `/settings` configures Loxep — its users, connectio
 | **Money** | ingested `orders` and `order_fees`: revenue, order count, seller-charge fees, net proceeds, refunds, a daily revenue/order series, and a 7-day-versus-prior-7-day trend | `/settings/connections` (order sync is enabled per connection) |
 | **Market pulse** | derived `market_events` over the trailing 24h, the highest-scoring rule-stamped opportunity, and the biggest price movers | `/market/*` |
 | **Operations health** | provider connections by status, the monitor fleet (enabled/erroring/backing off/overdue), order-sync freshness per target, and notification delivery success over 7 days | `/settings/*`, `/market/monitors` |
-| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts | a books surface, once one exists |
+| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts | `/finance/books` (create/archive a book, link entities, generate fiscal years, open/close/reopen periods, trial balance) |
 
 Three rules the composition exists to enforce, all checkable:
 
