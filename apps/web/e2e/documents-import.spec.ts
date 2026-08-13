@@ -205,6 +205,6 @@ test('confirming a receipt-backed line attaches the receipt, so it never lands i
   // …and, because its source document had a receipt image, it does NOT
   // appear as missing paper.
   await page.goto('/finance/overview');
-  await expect(page.getByRole('heading', { name: 'Missing receipts' })).toBeVisible();
+  await expect(page.getByText('Missing receipts', { exact: true })).toBeVisible();
   await expect(page.getByText(receiptCategory)).toHaveCount(0);
 });

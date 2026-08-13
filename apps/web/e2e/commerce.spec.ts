@@ -83,31 +83,28 @@ test('creates a manual listing for an item and it shows Listed, and the listing 
   // Marketplace, Draft, USD) — mirrors `IntakeForm`'s reasoning.
   await listingDialog.getByLabel('Price').fill('45.00');
   await listingDialog.getByRole('button', { name: 'Create listing' }).click();
-  await expect(listingDialog).toBeHidden();
 
-  // --- The item now shows Listed (badge), and its "Listed" date is no
-  // longer "Not listed".
-  await expect(statusBadge.filter({ hasText: 'Listed' })).toBeVisible();
-  await expect(main(page).getByText('Not listed', { exact: true })).toHaveCount(0);
-
-  const listingLink = main(page).getByRole('link', { name: /^LST-/ });
-  await expect(listingLink).toBeVisible();
-  const listingCode = (await listingLink.textContent())?.trim();
-  expect(listingCode).toMatch(/^LST-\d{4}-\d{4}$/);
-
-  // --- Follow the link to the listing detail page and confirm it renders.
-  await listingLink.click();
+  // --- Creation closes the loop by navigating to the created listing
+  // (loxep-0l5): the listing detail renders with the item linked back.
   await page.waitForURL('**/commerce/listings/*');
   await expect(main(page).getByText(itemLabel)).toBeVisible();
   await expect(
-    main(page)
-      .getByText(listingCode as string)
-      .first()
-  ).toBeVisible();
-  await expect(
     main(page).locator('[data-slot="badge"]').filter({ hasText: 'Draft' })
   ).toBeVisible();
-  await expect(main(page).getByRole('link', { name: /^ITM-/ })).toBeVisible();
+  const listingCodeText = await main(page)
+    .getByText(/LST-\d{4}-\d{4}/)
+    .first()
+    .textContent();
+  const listingCode = listingCodeText?.match(/LST-\d{4}-\d{4}/)?.[0];
+  expect(listingCode).toMatch(/^LST-\d{4}-\d{4}$/);
+
+  // --- Back on the item via the reverse link: the item now shows Listed
+  // (badge), and its "Listed" date is no longer "Not listed".
+  await main(page).getByRole('link', { name: /^ITM-/ }).click();
+  await page.waitForURL('**/inventory/stock/*');
+  await expect(statusBadge.filter({ hasText: 'Listed' })).toBeVisible();
+  await expect(main(page).getByText('Not listed', { exact: true })).toHaveCount(0);
+  await expect(main(page).getByRole('link', { name: /^LST-/ })).toBeVisible();
 
   // --- And it shows up in the /commerce/listings list.
   await page.goto('/commerce/listings');
