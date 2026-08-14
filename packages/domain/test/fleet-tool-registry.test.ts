@@ -25,11 +25,25 @@ describe("fleet tool registry", () => {
     }
   });
 
-  it("marks exactly tailscale, termix, and uptimekuma as having no tier-2 health path", () => {
+  it("marks exactly tailscale and termix as having no tier-2 health path", () => {
     const noHealthPath = FLEET_TOOL_PROVIDERS.filter(
       (provider) => FLEET_TOOL_REGISTRY[provider].healthPath === null,
     );
-    expect(noHealthPath.sort()).toEqual(["tailscale", "termix", "uptimekuma"]);
+    expect(noHealthPath.sort()).toEqual(["tailscale", "termix"]);
+  });
+
+  it("holds exactly the five integrated providers — link-only tools were removed", () => {
+    // netdata, cockpit, and uptimekuma had no adapter, connection, or
+    // credential and were deliberately removed on owner instruction ("if it
+    // doesn't integrate we don't mention it") — see the registry module doc.
+    // This asserts the real, current set rather than a stale historical count.
+    expect([...FLEET_TOOL_PROVIDERS].sort()).toEqual([
+      "beszel",
+      "dockhand",
+      "gatus",
+      "tailscale",
+      "termix",
+    ]);
   });
 
   it("derives PROBEABLE_FLEET_TOOL_PROVIDERS from the registry, not a hand-duplicated list", () => {
@@ -39,11 +53,13 @@ describe("fleet tool registry", () => {
     expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("beszel");
     expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("gatus");
     expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("dockhand");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("netdata");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("cockpit");
     expect(PROBEABLE_FLEET_TOOL_PROVIDERS).not.toContain("tailscale");
     expect(PROBEABLE_FLEET_TOOL_PROVIDERS).not.toContain("termix");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).not.toContain("uptimekuma");
+    expect([...PROBEABLE_FLEET_TOOL_PROVIDERS].sort()).toEqual([
+      "beszel",
+      "dockhand",
+      "gatus",
+    ]);
   });
 
   it("isFleetToolProvider narrows only the known providers", () => {

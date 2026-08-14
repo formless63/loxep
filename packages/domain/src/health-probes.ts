@@ -56,10 +56,15 @@
  *                       `<url origin><registry health path>`, unauthenticated,
  *                       for whichever provider `./fleet-tool-registry.ts`
  *                       names as tier-2-probeable. A provider with no
- *                       registered health path (Tailscale, Termix, Uptime
- *                       Kuma — see that module's doc) is never listed as a
- *                       candidate at all, so it never gets a fabricated
- *                       `unknown` row.
+ *                       registered health path (Tailscale, Termix — see that
+ *                       module's doc) is never listed as a candidate at all,
+ *                       so it never gets a fabricated `unknown` row. Netdata,
+ *                       Cockpit, and Uptime Kuma were link-only entries in
+ *                       that registry and were REMOVED from it on 2026-08-14
+ *                       (owner instruction: "if it doesn't integrate we don't
+ *                       mention it" — see that module's doc); this probe
+ *                       simply never sees them anymore, same as any other
+ *                       provider the registry does not name.
  * ```
  *
  * **"Unreachable from Loxep" vs "failing"**, the design's sharpest UX rule: a
@@ -427,10 +432,11 @@ function createStorageBackendProbe(
 /**
  * Every `external_resources` row whose `provider` is tier-2-probeable per
  * `./fleet-tool-registry.ts` (`PROBEABLE_FLEET_TOOL_PROVIDERS`). Other
- * providers — a future knowledge/tasks companion link, or a fleet tool with
- * no unauthenticated health path (Tailscale, Termix, Uptime Kuma) — are
- * never listed, so they never accumulate a fabricated `integration_health`
- * row this probe cannot honestly back.
+ * providers — a future knowledge/tasks companion link, a fleet tool with no
+ * unauthenticated health path (Tailscale, Termix), or a link-only tool
+ * removed from the registry entirely (Netdata, Cockpit, Uptime Kuma — see
+ * that module's doc) — are never listed, so they never accumulate a
+ * fabricated `integration_health` row this probe cannot honestly back.
  */
 async function listExternalResourceCandidates(
   db: LoxepDb,

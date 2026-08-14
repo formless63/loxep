@@ -280,7 +280,7 @@ describe("default health subject registry", () => {
     });
 
     it("reports 'failing' on a definite HTTP error response", async () => {
-      const link = await makeLink("cockpit", "https://cockpit.example.test/host/abc");
+      const link = await makeLink("beszel", "https://beszel.example.test/system/def");
       const registry = createDefaultHealthSubjectRegistry({
         fetchImpl: fetchStub(() => ({ ok: false, status: 502, body: "" })),
       });

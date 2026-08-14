@@ -19,12 +19,29 @@
  * no metric chart, no proxied terminal." No panel in this codebase reads
  * `embeddable` to decide whether to render an `<iframe>` today.
  *
+ * ## Link-only tools were REMOVED from this registry, on owner instruction
+ *
+ * `netdata`, `cockpit`, and `uptimekuma` were shipped here for one day
+ * (2026-08-13) as link-only, tier-1 entries with no adapter, no connection,
+ * and no credential behind them. The owner reviewed that shape on 2026-08-14
+ * and rejected it outright: *"ditch netdata"*, and more generally *"remove
+ * the link-only stuff from within the app. If it doesn't integrate we don't
+ * mention it."* This is a deliberate deletion, not an oversight — do not
+ * re-add a provider here (or restore `netdata`/`cockpit`/`uptimekuma`
+ * specifically) without integrating it first via `add-integration-provider`.
+ * A future reader diffing history and finding these three gone should read
+ * this paragraph, not assume they were dropped by accident.
+ *
+ * The five providers left below (`beszel`, `gatus`, `dockhand`, `tailscale`,
+ * `termix`) all have a real adapter, connection, or credential path
+ * elsewhere in the codebase — they are not link-only.
+ *
  * ## Which providers get a `healthPath`, and why some are `null`
  *
  * `healthPath` is set only when fleet-observability-design.md's "Per-tool
  * verdicts" table documents a genuinely UNAUTHENTICATED reachability route
  * for that tool — tier 2 ("link + reachability") requires exactly that.
- * Three providers are tier 3 with NO tier-2 predecessor at all, by the
+ * Two providers are tier 3 with NO tier-2 predecessor at all, by the
  * design's own verified finding, and therefore carry `healthPath: null`:
  *
  * - `tailscale` — "No whoami/identity endpoint exists … Tailscale requires
@@ -34,10 +51,6 @@
  *   (loxep-wvm §1.1); `openapi.json`'s global `bearerAuth` security
  *   requirement has no per-operation override, so even `probe()` itself is a
  *   login exchange, never a bare GET.
- * - `uptimekuma` — confirmed "tier 1 … No adapter against an API upstream
- *   disclaims" (design, per-tool verdicts table). Its one unauthenticated
- *   GET (`/api/status-page/:slug`) needs a per-status-page slug this generic
- *   registry has no way to supply, so it stays link-only.
  *
  * A `null` healthPath means {@link ../health-probes.ts}'s `external_resource`
  * probe never lists that provider's links as sweep candidates at all — see
@@ -67,8 +80,12 @@
  * "Ladder order vs. panel render order" section, which explicitly declines
  * to resolve it and defers to this module.
  *
- * **Decision: fundamental-first**, extended to all eight known providers as
- * `FLEET_TOOL_PANEL_ORDER` below. Three reasons, none of them taste:
+ * **Decision: fundamental-first**, extended to all five known providers as
+ * `FLEET_TOOL_PANEL_ORDER` below (originally extended to eight; three
+ * link-only providers — `netdata`, `cockpit`, `uptimekuma` — were removed
+ * from the registry entirely on 2026-08-14, see "Link-only tools were
+ * REMOVED" above, and dropped from this order along with them). Three
+ * reasons, none of them taste:
  *
  * 1. `diagnoseHostWitnesses`'s one derived sentence renders directly ABOVE
  *    this panel (this bead's own remaining scope) and reasons over
@@ -106,9 +123,6 @@ export const FLEET_TOOL_PROVIDERS = [
   "beszel",
   "gatus",
   "dockhand",
-  "netdata",
-  "cockpit",
-  "uptimekuma",
   "tailscale",
   "termix",
 ] as const;
@@ -145,9 +159,11 @@ export const FLEET_TOOL_REGISTRY: Record<FleetToolProvider, FleetToolRegistryEnt
     label: "Gatus",
     icon: "pulse",
     healthPath: "/health",
-    // "Iframe embedding" is not discussed for Gatus in the design, and the
-    // design's own "Where this surfaces" section only names Netdata as the
-    // genuinely-available embed; treat unlisted as not embeddable.
+    // "Iframe embedding" is not discussed for Gatus in the design; the
+    // design's own "Where this surfaces" section named Netdata as the one
+    // genuinely-available embed among the tools it surveyed, but Netdata was
+    // removed from this registry (see the module doc) — treat unlisted as
+    // not embeddable regardless.
     embeddable: false,
   },
   beszel: {
@@ -167,33 +183,6 @@ export const FLEET_TOOL_REGISTRY: Record<FleetToolProvider, FleetToolRegistryEnt
     // authenticated call this tier-2 check does not perform.
     healthPath: "/api/auth/session",
     embeddable: false, // rule 13 — no UI may imply container control, embedded or otherwise
-  },
-  netdata: {
-    label: "Netdata",
-    icon: "pulse",
-    // UNVERIFIED against a live agent — no Netdata credential or instance
-    // exists on this box to confirm. The design's own text names only the
-    // v3 data/alert routes explicitly ("Any future adapter targets v3");
-    // this path follows that same version guidance for a plain reachability
-    // ping rather than quoting a route the design states verbatim. Re-verify
-    // before relying on this for anything beyond "is the origin up".
-    healthPath: "/api/v3/info",
-    embeddable: true, // "Iframe-able by default" (design, per-tool verdicts table)
-  },
-  cockpit: {
-    label: "Cockpit",
-    icon: "laptop",
-    // "GET /ping -> {"service":"cockpit"}, CORS-enabled and documented" (design).
-    healthPath: "/ping",
-    // "X-Frame-Options: sameorigin is hard-coded with no configuration knob
-    // … do not design for it" (design, per-tool verdicts table).
-    embeddable: false,
-  },
-  uptimekuma: {
-    label: "Uptime Kuma",
-    icon: "pulse",
-    healthPath: null, // tier 1 only — see module doc
-    embeddable: false,
   },
   tailscale: {
     label: "Tailscale",
@@ -228,23 +217,20 @@ export const PROBEABLE_FLEET_TOOL_PROVIDERS: readonly FleetToolProvider[] =
 /**
  * The shared Companion-tools panel's witness/tool render order — PROVISIONAL,
  * see the module doc's "Panel render order" section for the full reasoning.
- * Covers all eight known providers (not just the four
+ * Covers all five known providers (not just the four
  * {@link ../host-diagnosis.ts} `HOST_DIAGNOSIS_LADDER} reasons over) so a
  * rendering surface has one order to sort by regardless of which tools are
- * actually linked to a given target. `uptimekuma` is listed last for
- * completeness even though its only fixed vocabulary purpose today
- * (`managed_domain`/`uptime_check`) means it never actually appears on the
- * `hosting_target`-scoped Companion-tools panel this bead upgrades.
+ * actually linked to a given target. Originally covered eight; `netdata`,
+ * `cockpit`, and `uptimekuma` were removed from the registry on 2026-08-14
+ * (see the module doc's "Link-only tools were REMOVED" section) and dropped
+ * from this order with them.
  */
 export const FLEET_TOOL_PANEL_ORDER: readonly FleetToolProvider[] = [
   "tailscale",
   "termix",
   "beszel",
-  "netdata",
   "dockhand",
-  "cockpit",
   "gatus",
-  "uptimekuma",
 ];
 
 /**
