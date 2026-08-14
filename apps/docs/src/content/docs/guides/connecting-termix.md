@@ -48,7 +48,8 @@ This is a single connection-level status today, not a per-host list: Loxep prove
 
 | Symptom | Usual cause |
 |---|---|
-| Authentication fails with correct-looking credentials | Verify the account can sign in to Termix's own web UI with the same username and password. |
+| Authentication fails with correct-looking credentials | Verify the account can sign in to Termix's own web UI with the same username and password. If Termix reports the password is simply wrong, the stored password is wrong or was changed — update it in **Settings → Connections**. |
+| Authentication fails and Termix's own UI says password sign-in is disabled | This Termix instance has turned password authentication off (it is OIDC/SSO-only). No password change on Loxep's side will fix this — the connection stays unusable until Termix issues a machine credential Loxep can use, or the instance re-enables password authentication. |
 | Repeated login failures | Termix rate-limits login attempts; wait and re-verify the password before retrying. |
 | "Unreachable from Loxep" | The instance is on a private network, behind a tunnel, or on an address your browser can reach and the Loxep server cannot — a network-topology problem, not a credential one. |
 

@@ -711,9 +711,23 @@ async function probeTailscaleConnection(
  * thrown, no detail.httpStatus                   -> unknown   { kind: 'unreachable' }
  * thrown, kind 'rate_limited'                     -> degraded  { kind: 'rate_limited' }
  * thrown, any other kind (has an httpStatus)       -> failing   { kind, httpStatus }
- * authenticated === false                          -> failing   { kind: 'auth' }
+ * authenticated === false, authRejectedStatus 403  -> failing   { kind: 'auth', authRejectedStatus: 403 }
+ * authenticated === false, authRejectedStatus 401  -> failing   { kind: 'auth', authRejectedStatus: 401 }
+ * authenticated === false, authRejectedStatus null -> failing   { kind: 'auth' }
  * authenticated === true                            -> ok        { hostCount?, hostsReadable }
  * ```
+ *
+ * `authRejectedStatus` (loxep-tit, landing loxep-wvm §1.4's RECOMMENDED fix)
+ * carries the distinction `probe()` used to swallow: 401 means the stored
+ * password is wrong or was changed; 403 ("Password authentication is
+ * currently disabled.") means this Termix instance is OIDC/SSO-only and no
+ * password change will ever fix it. It is copied into `detail` ONLY when it
+ * is 401 or 403 — a number, never a body, a header, or `providerMessage` (see
+ * the module doc's "counts and short labels only" rule) — so a surface can
+ * render the right operator sentence instead of a uniform "check your
+ * password". When the status is unknown, `detail` stays exactly
+ * `{ kind: 'auth' }`, the pre-existing fallback: the copy layer must then
+ * carry both possibilities and assert neither.
  *
  * The unreachable-vs-failing discriminator is `typeof error.detail.httpStatus
  * === 'number'`. `termixErrorFromResponse` ALWAYS sets it (the instance
@@ -765,7 +779,17 @@ async function probeTermixConnection(
   }
 
   if (!probeFact.authenticated) {
-    return { status: "failing", detail: { kind: "auth" }, source: "adapter" };
+    const authRejectedStatus = probeFact.authRejectedStatus;
+    return {
+      status: "failing",
+      detail: {
+        kind: "auth",
+        ...(authRejectedStatus === 401 || authRejectedStatus === 403
+          ? { authRejectedStatus }
+          : {}),
+      },
+      source: "adapter",
+    };
   }
 
   let detail: Record<string, unknown>;

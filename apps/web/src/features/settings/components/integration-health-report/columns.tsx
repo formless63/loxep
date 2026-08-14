@@ -14,6 +14,32 @@ const STATUS_TONE: Record<string, Tone> = {
   unknown: 'outline'
 };
 
+/**
+ * A short, accurate tooltip for a `kind: 'auth'` row, or `undefined` when
+ * `detail` carries no such shape. Reads `detail` GENERICALLY — by field
+ * shape, never by `subjectType`/provider name, since this table has no
+ * provider column to branch on and none should be added here (see
+ * `connections-table/termix-auth-status-cell.tsx` for the one probe that
+ * currently sets `authRejectedStatus`, loxep-tit). 401 and 403 are opposite
+ * operator problems: 401 means the stored password is wrong or was changed;
+ * 403 means the instance has disabled password sign-in entirely (OIDC/SSO-
+ * only), and no password change will fix that. When the rejecting status is
+ * unknown, the hint carries both possibilities and asserts neither.
+ */
+function authFailureHint(detail: unknown): string | undefined {
+  if (typeof detail !== 'object' || detail === null || Array.isArray(detail)) return undefined;
+  const record = detail as Record<string, unknown>;
+  if (record['kind'] !== 'auth') return undefined;
+  const authRejectedStatus = record['authRejectedStatus'];
+  if (authRejectedStatus === 403) {
+    return 'Password sign-in is disabled on this instance (OIDC/SSO-only) — no password change will fix this.';
+  }
+  if (authRejectedStatus === 401) {
+    return 'The stored password is wrong or was changed.';
+  }
+  return 'The stored credential was rejected — this may be a wrong password, or password sign-in may be disabled on this instance.';
+}
+
 export const integrationHealthColumns: ColumnDef<DataTableFeatures, IntegrationHealthDto>[] = [
   {
     id: 'subjectType',
@@ -56,9 +82,16 @@ export const integrationHealthColumns: ColumnDef<DataTableFeatures, IntegrationH
     header: ({ column }: { column: Column<DataTableFeatures, IntegrationHealthDto, unknown> }) => (
       <DataTableColumnHeader column={column} title='Status' />
     ),
-    cell: ({ cell }) => {
+    cell: ({ cell, row }) => {
       const status = cell.getValue<string>();
-      return <ToneBadge tone={STATUS_TONE[status] ?? 'outline'}>{status}</ToneBadge>;
+      return (
+        <ToneBadge
+          tone={STATUS_TONE[status] ?? 'outline'}
+          title={authFailureHint(row.original.detail)}
+        >
+          {status}
+        </ToneBadge>
+      );
     }
   },
   {

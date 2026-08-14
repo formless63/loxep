@@ -273,6 +273,7 @@ describe("probe(): the whoami-equivalent", () => {
     await expect(adapter.probe()).resolves.toEqual({
       reachable: true,
       authenticated: true,
+      authRejectedStatus: null,
     });
     expect(stub.pathOf(1)).toBe(TERMIX_ME_PATH);
   });
@@ -282,6 +283,18 @@ describe("probe(): the whoami-equivalent", () => {
     await expect(adapter.probe()).resolves.toEqual({
       reachable: true,
       authenticated: false,
+      authRejectedStatus: 401,
+    });
+  });
+
+  it("reports authRejectedStatus: 403 when password auth is disabled instance-wide", async () => {
+    const { adapter } = adapterWith([
+      fail(403, "Password authentication is currently disabled."),
+    ]);
+    await expect(adapter.probe()).resolves.toEqual({
+      reachable: true,
+      authenticated: false,
+      authRejectedStatus: 403,
     });
   });
 
@@ -313,6 +326,7 @@ describe("error taxonomy", () => {
       await expect(adapter.probe()).resolves.toEqual({
         reachable: true,
         authenticated: false,
+        authRejectedStatus: status,
       });
     }
   });

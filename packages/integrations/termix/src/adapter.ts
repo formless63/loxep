@@ -136,6 +136,18 @@ export interface TermixProbeFact {
   /** `false` only for a network-level failure. */
   reachable: boolean;
   authenticated: boolean;
+  /**
+   * The HTTP status Termix answered with when it rejected the credential
+   * (401 or 403), or `null` on a successful probe or when the status is
+   * unknown. 401 ("Invalid username or password." / "Session expired") means
+   * the stored password is wrong or was changed; 403 ("Password
+   * authentication is currently disabled.") means this Termix instance is
+   * OIDC/SSO-only and no password change will ever fix it — see loxep-wvm
+   * §1.4. Read defensively: `termixErrorFromResponse` always sets
+   * `detail.httpStatus`, but `normalizeTermixError` never does, so a
+   * network-classified error still surfaces here as `null`.
+   */
+  authRejectedStatus: number | null;
 }
 
 export interface TermixCapabilities {
@@ -449,10 +461,19 @@ export function createTermixAdapter(
         await authenticated(async (authorization) => {
           await request(TERMIX_ME_PATH, { method: "GET", authorization }, "auth.me");
         });
-        return { reachable: true, authenticated: true };
+        return { reachable: true, authenticated: true, authRejectedStatus: null };
       } catch (error) {
         if (error instanceof TermixAdapterError && error.kind === "auth") {
-          return { reachable: true, authenticated: false };
+          // termixErrorFromResponse always sets detail.httpStatus (the
+          // instance answered); normalizeTermixError never does. Read
+          // defensively so an unexpected shape degrades to `null` rather
+          // than throwing.
+          const httpStatus = error.detail["httpStatus"];
+          return {
+            reachable: true,
+            authenticated: false,
+            authRejectedStatus: typeof httpStatus === "number" ? httpStatus : null,
+          };
         }
         throw error;
       }

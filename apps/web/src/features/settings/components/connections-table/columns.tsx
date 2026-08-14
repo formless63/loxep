@@ -15,6 +15,7 @@ import { CellAction } from './cell-action';
 import { OrderSyncStatusCell } from './order-sync-cell';
 import { PurchaseSyncStatusCell } from './purchase-sync-cell';
 import { TAILSCALE_PROVIDER, TailscaleCredentialExpiryCell } from './tailscale-expiry-cell';
+import { TERMIX_PROVIDER, TermixAuthStatusCell } from './termix-auth-status-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -113,6 +114,8 @@ export function getColumns(
           <EbayCredentialStatus connection={row.original} />
         ) : row.original.provider === TAILSCALE_PROVIDER ? (
           <TailscaleCredentialExpiryCell connection={row.original} />
+        ) : row.original.provider === TERMIX_PROVIDER ? (
+          <TermixAuthStatusCell connection={row.original} />
         ) : row.original.credentials.length === 0 ? (
           <span className='text-muted-foreground'>none</span>
         ) : (

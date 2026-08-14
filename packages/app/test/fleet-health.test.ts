@@ -895,11 +895,11 @@ describe("createFleetHealthSubjectRegistry", () => {
       expect(outcome?.detail).toEqual({ kind: "provider_unavailable", httpStatus: 500 });
     });
 
-    it("authenticated === false -> failing, kind auth", async () => {
+    it("authenticated === false, authRejectedStatus unknown -> failing, kind auth only", async () => {
       const connection = await createFleetConnection("termix", "bad-credential");
       const registry = createFleetHealthSubjectRegistry(
         makeTermixServices({
-          probe: async () => ({ reachable: true, authenticated: false }),
+          probe: async () => ({ reachable: true, authenticated: false, authRejectedStatus: null }),
         }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
@@ -907,11 +907,50 @@ describe("createFleetHealthSubjectRegistry", () => {
       expect(outcome?.detail).toEqual({ kind: "auth" });
     });
 
+    it("authenticated === false, authRejectedStatus 401 -> failing, carries the wrong-password status", async () => {
+      const connection = await createFleetConnection("termix", "wrong-password");
+      const registry = createFleetHealthSubjectRegistry(
+        makeTermixServices({
+          probe: async () => ({ reachable: true, authenticated: false, authRejectedStatus: 401 }),
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("failing");
+      expect(outcome?.detail).toEqual({ kind: "auth", authRejectedStatus: 401 });
+    });
+
+    it("authenticated === false, authRejectedStatus 403 -> failing, carries the password-auth-disabled status", async () => {
+      const connection = await createFleetConnection("termix", "password-auth-disabled");
+      const registry = createFleetHealthSubjectRegistry(
+        makeTermixServices({
+          probe: async () => ({ reachable: true, authenticated: false, authRejectedStatus: 403 }),
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("failing");
+      expect(outcome?.detail).toEqual({ kind: "auth", authRejectedStatus: 403 });
+    });
+
+    it("authRejectedStatus survives the real write path (guardHealthDetail does not reject the new key)", async () => {
+      const connection = await createFleetConnection("termix", "password-auth-disabled-e2e");
+      const registry = createFleetHealthSubjectRegistry(
+        makeTermixServices({
+          probe: async () => ({ reachable: true, authenticated: false, authRejectedStatus: 403 }),
+        }),
+      );
+      await runHealthSweep({ db: handle.db, registry });
+
+      const health = createHealthService({ db: handle.db });
+      const row = await health.getHealth("connection", connection.id);
+      expect(row?.status).toBe("failing");
+      expect(row?.detail).toEqual({ kind: "auth", authRejectedStatus: 403 });
+    });
+
     it("authenticated === true, listHosts() ok -> ok, hostCount + hostsReadable", async () => {
       const connection = await createFleetConnection("termix", "healthy");
       const registry = createFleetHealthSubjectRegistry(
         makeTermixServices({
-          probe: async () => ({ reachable: true, authenticated: true }),
+          probe: async () => ({ reachable: true, authenticated: true, authRejectedStatus: null }),
           listHosts: async () => [{ externalHostId: "1" } as never],
         }),
       );
@@ -924,7 +963,7 @@ describe("createFleetHealthSubjectRegistry", () => {
       const connection = await createFleetConnection("termix", "unschemad-hosts");
       const registry = createFleetHealthSubjectRegistry(
         makeTermixServices({
-          probe: async () => ({ reachable: true, authenticated: true }),
+          probe: async () => ({ reachable: true, authenticated: true, authRejectedStatus: null }),
           listHosts: async () => {
             throw new TermixAdapterError(
               "invalid_request",
