@@ -65,17 +65,25 @@ import {
   testConfig,
   waitFor,
 } from "./helpers.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadSandboxCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("ebay");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-sandbox] skipped: no keyset at ~/.config/loxep/ebay-sandbox.env",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 const dbName = scratchDbName("loxep_test_app_live");
 let databaseUrl = "";

@@ -66,17 +66,25 @@ import {
   testConfig,
   waitFor,
 } from "./helpers.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadWooCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("woo");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-woo-sync] skipped: no credentials at ~/.config/loxep/woo.env",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-woo-sync] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 /** A bounded slice: five orders per page, at most two pages per sync. */
 const PER_PAGE = 5;

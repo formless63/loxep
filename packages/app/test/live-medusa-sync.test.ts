@@ -102,6 +102,7 @@ import {
   testConfig,
   waitFor,
 } from "./helpers.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadMedusaCredentialsFromEnvFile();
 
@@ -139,6 +140,7 @@ function selfSignedTrustMissing(): string | null {
 }
 
 const untrustedCaCertFile = creds === null ? null : selfSignedTrustMissing();
+const optedIn = liveTestsEnabledFor("medusa");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
@@ -153,10 +155,18 @@ if (creds === null) {
       `NODE_EXTRA_CA_CERTS=${untrustedCaCertFile} (see ` +
       "packages/integrations/medusa/test/harness.md).",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-medusa-sync] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=medusa (or =all) to run against the live instance.",
+  );
 }
 
 const describeLive =
-  creds === null || untrustedCaCertFile !== null ? describe.skip : describe;
+  creds === null || untrustedCaCertFile !== null || !optedIn
+    ? describe.skip
+    : describe;
 
 /** A bounded slice: five orders per page, at most two pages per sync. */
 const PER_PAGE = 5;

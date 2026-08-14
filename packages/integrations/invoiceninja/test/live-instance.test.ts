@@ -51,18 +51,26 @@
  */
 import { describe, it } from "vitest";
 import { loadInvoiceNinjaCredentialsFromEnvFile, defaultInvoiceNinjaEnvFilePath } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const ENV_PATH = defaultInvoiceNinjaEnvFilePath();
 const creds = loadInvoiceNinjaCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("invoiceninja");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     `[live-instance] skipped: no credentials at ${ENV_PATH} — see this file's module doc`,
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-instance] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=invoiceninja (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 describeLive("Invoice Ninja v5 instance (live, write-capable)", () => {
   it.todo(

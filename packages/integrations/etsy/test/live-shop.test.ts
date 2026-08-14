@@ -36,8 +36,10 @@ import {
   probeConnection,
   verifyConsentState,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadDevKeysetFromEnvFile();
+const optedIn = liveTestsEnabledFor("etsy");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
@@ -47,9 +49,15 @@ if (creds === null) {
       "Portal Personal App (see this file's module doc), then write the keyset " +
       "to that env file. Etsy has no sandbox, so nothing here can run until then.",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-shop] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=etsy (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 function makeAdapter() {
   if (creds === null) throw new Error("unreachable: creds checked by skip");

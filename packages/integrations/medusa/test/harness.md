@@ -6,6 +6,12 @@ backend**, not fixtures. Both skip cleanly when `~/.config/loxep/medusa.env` is
 absent, so a checkout with no harness still has a green suite — the harness is
 how you turn those skips into assertions.
 
+Both ALSO skip unless `LOXEP_LIVE_TESTS` opts the `medusa` slug in
+(`LOXEP_LIVE_TESTS=medusa` or `=all`) — the credential file alone is no longer
+sufficient. This keeps a routine `bun run test:packages` from touching a real
+Medusa backend just because `~/.config/loxep/medusa.env` happens to exist; see
+`packages/integrations/medusa/test/live-gate.ts` for the parsing rule.
+
 Everything below stands up a throwaway store on loopback only. It was first
 provisioned on 2026-08-12 against **Medusa 2.18.0**, which is the version whose
 observed behaviour the adapter's findings and the `loxep-xxz` translator
@@ -136,9 +142,14 @@ believes the wrong mapping.
 ## Running the live suites
 
 ```bash
-bun --cwd packages/integrations/medusa test           # live-store.test.ts unskips
-bun --cwd packages/app test live-medusa-sync          # the composition-root leg
+LOXEP_LIVE_TESTS=medusa bun --cwd packages/integrations/medusa test   # live-store.test.ts unskips
+LOXEP_LIVE_TESTS=medusa bun --cwd packages/app test live-medusa-sync  # the composition-root leg
 ```
+
+`LOXEP_LIVE_TESTS=medusa` is the opt-in gate (`=all` also works): the
+credential file alone no longer runs the live suite, so a routine
+`bun run test:packages` skips these even when `~/.config/loxep/medusa.env`
+exists. See `test/live-gate.ts` for the parsing rule.
 
 `packages/app`'s live sync test additionally needs the harness certificate
 trusted by the vitest process, because `packages/app`'s adapter factories have
@@ -146,7 +157,7 @@ no fetch seam and must not grow a production one for a test:
 
 ```bash
 NODE_EXTRA_CA_CERTS="$(pwd)/packages/integrations/medusa/test/harness/tls/cert.pem" \
-  bun --cwd packages/app test live-medusa-sync
+  LOXEP_LIVE_TESTS=medusa bun --cwd packages/app test live-medusa-sync
 ```
 
 Rules the live suites hold to, and any new one must: no credential material and

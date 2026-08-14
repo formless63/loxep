@@ -74,13 +74,21 @@ import {
   probeConnection,
 } from "../src/index.ts";
 import type { MedusaFetch, MedusaOrderFact } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const ENV_PATH = join(homedir(), ".config", "loxep", "medusa.env");
 const creds = loadMedusaCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("medusa");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(`[live-store] skipped: no credentials at ${ENV_PATH}`);
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-store] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=medusa (or =all) to run against the live instance.",
+  );
 }
 
 /**
@@ -147,7 +155,7 @@ function makeCaPinnedFetch(ca: string): MedusaFetch {
     });
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 function makeAdapter(overrides: Record<string, unknown> = {}) {
   if (creds === null) throw new Error("unreachable: creds checked by skip");

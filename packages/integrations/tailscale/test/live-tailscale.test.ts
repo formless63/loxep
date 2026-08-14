@@ -20,6 +20,7 @@ import {
   defaultTailscaleEnvFilePath,
   loadTailscaleCredentialsFromEnvFile,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const loaded = (() => {
   try {
@@ -30,7 +31,16 @@ const loaded = (() => {
   }
 })();
 
-const describeLive = loaded === null ? describe.skip : describe;
+const optedIn = liveTestsEnabledFor("tailscale");
+if (loaded !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-tailscale] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=tailscale (or =all) to run against the live instance.",
+  );
+}
+
+const describeLive = loaded === null || !optedIn ? describe.skip : describe;
 
 describeLive(`live Tailscale tailnet (${defaultTailscaleEnvFilePath()})`, () => {
   const makeAdapter = () =>

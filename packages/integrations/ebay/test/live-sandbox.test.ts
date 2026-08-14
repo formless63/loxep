@@ -39,17 +39,25 @@ import {
   snapshotToObservation,
   verifyConsentState,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadSandboxCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("ebay");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-sandbox] skipped: no keyset at ~/.config/loxep/ebay-sandbox.env",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 function makeAdapter() {
   if (creds === null) throw new Error("unreachable: creds checked by skip");
@@ -385,12 +393,20 @@ describeLive("eBay sandbox seller enumeration (live)", () => {
 // ---------------------------------------------------------------------------
 
 const describeConsent =
-  creds === null || creds.ruName === undefined ? describe.skip : describe;
+  creds === null || creds.ruName === undefined || !optedIn
+    ? describe.skip
+    : describe;
 
 if (creds !== null && creds.ruName === undefined) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-sandbox] consent URL skipped: keyset file has no LOXEP_EBAY_RU_NAME",
+  );
+} else if (creds !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] consent URL skipped: credentials present but not opted in — " +
+      "set LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
   );
 }
 
@@ -436,10 +452,18 @@ if (creds !== null && userBundle === null) {
     "[live-sandbox] watchlist skipped: no user token at " +
       "~/.config/loxep/ebay-sandbox-user-token.json (run the manual consent first)",
   );
+} else if (creds !== null && userBundle !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] watchlist skipped: credentials present but not opted in — " +
+      "set LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
 }
 
 const describeWatchlist =
-  creds === null || userBundle === null ? describe.skip : describe;
+  creds === null || userBundle === null || !optedIn
+    ? describe.skip
+    : describe;
 
 describeWatchlist("eBay sandbox watchlist (live, user token)", () => {
   it("refreshes the token when needed and reads the watch list", async () => {

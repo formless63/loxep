@@ -28,8 +28,10 @@ import {
   loadDevCredentialsFromEnvFile,
   probeConnection,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadDevCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("reverb");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
@@ -39,9 +41,15 @@ if (creds === null) {
       "Token in the Reverb account's own settings (public + read_listings " +
       "scopes) and write it to that env file. See this file's module doc.",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-account] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=reverb (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 function makeAdapter() {
   if (creds === null) throw new Error("unreachable: creds checked by skip");

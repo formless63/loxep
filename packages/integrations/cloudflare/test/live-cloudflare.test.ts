@@ -45,17 +45,25 @@ import {
   defaultCloudflareEnvFilePath,
   loadCloudflareCredentialsFromEnvFile,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadCloudflareCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("cloudflare");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     `[live-cloudflare] skipped: no credentials at ${defaultCloudflareEnvFilePath()}`,
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-cloudflare] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=cloudflare (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 function makeAdapter() {
   if (creds === null) throw new Error("unreachable: creds checked by skip");

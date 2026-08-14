@@ -36,6 +36,7 @@ import {
   defaultDockhandEnvFilePath,
   loadDockhandCredentialsFromEnvFile,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const credentials = (() => {
   try {
@@ -45,7 +46,16 @@ const credentials = (() => {
   }
 })();
 
-const describeLive = credentials === null ? describe.skip : describe;
+const optedIn = liveTestsEnabledFor("dockhand");
+if (credentials !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-dockhand] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=dockhand (or =all) to run against the live instance.",
+  );
+}
+
+const describeLive = credentials === null || !optedIn ? describe.skip : describe;
 
 describeLive(`live Dockhand instance (${defaultDockhandEnvFilePath()})`, () => {
   const makeAdapter = () =>

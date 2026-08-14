@@ -36,16 +36,23 @@ import { createWooOrderSync } from "../src/sync.ts";
 import type { SyncWooOrdersResult } from "../src/sync.ts";
 import { createMigratedScratchDb, seedConnection, seedEntity } from "./helpers.ts";
 import type { ScratchDb } from "./helpers.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadWooCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("woo");
 
 if (creds === null) {
   console.info(
     "[live-store] skipped: no credentials at ~/.config/loxep/woo.env",
   );
+} else if (!optedIn) {
+  console.info(
+    "[live-store] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null ? describe.skip : describe;
+const describeLive = creds === null || !optedIn ? describe.skip : describe;
 
 /** A bounded slice: five orders per page, at most two pages per sync. */
 const PER_PAGE = 5;

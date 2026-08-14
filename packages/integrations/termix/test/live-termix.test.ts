@@ -20,6 +20,7 @@ import {
   defaultTermixEnvFilePath,
   loadTermixCredentialsFromEnvFile,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const credentials = (() => {
   try {
@@ -29,7 +30,16 @@ const credentials = (() => {
   }
 })();
 
-const describeLive = credentials === null ? describe.skip : describe;
+const optedIn = liveTestsEnabledFor("termix");
+if (credentials !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-termix] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=termix (or =all) to run against the live instance.",
+  );
+}
+
+const describeLive = credentials === null || !optedIn ? describe.skip : describe;
 
 describeLive(`live Termix instance (${defaultTermixEnvFilePath()})`, () => {
   const makeAdapter = () =>

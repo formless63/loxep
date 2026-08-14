@@ -46,9 +46,11 @@ import {
   redactEbayOrderFact,
 } from "../src/index.ts";
 import { EbayAdapterError } from "../src/errors.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const creds = loadSandboxCredentialsFromEnvFile();
 const bundle = creds === null ? null : loadSandboxUserTokenFromFile();
+const optedIn = liveTestsEnabledFor("ebay");
 
 if (creds === null) {
   // eslint-disable-next-line no-console
@@ -62,9 +64,16 @@ if (creds === null) {
       `— complete the sandbox consent flow with the ${EBAY_SELL_FULFILLMENT_READONLY_SCOPE} scope ` +
       "(EBAY_ORDER_CONSENT_SCOPES) and write the bundle there",
   );
+} else if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-orders] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
 }
 
-const describeLive = creds === null || bundle === null ? describe.skip : describe;
+const describeLive =
+  creds === null || bundle === null || !optedIn ? describe.skip : describe;
 
 function makeUserAdapter() {
   if (creds === null || bundle === null) {

@@ -31,6 +31,7 @@ import {
   defaultGatusEnvFilePath,
   loadGatusCredentialsFromEnvFile,
 } from "../src/index.ts";
+import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const credentials = (() => {
   try {
@@ -40,7 +41,16 @@ const credentials = (() => {
   }
 })();
 
-const describeLive = credentials === null ? describe.skip : describe;
+const optedIn = liveTestsEnabledFor("gatus");
+if (credentials !== null && !optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-gatus] skipped: credentials present but not opted in — set " +
+      "LOXEP_LIVE_TESTS=gatus (or =all) to run against the live instance.",
+  );
+}
+
+const describeLive = credentials === null || !optedIn ? describe.skip : describe;
 
 describeLive(`live Gatus instance (${defaultGatusEnvFilePath()})`, () => {
   const makeAdapter = () =>
