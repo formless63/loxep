@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import CompanionLinksPanel from '@/features/infrastructure/components/companion-links-panel';
@@ -94,6 +95,43 @@ function DecommissionButton({ target }: { target: HostingTargetDetailDto }) {
   );
 }
 
+/**
+ * Warns when the stored `addressV4`/`addressV6` itself falls inside
+ * Tailscale's CGNAT or ULA range (loxep-89h; loxep-50t §3.2). This is a
+ * DISPLAY-only warning about data already stored — it never reads, offers,
+ * or pre-fills anything from a Tailscale device, which stays forbidden by
+ * the same design. The classification comes from the server, computed with
+ * the same predicate `resolveHostingAddress` refuses on
+ * (`addressV4TailnetKind`/`addressV6TailnetKind` on the DTO), so this
+ * component never needs its own copy of the CGNAT/ULA prefixes.
+ */
+function TailnetAddressWarning({ target }: { target: HostingTargetDetailDto }) {
+  const badAddresses = [
+    target.addressV4TailnetKind !== null ? target.addressV4 : null,
+    target.addressV6TailnetKind !== null ? target.addressV6 : null
+  ].filter((value): value is string => value !== null);
+
+  if (badAddresses.length === 0) return null;
+
+  return (
+    <Alert variant='warning'>
+      <Icons.warning />
+      <AlertTitle>This address cannot be published</AlertTitle>
+      <AlertDescription>
+        <span>
+          {badAddresses.join(' and ')} {badAddresses.length > 1 ? 'are' : 'is'} a private Tailscale
+          address — a tailnet address only answers for devices on that tailnet, never for a public
+          name. DNS materialization for any domain pointed at this target will refuse rather than
+          publish it.
+        </span>
+        <span>
+          Replace it with a publicly routable address, or clear the field if this target has none.
+        </span>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 function FleetDetailData({ name }: { name: string }) {
   const { data } = useSuspenseQuery(hostingTargetQuery(name));
   return (
@@ -114,6 +152,7 @@ function FleetDetailData({ name }: { name: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent className='flex flex-col gap-3'>
+          <TailnetAddressWarning target={data} />
           <div>
             <p className='text-sm font-medium'>Domains pointing here ({data.domains.length})</p>
             {data.domains.length === 0 ? (

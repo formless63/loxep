@@ -71,6 +71,15 @@ Independently, `health.sweep`'s own probe returns a `degraded` status once a rec
 
 This is a single connection-level status today, not a per-device list: the read proves the credential and counts the tailnet's devices, but Loxep does not yet render one row per device anywhere. Joining an individual device to a specific fleet record (`hosting_target`), so its address and connectivity show up on that record's own page, is designed but not yet built — see the [integrations status page](../../product/integrations-status/) for the current state.
 
+## A tailnet address is never a DNS address
+
+You are reading this guide because you are about to have a `100.x.y.z` (or `fd7a:115c:a1e0::…`) address for a device, and a hosting target's address field nearby that looks like a natural place to put it. Do not: Loxep never writes, suggests, or pre-fills a hosting target's address from a Tailscale device, and if you paste one in yourself, two things catch it —
+
+- On the **Infrastructure** workspace's fleet detail page for that target, a warning explains the stored address is a private Tailscale address and cannot be published.
+- If you try to sync DNS anyway, materialization refuses with an error rather than publishing it.
+
+The reason is simple: a tailnet address only answers for devices already on that tailnet. Publishing it as an A/AAAA record produces a name that resolves to an address the public internet cannot reach — an outage that looks exactly like ordinary DNS propagation lag, which is the hardest kind to diagnose because everything *looks* like it is about to start working. If a host is reachable only over Tailscale, its hosting target's address field should stay empty (or hold whatever public address fronts it); the tailnet address's place is the private-network read this integration is building toward, never a DNS record.
+
 ## When it does not work
 
 | Symptom | Usual cause |

@@ -189,6 +189,96 @@ describe("resolveHostingAddress — the fronting-node hop", () => {
   });
 });
 
+describe("resolveHostingAddress — the CGNAT/ULA publish guard (loxep-89h)", () => {
+  it("REFUSES a CGNAT (Tailscale) IPv4 address rather than publishing it", () => {
+    const node = target({ id: "t1", addressV4: "100.90.1.1" });
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).toThrow(MaterializationError);
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).toThrow(/private Tailscale-range address/);
+  });
+
+  it("REFUSES a Tailscale ULA IPv6 address rather than publishing it", () => {
+    const node = target({
+      id: "t1",
+      addressV4: null,
+      addressV6: "fd7a:115c:a1e0::5",
+    });
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).toThrow(/private Tailscale-range address/);
+  });
+
+  it("REFUSES ENTIRELY — not a partial publish — when only the v4 half is a tailnet address", () => {
+    // The design's explicit call: a partial publish that silently drops the
+    // v6 record (or vice versa) is its own kind of dishonesty. One bad half
+    // refuses the whole resolution rather than quietly downgrading to one
+    // record type.
+    const node = target({
+      id: "t1",
+      addressV4: "100.64.5.5",
+      addressV6: "2001:db8::10",
+    });
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).toThrow(MaterializationError);
+  });
+
+  it("REFUSES ENTIRELY when only the v6 half is a tailnet address", () => {
+    const node = target({
+      id: "t1",
+      addressV4: "203.0.113.10",
+      addressV6: "fd7a:115c:a1e0::99",
+    });
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).toThrow(MaterializationError);
+  });
+
+  it("names the FRONTING NODE, not the origin, when the bad address is the fronting node's", () => {
+    // The design's exact concern: the address that would be published comes
+    // from `current` (the resolved fronting node), not necessarily the
+    // target the caller asked about. A tunnel client's own address is never
+    // published at all, so the error must name whichever target actually
+    // carries the address that would leak.
+    const node = target({
+      id: "node",
+      controlSurface: "proxy_node",
+      addressV4: "100.64.9.9",
+    });
+    const origin = target({
+      id: "origin",
+      controlSurface: "tunnel_client",
+      addressV4: "10.0.0.4",
+      frontedByTargetId: "node",
+    });
+    try {
+      resolveHostingAddress(
+        origin,
+        new Map([
+          ["node", node],
+          ["origin", origin],
+        ]),
+      );
+      throw new Error("expected resolveHostingAddress to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(MaterializationError);
+      const message = (error as Error).message;
+      expect(message).toContain('"node"');
+      expect(message).not.toContain('"origin"');
+    }
+  });
+
+  it("does not refuse an ordinary public address", () => {
+    const node = target({ id: "t1", addressV4: "203.0.113.10" });
+    expect(() =>
+      resolveHostingAddress(node, new Map([["t1", node]])),
+    ).not.toThrow();
+  });
+});
+
 describe("materializeDesiredRecords — the apex and wildcard", () => {
   it("emits A records for @ and * with the domain's own proxy intent", () => {
     const node = target({ id: "t1", addressV4: "203.0.113.10" });
@@ -283,6 +373,24 @@ describe("materializeDesiredRecords — the apex and wildcard", () => {
       expect(record.content).toBe("198.51.100.5");
       expect(record.content).not.toBe("10.0.0.4");
     }
+  });
+
+  it("refuses to materialize an apex whose target has a private tailnet address", () => {
+    const node = target({ id: "t1", addressV4: "100.72.4.4" });
+    expect(() =>
+      materializeDesiredRecords(
+        input({
+          domain: {
+            name: "example.test",
+            apexTargetId: "t1",
+            apexProxied: false,
+            wildcardProxied: false,
+            mailEnabled: false,
+          },
+          targets: new Map([["t1", node]]),
+        }),
+      ),
+    ).toThrow(/private Tailscale-range address/);
   });
 
   it("refuses a control surface of 'none' as an apex target", () => {

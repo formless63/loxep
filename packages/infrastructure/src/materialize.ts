@@ -30,7 +30,7 @@
  *                     rewritten, never deleted
  * ```
  *
- * Three of those are the ones that bite:
+ * Four of those are the ones that bite:
  *
  * 1. **Resolution walks the fronting chain, and a broken chain is an ERROR,
  *    not a fallback.** When a domain targets a tunnel-connected host, the
@@ -39,12 +39,21 @@
  *    Silently emitting the origin's address publishes the exact thing the
  *    tunnel exists to hide, and it presents as a DNS propagation problem for
  *    as long as it takes somebody to check.
- * 2. **Mail records are never proxied.** Enforced here AND by a `CHECK`, both.
+ * 2. **A resolved address that falls in Tailscale's private ranges is an
+ *    ERROR, not a partial publish.** CGNAT (`100.64.0.0/10`) and Tailscale's
+ *    ULA prefix (`fd7a:115c:a1e0::/48`) are private-network addresses, not
+ *    public ones — publishing one is the identical failure mode as rule 1,
+ *    reached a different way (an operator pasted a tailnet address into
+ *    `address_v4`/`address_v6` instead of a public one). See
+ *    `tailnet-address.ts` for the containment predicate and why both
+ *    families refuse together rather than one publishing while the other
+ *    is dropped.
+ * 3. **Mail records are never proxied.** Enforced here AND by a `CHECK`, both.
  *    Proxying a mail provider's key-publication CNAME makes the DNS provider
  *    answer with its own addresses instead of resolving through to the key:
  *    mail keeps flowing, signature alignment quietly fails, and the symptom is
  *    a deliverability problem discovered weeks later.
- * 3. **No CAA record is emitted until the policy has been reviewed.** Open
+ * 4. **No CAA record is emitted until the policy has been reviewed.** Open
  *    question 2 is OWNER-REVIEW-CRITICAL and resolved PROVISIONAL with no
  *    default issuer list. A wrong CAA record breaks certificate renewal
  *    silently, at expiry.
@@ -55,6 +64,7 @@
  * path, because DNS resolution already works that way.
  */
 import { MaterializationError } from "./errors.ts";
+import { tailnetAddressKind } from "./tailnet-address.ts";
 
 /** A hosting target as materialization sees it. */
 export interface HostingTargetNode {
@@ -179,6 +189,41 @@ export function resolveHostingAddress(
         { targetId: target.id, hops },
       );
     }
+  }
+
+  // A Tailscale-private address must never reach a published A/AAAA record
+  // (loxep-89h; loxep-50t §3.2, "a safety rule, not a taste one"). This check
+  // reads `current`, the target that WOULD be published — the resolved
+  // fronting node for a tunnel client, not necessarily the target the caller
+  // asked about — because that is the address that would actually leave the
+  // building. Reporting `target.name` here would name the wrong host on the
+  // one case (a tunnel client fronted by a target with a tailnet address)
+  // where the two differ.
+  const badV4 = current.addressV4 === null ? null : tailnetAddressKind(current.addressV4);
+  const badV6 = current.addressV6 === null ? null : tailnetAddressKind(current.addressV6);
+  if (badV4 !== null || badV6 !== null) {
+    // Refuse BOTH families rather than publishing whichever half is clean.
+    // A partial publish silently drops the record for the bad family, and a
+    // desired-record set that quietly has one fewer record than the operator
+    // configured is exactly the kind of silent degradation this file's other
+    // rules exist to prevent (see rule 2 in the module doc, and
+    // `assertProxyingSupported` below, which takes the same all-or-nothing
+    // stance rather than degrading a proxying intent it cannot honor). A
+    // loud, whole-target refusal also gives the operator ONE thing to fix —
+    // this target's stored address — instead of a half-working domain that
+    // looks intentional until someone notices the missing record type.
+    throw new MaterializationError(
+      `hosting target "${current.name}" has a private Tailscale-range address and cannot be published as a DNS record — a tailnet address can only answer for devices on that tailnet, never for a public name`,
+      {
+        targetId: current.id,
+        resolvedFrom: target.id,
+        hops,
+        addressV4: current.addressV4,
+        addressV6: current.addressV6,
+        badAddressV4Kind: badV4,
+        badAddressV6Kind: badV6,
+      },
+    );
   }
 
   if (current.addressV4 === null && current.addressV6 === null) {

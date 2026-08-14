@@ -30,6 +30,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { JsonValue } from '@/server/admin-functions';
+import type { TailnetAddressKind } from '@loxep/infrastructure';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -628,6 +629,17 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
   domains: { id: string; name: string; state: string }[];
   tokens: DnsProviderTokenDto[];
   companionLinks: CompanionLinkDto[];
+  /**
+   * `null` unless the stored address itself falls in Tailscale's CGNAT or
+   * ULA range (loxep-89h; loxep-50t §3.2). Classified here, server-side,
+   * with the SAME `tailnetAddressKind` predicate `resolveHostingAddress`
+   * refuses on — not a second copy of the CIDR literals — so the fleet
+   * detail warning and the materializer's refusal can never disagree about
+   * what counts as a tailnet address. Computed from `addressV4`/`addressV6`,
+   * which this response already carries; no extra read.
+   */
+  addressV4TailnetKind: TailnetAddressKind | null;
+  addressV6TailnetKind: TailnetAddressKind | null;
 }
 
 export const fetchHostingTarget = createServerFn({ method: 'GET' })
@@ -639,6 +651,11 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       getDnsProviderTokensService,
       getResourceLinksService
     } = await import('@/server/admin');
+    // Dynamic, not top-level: `@loxep/infrastructure` pulls in server-only
+    // packages (drizzle-orm, pg, graphile-worker via other modules in its
+    // barrel) that must stay out of the client bundle — same reason every
+    // other server-package access in this file goes through `@/server/admin`.
+    const { tailnetAddressKind } = await import('@loxep/infrastructure');
     await requireSession();
     const { handle } = getAdminServices();
     const target = await handle.db.query.hostingTargets.findFirst({
@@ -687,6 +704,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       region: target.region,
       addressV4: target.addressV4,
       addressV6: target.addressV6,
+      addressV4TailnetKind: target.addressV4 === null ? null : tailnetAddressKind(target.addressV4),
+      addressV6TailnetKind: target.addressV6 === null ? null : tailnetAddressKind(target.addressV6),
       frontedByTargetId: target.frontedByTargetId,
       frontedByTargetName: frontingNode?.name ?? null,
       domainCount: domains.length,

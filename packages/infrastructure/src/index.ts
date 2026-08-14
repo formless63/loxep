@@ -74,6 +74,19 @@
  * per-host connection detail lives, which is a `/infrastructure` surface
  * question this issue does not answer. The port and planner exist so that
  * milestone lands as wiring rather than as design.
+ *
+ * ## What loxep-89h adds (rf4/Tailscale slice A leftover)
+ *
+ * ```text
+ * tailnet-address.ts   PURE CGNAT/ULA containment predicate, no DB, no network
+ * ```
+ *
+ * `resolveHostingAddress` refuses (`MaterializationError`) rather than
+ * publishes a `hosting_targets.address_v4`/`address_v6` that falls inside
+ * Tailscale's private ranges — see the module for why, and `tailnet-address.ts`
+ * for the two verified CIDR literals. Exported here so `apps/web`'s fleet
+ * detail warning classifies the SAME stored address the SAME way, instead of
+ * carrying a second copy of the prefixes that could drift from this one.
  */
 export {
   InfrastructureError,
@@ -96,6 +109,14 @@ export type {
   MaterializeInput,
   ResolvedHostingAddress,
 } from "./materialize.ts";
+
+export {
+  TAILSCALE_CGNAT_V4_CIDR,
+  TAILSCALE_ULA_V6_CIDR,
+  isPrivateTailnetAddress,
+  tailnetAddressKind,
+} from "./tailnet-address.ts";
+export type { TailnetAddressKind } from "./tailnet-address.ts";
 
 export {
   applyOperationsFor,
