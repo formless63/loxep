@@ -57,19 +57,39 @@ export function orderSyncIneligibleHint(connection: ConnectionDto): string | nul
  * `success` tone when enabled — mirrors the table's convention that an
  * operator state never rides on alarm colors alone (see
  * `CONNECTION_STATUS_TONE` in `./columns`).
+ *
+ * The ineligibility hint is consulted ONLY while no order-sync target exists
+ * (loxep-6i1). Once one does, this column reports that target's state and
+ * nothing else, because the hint was actively lying about it: when a store's
+ * first poll fails, `recordConnectionFailure` flips the connection `active` →
+ * `error`, and this cell used to switch to "Account must be active" even
+ * though the `woo_orders` target was still `enabled = true` and still
+ * retrying — telling the operator sync was unconfigured at the exact moment
+ * they most need to see that it is on. It also contradicted the row's own
+ * dropdown, which correctly keeps offering "Disable order sync" for an
+ * errored-but-enabled connection (`cell-action.tsx`'s `|| orderSyncEnabled`
+ * arm). Health belongs to the Status column, which already reads "Error"
+ * three cells to the left; this column answers "is order sync on?".
+ *
+ * Before anything is configured there is no target state to report, so the
+ * hint is the whole answer there and stays — it is what explains why the
+ * dropdown does not offer "Enable order sync" yet.
  */
 export function OrderSyncStatusCell({ connection }: { connection: ConnectionDto }) {
   if (!supportsOrderSync(connection)) {
     return <span className='text-muted-foreground'>—</span>;
   }
 
-  const hint = orderSyncIneligibleHint(connection);
-  if (hint !== null) {
-    return <span className='text-muted-foreground text-xs'>{hint}</span>;
+  const orderSync = connection.orderSync;
+  if (orderSync === null) {
+    const hint = orderSyncIneligibleHint(connection);
+    if (hint !== null) {
+      return <span className='text-muted-foreground text-xs'>{hint}</span>;
+    }
+    return <ToneBadge tone='outline'>Off</ToneBadge>;
   }
 
-  const orderSync = connection.orderSync;
-  if (orderSync === null || !orderSync.enabled) {
+  if (!orderSync.enabled) {
     return <ToneBadge tone='outline'>Off</ToneBadge>;
   }
 

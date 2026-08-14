@@ -33,10 +33,27 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * disabled with an explanatory hint — that is WHY no consented fixture can
  * exist in this harness at all. The residual gap (an actual eBay purchase-sync
  * enable/disable round trip) is recorded on loxep-bdt rather than faked here.
+ *
+ * ## Why these tests are no longer a race with the worker (loxep-6i1)
+ *
+ * Turning order sync on creates a `woo_orders` monitor target that is due
+ * immediately, and the store URL these fixtures use is deliberately
+ * unreachable — so whenever `market.dispatch-due-monitors` (a one-minute cron)
+ * claimed that target inside a test window, the poll failed,
+ * `recordConnectionFailure` flipped the connection `active` → `error`, and
+ * assertions that silently assumed `active` broke. That is correct product
+ * behaviour, not a bug to design around, so nothing here suppresses the
+ * dispatcher. Instead the coupling is gone on both sides:
+ *
+ * - the Order-sync column now reports the order-sync TARGET's state once one
+ *   exists, not the connection's health (see `OrderSyncStatusCell`), so
+ *   `Off`/`Syncing` mean the same thing whether or not a poll has failed;
+ * - the purchase-sync test never enables order sync, so its row has no target
+ *   to poll at all.
+ *
+ * Both tests also build their own store, so neither can cascade into the
+ * other. The suite is still single-worker against one shared database.
  */
-
-const runId = Date.now();
-const wooStoreName = `E2E Woo Store ${runId}`;
 
 test.beforeAll(async ({ browser }) => {
   const page = await browser.newPage({
@@ -64,20 +81,37 @@ function purchaseSyncCell(row: Locator): Locator {
   return row.getByRole('cell').nth(5);
 }
 
-test('admin toggles order sync on a WooCommerce connection, badge round-trips', async ({
-  page
-}) => {
-  await page.goto('/settings/connections');
-
+/**
+ * Create one WooCommerce store through the UI and return its name.
+ *
+ * Each test that needs a store calls this itself rather than sharing a
+ * module-level fixture (loxep-6i1). A module-level `runId = Date.now()` used
+ * to name a store that only the FIRST test created, so when that test failed
+ * Playwright tore the worker down, re-imported this file with a fresh `runId`,
+ * and every later test hunted for a store name that had never existed —
+ * turning one real failure into a cascade of misleading ones. Per-test
+ * fixtures make each test's verdict its own.
+ */
+async function createWooStore(page: Page): Promise<string> {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Woo Store ${runId}`;
   await page.getByRole('button', { name: 'Add WooCommerce store' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Add WooCommerce store')).toBeVisible();
-  await dialog.getByLabel('Store name *').fill(wooStoreName);
+  await dialog.getByLabel('Store name *').fill(name);
   await dialog.getByLabel('Store URL *').fill(`https://e2e-woo-${runId}.example.test`);
   await dialog.getByLabel('Consumer key *').fill(`ck_e2e_${runId}`);
   await dialog.getByLabel('Consumer secret *').fill(`cs_e2e_${runId}`);
   await dialog.getByRole('button', { name: 'Connect store' }).click();
   await expect(dialog).toBeHidden();
+  return name;
+}
+
+test('admin toggles order sync on a WooCommerce connection, badge round-trips', async ({
+  page
+}) => {
+  await page.goto('/settings/connections');
+  const wooStoreName = await createWooStore(page);
 
   const row = tableRow(page, wooStoreName);
   await expect(row).toBeVisible();
@@ -96,6 +130,11 @@ test('admin toggles order sync on a WooCommerce connection, badge round-trips', 
   // Purchase sync stays "not applicable" throughout: this row is never eBay.
   await expect(purchaseSyncCell(row)).toHaveText('—');
 
+  // Reopening the row menu right after an action closed it is load-bearing
+  // coverage, not incidental (loxep-6i1): the click used to be swallowed by
+  // the still-animating closed menu's dismissable layer. Do not insert a
+  // wait here to "stabilise" it — a wait would hide exactly the regression
+  // this line catches.
   await row.getByRole('button', { name: 'Open menu' }).click();
   await page.getByRole('menuitem', { name: 'Disable order sync' }).click();
   await expect(page.getByText('Order sync disabled')).toBeVisible();
@@ -104,6 +143,12 @@ test('admin toggles order sync on a WooCommerce connection, badge round-trips', 
 
 test('a non-eBay connection never offers the purchase-sync action', async ({ page }) => {
   await page.goto('/settings/connections');
+  // Its own store, and order sync is deliberately never turned on for it: no
+  // order-sync target means no monitor for the dispatcher to poll, so this
+  // row's status cannot be flipped to `error` mid-test by the unreachable
+  // fixture URL, and "Enable order sync" is guaranteed to be the arm the
+  // dropdown renders.
+  const wooStoreName = await createWooStore(page);
   const row = tableRow(page, wooStoreName);
   await expect(row).toBeVisible();
 

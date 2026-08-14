@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
@@ -57,6 +57,7 @@ const EBAY_PROVIDER = 'ebay';
  */
 export function CellAction({ data }: { data: ConnectionDto }) {
   const queryClient = useQueryClient();
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [blocking, setBlocking] = useState<ConnectionReferenceDto[] | null>(null);
   const [editingExpiry, setEditingExpiry] = useState(false);
@@ -148,12 +149,38 @@ export function CellAction({ data }: { data: ConnectionDto }) {
 
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button variant='ghost' className='h-8 w-8 p-0'>
+          <Button ref={menuTriggerRef} variant='ghost' className='h-8 w-8 p-0'>
             <span className='sr-only'>Open menu</span>
             <Icons.ellipsis className='h-4 w-4' />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align='end'>
+        <DropdownMenuContent
+          align='end'
+          // loxep-6i1 — WHY this handler exists: reopening this menu within
+          // ~150ms of closing it was silently doing nothing.
+          //
+          // `DropdownMenuContent` carries `data-[state=closed]:animate-out`
+          // (see `@/components/ui/dropdown-menu`), so after the menu closes
+          // Radix's `Presence` keeps the content node — and therefore its
+          // `DismissableLayer` — mounted until that exit animation ends. A
+          // `pointerdown` landing on the trigger inside that window is seen
+          // twice: the trigger toggles the menu OPEN, and the still-mounted
+          // closing layer treats the very same event as an outside press and
+          // dismisses it again. Traced on the real app the two land 7ms apart
+          // (`aria-expanded` true then false), so the menu ends up closed and
+          // the operator's click is swallowed with no feedback.
+          //
+          // A press on our own trigger is never "outside" this menu — it is
+          // the toggle — so cancel the dismiss and let the trigger's own
+          // toggle be the single thing that acts on the event. When the menu
+          // is genuinely open this changes nothing (both paths closed it
+          // before; now only the toggle does).
+          onPointerDownOutside={(event) => {
+            if (menuTriggerRef.current?.contains(event.target as Node)) {
+              event.preventDefault();
+            }
+          }}
+        >
           <DropdownMenuGroup>
             <DropdownMenuLabel>Account</DropdownMenuLabel>
           </DropdownMenuGroup>
