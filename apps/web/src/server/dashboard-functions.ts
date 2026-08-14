@@ -53,9 +53,16 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
+import type { MonitorTargetType } from '@loxep/market';
 import type { JsonValue } from '@/server/admin-functions';
 import { bucketHourly, readOpportunityPayload } from '@/server/market-functions';
 import type { MarketOverviewTrendBucketDto, TopOpportunityDto } from '@/server/market-functions';
+// `computeFleetSignals` is a PURE function (no server-package side effects at
+// import time beyond what this module already pulls in) — see its own module
+// doc in infrastructure-functions.ts for why apps/web's Operations band folds
+// into it rather than hand-rolling a sixth provider list (loxep-cum, loxep-9m2).
+import { computeFleetSignals } from '@/server/infrastructure-functions';
+import type { FleetSignalsDto } from '@/server/infrastructure-functions';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -118,6 +125,40 @@ function pct(value: unknown): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+/**
+ * `channel_listings.status` is provider-extensible with no `CHECK` (`@loxep/
+ * db`'s commerce schema) — an unrecognized future value folds into `unknown`
+ * rather than being silently dropped from {@link
+ * DashboardChannelListingCountsDto.total}, the same "absent renders absent,
+ * never silently miscounted" discipline `computeFleetSignals` documents.
+ */
+function toChannelListingCounts(
+  rows: readonly Record<string, unknown>[]
+): DashboardChannelListingCountsDto {
+  let draft = 0;
+  let active = 0;
+  let ended = 0;
+  let soldOut = 0;
+  let unknown = 0;
+  for (const row of rows) {
+    const status = row['status'] as string;
+    const n = count(row['n']);
+    if (status === 'draft') draft += n;
+    else if (status === 'active') active += n;
+    else if (status === 'ended') ended += n;
+    else if (status === 'sold_out') soldOut += n;
+    else unknown += n;
+  }
+  return {
+    draft,
+    active,
+    ended,
+    soldOut,
+    unknown,
+    total: draft + active + ended + soldOut + unknown
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Band 1 — Money
 // ---------------------------------------------------------------------------
@@ -135,6 +176,21 @@ export interface DashboardMoneyDayDto {
 export interface DashboardMoneyCurrencyDto {
   currency: string;
   orderCount: number;
+}
+
+/**
+ * `channel_listings.status` counts, installation-wide and NOT windowed —
+ * status is current state, not a time-bounded fact (loxep-9m2). `unknown`
+ * folds in the provider's own literal `'unknown'` status plus anything this
+ * DTO does not yet name, so a future status value is never silently dropped.
+ */
+export interface DashboardChannelListingCountsDto {
+  draft: number;
+  active: number;
+  ended: number;
+  soldOut: number;
+  unknown: number;
+  total: number;
 }
 
 export interface DashboardMoneyDto {
@@ -170,6 +226,16 @@ export interface DashboardMoneyDto {
   orderTrendPct: number | null;
   /** Orders ingested at any time, ever — distinguishes "quiet month" from "not connected". */
   lifetimeOrderCount: number;
+  /**
+   * Orders in the window whose `provider = 'manual'` (an offline/manual
+   * channel sale, design 4a) — a subset of {@link orderCount}, not an
+   * addition to it. Today these orders reach `orderCount`/`grossAmount`
+   * unlabeled, indistinguishable from a connector-synced sale; this field is
+   * the fix (loxep-9m2).
+   */
+  manualOrderCount: number;
+  /** The listed→sold funnel this installation's channel listings are in right now. */
+  channelListings: DashboardChannelListingCountsDto;
 }
 
 export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
@@ -179,7 +245,7 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
     const { handle } = getAdminServices();
     const windowClause = `o.placed_at >= now() - interval '${intLiteral(MONEY_WINDOW_DAYS)} days'`;
 
-    const [currencies, lifetime] = await Promise.all([
+    const [currencies, lifetime, channelListingStatuses] = await Promise.all([
       handle.db.execute(
         `select o.currency, count(*)::int as order_count
            from orders o
@@ -192,10 +258,13 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
         `select count(*)::int as order_count
            from orders o
           where o.duplicate_of_order_id is null`
-      )
+      ),
+      // Current state, not windowed — see the DTO doc.
+      handle.db.execute(`select status, count(*)::int as n from channel_listings group by status`)
     ]);
 
     const lifetimeOrderCount = count(lifetime.rows[0]?.['order_count']);
+    const channelListings = toChannelListingCounts(channelListingStatuses.rows);
     const groups = currencies.rows.map((row) => ({
       currency: row['currency'] as string,
       orderCount: count(row['order_count'])
@@ -217,7 +286,9 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
         daily: [],
         revenueTrendPct: null,
         orderTrendPct: null,
-        lifetimeOrderCount
+        lifetimeOrderCount,
+        manualOrderCount: 0,
+        channelListings
       };
     }
 
@@ -226,7 +297,7 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
     // `order_fees` before aggregating — joining first multiplies
     // `total_amount` by the fee-row count, which is the classic way a
     // profitability report silently triples its revenue (`reports.ts`).
-    const [totals, daily, trend] = await Promise.all([
+    const [totals, daily, trend, manual] = await Promise.all([
       handle.db.execute(
         `select count(*)::int as order_count,
                 coalesce(sum(o.total_amount), 0)::numeric(20, 6)::text as gross_amount,
@@ -292,6 +363,17 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
                       then ((recent_orders - prior_orders)::numeric / prior_orders * 100)::float8
                  end as order_trend_pct
             from windows`
+      ),
+      // `MANUAL_PROVIDER` in `@loxep/db`'s commerce schema — a manual/offline
+      // channel sale (design 4a). A subset of the window's `orderCount`, not
+      // an addition to it; see the DTO doc (loxep-9m2).
+      handle.db.execute(
+        `select count(*)::int as manual_order_count
+           from orders o
+          where o.duplicate_of_order_id is null
+            and o.provider = 'manual'
+            and o.currency = ${currency}
+            and ${windowClause}`
       )
     ]);
 
@@ -315,7 +397,9 @@ export const fetchDashboardMoney = createServerFn({ method: 'GET' }).handler(
       })),
       revenueTrendPct: pct(trendRow?.['revenue_trend_pct']),
       orderTrendPct: pct(trendRow?.['order_trend_pct']),
-      lifetimeOrderCount
+      lifetimeOrderCount,
+      manualOrderCount: count(manual.rows[0]?.['manual_order_count']),
+      channelListings
     };
   }
 );
@@ -435,27 +519,90 @@ export const fetchDashboardMarketPulse = createServerFn({ method: 'GET' }).handl
 // ---------------------------------------------------------------------------
 
 /**
- * Mirrors `@/server/order-sync-functions`' target types (same re-declaration
- * reason). `medusa_orders` added by loxep-xxz — required, not optional:
- * without it every `medusa_orders` row falls into `fleet` below, inflating
- * `monitors.total/enabled/disabled`, letting a stalled Medusa sync count as
- * a market-monitor error, letting a healthy Medusa sync mask a stale
- * discovery fleet via the `lastSuccessAt` `Math.max`, and showing
- * `OrderSyncCard` as "off" while sync is actually running.
+ * Every {@link MonitorTargetType} member, classified by the domain that owns
+ * it (loxep-9m2) — replaces the old hand-maintained `ORDER_SYNC_TARGET_TYPES`
+ * literal, which excluded only `woo_orders`/`ebay_orders` and so counted
+ * `ebay_purchases` and `infrastructure_domain_reconcile` rows as market
+ * monitors: a stuck DNS reconcile read as a monitor error, monitor totals
+ * inflated, and a healthy non-monitor target could raise
+ * `monitors.lastSuccessAt` (a `Math.max`) and mask a stale discovery fleet.
  *
- * THIS ARRAY IS A HAND-MAINTAINED LIST WITH NO `satisfies` TIE (loxep-9m2) —
- * `ebay_purchases` and `infrastructure_domain_reconcile` are ALSO order-sync-
- * adjacent/non-fleet target types absent from this list today and get
- * miscounted as market monitors as a result; that is loxep-9m2's bug, in the
- * opposite direction from the one `medusa_orders`'s absence would have been.
- * loxep-9m2 owns replacing this array with a typed derivation (partitioning
- * targets by owning domain / a `satisfies` tie to the market registry); this
- * bead (loxep-xxz) deliberately does not attempt that refactor — it only
- * keeps the list from getting a fourth honesty gap. Whatever replaces this
- * array must keep `medusa_orders` out of the fleet count.
+ * `MonitorTargetType` is imported TYPE-ONLY from `@loxep/market` — a runtime
+ * import risks pulling `graphile-worker` into the request process, the same
+ * reason every other server-package access in this file goes through a
+ * dynamic `@/server/admin` import. This map is closed with `satisfies
+ * Record<MonitorTargetType, MonitorTargetDomain>` instead: a new member of
+ * `MONITOR_TARGET_TYPES` with no entry here fails `bun run typecheck`, not
+ * silently miscounts a bucket. Verified directly (loxep-9m2): temporarily
+ * removing one real entry below (equivalent, from this file's point of view,
+ * to `@loxep/market` adding a member this map has not caught up to yet)
+ * reproduces exactly the `satisfies` failure this comment claims — "Property
+ * '<name>' is missing in type '{ ... }' but required in type
+ * 'Record<MonitorTargetType, MonitorTargetDomain>'" — then the entry was
+ * restored; see this bead's report for the exact error text.
+ *
+ * ```text
+ * market_fleet              ebay_watchlist/item/search/seller,
+ *                           etsy_listing/shop, reverb_listing/shop — the
+ *                           discovery monitor fleet (MonitorFleetCard)
+ * commerce_order_sync       woo_orders, ebay_orders, medusa_orders — revenue
+ *                           order ingestion (OrderSyncCard)
+ * inventory_purchase_sync   ebay_purchases — inbound purchase ingestion,
+ *                           feeds `acquisitions`
+ * infrastructure_reconcile  infrastructure_domain_reconcile — the DNS
+ *                           reconcile sweep
+ * ```
+ *
+ * `inventory_purchase_sync` and `infrastructure_reconcile` are neither the
+ * discovery fleet nor revenue order sync. They are surfaced honestly in
+ * their own `otherSync` bucket below rather than disappearing into either.
  */
-const ORDER_SYNC_TARGET_TYPES = ['woo_orders', 'ebay_orders', 'medusa_orders'] as const;
-type OrderSyncTargetType = (typeof ORDER_SYNC_TARGET_TYPES)[number];
+type MonitorTargetDomain =
+  | 'market_fleet'
+  | 'commerce_order_sync'
+  | 'inventory_purchase_sync'
+  | 'infrastructure_reconcile';
+
+const MONITOR_TARGET_TYPE_DOMAIN = {
+  ebay_watchlist: 'market_fleet',
+  ebay_item: 'market_fleet',
+  ebay_search: 'market_fleet',
+  ebay_seller: 'market_fleet',
+  etsy_listing: 'market_fleet',
+  etsy_shop: 'market_fleet',
+  reverb_listing: 'market_fleet',
+  reverb_shop: 'market_fleet',
+  woo_orders: 'commerce_order_sync',
+  ebay_orders: 'commerce_order_sync',
+  medusa_orders: 'commerce_order_sync',
+  ebay_purchases: 'inventory_purchase_sync',
+  infrastructure_domain_reconcile: 'infrastructure_reconcile'
+} as const satisfies Record<MonitorTargetType, MonitorTargetDomain>;
+
+function targetTypesInDomain(...domains: MonitorTargetDomain[]): ReadonlySet<string> {
+  const wanted = new Set<MonitorTargetDomain>(domains);
+  return new Set(
+    (Object.keys(MONITOR_TARGET_TYPE_DOMAIN) as MonitorTargetType[]).filter((type) =>
+      wanted.has(MONITOR_TARGET_TYPE_DOMAIN[type])
+    )
+  );
+}
+
+const MARKET_FLEET_TARGET_TYPES = targetTypesInDomain('market_fleet');
+const COMMERCE_ORDER_SYNC_TARGET_TYPES = targetTypesInDomain('commerce_order_sync');
+const OTHER_SYNC_TARGET_TYPES = targetTypesInDomain(
+  'inventory_purchase_sync',
+  'infrastructure_reconcile'
+);
+
+type OrderSyncTargetType = Extract<
+  MonitorTargetType,
+  'woo_orders' | 'ebay_orders' | 'medusa_orders'
+>;
+type OtherSyncTargetType = Extract<
+  MonitorTargetType,
+  'ebay_purchases' | 'infrastructure_domain_reconcile'
+>;
 
 /** Delivery-success window; matches the design's "7d" notification tile. */
 export const NOTIFICATION_WINDOW_DAYS = 7;
@@ -473,12 +620,30 @@ export interface DashboardProviderHealthDto {
   active: number;
   disabled: number;
   archived: number;
-  /** Connections whose most recent recorded outcome was an error. */
+  /** `integration_health.status = 'failing'` — a genuine failure. */
   errored: number;
+  /**
+   * `integration_health.status = 'degraded'` (loxep-9m2 bug 2) — an
+   * operator-visible at-risk state, not yet a failure. Previously discarded
+   * entirely: only `'failing'` was counted, so a degraded credential about
+   * to expire rendered as fine.
+   */
+  degraded: number;
+  /**
+   * `integration_health.status = 'unknown'` (loxep-9m2 bug 2) — Loxep
+   * reached the sweep but the probe could not determine a status. This is
+   * NOT the same as healthy and NOT the same as failing; previously also
+   * silently discarded.
+   */
+  unknown: number;
 }
 
 export interface DashboardMonitorFleetDto {
-  /** Excludes order-sync targets — those get their own tile below. */
+  /**
+   * `market_fleet`-domain targets only (loxep-9m2) — order-sync,
+   * purchase-sync, and infrastructure-reconcile targets each get their own
+   * tile below and are never counted here.
+   */
   total: number;
   enabled: number;
   disabled: number;
@@ -506,6 +671,26 @@ export interface DashboardOrderSyncDto {
   stale: boolean;
 }
 
+/**
+ * `ebay_purchases` (inbound purchase ingestion, feeds `acquisitions`) and
+ * `infrastructure_domain_reconcile` (the DNS reconcile sweep) — the two
+ * target types loxep-9m2's bug 1 previously mis-bucketed as market monitors.
+ * Same shape as {@link DashboardOrderSyncDto}, plus `domain` so the UI can
+ * label the two kinds distinctly without re-deriving it from `targetType`.
+ */
+export interface DashboardOtherSyncTargetDto {
+  id: string;
+  name: string;
+  targetType: OtherSyncTargetType;
+  domain: Extract<MonitorTargetDomain, 'inventory_purchase_sync' | 'infrastructure_reconcile'>;
+  connectionName: string | null;
+  enabled: boolean;
+  intervalSeconds: number;
+  lastSuccessAt: string | null;
+  consecutiveErrors: number;
+  stale: boolean;
+}
+
 export interface DashboardNotificationHealthDto {
   windowDays: number;
   total: number;
@@ -516,11 +701,36 @@ export interface DashboardNotificationHealthDto {
   successRatePct: number | null;
 }
 
+/** How many days back {@link DashboardInfrastructureDto.recentFailedReconcileRunCount} looks. */
+export const INFRASTRUCTURE_RUN_WINDOW_DAYS = 7;
+
+/**
+ * The installation's own DNS/hosting estate (loxep-9m2) — domains, unresolved
+ * DNS drift, hosting targets, and recent reconcile-run failures. A light,
+ * count-only echo of `fetchInfrastructureOverview`'s reads (never a second
+ * copy of ITS logic — `computeFleetSignals` below is the one piece of real
+ * classification logic this band imports rather than re-derives).
+ */
+export interface DashboardInfrastructureDto {
+  windowDays: number;
+  domainCount: number;
+  hostingTargetCount: number;
+  /** `dns_drift_findings` where `resolved_at is null`. */
+  unresolvedDriftCount: number;
+  /** `reconcile_runs` where `status = 'failed'` within {@link windowDays}. */
+  recentFailedReconcileRunCount: number;
+}
+
 export interface DashboardOperationsDto {
   providers: DashboardProviderHealthDto[];
   connectionCount: number;
   monitors: DashboardMonitorFleetDto;
   orderSync: DashboardOrderSyncDto[];
+  /** See {@link DashboardOtherSyncTargetDto} — purchase sync and DNS reconcile, surfaced honestly. */
+  otherSync: DashboardOtherSyncTargetDto[];
+  infrastructure: DashboardInfrastructureDto;
+  /** loxep-cum's `computeFleetSignals`, folded in rather than re-derived — see this module's import doc. */
+  fleetSignals: FleetSignalsDto;
   notifications: DashboardNotificationHealthDto;
 }
 
@@ -531,7 +741,16 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
     const admin = getAdminServices();
     const { handle } = admin;
 
-    const [connections, targets, deliveries, connectionHealth] = await Promise.all([
+    const [
+      connections,
+      targets,
+      deliveries,
+      connectionHealth,
+      domainCountRow,
+      hostingTargetCountRow,
+      unresolvedDriftCountRow,
+      recentFailedReconcileRunCountRow
+    ] = await Promise.all([
       admin.connections.listConnections(),
       handle.db.query.monitorTargets.findMany(),
       handle.db.execute(
@@ -547,7 +766,20 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
       // connection the sweep has not reached yet (no row) is deliberately
       // NOT counted as errored: "nothing configured" must not read as
       // "broken" any more than it may read as "healthy".
-      admin.health.listHealth({ subjectType: 'connection' })
+      admin.health.listHealth({ subjectType: 'connection' }),
+      handle.db.execute(`select count(*)::int as n from managed_domains`),
+      handle.db.execute(
+        `select count(*)::int as n from hosting_targets where decommissioned_at is null`
+      ),
+      handle.db.execute(
+        `select count(*)::int as n from dns_drift_findings where resolved_at is null`
+      ),
+      handle.db.execute(
+        `select count(*)::int as n
+           from reconcile_runs
+          where status = 'failed'
+            and started_at >= now() - interval '${intLiteral(INFRASTRUCTURE_RUN_WINDOW_DAYS)} days'`
+      )
     ]);
 
     const healthStatusByConnectionId = new Map(
@@ -562,21 +794,26 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
         active: 0,
         disabled: 0,
         archived: 0,
-        errored: 0
+        errored: 0,
+        degraded: 0,
+        unknown: 0
       };
       bucket.total += 1;
       if (connection.status === 'active') bucket.active += 1;
       else if (connection.status === 'disabled') bucket.disabled += 1;
       else if (connection.status === 'archived') bucket.archived += 1;
-      if (healthStatusByConnectionId.get(connection.id) === 'failing') {
-        bucket.errored += 1;
-      }
+      const health = healthStatusByConnectionId.get(connection.id);
+      // Bug 2 (loxep-9m2): `degraded`/`unknown` previously vanished — only
+      // `'failing'` was counted. `'unknown'` means "Loxep could not
+      // determine", never collapsed into either healthy or failing.
+      if (health === 'failing') bucket.errored += 1;
+      else if (health === 'degraded') bucket.degraded += 1;
+      else if (health === 'unknown') bucket.unknown += 1;
       byProvider.set(connection.provider, bucket);
     }
 
     const now = Date.now();
-    const orderSyncTypes = new Set<string>(ORDER_SYNC_TARGET_TYPES);
-    const fleet = targets.filter((target) => !orderSyncTypes.has(target.targetType));
+    const fleet = targets.filter((target) => MARKET_FLEET_TARGET_TYPES.has(target.targetType));
     const enabled = fleet.filter((target) => target.enabled);
     const successInstants = fleet
       .map((target) => target.lastSuccessAt)
@@ -589,7 +826,7 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
 
     const connectionNameById = new Map(connections.map((row) => [row.id, row.name]));
     const orderSync = targets
-      .filter((target) => orderSyncTypes.has(target.targetType))
+      .filter((target) => COMMERCE_ORDER_SYNC_TARGET_TYPES.has(target.targetType))
       .map((target) => ({
         id: target.id,
         name: target.name,
@@ -611,6 +848,34 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
     // `.map()` above, so there is nothing shared to disturb (same convention
     // as `features/market/lib/sort-rows.ts`).
     orderSync.sort((left, right) => left.name.localeCompare(right.name));
+
+    // The bug-1 fix's other half: `ebay_purchases`/`infrastructure_domain_
+    // reconcile` no longer vanish into `fleet` — they get their own honest
+    // bucket, same freshness shape as `orderSync`.
+    const otherSync = targets
+      .filter((target) => OTHER_SYNC_TARGET_TYPES.has(target.targetType))
+      .map((target) => ({
+        id: target.id,
+        name: target.name,
+        targetType: target.targetType as OtherSyncTargetType,
+        domain: MONITOR_TARGET_TYPE_DOMAIN[target.targetType as MonitorTargetType] as Extract<
+          MonitorTargetDomain,
+          'inventory_purchase_sync' | 'infrastructure_reconcile'
+        >,
+        connectionName: target.connectionId
+          ? (connectionNameById.get(target.connectionId) ?? null)
+          : null,
+        enabled: target.enabled,
+        intervalSeconds: target.intervalSeconds,
+        lastSuccessAt: iso(target.lastSuccessAt),
+        consecutiveErrors: target.consecutiveErrors,
+        stale:
+          target.enabled &&
+          (target.lastSuccessAt === null ||
+            now - target.lastSuccessAt.getTime() >
+              STALE_INTERVAL_MULTIPLIER * target.intervalSeconds * 1000)
+      }));
+    otherSync.sort((left, right) => left.name.localeCompare(right.name));
 
     const providers = [...byProvider.values()];
     providers.sort((left, right) => left.provider.localeCompare(right.provider));
@@ -650,6 +915,15 @@ export const fetchDashboardOperations = createServerFn({ method: 'GET' }).handle
             : new Date(Math.min(...nextPollInstants)).toISOString()
       },
       orderSync,
+      otherSync,
+      infrastructure: {
+        windowDays: INFRASTRUCTURE_RUN_WINDOW_DAYS,
+        domainCount: count(domainCountRow.rows[0]?.['n']),
+        hostingTargetCount: count(hostingTargetCountRow.rows[0]?.['n']),
+        unresolvedDriftCount: count(unresolvedDriftCountRow.rows[0]?.['n']),
+        recentFailedReconcileRunCount: count(recentFailedReconcileRunCountRow.rows[0]?.['n'])
+      },
+      fleetSignals: computeFleetSignals(connections, connectionHealth),
       notifications: {
         windowDays: NOTIFICATION_WINDOW_DAYS,
         total: delivered + failed + pending,
@@ -694,6 +968,27 @@ export interface DashboardExpenseLineDto {
   amount: string;
 }
 
+/**
+ * Operational facts genuinely upstream of the ledger (the Implementation
+ * Contract's "operational facts before accounting" pipeline) — not read from
+ * `journal_lines` at all, so populated regardless of whether a book/period
+ * exists (loxep-9m2). Neither figure is windowed: both are current backlog,
+ * not a rate.
+ */
+export interface DashboardBacklogDto {
+  /** `acquisitions.status = 'draft'` — intake started, not yet processed. */
+  draftAcquisitionsCount: number;
+  /**
+   * `documents.status not in ('confirmed', 'discarded')` — genuinely awaiting
+   * a disposition. Computed from a query matching `documents_status_created_
+   * at_idx`'s own predicate (`status <> 'confirmed'`) so that previously
+   * unused partial index actually gets used; `discarded` rows are then
+   * excluded in application code, because a discarded document is resolved,
+   * not awaiting anything.
+   */
+  documentsAwaitingConfirmationCount: number;
+}
+
 export interface DashboardFinancialDto {
   /** Null when no accounting book exists — the band renders an Empty state. */
   book: DashboardBookDto | null;
@@ -706,7 +1001,13 @@ export interface DashboardFinancialDto {
   netIncome: string | null;
   /** Largest expense accounts in the period, at most {@link EXPENSE_LINE_LIMIT}. */
   expenseLines: DashboardExpenseLineDto[];
+  backlog: DashboardBacklogDto;
 }
+
+const EMPTY_BACKLOG: DashboardBacklogDto = {
+  draftAcquisitionsCount: 0,
+  documentsAwaitingConfirmationCount: 0
+};
 
 const EMPTY_FINANCIAL: DashboardFinancialDto = {
   book: null,
@@ -715,8 +1016,17 @@ const EMPTY_FINANCIAL: DashboardFinancialDto = {
   revenue: null,
   expenses: null,
   netIncome: null,
-  expenseLines: []
+  expenseLines: [],
+  backlog: EMPTY_BACKLOG
 };
+
+/** Statuses genuinely awaiting a disposition — see {@link DashboardBacklogDto}. */
+const DOCUMENTS_AWAITING_STATUSES = new Set([
+  'pending',
+  'parsing',
+  'review',
+  'partially_confirmed'
+]);
 
 export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler(
   async (): Promise<DashboardFinancialDto> => {
@@ -724,15 +1034,34 @@ export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler
     await requireSession();
     const { handle } = getAdminServices();
 
-    const [books, defaultSetting] = await Promise.all([
+    const [books, defaultSetting, draftAcquisitions, documentStatuses] = await Promise.all([
       handle.db.query.accountingBooks.findMany({
         orderBy: (table, { asc }) => [asc(table.openedOn), asc(table.createdAt)]
       }),
       handle.db.query.applicationSettings.findFirst({
         where: (table, { eq }) => eq(table.key, DEFAULT_BOOK_SETTING_KEY)
-      })
+      }),
+      handle.db.execute(`select count(*)::int as n from acquisitions where status = 'draft'`),
+      // Matches `documents_status_created_at_idx`'s own predicate exactly
+      // (`status <> 'confirmed'`) so that partial index — otherwise unused —
+      // actually gets used.
+      handle.db.execute(
+        `select status, count(*)::int as n from documents where status <> 'confirmed' group by status`
+      )
     ]);
-    if (books.length === 0) return EMPTY_FINANCIAL;
+
+    let documentsAwaitingConfirmationCount = 0;
+    for (const row of documentStatuses.rows) {
+      if (DOCUMENTS_AWAITING_STATUSES.has(row['status'] as string)) {
+        documentsAwaitingConfirmationCount += count(row['n']);
+      }
+    }
+    const backlog: DashboardBacklogDto = {
+      draftAcquisitionsCount: count(draftAcquisitions.rows[0]?.['n']),
+      documentsAwaitingConfirmationCount
+    };
+
+    if (books.length === 0) return { ...EMPTY_FINANCIAL, backlog };
 
     // The installation default when one is configured; otherwise the oldest
     // active book — a single-book installation (the common case) never has to
@@ -746,7 +1075,7 @@ export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler
       books.find((row) => row.id === configuredId) ??
       books.find((row) => row.status === 'active') ??
       books[0];
-    if (resolved === undefined) return EMPTY_FINANCIAL;
+    if (resolved === undefined) return { ...EMPTY_FINANCIAL, backlog };
 
     const book: DashboardBookDto = {
       id: resolved.id,
@@ -770,7 +1099,7 @@ export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler
       orderBy: (table, { desc }) => [desc(table.startsOn)]
     });
     if (periodRow === undefined) {
-      return { ...EMPTY_FINANCIAL, book, bookCount: books.length };
+      return { ...EMPTY_FINANCIAL, book, bookCount: books.length, backlog };
     }
 
     const bookLiteral = uuidLiteral(resolved.id);
@@ -837,7 +1166,8 @@ export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler
         code: row['code'] as string,
         name: row['name'] as string,
         amount: decimal(row['balance'])
-      }))
+      })),
+      backlog
     };
   }
 );

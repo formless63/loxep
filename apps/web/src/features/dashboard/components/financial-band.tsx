@@ -42,7 +42,7 @@ import {
   PanelCard,
   StatCard
 } from '@/features/dashboard/components/dashboard-primitives';
-import type { DashboardFinancialDto } from '@/server/dashboard-functions';
+import type { DashboardBacklogDto, DashboardFinancialDto } from '@/server/dashboard-functions';
 
 const expensesChartConfig = {
   amount: { label: 'Expense', color: 'var(--chart-2)' }
@@ -111,6 +111,37 @@ function NoPeriodCard({ data }: { data: DashboardFinancialDto }) {
         </Empty>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Operational facts genuinely upstream of the ledger (loxep-9m2) — draft
+ * acquisitions and unconfirmed documents. Rendered regardless of whether a
+ * book or fiscal period exists, because neither figure is read from
+ * `journal_lines`; an installation with no books yet can still have real
+ * intake backlog. `null` when both are zero, so an install with no backlog
+ * gets no empty tiles rather than two honest zeros nobody asked for.
+ */
+function BacklogTiles({ backlog }: { backlog: DashboardBacklogDto }) {
+  if (backlog.draftAcquisitionsCount === 0 && backlog.documentsAwaitingConfirmationCount === 0) {
+    return null;
+  }
+  return (
+    <div className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2', BAND_GRID_TINT)}>
+      <StatCard
+        label='Draft acquisitions awaiting intake'
+        value={formatQuantity(backlog.draftAcquisitionsCount)}
+        href='/inventory/acquisitions'
+        icon={{ icon: Icons.billing, className: 'bg-chart-5/15 text-chart-5' }}
+        footer='Intake started, not yet processed into stock — an operational fact upstream of the ledger.'
+      />
+      <StatCard
+        label='Documents awaiting confirmation'
+        value={formatQuantity(backlog.documentsAwaitingConfirmationCount)}
+        icon={{ icon: Icons.page, className: 'bg-chart-2/15 text-chart-2' }}
+        footer='Receipts and imports staged, not yet confirmed into an expense, an acquisition cost, or inventory intake.'
+      />
+    </div>
   );
 }
 
@@ -243,6 +274,7 @@ export function FinancialBand({ data }: { data: DashboardFinancialDto }) {
           <ExpensesCard data={data} />
         </div>
       )}
+      <BacklogTiles backlog={data.backlog} />
     </Band>
   );
 }

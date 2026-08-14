@@ -82,6 +82,47 @@ function OtherCurrenciesNote({ data }: { data: DashboardMoneyDto }) {
   );
 }
 
+/**
+ * The channel-listings funnel (loxep-9m2): draft/active/ended/sold-out
+ * counts, current state, not windowed. `total === 0` renders the honest
+ * empty state rather than a zero that looks like a measurement.
+ */
+function ChannelListingsCard({ data }: { data: DashboardMoneyDto }) {
+  const listings = data.channelListings;
+  const card =
+    listings.total === 0 ? (
+      <StatCard
+        label='Channel listings'
+        value='—'
+        href='/commerce/listings'
+        icon={{ icon: Icons.product, className: 'bg-chart-2/15 text-chart-2' }}
+        footer='No channel listings yet — the catalog and manual/offline sale recording live under Commerce.'
+      />
+    ) : (
+      <StatCard
+        label='Channel listings — the listed→sold funnel'
+        value={formatQuantity(listings.active)}
+        href='/commerce/listings'
+        icon={{ icon: Icons.product, className: 'bg-chart-2/15 text-chart-2' }}
+        footer={
+          <div className='flex flex-wrap items-center gap-1.5'>
+            <Badge variant='outline'>{formatQuantity(listings.draft)} draft</Badge>
+            <Badge variant='success'>{formatQuantity(listings.active)} active</Badge>
+            <Badge variant='outline'>{formatQuantity(listings.soldOut)} sold out</Badge>
+            {listings.ended > 0 && (
+              <Badge variant='outline'>{formatQuantity(listings.ended)} ended</Badge>
+            )}
+          </div>
+        }
+      />
+    );
+  // Deliberately its own single-tile row, not folded into the order-window
+  // grid above: a channel listing exists whether or not it has sold yet, so
+  // this tile does not gate on `lifetimeOrderCount` the way the rest of the
+  // band does.
+  return <div className={cn('grid grid-cols-1 gap-4', BAND_GRID_TINT)}>{card}</div>;
+}
+
 function NoOrdersYet() {
   return (
     <Card>
@@ -182,9 +223,23 @@ export function MoneyBand({ data }: { data: DashboardMoneyDto }) {
             trend={trendFrom(data.orderTrendPct, formatPercent(data.orderTrendPct))}
             {...ordersGraphic}
             footer={
-              hasSeries
-                ? 'Non-duplicate orders placed in the window.'
-                : `No orders placed in the last ${data.windowDays} days.`
+              hasSeries ? (
+                <>
+                  Non-duplicate orders placed in the window.
+                  {data.manualOrderCount > 0 && (
+                    <>
+                      {' '}
+                      <span className='tabular-nums'>
+                        {formatQuantity(data.manualOrderCount)}
+                      </span>{' '}
+                      {data.manualOrderCount === 1 ? 'is' : 'are'} a manual/offline channel sale,
+                      not a connector-synced one.
+                    </>
+                  )}
+                </>
+              ) : (
+                `No orders placed in the last ${data.windowDays} days.`
+              )
             }
           />
           <StatCard
@@ -224,6 +279,7 @@ export function MoneyBand({ data }: { data: DashboardMoneyDto }) {
           />
         </div>
       )}
+      <ChannelListingsCard data={data} />
     </Band>
   );
 }

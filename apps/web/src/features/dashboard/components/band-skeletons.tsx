@@ -17,7 +17,10 @@ function BandHeaderSkeleton() {
   );
 }
 
-/** Hero tile spanning 2×2, plus four 1×1 tiles — the money bento. */
+/**
+ * Hero tile spanning 2×2, four 1×1 tiles — the money bento — plus one
+ * full-width tile for the channel-listings funnel below it.
+ */
 export function MoneyBandSkeleton() {
   return (
     <section className='flex flex-col gap-3'>
@@ -28,6 +31,7 @@ export function MoneyBandSkeleton() {
           <Skeleton key={index} className='h-[7.5rem] w-full' />
         ))}
       </div>
+      <Skeleton className='h-32 w-full' />
     </section>
   );
 }
@@ -46,13 +50,17 @@ export function MarketPulseBandSkeleton() {
   );
 }
 
-/** Four equal operational tiles. */
+/**
+ * Seven equal operational tiles — connections, monitor fleet, order sync,
+ * other (purchase/reconcile) sync, infrastructure, fleet signals, and
+ * notifications (loxep-9m2).
+ */
 export function OperationsBandSkeleton() {
   return (
     <section className='flex flex-col gap-3'>
       <BandHeaderSkeleton />
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
-        {Array.from({ length: 4 }, (_, index) => (
+        {Array.from({ length: 7 }, (_, index) => (
           <Skeleton key={index} className='h-56 w-full' />
         ))}
       </div>
@@ -60,7 +68,11 @@ export function OperationsBandSkeleton() {
   );
 }
 
-/** Three statement tiles plus the period tile, then the expense bars. */
+/**
+ * Three statement tiles plus the period tile, the expense bars, and two
+ * backlog tiles (draft acquisitions, documents awaiting confirmation —
+ * loxep-9m2) which render regardless of book/period state.
+ */
 export function FinancialBandSkeleton() {
   return (
     <section className='flex flex-col gap-3'>
@@ -70,6 +82,10 @@ export function FinancialBandSkeleton() {
           <Skeleton key={index} className='h-36 w-full' />
         ))}
         <Skeleton className='h-56 w-full sm:col-span-2 xl:col-span-4' />
+      </div>
+      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2'>
+        <Skeleton className='h-32 w-full' />
+        <Skeleton className='h-32 w-full' />
       </div>
     </section>
   );

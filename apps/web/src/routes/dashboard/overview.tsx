@@ -1,10 +1,15 @@
 /**
- * `/dashboard/overview` — the Loxep product home (loxep-jwm).
+ * `/dashboard/overview` — the Loxep product home (loxep-jwm; refreshed by
+ * loxep-9m2 for the six domains that shipped after it).
  *
  * Four bands answering "how is my operation doing right now", each from real
- * data only: money from ingested orders, market pulse from derived events,
- * operations health from connections/monitors/deliveries, and the income
- * statement once a set of books exists.
+ * data only: money from ingested orders (including the manual/offline
+ * channel-listing funnel), market pulse from derived events, operations
+ * health from connections/the full polling fleet (discovery monitors, order
+ * sync, purchase sync, DNS reconcile)/this installation's own DNS and
+ * hosting estate/fleet-tool signals/deliveries, and the income statement
+ * (plus draft-acquisition and unconfirmed-document backlog, which sit
+ * upstream of it) once a set of books exists.
  *
  * ## Loading shape
  *
@@ -138,8 +143,8 @@ function DashboardOverview() {
       <div>
         <h1 className='text-2xl font-semibold tracking-tight'>Dashboard</h1>
         <p className='text-muted-foreground'>
-          Money, market, operations, and the ledger — everything Loxep currently knows, from real
-          data only.
+          Money, market, operations — including this installation's own DNS/hosting estate and
+          fleet-tool signals — and the ledger, from real data only.
         </p>
       </div>
 
