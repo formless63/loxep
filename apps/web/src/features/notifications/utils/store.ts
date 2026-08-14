@@ -20,6 +20,14 @@ type NotificationState = {
   unreadCount: () => number;
 };
 
+// PROVISIONAL (loxep-67w): this store's mock data is only ever rendered by
+// the /starter donor workspace now — the product header hides its
+// notification bell entirely (see components/layout/header.tsx) rather than
+// showing fiction like "Sarah Connor has joined the Engineering workspace"
+// on real product surfaces. features/notifications/** stays as preserved
+// donor/reference code; it is not deleted. The bell returns to product
+// surfaces when loxep-oii lands a real feed — and that must not mean simply
+// re-enabling mockNotifications here.
 const mockNotifications: Notification[] = [
   {
     id: '1',
