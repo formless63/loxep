@@ -9,7 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
-import { connections, notificationEndpoints, storageBackends } from "@loxep/db/schema";
+import {
+  connections,
+  externalResources,
+  notificationEndpoints,
+  storageBackends,
+} from "@loxep/db/schema";
 import type { DbHandle } from "@loxep/db";
 import { createDefaultHealthSubjectRegistry } from "../src/index.ts";
 import type { HealthFetch, HealthSubjectRegistry } from "../src/index.ts";
@@ -235,6 +240,72 @@ describe("default health subject registry", () => {
       });
       const outcome = await registry.storage_backend?.probe(handle.db, row.id);
       expect(outcome?.status).toBe("unknown");
+    });
+  });
+
+  describe("external_resource (loxep-ovj.3 — tier-2 companion-link reachability)", () => {
+    async function makeLink(provider: string, url: string) {
+      const [row] = await handle.db
+        .insert(externalResources)
+        .values({ provider, externalType: "fixture", url })
+        .returning();
+      if (row === undefined) throw new Error("fixture insert failed");
+      return row;
+    }
+
+    it("only lists candidates for providers the registry marks tier-2-probeable", async () => {
+      const beszel = await makeLink("beszel", "https://beszel.example.test/system/abc");
+      const tailscale = await makeLink("tailscale", "https://api.tailscale.com/device/xyz");
+      const registry = createDefaultHealthSubjectRegistry();
+      const candidates = await registry.external_resource?.listCandidates(handle.db);
+      const ids = candidates?.map((candidate) => candidate.subjectId) ?? [];
+      expect(ids).toContain(beszel.id);
+      expect(ids).not.toContain(tailscale.id);
+    });
+
+    it("probes the link's URL ORIGIN plus the registry's health path, unauthenticated", async () => {
+      const link = await makeLink("gatus", "https://gatus.example.test/endpoints/some-key");
+      let capturedUrl: string | undefined;
+      let capturedInit: unknown;
+      const fetchImpl: HealthFetch = async (url, init) => {
+        capturedUrl = url;
+        capturedInit = init;
+        return { ok: true, status: 200, text: async () => "OK" };
+      };
+      const registry = createDefaultHealthSubjectRegistry({ fetchImpl });
+      const outcome = await registry.external_resource?.probe(handle.db, link.id);
+      expect(capturedUrl).toBe("https://gatus.example.test/health");
+      expect(capturedInit).not.toHaveProperty("headers");
+      expect(outcome?.status).toBe("ok");
+    });
+
+    it("reports 'failing' on a definite HTTP error response", async () => {
+      const link = await makeLink("cockpit", "https://cockpit.example.test/host/abc");
+      const registry = createDefaultHealthSubjectRegistry({
+        fetchImpl: fetchStub(() => ({ ok: false, status: 502, body: "" })),
+      });
+      const outcome = await registry.external_resource?.probe(handle.db, link.id);
+      expect(outcome?.status).toBe("failing");
+      expect(outcome?.detail?.["kind"]).toBe("http_error");
+    });
+
+    it("reports 'unknown' — not 'failing' — on a network-level failure", async () => {
+      const link = await makeLink("dockhand", "https://dockhand.example.test/env/1");
+      const registry = createDefaultHealthSubjectRegistry({
+        fetchImpl: fetchStub(() => "network-error"),
+      });
+      const outcome = await registry.external_resource?.probe(handle.db, link.id);
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail?.["kind"]).toBe("unreachable");
+    });
+
+    it("returns null for a deleted subject so the sweep clears its row", async () => {
+      const registry = createDefaultHealthSubjectRegistry();
+      const outcome = await registry.external_resource?.probe(
+        handle.db,
+        "00000000-0000-4000-8000-0000000000fe",
+      );
+      expect(outcome).toBeNull();
     });
   });
 });

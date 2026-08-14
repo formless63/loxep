@@ -31,6 +31,12 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { JsonValue } from '@/server/admin-functions';
 import type { TailnetAddressKind } from '@loxep/infrastructure';
+import type {
+  HealthSource,
+  HealthStatus,
+  HostDiagnosisInput,
+  HostDiagnosisResult
+} from '@loxep/domain';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -1008,6 +1014,32 @@ export const fetchHostingTargets = createServerFn({ method: 'GET' }).handler(
 );
 
 /**
+ * The `integration_health` projection for one companion link (loxep-ovj.3):
+ * `subject_type = 'external_resource'`, `subject_id = ` the link's
+ * `external_resources.id` — a DEDICATED row per link, never shared with
+ * `hosting_target`, per the design's own rule ("a shared row would let
+ * Gatus/Beszel/Dockhand race and the last sweep would win"). `null` when the
+ * sweep has not reached this link yet (a brand-new link, or a provider with
+ * no tier-2 health path at all — see `@loxep/domain`'s
+ * `fleet-tool-registry.ts`) — the panel renders that as "no automated check"
+ * rather than a fabricated status.
+ *
+ * `status`/`source` are `HealthStatus`/`HealthSource` verbatim (never
+ * widened to `string`) so the client's tone/label maps stay exhaustive.
+ * `checkedAt` is LOXEP's read clock — see the panel's rendering rule for why
+ * this is never conflated with a tool's own reported timestamp (today's
+ * probe is credential-free reachability only, so there IS no second clock
+ * yet; a future adapter-sourced row may add one to `detail` without
+ * widening this shape).
+ */
+export interface CompanionLinkHealthDto {
+  status: HealthStatus;
+  source: HealthSource;
+  checkedAt: string;
+  detail: Record<string, JsonValue>;
+}
+
+/**
  * One `resource_links` attachment, joined with the `external_resources` row
  * it points at (loxep-v5r.3's generic companion-link service). `id` is the
  * `external_resources` row id; `resourceId`/`purpose` are carried too so the
@@ -1023,6 +1055,19 @@ export interface CompanionLinkDto {
   resourceId: string;
   purpose: string;
   createdAt: string;
+  /** loxep-ovj.3's tier-2 companion-link health projection — see {@link CompanionLinkHealthDto}. */
+  health: CompanionLinkHealthDto | null;
+  /**
+   * `@loxep/domain`'s known-tool registry entry for this link's `provider`
+   * (`fleet-tool-registry.ts`), or `null` for a provider the registry does
+   * not know (a hand-typed tier-1 link, or a future non-fleet companion —
+   * see `resource-links.ts`'s consolidation note). Threaded through as a DTO
+   * field rather than importing the registry client-side, because
+   * `@loxep/domain`'s barrel pulls in server-only packages that must stay
+   * out of the client bundle — the same reason every other server-package
+   * read in this file goes through a dynamic import.
+   */
+  knownTool: { label: string; embeddable: boolean } | null;
 }
 
 export interface DnsProviderTokenDto {
@@ -1052,6 +1097,89 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
    */
   addressV4TailnetKind: TailnetAddressKind | null;
   addressV6TailnetKind: TailnetAddressKind | null;
+  /**
+   * `@loxep/domain`'s `diagnoseHostWitnesses` (loxep-50t §3.1, loxep-1au §5,
+   * loxep-y64 §4), computed from this target's LINKED tailscale/beszel/
+   * dockhand/gatus companion links and their tier-2 health projections —
+   * see `computeHostDiagnosisInput` below. Reused verbatim, never a second
+   * sentence function: a `status`/`health` field on this type is exactly
+   * what witness-not-verdict forbids, so the panel renders `sentence`
+   * (naming its subjects) or the honest `'Not enough linked tools to say.'`
+   * refusal, never a derived badge.
+   */
+  diagnosis: HostDiagnosisResult;
+}
+
+/** `failing` > `degraded` > `unknown` > `ok` — matches `@loxep/app`'s `gatus-push.ts` `STATUS_SEVERITY` convention (duplicated locally, not imported, since this file otherwise takes no `@loxep/app` dependency). */
+const HEALTH_STATUS_SEVERITY: Record<HealthStatus, number> = {
+  ok: 0,
+  unknown: 1,
+  degraded: 2,
+  failing: 3
+};
+
+/**
+ * Worst status among ONE provider's (possibly several) companion links on
+ * this target; `undefined` when the provider has no link at all — "absent
+ * renders absent" carried through to the diagnosis input too, per
+ * `@loxep/domain`'s `host-diagnosis.ts` ("an unlinked witness contributes
+ * NOTHING … not a key on `HostDiagnosisInput`").
+ */
+function worstCompanionHealthStatus(
+  links: readonly CompanionLinkDto[],
+  provider: string
+): HealthStatus | undefined {
+  const providerLinks = links.filter((link) => link.provider === provider);
+  if (providerLinks.length === 0) return undefined;
+  let worst: HealthStatus = 'ok';
+  for (const link of providerLinks) {
+    // A LINKED witness with no health row yet (the sweep has not reached it)
+    // reads 'unknown' — Loxep genuinely does not know, a different fact from
+    // "no link exists", per host-diagnosis.ts's "Absent ≠ green" section.
+    const status = link.health?.status ?? 'unknown';
+    if (HEALTH_STATUS_SEVERITY[status] > HEALTH_STATUS_SEVERITY[worst]) worst = status;
+  }
+  return worst;
+}
+
+/**
+ * Builds `@loxep/domain`'s `HostDiagnosisInput` from this target's linked
+ * companion tools and their tier-2 health projections (loxep-ovj.3).
+ *
+ * **Honesty note, worth restating at the one call site that matters:** every
+ * non-null status here today comes from the credential-free tier-2
+ * reachability probe (`source: 'probe'` — "Loxep pinged the tool's own
+ * health path"). It answers "can Loxep reach this tool at all", not "is
+ * THIS SPECIFIC system/device/endpoint up", which needs an authenticated
+ * per-resource adapter read (loxep-hb7 Milestone B / loxep-y64 slice 3 /
+ * loxep-50t slice B / loxep-wvm slice B — design-complete, unbuilt). Both
+ * write to the SAME `integration_health` key (`subject_type=
+ * 'external_resource'`, `subject_id=` the link id), so this function needs
+ * no change when that richer data lands — `worstCompanionHealthStatus` just
+ * starts reading a `source: 'adapter'` row instead of a `'probe'` one.
+ * `tailscale` never gets a non-null status from THIS mechanism at all
+ * (Tailscale has no unauthenticated health path — see `fleet-tool-
+ * registry.ts`), and stays that way until that same future work lands.
+ */
+function computeHostDiagnosisInput(links: readonly CompanionLinkDto[]): HostDiagnosisInput {
+  const input: HostDiagnosisInput = {};
+
+  const tailscale = worstCompanionHealthStatus(links, 'tailscale');
+  if (tailscale !== undefined) input.tailscale = { status: tailscale };
+  const beszel = worstCompanionHealthStatus(links, 'beszel');
+  if (beszel !== undefined) input.beszel = { status: beszel };
+  const dockhand = worstCompanionHealthStatus(links, 'dockhand');
+  if (dockhand !== undefined) input.dockhand = { status: dockhand };
+
+  const gatusLinks = links.filter((link) => link.provider === 'gatus');
+  if (gatusLinks.length > 0) {
+    input.gatus = {
+      total: gatusLinks.length,
+      failing: gatusLinks.filter((link) => (link.health?.status ?? 'unknown') === 'failing').length
+    };
+  }
+
+  return input;
 }
 
 export const fetchHostingTarget = createServerFn({ method: 'GET' })
@@ -1068,8 +1196,18 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
     // barrel) that must stay out of the client bundle — same reason every
     // other server-package access in this file goes through `@/server/admin`.
     const { tailnetAddressKind } = await import('@loxep/infrastructure');
+    // `diagnoseHostWitnesses`, the known-tool registry, and its panel-order
+    // comparator are all pure (no db, no network) — imported dynamically
+    // anyway, matching this file's own rule that only TYPES from a server
+    // package are allowed at the top level.
+    const {
+      compareFleetToolPanelOrder,
+      diagnoseHostWitnesses,
+      FLEET_TOOL_REGISTRY,
+      isFleetToolProvider
+    } = await import('@loxep/domain');
     await requireSession();
-    const { handle } = getAdminServices();
+    const { handle, health } = getAdminServices();
     const target = await handle.db.query.hostingTargets.findFirst({
       where: (table, { eq }) => eq(table.name, data.name)
     });
@@ -1077,7 +1215,7 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       throw new Error(`Hosting target "${data.name}" not found`);
     }
 
-    const [frontedTargets, domains, tokens, tokenZoneRows, companionLinks, frontingNode] =
+    const [frontedTargets, domains, tokens, tokenZoneRows, rawCompanionLinks, frontingNode] =
       await Promise.all([
         handle.db.query.hostingTargets.findMany({
           where: (table, { eq }) => eq(table.frontedByTargetId, target.id),
@@ -1100,6 +1238,60 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
             })
           : null
       ]);
+
+    // loxep-ovj.3: per-link `integration_health` projection
+    // (`subject_type='external_resource'`, `subject_id=` the link's
+    // `external_resources.id`) — one lookup per link, "tens of subjects" per
+    // the design's own cost model, the same honest cost `runHealthSweep`
+    // already takes for its own candidate lists.
+    const healthByLinkId = new Map(
+      (
+        await Promise.all(
+          rawCompanionLinks.map(async (link) => {
+            const row = await health.getHealth('external_resource', link.externalResourceId);
+            return [link.externalResourceId, row] as const;
+          })
+        )
+      ).filter((entry): entry is [string, NonNullable<(typeof entry)[1]>] => entry[1] !== null)
+    );
+
+    const companionLinks: CompanionLinkDto[] = rawCompanionLinks
+      .map((link) => {
+        const row = healthByLinkId.get(link.externalResourceId) ?? null;
+        return {
+          id: link.externalResourceId,
+          provider: link.provider,
+          externalType: link.externalType,
+          url: link.url,
+          title: link.title,
+          resourceId: link.resourceId,
+          purpose: link.purpose,
+          createdAt: iso(link.createdAt),
+          health:
+            row === null
+              ? null
+              : {
+                  status: row.status,
+                  source: row.source,
+                  checkedAt: iso(row.checkedAt),
+                  detail: row.detail as Record<string, JsonValue>
+                },
+          knownTool: isFleetToolProvider(link.provider)
+            ? {
+                label: FLEET_TOOL_REGISTRY[link.provider].label,
+                embeddable: FLEET_TOOL_REGISTRY[link.provider].embeddable
+              }
+            : null
+        };
+      })
+      // loxep-ovj.3's PROVISIONAL panel order (fundamental-first) — see
+      // `fleet-tool-registry.ts`'s module doc for the full reasoning and
+      // fleet-observability-design.md's "Where this surfaces" section for
+      // the mirrored note. A provider the comparator does not know (a
+      // hand-typed tier-1 link) sorts after every known fleet tool.
+      .sort((a, b) => compareFleetToolPanelOrder(a.provider, b.provider));
+
+    const diagnosis = diagnoseHostWitnesses(computeHostDiagnosisInput(companionLinks));
 
     const zonesByToken = new Map<string, string[]>();
     for (const row of tokenZoneRows) {
@@ -1136,16 +1328,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
         domainIds: zonesByToken.get(token.id) ?? [],
         createdAt: iso(token.createdAt)
       })),
-      companionLinks: companionLinks.map((link) => ({
-        id: link.externalResourceId,
-        provider: link.provider,
-        externalType: link.externalType,
-        url: link.url,
-        title: link.title,
-        resourceId: link.resourceId,
-        purpose: link.purpose,
-        createdAt: iso(link.createdAt)
-      }))
+      companionLinks,
+      diagnosis
     };
   });
 
@@ -1170,6 +1354,7 @@ export const addCompanionLink = createServerFn({ method: 'POST' })
   .inputValidator(addCompanionLinkInput)
   .handler(async ({ data }): Promise<CompanionLinkDto> => {
     const { requireAdmin, getResourceLinksService } = await import('@/server/admin');
+    const { FLEET_TOOL_REGISTRY, isFleetToolProvider } = await import('@loxep/domain');
     await requireAdmin();
     const link = await getResourceLinksService().createLink({
       provider: data.provider,
@@ -1188,7 +1373,18 @@ export const addCompanionLink = createServerFn({ method: 'POST' })
       title: link.title,
       resourceId: link.resourceId,
       purpose: link.purpose,
-      createdAt: iso(link.createdAt)
+      createdAt: iso(link.createdAt),
+      // A freshly created link has no `integration_health` row yet — the
+      // sweep has not reached it. `null` here is the same honest "no
+      // automated check yet" the panel renders for any unprobed link, not a
+      // fabricated status.
+      health: null,
+      knownTool: isFleetToolProvider(link.provider)
+        ? {
+            label: FLEET_TOOL_REGISTRY[link.provider].label,
+            embeddable: FLEET_TOOL_REGISTRY[link.provider].embeddable
+          }
+        : null
     };
   });
 

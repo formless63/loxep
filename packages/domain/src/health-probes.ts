@@ -35,7 +35,8 @@
  * Every probe here is read-only, sends no credential, and probes a Loxep
  * RECORD with a documented health path — never an operator-typed URL (the
  * design's review test: "a form whose first field is a URL the operator
- * types" is the line that must never be crossed). The three first subjects:
+ * types" is the line that must never be crossed). The first three subjects
+ * (loxep-ovj.1), plus a fourth added by loxep-ovj.3:
  *
  * ```text
  * connection            derived from connections.last_success_at /
@@ -50,6 +51,15 @@
  *                       s3: an unauthenticated HEAD to the configured
  *                       endpoint — any HTTP response proves reachability;
  *                       no bucket call, no credential.
+ * external_resource     (loxep-ovj.3) one row per companion-tool LINK
+ *                       (`external_resources`), not per connection: GET
+ *                       `<url origin><registry health path>`, unauthenticated,
+ *                       for whichever provider `./fleet-tool-registry.ts`
+ *                       names as tier-2-probeable. A provider with no
+ *                       registered health path (Tailscale, Termix, Uptime
+ *                       Kuma — see that module's doc) is never listed as a
+ *                       candidate at all, so it never gets a fabricated
+ *                       `unknown` row.
  * ```
  *
  * **"Unreachable from Loxep" vs "failing"**, the design's sharpest UX rule: a
@@ -62,6 +72,11 @@
 import { access, stat } from "node:fs/promises";
 import type { LoxepDb } from "@loxep/db";
 import { isConnectionArchived } from "./connections.ts";
+import {
+  FLEET_TOOL_REGISTRY,
+  PROBEABLE_FLEET_TOOL_PROVIDERS,
+} from "./fleet-tool-registry.ts";
+import type { FleetToolProvider } from "./fleet-tool-registry.ts";
 import { createHealthService } from "./health.ts";
 import type {
   HealthService,
@@ -405,6 +420,89 @@ function createStorageBackendProbe(
   };
 }
 
+// ---------------------------------------------------------------------------
+// external_resource (loxep-ovj.3) — one row per companion-tool LINK
+// ---------------------------------------------------------------------------
+
+/**
+ * Every `external_resources` row whose `provider` is tier-2-probeable per
+ * `./fleet-tool-registry.ts` (`PROBEABLE_FLEET_TOOL_PROVIDERS`). Other
+ * providers — a future knowledge/tasks companion link, or a fleet tool with
+ * no unauthenticated health path (Tailscale, Termix, Uptime Kuma) — are
+ * never listed, so they never accumulate a fabricated `integration_health`
+ * row this probe cannot honestly back.
+ */
+async function listExternalResourceCandidates(
+  db: LoxepDb,
+): Promise<HealthSubjectCandidate[]> {
+  if (PROBEABLE_FLEET_TOOL_PROVIDERS.length === 0) return [];
+  const rows = await db.query.externalResources.findMany({
+    where: (table, { inArray }) =>
+      inArray(table.provider, [...PROBEABLE_FLEET_TOOL_PROVIDERS]),
+    columns: { id: true },
+  });
+  return rows.map((row) => ({ subjectId: row.id }));
+}
+
+function createExternalResourceProbe(
+  fetchImpl: HealthFetch,
+  timeoutMs: number,
+): HealthSubjectRegistryEntry["probe"] {
+  return async (db, subjectId) => {
+    const row = await db.query.externalResources.findFirst({
+      where: (table, { eq }) => eq(table.id, subjectId),
+      columns: { provider: true, url: true },
+    });
+    if (row === undefined) return null;
+
+    const entry = FLEET_TOOL_REGISTRY[row.provider as FleetToolProvider] as
+      | (typeof FLEET_TOOL_REGISTRY)[FleetToolProvider]
+      | undefined;
+    if (entry === undefined || entry.healthPath === null) {
+      // Reached only if a row's provider changed under this candidate list's
+      // feet between listing and probing, or the registry itself changed —
+      // `listExternalResourceCandidates` already filters to probeable
+      // providers, so this is defensive, not the common path.
+      return {
+        status: "unknown",
+        detail: { kind: "no_health_path", provider: row.provider },
+      };
+    }
+
+    // The link's own URL points at ONE specific resource, never a base URL
+    // (see fleet-tool-registry.ts's module doc) — the health path is
+    // resolved against its ORIGIN, not appended to the stored URL.
+    let origin: string;
+    try {
+      origin = new URL(row.url).origin;
+    } catch {
+      return { status: "unknown", detail: { kind: "invalid_url" } };
+    }
+
+    try {
+      const result = await probeUrl(
+        fetchImpl,
+        `${origin}${entry.healthPath}`,
+        timeoutMs,
+      );
+      if (!result.ok) {
+        return {
+          status: "failing",
+          detail: { kind: "http_error", statusCode: result.status },
+        };
+      }
+      return { status: "ok", detail: {} };
+    } catch (error) {
+      if (error instanceof HealthProbeNetworkError) {
+        // Distinct from 'failing' by design — these hubs commonly sit
+        // behind a tunnel or on a private network Loxep is not on.
+        return { status: "unknown", detail: { kind: "unreachable" } };
+      }
+      throw error;
+    }
+  };
+}
+
 export interface CreateDefaultHealthSubjectRegistryOptions {
   /** Injectable HTTP client; defaults to the global `fetch`. */
   fetchImpl?: HealthFetch;
@@ -413,10 +511,17 @@ export interface CreateDefaultHealthSubjectRegistryOptions {
 }
 
 /**
- * The three first subjects (design: "First subjects: connections,
+ * The first three subjects (design: "First subjects: connections,
  * notification endpoints, storage backends. No companion tool integration in
- * this milestone."). `source` is `'probe'` for all three — this registry is
- * only ever consulted by {@link runHealthSweep}.
+ * this milestone."), plus `external_resource` (loxep-ovj.3, tier-2
+ * companion-link reachability). `source` is `'probe'` for all four — this
+ * registry is only ever consulted by {@link runHealthSweep}.
+ *
+ * `@loxep/app`'s `createFleetHealthSubjectRegistry` (loxep-rf4/hb7) spreads
+ * this registry and overrides only its `connection` entry with a
+ * fleet-provider-dispatching one; `external_resource` passes through
+ * unchanged, exactly like `notification_endpoint`/`storage_backend` already
+ * do — no `@loxep/app` change was needed to compose this in.
  */
 export function createDefaultHealthSubjectRegistry(
   options?: CreateDefaultHealthSubjectRegistryOptions,
@@ -440,6 +545,11 @@ export function createDefaultHealthSubjectRegistry(
       source: "probe",
       listCandidates: listStorageBackendCandidates,
       probe: createStorageBackendProbe(fetchImpl, timeoutMs),
+    },
+    external_resource: {
+      source: "probe",
+      listCandidates: listExternalResourceCandidates,
+      probe: createExternalResourceProbe(fetchImpl, timeoutMs),
     },
   };
 }

@@ -205,6 +205,7 @@ function FleetDetailData({ name }: { name: string }) {
           hostingTargetId={data.id}
           hostingTargetName={data.name}
           links={data.companionLinks}
+          diagnosis={data.diagnosis}
         />
       </div>
     </div>

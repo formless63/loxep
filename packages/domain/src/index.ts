@@ -122,6 +122,19 @@ export type {
 } from "./connections.ts";
 
 export {
+  compareFleetToolPanelOrder,
+  FLEET_TOOL_PANEL_ORDER,
+  FLEET_TOOL_PROVIDERS,
+  FLEET_TOOL_REGISTRY,
+  isFleetToolProvider,
+  PROBEABLE_FLEET_TOOL_PROVIDERS,
+} from "./fleet-tool-registry.ts";
+export type {
+  FleetToolProvider,
+  FleetToolRegistryEntry,
+} from "./fleet-tool-registry.ts";
+
+export {
   createHealthService,
   guardHealthDetail,
   HEALTH_SOURCES,
