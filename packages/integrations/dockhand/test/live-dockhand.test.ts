@@ -103,6 +103,39 @@ describeLive(`live Dockhand instance (${defaultDockhandEnvFilePath()})`, () => {
     });
     expect(Array.isArray(containers)).toBe(true);
     expect(Array.isArray(stacks)).toBe(true);
+
+    // Counts alone do NOT verify field names, and that distinction is the
+    // whole reason this block exists. `containerSchema`/`stackSchema` parse
+    // defensively, so a field this package guessed WRONG degrades to `null`
+    // and the read still "succeeds" with the right row count. The session
+    // cookie was exactly that failure: 62 stub tests green, and no live login
+    // could ever have worked. So report presence per field, across ALL rows
+    // rather than the first one — a single container legitimately missing an
+    // optional value must not read as a wrong field name.
+    const presence = <T,>(rows: readonly T[], get: (row: T) => unknown) =>
+      rows.length === 0 ? "no rows" : rows.some((row) => get(row) !== null);
+    console.log("[live] dockhand container fields observed:", {
+      externalContainerId: presence(containers, (c) => c.externalContainerId),
+      externalHostId: presence(containers, (c) => c.externalHostId),
+      name: presence(containers, (c) => c.name),
+      image: presence(containers, (c) => c.image),
+      state: presence(containers, (c) => c.state),
+      status: presence(containers, (c) => c.status),
+    });
+    console.log("[live] dockhand stack fields observed:", {
+      name: presence(stacks, (s) => s.name),
+      externalHostId: presence(stacks, (s) => s.externalHostId),
+      status: presence(stacks, (s) => s.status),
+      sourceType: presence(stacks, (s) => s.sourceType),
+      // Numbers, not nullable — a wrong field name surfaces as a constant 0
+      // rather than a null, so report the observed spread instead of presence.
+      containerCountRange: stacks.length === 0
+        ? "no rows"
+        : `${Math.min(...stacks.map((s) => s.containerCount))}..${Math.max(...stacks.map((s) => s.containerCount))}`,
+      runningContainerCountRange: stacks.length === 0
+        ? "no rows"
+        : `${Math.min(...stacks.map((s) => s.runningContainerCount))}..${Math.max(...stacks.map((s) => s.runningContainerCount))}`,
+    });
   });
 
   it("performs one login for several reads", async () => {

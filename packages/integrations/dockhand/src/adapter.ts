@@ -62,9 +62,31 @@
  *   containers page documents a wrapping `containers` field. Both are accepted.
  *   See `errors.ts`.
  *
- * Field names are **UNVERIFIED against a running instance**;
- * `test/live-dockhand.test.ts` skips cleanly until
- * `~/.config/loxep/dockhand.env` exists and is the standing job to confirm them.
+ * ## Field names: OBSERVED 2026-08-14, and one of them was wrong
+ *
+ * These were all transcribed from the documentation site and unverified until
+ * `test/live-dockhand.test.ts` first ran against a real instance. That run
+ * settled them, and it is worth recording what it cost to learn:
+ *
+ * ```text
+ * environment   connectionType, host, port, protocol, socketPath, updatedAt   present
+ * container     externalContainerId, externalHostId, name, image, state,
+ *               status                                                        present
+ * stack         name, externalHostId, status, sourceType                      present
+ *               containerCount / runningContainerCount observed spanning 0..7,
+ *               which is how a wrong NUMERIC field name would have shown up —
+ *               as a constant zero rather than a null
+ * session       the login cookie is `dockhand_session`, NOT the transcribed
+ *               `session` — see DOCKHAND_SESSION_COOKIE_NAME. This one was
+ *               wrong, and 62 stub tests passed over it because the fixtures
+ *               were written from the same document as the implementation.
+ * ```
+ *
+ * Presence was checked across ALL returned rows rather than the first, so one
+ * container legitimately missing an optional value cannot masquerade as a bad
+ * field name. Everything stays parsed defensively regardless: one instance
+ * confirming a field is not a compatibility promise from an API that publishes
+ * no schema and ships roughly weekly.
  */
 import { z } from "zod";
 import {
