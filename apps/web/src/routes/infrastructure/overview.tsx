@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
+import { FleetSignalsBand } from '@/features/infrastructure/components/fleet-signals-band';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import { infrastructureOverviewQuery } from '@/features/infrastructure/api/queries';
 import {
@@ -65,6 +66,14 @@ function OverviewSkeleton() {
           <Skeleton key={index} className='h-28 w-full' />
         ))}
       </div>
+      <div className='flex flex-col gap-4'>
+        <Skeleton className='h-5 w-40' />
+        <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3'>
+          {Array.from({ length: 3 }, (_, index) => (
+            <Skeleton key={index} className='h-32 w-full' />
+          ))}
+        </div>
+      </div>
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <Skeleton className='h-64 w-full' />
         <Skeleton className='h-64 w-full' />
@@ -103,6 +112,8 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
           footer='Findings across every domain'
         />
       </div>
+
+      <FleetSignalsBand signals={data.fleetSignals} />
 
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <Card>

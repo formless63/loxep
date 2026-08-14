@@ -87,6 +87,400 @@ export const fetchHostingTargetOptions = createServerFn({ method: 'GET' }).handl
 );
 
 // ---------------------------------------------------------------------------
+// Fleet signals (loxep-cum) — the honest rollup over the five fleet
+// providers' CONNECTION-level `integration_health` rows.
+//
+// This is a VISIBILITY layer on top of rf4's already-shipped connection
+// probes (`packages/app/src/fleet-health.ts`, extended per-provider by
+// loxep-hb7/loxep-y64/loxep-50t/loxep-wvm/loxep-1au) — it reads what those
+// probes already write, aggregates it, and adds nothing new to the sweep.
+//
+// `computeFleetSignals` is a PURE function of two arrays this route's own
+// handler already needs (`connections`, plus `integration_health` rows for
+// `subjectType: 'connection'`) so it has no import-time dependency on any
+// server package: a caller passes in plain objects it already fetched. This
+// is exported specifically so loxep-9m2's main-dashboard Operations band —
+// which already fetches both of those same two arrays in
+// `dashboard-functions.ts`'s `fetchDashboardOperations` — can fold this
+// rollup into its own response by calling this function with its own
+// already-fetched `connections`/`connectionHealth`, rather than by growing a
+// sixth hand-maintained provider-literal list next to `ORDER_SYNC_TARGET_TYPES`
+// and friends.
+//
+// ## Anti-soup / witness-not-verdict, applied at THIS granularity
+//
+// Every count here is an aggregate of ONE provider's OWN connections — never
+// a cross-tool merge. There is no page-level "fleet health" verdict anywhere
+// in this module; each `FleetProviderSignalDto` stands alone, and the caller
+// must render (or omit) each independently. A provider with zero connections
+// gets `connectionCount: 0` and no `summary` — the RENDERER's job is to skip
+// it entirely ("absent renders absent, never green"), never to show a grey
+// "0" tile that could be mistaken for "checked and fine".
+//
+// ## Why every number here is defensively read, never assumed
+//
+// `detail` is `Record<string, unknown>` from the DB, not a typed fact —
+// `guardHealthDetail` only constrains its SHAPE (no secrets, no raw bodies),
+// never its keys. `numberField`/`stringField`/`boolField` below read a named
+// key only when it is actually that type; anything else is treated as
+// "this connection did not report that field" (silently excluded from the
+// sum), never coerced or defaulted to zero. A provider whose every connection
+// is `failing`/`unknown`/never-checked legitimately produces `summary: null`
+// — the caller renders that as "not reporting", never as "0".
+// ---------------------------------------------------------------------------
+
+export const FLEET_PROVIDERS = ['tailscale', 'beszel', 'dockhand', 'gatus', 'termix'] as const;
+export type FleetProvider = (typeof FLEET_PROVIDERS)[number];
+
+export interface FleetProviderSignalDto {
+  provider: FleetProvider;
+  /** Connections of this provider Loxep knows about, whether or not the sweep has reached them yet. */
+  connectionCount: number;
+  okCount: number;
+  degradedCount: number;
+  failingCount: number;
+  /** Health row exists (Loxep reached the sweep) but the probe could not determine a status. */
+  unknownCount: number;
+  /** No `integration_health` row at all yet — the sweep has never reached this connection. */
+  uncheckedCount: number;
+  /** Most recent `checkedAt` across this provider's connections that have ever been checked. */
+  lastCheckedAt: string | null;
+  /** A short, counts-only sentence built ONLY from fields this provider's `ok`/`degraded` connections actually reported. `null` when nothing reported one. */
+  summary: string | null;
+  /** A secondary, honest caveat about connections this provider's `summary` could not fold in (e.g. an OAuth-mode Tailscale connection that reports no device count). `null` when there is nothing to caveat. */
+  note: string | null;
+}
+
+/**
+ * The Gatus heartbeat mirror (loxep-1au §3) — Gatus's own opinion of Loxep's
+ * heartbeat endpoint, already computed by the connection probe and folded
+ * into `detail.heartbeat`. Rendered here as its OWN block, never as a health
+ * subject and never influencing any status — see fleet-health.ts's "BINDING
+ * RULE 1" doc. This DTO's `checkedAt` is Loxep's read clock; `gatusObservedAt`
+ * is Gatus's own evaluation instant — two distinct clocks, never collapsed.
+ */
+export interface FleetHeartbeatMirrorDto {
+  connectionId: string;
+  connectionName: string;
+  configuredKey: string;
+  keyFound: boolean;
+  uptime24h: number | null;
+  gatusObservedAt: string | null;
+  gatusSuccess: boolean | null;
+  source: string;
+  checkedAt: string;
+}
+
+export interface FleetSignalsDto {
+  /** Always five entries, one per {@link FLEET_PROVIDERS} member, in that fixed order — network reachability, agent, daemon, service, access. */
+  providers: FleetProviderSignalDto[];
+  /** `null` when no Gatus connection's base URL matches the configured push target, more than one does (ambiguous), or the push is unconfigured/disabled — see fleet-health.ts's matching rule. */
+  heartbeat: FleetHeartbeatMirrorDto | null;
+}
+
+/** The minimal connection shape this module needs — structurally satisfied by `@loxep/domain`'s `Connection` without importing it. */
+export interface FleetSignalConnectionInput {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+/** The minimal `integration_health` row shape this module needs — structurally satisfied by `@loxep/domain`'s `HealthRow` without importing it. */
+export interface FleetSignalHealthInput {
+  subjectId: string;
+  status: string;
+  detail: Record<string, unknown>;
+  checkedAt: Date;
+}
+
+function numberField(detail: Record<string, unknown>, key: string): number | null {
+  const value = detail[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringField(detail: Record<string, unknown>, key: string): string | null {
+  const value = detail[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function boolField(detail: Record<string, unknown>, key: string): boolean | null {
+  const value = detail[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function plural(count: number, singular: string, plural_: string = `${singular}s`): string {
+  return count === 1 ? singular : plural_;
+}
+
+interface FleetSignalProviderRow {
+  status: string;
+  detail: Record<string, unknown>;
+}
+
+/** loxep-y64 §1 `detail`: `{ systems, up, notUp, hubReachable }` on `status: 'ok'` rows only. */
+function beszelSummary(rows: FleetSignalProviderRow[]): {
+  summary: string | null;
+  note: string | null;
+} {
+  let systems = 0;
+  let up = 0;
+  let counted = 0;
+  for (const row of rows) {
+    if (row.status !== 'ok') continue;
+    const s = numberField(row.detail, 'systems');
+    const u = numberField(row.detail, 'up');
+    if (s === null || u === null) continue;
+    systems += s;
+    up += u;
+    counted += 1;
+  }
+  if (counted === 0) return { summary: null, note: null };
+  return { summary: `${up} of ${systems} Beszel ${plural(systems, 'host')} up`, note: null };
+}
+
+/**
+ * loxep-hb7 §1.2 `detail`: `{ authMode: 'session', hostCount }` on the
+ * common path, or `{ authMode: 'disabled' }` (no `hostCount` at all — the
+ * probe stops before calling `listHosts()`) when the Dockhand instance has
+ * its own auth turned off. A Dockhand "environment" IS a registered host —
+ * there is no further nesting — so `hostCount` summed across connections is
+ * the honest "environments registered" figure. Container/stack counts are
+ * NOT available at this granularity (they need a live per-host read, which
+ * is `/infrastructure/fleet/$name`'s scope, not this fleet-wide rollup's —
+ * see this bead's report for why that panel was not built this pass).
+ */
+function dockhandSummary(rows: FleetSignalProviderRow[]): {
+  summary: string | null;
+  note: string | null;
+} {
+  let hosts = 0;
+  let counted = 0;
+  let authDisabledCount = 0;
+  for (const row of rows) {
+    if (row.status !== 'ok') continue;
+    if (stringField(row.detail, 'authMode') === 'disabled') {
+      authDisabledCount += 1;
+      continue;
+    }
+    const hostCount = numberField(row.detail, 'hostCount');
+    if (hostCount === null) continue;
+    hosts += hostCount;
+    counted += 1;
+  }
+  const summary =
+    counted === 0 ? null : `${hosts} Dockhand ${plural(hosts, 'environment')} registered`;
+  const note =
+    authDisabledCount === 0
+      ? null
+      : `${authDisabledCount} Dockhand ${plural(authDisabledCount, 'connection')} ${plural(authDisabledCount, 'has', 'have')} authentication turned off on the instance itself`;
+  return { summary, note };
+}
+
+/**
+ * loxep-1au §2.3 `detail`: `{ posture, endpointCount, failingCount }` on
+ * `open`/`basic` posture `ok` rows only — OIDC-posture rows carry neither
+ * (the bulk statuses route is unwinnable there, per the design).
+ */
+function gatusSummary(rows: FleetSignalProviderRow[]): {
+  summary: string | null;
+  note: string | null;
+} {
+  let endpoints = 0;
+  let failing = 0;
+  let counted = 0;
+  let oidcCount = 0;
+  for (const row of rows) {
+    if (row.status === 'ok' || row.status === 'degraded') {
+      const endpointCount = numberField(row.detail, 'endpointCount');
+      const failingCount = numberField(row.detail, 'failingCount');
+      if (endpointCount !== null && failingCount !== null) {
+        endpoints += endpointCount;
+        failing += failingCount;
+        counted += 1;
+        continue;
+      }
+    }
+    if (stringField(row.detail, 'posture') === 'oidc') oidcCount += 1;
+  }
+  const summary =
+    counted === 0
+      ? null
+      : `${endpoints - failing} of ${endpoints} Gatus ${plural(endpoints, 'endpoint')} up`;
+  const note =
+    oidcCount === 0
+      ? null
+      : `${oidcCount} OIDC-secured Gatus ${plural(oidcCount, 'connection')} — Loxep cannot bulk-read endpoint counts there`;
+  return { summary, note };
+}
+
+/**
+ * loxep-50t §2.2(c) `detail`: `{ deviceCount }` on `ok` rows using an API
+ * access token, or `{ authMode: 'oauth_client' }` with NO `deviceCount` at
+ * all (per the design's own mapping table) when the connection uses the
+ * recommended OAuth-client mode. This is not a gap in this rollup — it is
+ * what the shipped probe reports — so an all-OAuth fleet legitimately
+ * produces `summary: null` with an honest `note` instead of a fabricated 0.
+ */
+function tailscaleSummary(rows: FleetSignalProviderRow[]): {
+  summary: string | null;
+  note: string | null;
+} {
+  let devices = 0;
+  let counted = 0;
+  let oauthCount = 0;
+  for (const row of rows) {
+    if (row.status !== 'ok') continue;
+    if (stringField(row.detail, 'authMode') === 'oauth_client') {
+      oauthCount += 1;
+      continue;
+    }
+    const deviceCount = numberField(row.detail, 'deviceCount');
+    if (deviceCount === null) continue;
+    devices += deviceCount;
+    counted += 1;
+  }
+  const summary = counted === 0 ? null : `${devices} tailnet ${plural(devices, 'device')}`;
+  const note =
+    oauthCount === 0
+      ? null
+      : `${oauthCount} OAuth-authenticated Tailscale ${plural(oauthCount, 'connection')} — Loxep does not read a device count there`;
+  return { summary, note };
+}
+
+/**
+ * loxep-wvm §1.5 `detail`: `{ hostCount, hostsReadable: true }` on `ok` rows
+ * when the best-effort `listHosts()` enrichment succeeded, or
+ * `{ hostsReadable: false }` (no `hostCount`) when it did not — which must
+ * NEVER downgrade the connection's own `ok` status, and does not downgrade
+ * this rollup's summary either; it becomes an honest `note` instead.
+ */
+function termixSummary(rows: FleetSignalProviderRow[]): {
+  summary: string | null;
+  note: string | null;
+} {
+  let hosts = 0;
+  let counted = 0;
+  let unreadableCount = 0;
+  for (const row of rows) {
+    if (row.status !== 'ok') continue;
+    if (boolField(row.detail, 'hostsReadable') === false) {
+      unreadableCount += 1;
+      continue;
+    }
+    const hostCount = numberField(row.detail, 'hostCount');
+    if (hostCount === null) continue;
+    hosts += hostCount;
+    counted += 1;
+  }
+  const summary = counted === 0 ? null : `${hosts} Termix ${plural(hosts, 'host')} registered`;
+  const note =
+    unreadableCount === 0
+      ? null
+      : `Host list unreadable on ${unreadableCount} otherwise-healthy Termix ${plural(unreadableCount, 'connection')}`;
+  return { summary, note };
+}
+
+const PROVIDER_SUMMARIZERS: Record<
+  FleetProvider,
+  (rows: FleetSignalProviderRow[]) => { summary: string | null; note: string | null }
+> = {
+  beszel: beszelSummary,
+  dockhand: dockhandSummary,
+  gatus: gatusSummary,
+  tailscale: tailscaleSummary,
+  termix: termixSummary
+};
+
+/**
+ * Gatus's mirror of Loxep's own heartbeat (loxep-1au §3.3), read straight out
+ * of whichever Gatus connection's `detail.heartbeat` is present — the probe
+ * only ever populates it on the ONE connection matching the configured push
+ * target (its own ambiguity guard already refuses to guess between two), so
+ * "first match" is "the only possible match", not a real ambiguity here.
+ */
+function extractHeartbeat(
+  connections: FleetSignalConnectionInput[],
+  healthByConnectionId: Map<string, FleetSignalHealthInput>
+): FleetHeartbeatMirrorDto | null {
+  for (const connection of connections) {
+    if (connection.provider !== 'gatus') continue;
+    const row = healthByConnectionId.get(connection.id);
+    if (row === undefined) continue;
+    const raw = row.detail['heartbeat'];
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const heartbeat = raw as Record<string, unknown>;
+    const configuredKey = stringField(heartbeat, 'configuredKey');
+    const keyFound = boolField(heartbeat, 'keyFound');
+    if (configuredKey === null || keyFound === null) continue;
+    return {
+      connectionId: connection.id,
+      connectionName: connection.name,
+      configuredKey,
+      keyFound,
+      uptime24h: numberField(heartbeat, 'uptime24h'),
+      gatusObservedAt: stringField(heartbeat, 'gatusObservedAt'),
+      gatusSuccess: boolField(heartbeat, 'gatusSuccess'),
+      source: stringField(heartbeat, 'source') ?? 'unknown',
+      checkedAt: iso(row.checkedAt)
+    };
+  }
+  return null;
+}
+
+/** See this section's module doc — the pure rollup 9m2 can call directly. */
+export function computeFleetSignals(
+  connections: FleetSignalConnectionInput[],
+  connectionHealth: FleetSignalHealthInput[]
+): FleetSignalsDto {
+  const healthByConnectionId = new Map(connectionHealth.map((row) => [row.subjectId, row]));
+
+  const providers = FLEET_PROVIDERS.map((provider) => {
+    const providerConnections = connections.filter(
+      (connection) => connection.provider === provider
+    );
+    const rows: FleetSignalProviderRow[] = [];
+    let okCount = 0;
+    let degradedCount = 0;
+    let failingCount = 0;
+    let unknownCount = 0;
+    let uncheckedCount = 0;
+    let lastCheckedAt: Date | null = null;
+
+    for (const connection of providerConnections) {
+      const health = healthByConnectionId.get(connection.id);
+      if (health === undefined) {
+        uncheckedCount += 1;
+        continue;
+      }
+      rows.push({ status: health.status, detail: health.detail });
+      if (lastCheckedAt === null || health.checkedAt > lastCheckedAt)
+        lastCheckedAt = health.checkedAt;
+      if (health.status === 'ok') okCount += 1;
+      else if (health.status === 'degraded') degradedCount += 1;
+      else if (health.status === 'failing') failingCount += 1;
+      else unknownCount += 1;
+    }
+
+    const { summary, note } = PROVIDER_SUMMARIZERS[provider](rows);
+
+    return {
+      provider,
+      connectionCount: providerConnections.length,
+      okCount,
+      degradedCount,
+      failingCount,
+      unknownCount,
+      uncheckedCount,
+      lastCheckedAt: lastCheckedAt === null ? null : iso(lastCheckedAt),
+      summary,
+      note
+    } satisfies FleetProviderSignalDto;
+  });
+
+  return { providers, heartbeat: extractHeartbeat(connections, healthByConnectionId) };
+}
+
+// ---------------------------------------------------------------------------
 // Overview
 // ---------------------------------------------------------------------------
 
@@ -112,15 +506,26 @@ export interface InfrastructureOverviewDto {
     startedAt: string;
     finishedAt: string | null;
   }[];
+  /** loxep-cum's fleet signals band — see the section above for what each provider's summary/note means and why. */
+  fleetSignals: FleetSignalsDto;
 }
 
 export const fetchInfrastructureOverview = createServerFn({ method: 'GET' }).handler(
   async (): Promise<InfrastructureOverviewDto> => {
     const { requireSession, getAdminServices } = await import('@/server/admin');
     await requireSession();
-    const { handle } = getAdminServices();
+    const admin = getAdminServices();
+    const { handle } = admin;
 
-    const [domains, hostingTargets, tokens, unresolvedDrift, recentRuns] = await Promise.all([
+    const [
+      domains,
+      hostingTargets,
+      tokens,
+      unresolvedDrift,
+      recentRuns,
+      connections,
+      connectionHealth
+    ] = await Promise.all([
       handle.db.query.managedDomains.findMany(),
       handle.db.query.hostingTargets.findMany({
         where: (table, { isNull }) => isNull(table.decommissionedAt)
@@ -132,7 +537,13 @@ export const fetchInfrastructureOverview = createServerFn({ method: 'GET' }).han
       handle.db.query.reconcileRuns.findMany({
         orderBy: (table, { desc }) => [desc(table.startedAt)],
         limit: 10
-      })
+      }),
+      admin.connections.listConnections(),
+      // Phase 8 (loxep-cum): the same `integration_health` rows rf4's
+      // fleet probes already write, read here for the fleet signals band —
+      // never written to, never driving retry/backoff (that stays
+      // `connections.status`'s job).
+      admin.health.listHealth({ subjectType: 'connection' })
     ]);
 
     const needingAttention = domains.filter(
@@ -160,7 +571,8 @@ export const fetchInfrastructureOverview = createServerFn({ method: 'GET' }).han
         mode: run.mode,
         startedAt: iso(run.startedAt),
         finishedAt: iso(run.finishedAt)
-      }))
+      })),
+      fleetSignals: computeFleetSignals(connections, connectionHealth)
     };
   }
 );
