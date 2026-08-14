@@ -1,17 +1,15 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearch } from '@tanstack/react-router';
-import { Button } from '@/components/ui/button';
+import { useSearch } from '@tanstack/react-router';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
 import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
 import { useDataTable } from '@/hooks/use-data-table';
 import {
   applyClientTableState,
   type ClientColumnSpec
 } from '@/features/settings/lib/client-data-table';
-import type { ConnectionDto, EntityDto } from '@/server/admin-functions';
+import type { ConnectionDto } from '@/server/admin-functions';
 import {
   connectionsQuery,
   ebayKeysetStatusQuery,
@@ -21,8 +19,6 @@ import {
 } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ConnectionAddDialog from '@/features/settings/components/connection-add-dialog';
-import { IntegrationStatusBadges } from '@/features/settings/components/integration-card';
-import { ToneBadge } from '@/features/settings/components/status-tone';
 import {
   connectableIntegrationServices,
   isIntegrationEnabled,
@@ -30,29 +26,37 @@ import {
   type IntegrationService,
   type IntegrationStatusInput
 } from '@/features/settings/integrations-catalog';
-import { getColumns } from './columns';
-
-/**
- * Explanatory text for both the "why is Add account disabled" caption and
- * the header chip's tooltip — kept as one string (loxep-dgg) so the two
- * surfaces never drift apart.
- */
-const PROVIDER_DISABLED_EXPLANATION =
-  'This integration is disabled in this installation’s catalog. Existing accounts keep syncing unchanged; enable it again from the Integrations page to add another.';
+import { AddConnectionMenu } from './add-connection-toolbar';
+import { getColumns, lastActivityTimestamp } from './columns';
 
 const CLIENT_COLUMNS: ClientColumnSpec<ConnectionDto>[] = [
   { id: 'name', accessor: (row) => row.name, filterVariant: 'text' },
-  { id: 'status', accessor: (row) => row.status, filterVariant: 'multiSelect' }
+  { id: 'provider', accessor: (row) => row.provider, filterVariant: 'multiSelect' },
+  { id: 'status', accessor: (row) => row.status, filterVariant: 'multiSelect' },
+  { id: 'lastActivity', accessor: (row) => lastActivityTimestamp(row) ?? '' }
 ];
 
 /**
- * Accounts, grouped by the service they belong to.
+ * One unified table across every connection (loxep-4t7), replacing the
+ * per-provider tables the page used to stack vertically — with 14+
+ * providers that was a horizontal-scroll slog reading as ten near-identical
+ * widgets rather than one surface.
  *
- * The grouping and every "Add account" action come from the integrations
- * catalog (`@/features/settings/integrations-catalog`), so `provider` and
- * `kind` are chosen by the system rather than typed, and a service that is
- * not set up yet says so and links to `/settings/integrations` instead of
- * offering a form that would fail.
+ * Grouping is gone; PROVIDER is now just a column (badge + filter chip). The
+ * integrations catalog (`@/features/settings/integrations-catalog`) still
+ * decides what "Add connection" offers and what the Provider filter's chip
+ * list contains, so `provider`/`kind` remain system-supplied facts an
+ * operator never types, and a service that isn't set up yet still says so
+ * rather than offering a form that would fail.
+ *
+ * loxep-dgg parity, without sections to hide: a disabled provider (the
+ * `integrations.enabled` setting) with zero connections contributes neither
+ * an "Add connection" menu item nor a Provider filter chip — see
+ * `visibleServices` below, which both derive from. A disabled provider that
+ * DOES have connections keeps them fully visible and functional in the
+ * table (never silently halted to tidy a grid); it keeps its filter chip
+ * too, and its rows carry a "Disabled here" flag in the Provider cell so the
+ * state is legible without a separate section header to hang it on.
  */
 export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const { data, isPending, isError, error, refetch } = useQuery(connectionsQuery);
@@ -70,9 +74,12 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const { data: enabledMap } = useQuery(integrationsEnabledQuery);
   const catalogEnabledMap: IntegrationEnabledMap = enabledMap ?? {};
   const [addServiceId, setAddServiceId] = React.useState<string | null>(null);
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const page = (search.page as number) ?? 1;
+  const perPage = (search.perPage as number) ?? 10;
 
   if (isPending || entitiesPending) {
-    return <DataTableSkeleton columnCount={8} filterCount={2} />;
+    return <DataTableSkeleton columnCount={8} filterCount={3} />;
   }
 
   if (isError) {
@@ -90,75 +97,91 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   };
   const activeCount = connections.filter((connection) => connection.status === 'active').length;
   // Archived accounts are retired, so they are not part of the "of N" the
-  // headline counts; they still appear in their service's table (muted) and
-  // in the status filter, so nothing is hidden.
+  // headline counts; they still appear in the table (muted) and in the
+  // status filter, so nothing is hidden.
   const liveCount = connections.filter((connection) => connection.status !== 'archived').length;
   const archivedCount = connections.length - liveCount;
 
-  const catalogProviders = new Set(
-    connectableIntegrationServices.map((service) => service.accounts?.provider)
-  );
-  const uncatalogued = connections.filter(
-    (connection) => !catalogProviders.has(connection.provider)
-  );
   // A disabled provider (loxep-dgg) is hidden from "connection-add options"
-  // entirely when it has no existing accounts — that's exactly what hiding
-  // it means. When it DOES have existing accounts, the section stays so
-  // those accounts remain visible and flagged; only the "Add account" action
-  // is blocked (see ServiceSection below).
+  // and the provider filter entirely when it has no existing accounts —
+  // that's exactly what hiding it means. When it DOES have existing
+  // accounts, it stays "visible": its rows keep showing (and syncing)
+  // exactly as before, its filter chip stays offered, and its "Add
+  // connection" menu item stays present but blocked (see
+  // AddConnectionMenu), mirroring the existing `blockedReason` UI other
+  // unmet prerequisites already use.
   const visibleServices = connectableIntegrationServices.filter((service) => {
     if (isIntegrationEnabled(catalogEnabledMap, service.id)) return true;
     return connections.some((connection) => connection.provider === service.accounts?.provider);
   });
+
+  const disabledProviders = new Set(
+    visibleServices
+      .filter((service) => !isIntegrationEnabled(catalogEnabledMap, service.id))
+      .map((service) => service.accounts?.provider)
+      .filter((provider): provider is string => provider !== undefined)
+  );
+
+  const catalogProviders = new Set(
+    connectableIntegrationServices.map((service) => service.accounts?.provider)
+  );
+  const uncataloguedProviders = Array.from(
+    new Set(
+      connections
+        .filter((connection) => !catalogProviders.has(connection.provider))
+        .map((connection) => connection.provider)
+    )
+  );
+
+  const providerOptions = [
+    ...visibleServices.map((service) => ({
+      value: service.accounts?.provider ?? service.id,
+      label: disabledProviders.has(service.accounts?.provider ?? '')
+        ? `${service.name} (disabled)`
+        : service.name
+    })),
+    ...uncataloguedProviders.map((provider) => ({ value: provider, label: provider }))
+  ];
+
+  // Defense in depth alongside AddConnectionMenu's own disabled item: even
+  // if `addServiceId` somehow named a disabled-here service, the dialog
+  // itself never opens for it.
   const addService =
     visibleServices.find(
       (service) =>
         service.id === addServiceId && isIntegrationEnabled(catalogEnabledMap, service.id)
     ) ?? null;
 
+  const columns = getColumns({
+    entities: entities ?? [],
+    isAdmin,
+    disabledProviders,
+    providerOptions
+  });
+
+  const { rows, pageCount } = applyClientTableState(
+    connections,
+    CLIENT_COLUMNS,
+    search,
+    page,
+    perPage
+  );
+
   return (
-    <div className='flex flex-col gap-8'>
-      {connections.length > 0 && (
-        <p className='text-sm'>
-          <span className='text-primary text-2xl font-semibold tabular-nums'>{activeCount}</span>{' '}
-          <span className='text-muted-foreground'>
-            of {liveCount} account{liveCount === 1 ? '' : 's'} active
-            {archivedCount > 0 ? ` · ${archivedCount} archived` : ''}
-          </span>
-        </p>
-      )}
-
-      {visibleServices.map((service) => (
-        <ServiceSection
-          key={service.id}
-          service={service}
-          connections={connections.filter(
-            (connection) => connection.provider === service.accounts?.provider
-          )}
-          entities={entities ?? []}
-          statusInput={statusInput}
-          isAdmin={isAdmin}
-          isDisabled={!isIntegrationEnabled(catalogEnabledMap, service.id)}
-          onAddAccount={() => setAddServiceId(service.id)}
-        />
-      ))}
-
-      {uncatalogued.length > 0 && (
-        <section className='flex flex-col gap-3'>
-          <h2 className='text-lg font-medium'>Other services</h2>
-          <p className='text-muted-foreground text-sm'>
-            Accounts recorded for services that are not in the integrations catalog. They can be
-            disabled and attributed here, but no guided set-up exists for them.
-          </p>
-          <ConnectionRows
-            connections={uncatalogued}
-            entities={entities ?? []}
-            isAdmin={isAdmin}
-            showService
-          />
-        </section>
-      )}
-
+    <ConnectionsDataTable
+      rows={rows}
+      pageCount={pageCount}
+      columns={columns}
+      total={connections.length}
+      activeCount={activeCount}
+      liveCount={liveCount}
+      archivedCount={archivedCount}
+      isAdmin={isAdmin}
+      visibleServices={visibleServices}
+      statusInput={statusInput}
+      catalogEnabledMap={catalogEnabledMap}
+      onAddService={setAddServiceId}
+    >
       {addService !== null && (
         <ConnectionAddDialog
           service={addService}
@@ -169,125 +192,84 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
           entities={entities ?? []}
         />
       )}
-    </div>
+    </ConnectionsDataTable>
   );
 }
 
 /**
- * One service's accounts plus its guarded "Add account" action.
- *
- * `isDisabled` (loxep-dgg) means this provider is hidden from the catalog by
- * the `integrations.enabled` setting. It never changes what is rendered
- * below the header — existing connections keep showing (and syncing)
- * exactly as before — it only flags the header and blocks new "Add account"
- * clicks, mirroring the existing `blockedReason` UI other unmet
- * prerequisites already use.
+ * The table itself, split out only so `useDataTable` (which reads/writes URL
+ * search state on every render) is called with `columns`/`rows` that are
+ * already fully resolved, matching the shape `useDataTable` callers use
+ * elsewhere in the codebase.
  */
-function ServiceSection({
-  service,
-  connections,
-  entities,
+function ConnectionsDataTable({
+  rows,
+  pageCount,
+  columns,
+  total,
+  activeCount,
+  liveCount,
+  archivedCount,
+  isAdmin,
+  visibleServices,
   statusInput,
-  isAdmin,
-  isDisabled,
-  onAddAccount
+  catalogEnabledMap,
+  onAddService,
+  children
 }: {
-  service: IntegrationService;
-  connections: ConnectionDto[];
-  entities: EntityDto[];
+  rows: ConnectionDto[];
+  pageCount: number;
+  columns: ReturnType<typeof getColumns>;
+  total: number;
+  activeCount: number;
+  liveCount: number;
+  archivedCount: number;
+  isAdmin: boolean;
+  visibleServices: IntegrationService[];
   statusInput: IntegrationStatusInput;
-  isAdmin: boolean;
-  isDisabled: boolean;
-  onAddAccount: () => void;
+  catalogEnabledMap: IntegrationEnabledMap;
+  onAddService: (serviceId: string) => void;
+  children?: React.ReactNode;
 }) {
-  const blockedReason = isDisabled
-    ? PROVIDER_DISABLED_EXPLANATION
-    : (service.accounts?.blockedReason(statusInput) ?? null);
-
-  return (
-    <section className='flex flex-col gap-3'>
-      <div className='flex flex-wrap items-start justify-between gap-2'>
-        <div className='flex flex-col gap-1'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <h2 className='text-lg font-medium'>{service.name}</h2>
-            {isDisabled && (
-              <ToneBadge tone='warning' title={PROVIDER_DISABLED_EXPLANATION}>
-                Disabled here
-              </ToneBadge>
-            )}
-          </div>
-          <IntegrationStatusBadges status={service.status(statusInput)} />
-        </div>
-        {isAdmin && (
-          <div className='flex flex-col items-end gap-1'>
-            <Button size='sm' disabled={blockedReason !== null} onClick={onAddAccount}>
-              {service.accounts?.addLabel ?? 'Add account'}
-            </Button>
-            {blockedReason !== null && (
-              <p className='text-muted-foreground max-w-xs text-right text-xs'>
-                {blockedReason}{' '}
-                <Link to='/settings/integrations' className='underline underline-offset-2'>
-                  Open integrations
-                </Link>
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-      {connections.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>No {service.name} accounts</EmptyTitle>
-            <EmptyDescription>{service.description}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <ConnectionRows connections={connections} entities={entities} isAdmin={isAdmin} />
-      )}
-    </section>
-  );
-}
-
-/** The account table itself — one row per connection. */
-function ConnectionRows({
-  connections,
-  entities,
-  isAdmin,
-  showService = false
-}: {
-  connections: ConnectionDto[];
-  entities: EntityDto[];
-  isAdmin: boolean;
-  showService?: boolean;
-}) {
-  const search = useSearch({ strict: false }) as Record<string, unknown>;
-  const page = (search.page as number) ?? 1;
-  const perPage = (search.perPage as number) ?? 10;
-
-  const columns = React.useMemo(
-    () => getColumns(entities, isAdmin, showService),
-    [entities, isAdmin, showService]
-  );
-  const { rows, pageCount } = applyClientTableState(
-    connections,
-    CLIENT_COLUMNS,
-    search,
-    page,
-    perPage
-  );
-
   const { table } = useDataTable({
     data: rows,
     columns,
     pageCount,
     shallow: true,
     debounceMs: 500,
-    initialState: { columnPinning: { start: [], end: ['actions'] } }
+    initialState: {
+      columnPinning: { start: [], end: ['actions'] },
+      // Chosen so the table needs no horizontal scroll at a 1440px viewport
+      // (verified with a Playwright scrollWidth/clientWidth check, loxep-4t7)
+      // — Entity and Credential state stay one toggle away in the View menu.
+      columnVisibility: { entity: false, credentialState: false }
+    }
   });
 
   return (
-    <DataTable table={table}>
-      <DataTableToolbar table={table} />
-    </DataTable>
+    <div className='flex flex-col gap-4'>
+      {total > 0 && (
+        <p className='text-sm'>
+          <span className='text-primary text-2xl font-semibold tabular-nums'>{activeCount}</span>{' '}
+          <span className='text-muted-foreground'>
+            of {liveCount} account{liveCount === 1 ? '' : 's'} active
+            {archivedCount > 0 ? ` · ${archivedCount} archived` : ''}
+          </span>
+        </p>
+      )}
+      <DataTable table={table}>
+        <DataTableToolbar table={table}>
+          {isAdmin && (
+            <AddConnectionMenu
+              services={visibleServices}
+              statusInput={statusInput}
+              enabledMap={catalogEnabledMap}
+              onSelect={onAddService}
+            />
+          )}
+        </DataTableToolbar>
+      </DataTable>
+      {children}
+    </div>
   );
 }

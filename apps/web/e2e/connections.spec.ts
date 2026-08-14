@@ -72,13 +72,17 @@ function tableRow(page: Page, text: string): Locator {
 }
 
 /**
- * The "Purchase sync" cell, by column position (`columns.tsx`: name, status,
- * entity, credentials, orderSync, purchaseSync, …) rather than by text — its
- * "not applicable" glyph (`—`) is IDENTICAL to the "Last error" column's own
- * empty state, so text alone cannot disambiguate them within one row.
+ * The "Purchase sync" sub-cell inside the unified table's merged "Sync"
+ * column, by `data-testid` (`columns.tsx`'s `SyncSummaryCell`) rather than
+ * column position or text — with credential state, entity, and sync merged
+ * into a handful of composite columns (loxep-4t7), a positional index is
+ * fragile (it shifts if a column is reordered or a default-hidden one is
+ * toggled), and the "not applicable" glyph (`—`) it renders is IDENTICAL to
+ * several other cells' own empty state, so text alone cannot disambiguate
+ * it within one row either.
  */
 function purchaseSyncCell(row: Locator): Locator {
-  return row.getByRole('cell').nth(5);
+  return row.getByTestId('purchase-sync-status');
 }
 
 /**
@@ -95,7 +99,10 @@ function purchaseSyncCell(row: Locator): Locator {
 async function createWooStore(page: Page): Promise<string> {
   const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const name = `E2E Woo Store ${runId}`;
-  await page.getByRole('button', { name: 'Add WooCommerce store' }).click();
+  // "Add account" actions live in the unified table's toolbar menu now
+  // (loxep-4t7), not a per-service section button.
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add WooCommerce store' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('Add WooCommerce store')).toBeVisible();
   await dialog.getByLabel('Store name *').fill(name);
@@ -162,21 +169,22 @@ test('a non-eBay connection never offers the purchase-sync action', async ({ pag
 
 test('no consented eBay purchase-sync fixture can exist in this harness', async ({ page }) => {
   await page.goto('/settings/connections');
-  const ebaySection = page
-    .locator('section')
-    .filter({ has: page.getByRole('heading', { name: 'eBay' }) });
-  const addButton = ebaySection.getByRole('button', { name: 'Add eBay account' });
-  await expect(addButton).toBeVisible();
+  // Sections are gone (loxep-4t7): every "Add account" action is one item in
+  // the toolbar's "Add connection" menu now.
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  const addItem = page.getByRole('menuitem', { name: 'Add eBay account' });
+  await expect(addItem).toBeVisible();
 
   // Two honest worlds, both ending in "no consented eBay row exists here":
-  // with no application keyset the add button is disabled and names the
+  // with no application keyset the menu item is disabled and names the
   // missing prerequisite; with the dev-file keyset fallback present (as on
-  // a developer box) the button is enabled, but completing consent needs a
+  // a developer box) the item is enabled, but completing consent needs a
   // live eBay OAuth round-trip the harness cannot perform. Either way the
-  // section must show no connection rows — the concrete reason the
-  // purchase-sync toggle has no real fixture in this suite.
-  if (await addButton.isDisabled()) {
-    await expect(ebaySection.getByText(/eBay application keyset/)).toBeVisible();
+  // table must show no eBay row — the concrete reason the purchase-sync
+  // toggle has no real fixture in this suite.
+  if ((await addItem.getAttribute('data-disabled')) !== null) {
+    await expect(page.getByText(/eBay application keyset/)).toBeVisible();
   }
-  await expect(ebaySection.getByRole('row')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('table').getByRole('row').filter({ hasText: 'eBay' })).toHaveCount(0);
 });
