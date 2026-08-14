@@ -159,6 +159,19 @@ export type {
 } from "./health-probes.ts";
 
 export {
+  diagnoseHostWitnesses,
+  HOST_DIAGNOSIS_LADDER,
+  HOST_DIAGNOSIS_REASONS,
+} from "./host-diagnosis.ts";
+export type {
+  HostDiagnosisInput,
+  HostDiagnosisReason,
+  HostDiagnosisResult,
+  HostDiagnosisWitness,
+  HostDiagnosisWitnessSignal,
+} from "./host-diagnosis.ts";
+
+export {
   createResourceLinksService,
   RESOURCE_LINK_RESOURCE_TYPES,
   resourceLinkResourceTypeConfig,
