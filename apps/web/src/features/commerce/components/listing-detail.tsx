@@ -39,9 +39,10 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 export default function ListingDetail({ listingId }: { listingId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(channelListingQuery(listingId));
   const [saleOpen, setSaleOpen] = React.useState(false);
-  // Kept for as long as this page stays open — the oversell flag a sale
-  // returns has nowhere durable to link to yet (no `/commerce/orders`
-  // route), so this is the non-transient surface for it past the toast
+  // Kept for as long as this page stays open — `/commerce/orders/$id`
+  // (loxep-i51) now gives the resulting order a durable page, but the
+  // oversell flag itself is only in the mutation's response, not a stored
+  // column, so this remains the non-transient surface for it past the toast
   // (loxep-0l5).
   const [lastSale, setLastSale] = React.useState<RecordManualSaleResultDto | null>(null);
 
@@ -104,6 +105,19 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
               '—'
             )}
           </DetailRow>
+          <DetailRow label='Market listing'>
+            {data.marketplaceItemId ? (
+              <Link
+                to='/market/items/$itemId'
+                params={{ itemId: data.marketplaceItemId }}
+                className='hover:underline'
+              >
+                View observed listing
+              </Link>
+            ) : (
+              <span className='text-muted-foreground'>not linked</span>
+            )}
+          </DetailRow>
           {data.listingUrl && (
             <DetailRow label='Listing URL'>
               <a
@@ -154,6 +168,7 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Order</TableHead>
                   <TableHead>Quantity</TableHead>
                   <TableHead className='text-right'>Unit price</TableHead>
                   <TableHead className='text-right'>Line total</TableHead>
@@ -163,6 +178,15 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
               <TableBody>
                 {data.sales.map((sale) => (
                   <TableRow key={sale.orderLineId}>
+                    <TableCell>
+                      <Link
+                        to='/commerce/orders/$id'
+                        params={{ id: sale.orderId }}
+                        className='hover:underline'
+                      >
+                        View order
+                      </Link>
+                    </TableCell>
                     <TableCell className='tabular-nums'>
                       {formatQuantity(Number(sale.quantity))}
                       {lastSale?.oversell && lastSale.orderLineId === sale.orderLineId && (

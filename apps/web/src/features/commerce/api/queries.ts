@@ -5,6 +5,7 @@ import {
   fetchChannelListings,
   fetchListingsForInventoryItem
 } from '@/server/commerce-functions';
+import { fetchOrder, fetchOrders } from '@/server/orders-functions';
 
 export interface ListingFilterParams {
   status?: string;
@@ -34,4 +35,25 @@ export const inventoryItemListingsQuery = (inventoryItemId: string) =>
   queryOptions({
     queryKey: ['commerce', 'inventory-item-listings', inventoryItemId],
     queryFn: () => fetchListingsForInventoryItem({ data: { inventoryItemId } })
+  });
+
+// ---------------------------------------------------------------------------
+// Orders (loxep-i51)
+// ---------------------------------------------------------------------------
+
+export interface OrderFilterParams {
+  provider?: string;
+  status?: string;
+}
+
+export const ordersQuery = (filter: OrderFilterParams) =>
+  queryOptions({
+    queryKey: ['commerce', 'orders', filter],
+    queryFn: () => fetchOrders({ data: filter })
+  });
+
+export const orderQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['commerce', 'order', id],
+    queryFn: () => fetchOrder({ data: { id } })
   });

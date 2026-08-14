@@ -94,6 +94,13 @@ export interface ChannelListingListItemDto {
   createdAt: string;
 }
 
+/**
+ * `channel_listings.marketplace_item_id` — the nullable, opportunistic link
+ * to the entity-neutral public listing `channel_listings` publishes (loxep-i51;
+ * WEAVE AUDIT 2026-08 finding 7 named this FK rendered nowhere). Only the
+ * detail DTO carries it — the list view stays as it was.
+ */
+
 const listingFilterInput = z.strictObject({
   status: z.string().trim().min(1).optional(),
   provider: z.string().trim().min(1).optional(),
@@ -165,6 +172,7 @@ export interface ChannelListingOrderDto {
 export interface ChannelListingDetailDto extends ChannelListingListItemDto {
   inventoryItemId: string | null;
   inventoryItemCode: string | null;
+  marketplaceItemId: string | null;
   /** Manual sales recorded against this listing, most recent first. */
   sales: ChannelListingOrderDto[];
 }
@@ -225,6 +233,7 @@ export const fetchChannelListing = createServerFn({ method: 'GET' })
       createdAt: iso(row.createdAt),
       inventoryItemId: inventoryItem?.id ?? null,
       inventoryItemCode: inventoryItem?.itemCode ?? null,
+      marketplaceItemId: row.marketplaceItemId,
       sales: lineRows
         .map((line) => {
           const placedAt = placedAtByOrderId.get(line.orderId);

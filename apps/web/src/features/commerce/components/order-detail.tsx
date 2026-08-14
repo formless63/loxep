@@ -1,0 +1,502 @@
+import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table';
+import { Icons } from '@/components/icons';
+import { formatDateTime, formatMoney, formatQuantity } from '@/lib/format';
+import { orderQuery } from '@/features/commerce/api/queries';
+import {
+  feeDirectionLabel,
+  fulfillmentRecordStatusLabel,
+  fulfillmentRecordStatusTone,
+  humanizeSnakeCase,
+  orderFulfillmentStatusLabel,
+  orderFulfillmentStatusTone,
+  orderPaymentStatusLabel,
+  orderPaymentStatusTone,
+  orderStatusLabel,
+  orderStatusTone,
+  providerLabel,
+  provenanceRetentionLabel,
+  provenanceRetentionTone,
+  refundKindLabel,
+  refundStatusLabel,
+  refundStatusTone
+} from '@/features/commerce/constants';
+import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import type {
+  OrderDetailDto,
+  OrderFeeDto,
+  OrderFulfillmentDto,
+  OrderLineDto,
+  OrderRefundDto
+} from '@/server/orders-functions';
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className='flex flex-col gap-0.5'>
+      <span className='text-muted-foreground text-xs'>{label}</span>
+      <span className='text-sm'>{children}</span>
+    </div>
+  );
+}
+
+function LineJoins({ line }: { line: OrderLineDto }) {
+  return (
+    <div className='flex flex-col gap-0.5 text-xs'>
+      <span>
+        Listing:{' '}
+        {line.channelListingId ? (
+          <Link
+            to='/commerce/listings/$id'
+            params={{ id: line.channelListingId }}
+            className='hover:underline'
+          >
+            {line.channelListingCode ?? 'View listing'}
+          </Link>
+        ) : (
+          <span className='text-muted-foreground'>not linked</span>
+        )}
+      </span>
+      <span>
+        Market item:{' '}
+        {line.marketplaceItemId ? (
+          <Link
+            to='/market/items/$itemId'
+            params={{ itemId: line.marketplaceItemId }}
+            className='hover:underline'
+          >
+            {line.marketplaceItemTitle ?? 'View listing'}
+          </Link>
+        ) : (
+          <span className='text-muted-foreground'>not linked</span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function LinesTable({ lines, currency }: { lines: OrderLineDto[]; currency: string }) {
+  if (lines.length === 0) {
+    return <p className='text-muted-foreground text-sm'>This order has no lines.</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Item</TableHead>
+          <TableHead>Joins</TableHead>
+          <TableHead className='text-right'>Qty</TableHead>
+          <TableHead className='text-right'>Unit price</TableHead>
+          <TableHead className='text-right'>Line total</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {lines.map((line) => (
+          <TableRow key={line.id}>
+            <TableCell>
+              <div className='flex flex-col'>
+                <span className='font-medium'>{line.title ?? line.catalogItemName ?? '—'}</span>
+                <span className='text-muted-foreground text-xs'>
+                  {line.channelSku ?? line.catalogItemSku ?? '—'}
+                </span>
+              </div>
+            </TableCell>
+            <TableCell>
+              <LineJoins line={line} />
+            </TableCell>
+            <TableCell className='text-right tabular-nums'>
+              {formatQuantity(Number(line.quantity))}
+            </TableCell>
+            <TableCell className='text-right tabular-nums'>
+              {formatMoney(line.unitPrice, currency)}
+            </TableCell>
+            <TableCell className='text-right font-medium tabular-nums'>
+              {formatMoney(line.lineTotal, currency)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function FeesTable({ fees }: { fees: OrderFeeDto[] }) {
+  if (fees.length === 0) {
+    return <p className='text-muted-foreground text-sm'>No fees reported for this order.</p>;
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Type</TableHead>
+          <TableHead>Direction</TableHead>
+          <TableHead>Scope</TableHead>
+          <TableHead>Charged</TableHead>
+          <TableHead className='text-right'>Amount</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {fees.map((fee) => (
+          <TableRow key={fee.id}>
+            <TableCell>
+              <div className='flex flex-col'>
+                <span>{humanizeSnakeCase(fee.feeType)}</span>
+                {fee.providerFeeCode && (
+                  <span className='text-muted-foreground text-xs'>{fee.providerFeeCode}</span>
+                )}
+              </div>
+            </TableCell>
+            <TableCell className='text-muted-foreground'>
+              {feeDirectionLabel(fee.feeDirection)}
+            </TableCell>
+            <TableCell className='text-muted-foreground capitalize'>{fee.feeScope}</TableCell>
+            <TableCell className='text-muted-foreground tabular-nums'>
+              {fee.chargedAt ? formatDateTime(fee.chargedAt) : '—'}
+            </TableCell>
+            <TableCell className='text-right tabular-nums'>
+              {formatMoney(fee.amount, fee.currency)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function RefundsList({ refunds }: { refunds: OrderRefundDto[] }) {
+  if (refunds.length === 0) {
+    return <p className='text-muted-foreground text-sm'>No refunds recorded for this order.</p>;
+  }
+  return (
+    <div className='flex flex-col gap-3'>
+      {refunds.map((refund) => (
+        <div key={refund.id} className='flex flex-col gap-2 rounded-md border p-3'>
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <div className='flex items-center gap-2'>
+              <Badge variant={refundStatusTone(refund.status)}>
+                {refundStatusLabel(refund.status)}
+              </Badge>
+              <span className='text-sm'>{refundKindLabel(refund.kind)}</span>
+              {refund.reasonCode && (
+                <span className='text-muted-foreground text-xs'>{refund.reasonCode}</span>
+              )}
+            </div>
+            <div className='flex items-center gap-3'>
+              <span className='text-muted-foreground text-xs tabular-nums'>
+                {refund.refundedAt ? formatDateTime(refund.refundedAt) : '—'}
+              </span>
+              <span className='font-medium tabular-nums'>
+                {formatMoney(refund.amount, refund.currency)}
+              </span>
+            </div>
+          </div>
+          {refund.lines.length > 0 && (
+            <div className='flex flex-col gap-1 pl-1'>
+              {refund.lines.map((line) => (
+                <div key={line.id} className='text-muted-foreground flex justify-between text-xs'>
+                  <span>
+                    {line.orderLineId
+                      ? `Line ${line.orderLineId.slice(0, 8)}…`
+                      : 'Order-level adjustment'}
+                    {line.quantity ? ` × ${formatQuantity(Number(line.quantity))}` : ''}
+                  </span>
+                  <span className='tabular-nums'>{formatMoney(line.amount, refund.currency)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FulfillmentsList({ fulfillments }: { fulfillments: OrderFulfillmentDto[] }) {
+  if (fulfillments.length === 0) {
+    return <p className='text-muted-foreground text-sm'>Nothing reported as shipped yet.</p>;
+  }
+  return (
+    <div className='flex flex-col gap-3'>
+      {fulfillments.map((fulfillment) => (
+        <div key={fulfillment.id} className='flex flex-col gap-2 rounded-md border p-3'>
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <div className='flex items-center gap-2'>
+              <Badge variant={fulfillmentRecordStatusTone(fulfillment.status)}>
+                {fulfillmentRecordStatusLabel(fulfillment.status)}
+              </Badge>
+              {fulfillment.carrierName && (
+                <span className='text-sm'>{fulfillment.carrierName}</span>
+              )}
+              {fulfillment.trackingNumber &&
+                (fulfillment.trackingUrl ? (
+                  <a
+                    href={fulfillment.trackingUrl}
+                    target='_blank'
+                    rel='noreferrer'
+                    className='text-muted-foreground text-xs hover:underline'
+                  >
+                    {fulfillment.trackingNumber}
+                  </a>
+                ) : (
+                  <span className='text-muted-foreground text-xs'>
+                    {fulfillment.trackingNumber}
+                  </span>
+                ))}
+            </div>
+            <div className='flex items-center gap-3 text-xs'>
+              <span className='text-muted-foreground'>
+                {fulfillment.destinationCountry
+                  ? [fulfillment.destinationRegion, fulfillment.destinationCountry]
+                      .filter(Boolean)
+                      .join(', ')
+                  : '—'}
+              </span>
+              <span className='text-muted-foreground tabular-nums'>
+                {fulfillment.shippedAt ? formatDateTime(fulfillment.shippedAt) : 'Not shipped'}
+              </span>
+            </div>
+          </div>
+          {fulfillment.lines.length > 0 && (
+            <div className='text-muted-foreground pl-1 text-xs'>
+              {fulfillment.lines
+                .map((line) => `${formatQuantity(Number(line.quantity))} unit(s)`)
+                .join(', ')}{' '}
+              across {fulfillment.lines.length} line(s)
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProvenanceTable({ provenance }: { provenance: OrderDetailDto['provenance'] }) {
+  if (provenance.length === 0) {
+    return (
+      <p className='text-muted-foreground text-sm'>
+        No retained source facts linked to this order yet.
+      </p>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Source</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>Effect</TableHead>
+          <TableHead>Captured</TableHead>
+          <TableHead>Retention</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {provenance.map((link) => (
+          <TableRow key={link.linkId}>
+            <TableCell>
+              {link.sourceKind === 'provider_object' ? 'Provider snapshot' : 'Source event'}
+            </TableCell>
+            <TableCell className='text-muted-foreground'>
+              {link.objectType ? humanizeSnakeCase(link.objectType) : '—'}
+            </TableCell>
+            <TableCell className='text-muted-foreground capitalize'>{link.effect}</TableCell>
+            <TableCell className='text-muted-foreground tabular-nums'>
+              {link.capturedAt ? formatDateTime(link.capturedAt) : '—'}
+            </TableCell>
+            <TableCell>
+              {link.retention ? (
+                <Badge variant={provenanceRetentionTone(link.retention)}>
+                  {provenanceRetentionLabel(link.retention)}
+                </Badge>
+              ) : (
+                <span className='text-muted-foreground'>—</span>
+              )}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+export default function OrderDetail({ orderId }: { orderId: string }) {
+  const { data, isPending, isError, error, refetch } = useQuery(orderQuery(orderId));
+
+  if (isPending) {
+    return <div className='text-muted-foreground text-sm'>Loading…</div>;
+  }
+  if (isError) {
+    return <QueryErrorAlert error={error} title='Could not load order' onRetry={() => refetch()} />;
+  }
+
+  return (
+    <div className='flex flex-col gap-4'>
+      {data.duplicateOfOrderId && (
+        <Alert variant='warning'>
+          <Icons.warning />
+          <AlertTitle>Marked as a duplicate</AlertTitle>
+          <AlertDescription>
+            Cross-connection duplicate detection linked this order to another as its canonical
+            record.{' '}
+            <Link
+              to='/commerce/orders/$id'
+              params={{ id: data.duplicateOfOrderId }}
+              className='underline'
+            >
+              View the canonical order
+            </Link>
+            . This row is kept as retained evidence and excluded from the orders list.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <Card>
+        <CardHeader className='flex flex-row items-start justify-between gap-2'>
+          <div>
+            <CardTitle className='flex flex-wrap items-center gap-2 text-xl'>
+              {data.externalOrderNumber ?? data.externalOrderId}
+              <Badge variant={orderStatusTone(data.status)}>{orderStatusLabel(data.status)}</Badge>
+              <Badge variant={orderPaymentStatusTone(data.paymentStatus)}>
+                {orderPaymentStatusLabel(data.paymentStatus)}
+              </Badge>
+              <Badge variant={orderFulfillmentStatusTone(data.fulfillmentStatus)}>
+                {orderFulfillmentStatusLabel(data.fulfillmentStatus)}
+              </Badge>
+            </CardTitle>
+            <p className='text-muted-foreground text-sm'>
+              {data.isManual ? (
+                <span className='inline-flex items-center gap-1'>
+                  <Icons.user className='size-3.5' /> Manually recorded sale
+                </span>
+              ) : (
+                <span className='inline-flex items-center gap-1'>
+                  <Icons.integrations className='size-3.5' /> Synced from{' '}
+                  {providerLabel(data.provider)}
+                </span>
+              )}
+              {' · '}
+              {data.channel}
+              {data.marketplace ? ` · ${data.marketplace}` : ''}
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
+          <DetailRow label='Placed'>{formatDateTime(data.placedAt)}</DetailRow>
+          <DetailRow label='Last synced'>
+            {data.providerUpdatedAt ? formatDateTime(data.providerUpdatedAt) : '—'}
+          </DetailRow>
+          <DetailRow label='Cancelled'>
+            {data.cancelledAt ? formatDateTime(data.cancelledAt) : '—'}
+          </DetailRow>
+          <DetailRow label='Buyer'>
+            {data.buyerDisplayName ?? '—'}
+            {data.buyerExternalId && (
+              <span className='text-muted-foreground block text-xs'>{data.buyerExternalId}</span>
+            )}
+          </DetailRow>
+          <DetailRow label='Attribution'>
+            {data.economicEntityName ?? 'Unattributed'}
+            <span className='text-muted-foreground block text-xs capitalize'>
+              {data.entityAttributionSource.replaceAll('_', ' ')}
+            </span>
+          </DetailRow>
+          <DetailRow label='Provider order id'>{data.externalOrderId}</DetailRow>
+          <DetailRow label='Source account'>{data.sourceAccountKey}</DetailRow>
+          {data.providerStatusRaw && (
+            <DetailRow label='Provider status (raw)'>{data.providerStatusRaw}</DetailRow>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='text-base'>Totals</CardTitle>
+        </CardHeader>
+        <CardContent className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
+          <DetailRow label='Subtotal'>{formatMoney(data.subtotalAmount, data.currency)}</DetailRow>
+          <DetailRow label='Shipping'>{formatMoney(data.shippingAmount, data.currency)}</DetailRow>
+          <DetailRow label='Discount'>{formatMoney(data.discountAmount, data.currency)}</DetailRow>
+          <DetailRow label='Tax'>{formatMoney(data.taxAmount, data.currency)}</DetailRow>
+          <DetailRow label='Fees (seller-charged)'>
+            {formatMoney(data.feeAmount, data.currency)}
+          </DetailRow>
+          <DetailRow label='Refunded'>{formatMoney(data.refundedAmount, data.currency)}</DetailRow>
+          <DetailRow label='Total'>
+            <span className='text-base font-semibold'>
+              {formatMoney(data.totalAmount, data.currency)}
+            </span>
+          </DetailRow>
+        </CardContent>
+        <CardContent className='text-muted-foreground text-xs'>
+          Revenue minus provider-reported fees and refunds — before cost of goods. Margin arrives
+          once cost basis exists.
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Icons.orders className='size-4' /> Lines
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <LinesTable lines={data.lines} currency={data.currency} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Icons.fees className='size-4' /> Fees
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FeesTable fees={data.fees} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Icons.refunds className='size-4' /> Refunds
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <RefundsList refunds={data.refunds} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Icons.send className='size-4' /> Fulfillments
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <FulfillmentsList fulfillments={data.fulfillments} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='flex items-center gap-2 text-base'>
+            <Icons.lock className='size-4' /> Provenance
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ProvenanceTable provenance={data.provenance} />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

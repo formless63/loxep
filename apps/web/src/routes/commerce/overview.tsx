@@ -1,10 +1,15 @@
-import { createFileRoute } from '@tanstack/react-router';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Icons } from '@/components/icons';
 import { CommercePage } from '@/features/commerce/components/commerce-page';
-import { catalogItemsQuery, channelListingsQuery } from '@/features/commerce/api/queries';
+import {
+  catalogItemsQuery,
+  channelListingsQuery,
+  ordersQuery
+} from '@/features/commerce/api/queries';
 import {
   channelListingStatusLabel,
   channelListingStatusOptions,
@@ -18,6 +23,7 @@ export const Route = createFileRoute('/commerce/overview')({
 function CommerceOverview() {
   const { data: listings, isPending: listingsPending } = useQuery(channelListingsQuery({}));
   const { data: catalogItems, isPending: catalogPending } = useQuery(catalogItemsQuery);
+  const { data: orders, isPending: ordersPending } = useQuery(ordersQuery({}));
 
   const countByStatus = new Map<string, number>();
   let manualCount = 0;
@@ -26,12 +32,32 @@ function CommerceOverview() {
     if (listing.provider === MANUAL_PROVIDER) manualCount += 1;
   }
 
+  const manualOrderCount = (orders ?? []).filter((order) => order.isManual).length;
+  const connectorOrderCount = (orders ?? []).length - manualOrderCount;
+
   return (
     <CommercePage
       title='Overview'
-      description='Catalog items, channel listings, and manual/offline sales — Orders (connector-synced) land here in a later milestone.'
+      description='Catalog items, channel listings, and orders — connector-synced and manually recorded alike.'
     >
-      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='text-sm text-muted-foreground'>Orders</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {ordersPending ? (
+              <Skeleton className='h-8 w-16' />
+            ) : (
+              <>
+                <p className='text-3xl font-semibold tabular-nums'>{orders?.length ?? 0}</p>
+                <p className='text-muted-foreground text-xs'>
+                  {connectorOrderCount} connector-synced · {manualOrderCount} manual
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle className='text-sm text-muted-foreground'>Listings</CardTitle>
@@ -83,6 +109,15 @@ function CommerceOverview() {
           </CardContent>
         </Card>
       </div>
+
+      <Link
+        to='/commerce/orders'
+        className='text-primary focus-visible:ring-ring inline-flex w-fit items-center gap-1 rounded-md text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none'
+      >
+        <Icons.orders className='size-4' />
+        View every order
+        <Icons.arrowRight className='size-3.5' />
+      </Link>
 
       <Card>
         <CardHeader>

@@ -18,12 +18,18 @@ The repository already has the first workspace roots:
                creation, cost allocation) are validated but blocked pending one
                apps/web dependency add; enrichment and intake review's other two
                producers arrive in later milestones
-/commerce/*     commerce workspace — catalog and manual/offline channel listings live
-               (M6, loxep-dgf.6): overview, listings list + detail, the read-only
+/commerce/*     commerce workspace — catalog, manual/offline channel listings, and
+               orders live: overview, listings list + detail, the read-only
                catalog, an item-detail listings panel (the /inventory ↔ /commerce
-               weave), and manual sale recording (design open question 7,
-               PROVISIONAL — see the flipping design doc). Connector-synced
-               listings and orders have no surface yet — a later milestone
+               weave), manual sale recording (design open question 7,
+               PROVISIONAL — see the flipping design doc; M6, loxep-dgf.6), and
+               an orders list + detail (loxep-i51) reading the `orders`/
+               `order_lines`/`order_fees`/`order_refunds`/`order_fulfillments`
+               rows every provider (Woo, eBay, Medusa) and manual sale recording
+               already write — labeling manual versus connector-synced orders,
+               linking lines to listings/inventory where the provenance FKs
+               resolve, and surfacing retained provider-payload METADATA
+               (ADR-0021) rather than the payload body
 /finance/*      finance workspace — expense capture, receipts, and expense reports live
                (M1); books/chart-of-accounts/fiscal-period administration
                (`/finance/books`) lives too — create a book, link entities, generate
