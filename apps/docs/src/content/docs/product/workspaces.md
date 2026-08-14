@@ -106,7 +106,7 @@ Two placements are worth stating because they are easy to get wrong:
 - **Expenses live in `/finance`, not `/inventory`**, even though a reseller records most spend while standing next to a lot they just bought. The workspace map already composes billing, expenses, payments, banking, accounting, and tax there; expenses are its first tenant, not its definition. Quick entry is reachable from the command palette and from acquisition detail so the operator never has to navigate to record a spend.
 - **Intake review lives in `/inventory`**, and it is one surface serving three producers — hand entry, an ingested marketplace purchase, and a parsed receipt. Unifying them means the operator learns one review screen rather than three.
 
-`/dashboard` gains nothing from this phase, deliberately — Phase 9 built the three workspaces above and left the dashboard untouched on purpose. Expenses already reach it through the Financial band, which reads the ledger. *(Update: COGS posting from inventory depletion has since shipped, outside this phase's own scope — see [Phase 5](../roadmap/#phase-5--financial-foundation) — so acquisitions now reach the ledger too. The dashboard itself still does not read any of the six domains that shipped after it, including this one; that gap and its fix are tracked in `loxep-9m2`, not here.)*
+`/dashboard` gains nothing from this phase, deliberately — Phase 9 built the three workspaces above and left the dashboard untouched on purpose. Expenses already reach it through the Financial band, which reads the ledger. *(Update: COGS posting from inventory depletion has since shipped, outside this phase's own scope — see [Phase 5](../roadmap/#phase-5--financial-foundation) — so acquisitions now reach the ledger too. The dashboard's own blindness to the six domains that shipped after it has since been closed by `loxep-9m2`, which is where the band table below now reflects; this section describes what Phase 9 itself did, not the current dashboard.)*
 
 ### Infrastructure is a future peer root, and it is about the installation itself
 
@@ -135,10 +135,24 @@ It is **not** `/settings`. `/settings` configures Loxep — its users, connectio
 
 | Band | Reads | Owning surface |
 | --- | --- | --- |
-| **Money** | ingested `orders` and `order_fees`: revenue, order count, seller-charge fees, net proceeds, refunds, a daily revenue/order series, and a 7-day-versus-prior-7-day trend | `/settings/connections` (order sync is enabled per connection) |
+| **Money** | ingested `orders` and `order_fees`: revenue, order count (naming the manual/offline subset rather than burying it), seller-charge fees, net proceeds, refunds, a daily revenue/order series, a 7-day-versus-prior-7-day trend, and the `channel_listings` draft→active→ended→sold funnel | `/settings/connections` (order sync is enabled per connection), `/commerce/listings` |
 | **Market pulse** | derived `market_events` over the trailing 24h, the highest-scoring rule-stamped opportunity, and the biggest price movers | `/market/*` |
-| **Operations health** | provider connections by status, the monitor fleet (enabled/erroring/backing off/overdue), order-sync freshness per target, and notification delivery success over 7 days | `/settings/*`, `/market/monitors` |
-| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts | `/finance/books` (create/archive a book, link entities, generate fiscal years, open/close/reopen periods, trial balance) |
+| **Operations health** | provider connections by status **and by health status** (failing, degraded, and unknown counted distinctly — "Loxep could not determine" is not "healthy"), the market-monitor fleet, purchase-sync and DNS-reconcile freshness, infrastructure counts (hosting targets, unresolved DNS drift, reconcile failures, domains), the fleet-tool signal chips, and notification delivery success over 7 days | `/settings/*`, `/market/monitors`, `/infrastructure/*` |
+| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts — and the two upstream-of-ledger backlogs (draft acquisitions awaiting intake, documents awaiting confirmation), which render whether or not a book exists | `/finance/books` (create/archive a book, link entities, generate fiscal years, open/close/reopen periods, trial balance), `/inventory`, `/finance/documents` |
+
+Which target types count as the **market-monitor fleet** is derived, not
+listed: every `MonitorTargetType` maps to its owning domain through a
+`satisfies Record<MonitorTargetType, …>` map, so a new registrant in
+`@loxep/market` breaks the typecheck until it is classified. That replaced a
+hand-maintained exclusion list which had been counting `ebay_purchases` and
+`infrastructure_domain_reconcile` as market monitors — inflating the fleet,
+rendering a stuck DNS reconcile as a monitor error, and letting a healthy
+non-monitor target mask a stale discovery fleet through the freshness
+`Math.max`.
+
+A backlog is deliberately **not** an Operations tile. That band answers "is
+anything broken right now", and draft acquisitions or unconfirmed documents
+are work waiting, not faults — they belong with the ledger facts they precede.
 
 Three rules the composition exists to enforce, all checkable:
 
