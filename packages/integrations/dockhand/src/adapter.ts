@@ -239,8 +239,46 @@ export interface DockhandCapabilities {
   metricHistory: false;
   /** Session cookie is the only documented machine credential. */
   bearerTokenAuth: false;
+  // (see DOCKHAND_SESSION_COOKIE_NAME below for the cookie's observed name)
   connectionTypes: readonly DockhandConnectionType[];
 }
+
+/**
+ * The name of the session cookie Dockhand actually sets, and the name this
+ * adapter sends back.
+ *
+ * ## This was a transcribed guess until a live instance falsified it
+ *
+ * The original implementation looked for a cookie named plainly `session`,
+ * transcribed from the same upstream reference as everything else in this
+ * package — and the stub fixtures were written from that same reference, so
+ * the whole suite passed while a real instance could never have authenticated.
+ * That is the failure mode worth remembering here: a fixture written from the
+ * document the implementation was written from validates the guess, not the
+ * provider.
+ *
+ * OBSERVED 2026-08-14 against a real Dockhand instance: `POST /api/auth/login`
+ * answers `200` with `Set-Cookie: dockhand_session=…` and a body of
+ * `{ success, user }`. The old pattern could not match that name — in
+ * `dockhand_session=`, the substring `session=` is preceded by `dockhand_`
+ * rather than by a start-of-string or `; ` — so every live login failed with
+ * "login succeeded but set no session cookie" despite the credential being
+ * accepted.
+ *
+ * The name lives here, in exactly one place, because it is now a fact about a
+ * provider rather than an assumption, and because sending the wrong cookie
+ * name is a silent authentication failure rather than a loud one.
+ */
+export const DOCKHAND_SESSION_COOKIE_NAME = "dockhand_session";
+
+/**
+ * Matches {@link DOCKHAND_SESSION_COOKIE_NAME} at a cookie boundary — start of
+ * string or after `; ` — so a differently-prefixed cookie that merely ENDS in
+ * the same characters cannot be mistaken for the session.
+ */
+const DOCKHAND_SESSION_COOKIE_PATTERN = new RegExp(
+  `(?:^|;\\s*)${DOCKHAND_SESSION_COOKIE_NAME}=([^;]+)`,
+);
 
 export interface DockhandAdapterStats {
   rateBudget: RateBudgetStats;
@@ -426,7 +464,8 @@ export function createDockhandAdapter(
 
     const headers: Record<string, string> = { accept: "application/json" };
     if (init.body !== undefined) headers["content-type"] = "application/json";
-    if (init.cookie != null) headers["cookie"] = `session=${init.cookie}`;
+    if (init.cookie != null)
+      headers["cookie"] = `${DOCKHAND_SESSION_COOKIE_NAME}=${init.cookie}`;
 
     let response: Response;
     try {
@@ -467,7 +506,7 @@ export function createDockhandAdapter(
           ? response.headers.getSetCookie()
           : [response.headers.get("set-cookie") ?? ""];
       for (const raw of setCookies) {
-        const match = /(?:^|;\s*)session=([^;]+)/.exec(raw);
+        const match = DOCKHAND_SESSION_COOKIE_PATTERN.exec(raw);
         if (match?.[1] !== undefined) {
           sessionCookie = match[1];
           break;

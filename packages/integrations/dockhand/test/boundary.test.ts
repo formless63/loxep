@@ -74,7 +74,7 @@ describe("credentials never reach a URL", () => {
     const { stub, adapter } = makeAdapter([loginOk(), bareList([])]);
     await adapter.listHosts();
     const read = stub.calls[1]!;
-    expect(read.headers["cookie"]).toBe(`session=${TEST_SESSION}`);
+    expect(read.headers["cookie"]).toBe(`dockhand_session=${TEST_SESSION}`);
     expect(read.body).toBeNull();
   });
 });

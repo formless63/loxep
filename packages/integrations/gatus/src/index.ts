@@ -23,6 +23,15 @@
  * `test/live-gatus.test.ts` skips cleanly until `~/.config/loxep/gatus.env`
  * exists and is the standing job to confirm live behavior beyond the source
  * reading.
+ *
+ * **Live-run update, 2026-08-14.** That standing job ran against one real
+ * instance: the unauthenticated health and config probes both answered as
+ * documented, `listEndpointStatuses()`/the OIDC-refusal path behaved
+ * correctly for the mode that instance was actually in, and `capabilities()`
+ * issued exactly one probe. Only one instance in one posture was exercised —
+ * see `operations.ts`'s "three-way posture … is an INFERENCE" section for
+ * exactly what that does and does not confirm about the open/basic/oidc
+ * distinction, and why that distinction stays copy-only regardless.
  */
 export { createGatusAdapter } from "./adapter.ts";
 export type {

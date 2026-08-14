@@ -168,8 +168,8 @@ describe("listHosts(): Dockhand calls them environments", () => {
 
     expect(stub.pathOf(1)).toBe(DOCKHAND_ENVIRONMENTS_PATH);
     expect(stub.calls[1]?.method).toBe("GET");
-    // Upstream sends the session back as `Cookie: session=…`.
-    expect(stub.calls[1]?.headers["cookie"]).toBe(`session=${TEST_SESSION}`);
+    // Upstream sends the session back as `Cookie: dockhand_session=…` (name OBSERVED live 2026-08-14; it was a transcribed guess before that).
+    expect(stub.calls[1]?.headers["cookie"]).toBe(`dockhand_session=${TEST_SESSION}`);
   });
 
   it("never carries TLS material or a Hawser token into a fact", async () => {
@@ -426,7 +426,7 @@ describe("session handling", () => {
     ]);
     await expect(adapter.listHosts()).resolves.toHaveLength(1);
     expect(adapter.stats().reauthRetries).toBe(1);
-    expect(stub.calls[3]?.headers["cookie"]).toBe("session=second-session");
+    expect(stub.calls[3]?.headers["cookie"]).toBe("dockhand_session=second-session");
   });
 
   it("gives up after one retry rather than walking into the lockout", async () => {

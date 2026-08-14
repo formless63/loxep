@@ -53,7 +53,7 @@ export function loginOk(session: string = TEST_SESSION): StubResponse {
     status: 200,
     body: { success: true },
     headers: {
-      "set-cookie": `session=${session}; Path=/; HttpOnly; SameSite=Lax`,
+      "set-cookie": `dockhand_session=${session}; Path=/; HttpOnly; SameSite=Lax`,
     },
   };
 }

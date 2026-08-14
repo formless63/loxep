@@ -113,6 +113,45 @@
  * is configured" — harmless to send even against a genuinely open server,
  * since no middleware is registered to look at it there.
  *
+ * ## The three-way posture (open / basic / oidc) is an INFERENCE, and drives copy only
+ *
+ * The three-row table above is read STRAIGHT from `api/config.go` and
+ * `security/config.go` — it is not a Gatus-documented contract, because Gatus
+ * publishes no spec that names "open" and "Basic auth configured" as distinct
+ * states at all. Operationally this adapter cannot and does not tell them
+ * apart: both produce `oidc: false`, both map to `mode: "direct"`, and both
+ * are handled by the exact same request — "attempt the bulk statuses read,
+ * sending Basic auth if a credential is configured" — because sending an
+ * unused `Authorization` header against a genuinely open instance is
+ * harmless. Nothing in this adapter's control flow branches on open-vs-basic;
+ * only `oidc` (present or not) changes behavior. A caller that wants to LABEL
+ * the connection as "open" vs "Basic auth configured" (e.g. `apps/web`'s
+ * connection copy) is therefore inferring a third state from a fact this
+ * adapter does not itself observe — typically "does Loxep have a stored
+ * credential for this connection" — and that inference MAY DRIVE DISPLAY
+ * COPY ONLY. It must never gate a read or a capability, because the
+ * adapter's own behavior already proves open and basic are indistinguishable
+ * at the only boundary that matters for correctness.
+ *
+ * **Live-run addendum, 2026-08-14.** A run against one real Gatus instance
+ * confirmed, live rather than only from source reading: the unauthenticated
+ * `/health` probe answered; the unauthenticated `/api/v1/config` probe
+ * returned the documented `{oidc: boolean, authenticated: boolean}` shape;
+ * `listEndpointStatuses()` read cleanly when `mode` came back `"direct"` (or,
+ * symmetrically, refused cleanly with `kind: "auth"` had it come back
+ * `"oidc_degraded"` — the run recorded the mode it actually saw, not both);
+ * and `capabilities()` issued exactly one config probe, confirming the
+ * "fresh probe every call, never cached" claim above against a live server's
+ * timing. **What that run does NOT confirm**: only one instance, in
+ * whichever single posture it happened to be running, was exercised — a
+ * `direct`-mode result does not distinguish "no security block" from "Basic
+ * auth configured" any more than the adapter itself does, so the three-way
+ * open/basic/oidc inference remains unverified as a three-way distinction
+ * against a live instance in more than one of those states. The copy-only
+ * restriction above stands unchanged and is, if anything, reinforced by
+ * this: a live run through one posture is not grounds to promote an inferred
+ * label into gating logic.
+ *
  * ## Only GET, and there is no login exchange at all
  *
  * Unlike Beszel (which needs one `POST` to exchange a login for a token),

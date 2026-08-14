@@ -43,18 +43,39 @@
  *    field except `id` is therefore OPTIONAL at this boundary, and a record
  *    that loses a field degrades to `null` on one fact instead of failing a
  *    whole fleet read.
+ * 4. **Live-run confirmation, 2026-08-14.** A run against a real hub (v0.18.x)
+ *    confirmed point 1 empirically, not just from reading docs: the adapter
+ *    authenticated and listed systems using the ordinary `users`-collection
+ *    credential, never touching `_superusers` — the readonly PocketBase role
+ *    this package relies on actually works against a live hub. The same run
+ *    is also the source of the field-presence observation below.
  *
- * ## Which system fields are actually documented, and which are not
+ * ## Which system fields are documented, which were UNVERIFIED, and what one live hub showed
  *
  * Beszel publishes no schema for the `systems` collection. Two fields are
  * confirmed from the REST guide's own examples — `status` (its filter example
  * is `status = "up"`) and `users` (its second example selects
  * `fields: 'id,users'` and updates the array) — plus `id`, which PocketBase
- * guarantees for every record. **`name`, `host`, `port`, and `updated` are
- * UNVERIFIED**: they are the names a PocketBase collection of monitored hosts
- * would plausibly use, they are read defensively, and nothing here breaks if
- * every one of them is wrong. `test/live-beszel.test.ts` exists to replace that
- * paragraph with observed fact.
+ * guarantees for every record. `name`, `host`, `port`, and `updated` had no
+ * such documentation and were carried as UNVERIFIED guesses at the names a
+ * PocketBase collection of monitored hosts would plausibly use.
+ *
+ * **Now OBSERVED, not just guessed**: a live run against one real hub
+ * (v0.18.x, 2026-08-14) reported every one of those fields present —
+ * `{ name: true, host: true, port: true, status: true, observedAt: true }`
+ * (`test/live-beszel.test.ts`, whose standing job was exactly this
+ * replacement). That is real evidence the names are right, from the hub that
+ * was actually asked.
+ *
+ * **What this does and does not prove**: one hub confirming a field is
+ * present today is not a schema guarantee from an upstream that publishes
+ * none — the REST guide's own shape warning (point 3 above) still applies to
+ * a different hub, a future Beszel release, or a system record under
+ * different settings. Nothing here has been loosened on the strength of this
+ * observation: every field but `id` remains OPTIONAL at this boundary and the
+ * parsing still degrades to `null` on absence exactly as it did before this
+ * paragraph was rewritten. Treat this as "confirmed observed, still
+ * defensively parsed," not "now guaranteed."
  *
  * ## Read-only by construction
  *
@@ -112,15 +133,15 @@ export type BeszelFetch = (
 export interface BeszelSystemFact {
   /** The PocketBase record id. The only field upstream guarantees. */
   externalSystemId: string;
-  /** UNVERIFIED field name; `null` when absent. */
+  /** Field name observed present on a live hub (2026-08-14, see module doc); not a schema guarantee — `null` when absent. */
   name: string | null;
-  /** UNVERIFIED field name; `null` when absent. */
+  /** Field name observed present on a live hub (2026-08-14, see module doc); not a schema guarantee — `null` when absent. */
   host: string | null;
-  /** UNVERIFIED field name; `null` when absent or unparseable. */
+  /** Field name observed present on a live hub (2026-08-14, see module doc); not a schema guarantee — `null` when absent or unparseable. */
   port: number | null;
   /** Verbatim. `""` when the record carried no status at all. */
   status: string;
-  /** The record's own last-write time, UNVERIFIED field name. */
+  /** The record's own last-write time; field name observed present on a live hub (2026-08-14, see module doc), not a schema guarantee. */
   observedAt: string | null;
   /** How many accounts this system is shared with. Never the ids. */
   sharedWithCount: number;
