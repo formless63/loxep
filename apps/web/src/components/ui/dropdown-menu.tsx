@@ -6,8 +6,52 @@ import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
 
 import { cn } from '@/lib/utils';
 
+/**
+ * loxep-wwp — PROVISIONAL fix, chosen deliberately over dropping the exit
+ * animation. See the full writeup on `DropdownMenuContent` below; this
+ * context is the plumbing that fix needs.
+ *
+ * `DropdownMenuContent` carries `data-[state=closed]:animate-out`, so Radix's
+ * `Presence` keeps the content — and its `DismissableLayer` — mounted for the
+ * ~150ms exit animation. A `pointerdown` on the trigger inside that window is
+ * seen twice: the trigger toggles the menu OPEN, then the still-mounted
+ * closing layer treats the same press as an outside interaction and closes
+ * it again a few ms later, so the reopen is silently swallowed (measured 5/9
+ * failures on immediate reopen, 0/6 with a 150ms pause; see bead loxep-wwp).
+ *
+ * The fix is to have `DropdownMenuContent` recognize a press on its own
+ * trigger as never being "outside," so only the trigger's own toggle acts on
+ * the event. Doing that needs the content to know which element its trigger
+ * is. Radix's `DropdownMenu` does track a `triggerRef` internally, but the
+ * context hook that holds it (`useDropdownMenuContext`) is not part of
+ * `@radix-ui/react-dropdown-menu`'s public API — only `createDropdownMenuScope`
+ * is exported, confirmed against the installed 2.1.24 `dist/index.d.ts`.
+ * Reaching into Radix's private module scope isn't viable, so this primitive
+ * grows its own small ref-sharing context instead: `DropdownMenu` owns the
+ * ref, `DropdownMenuTrigger` populates it (composed with any ref a caller
+ * passes), and `DropdownMenuContent` reads it. This generalizes the
+ * per-instance guard from loxep-6i1 to every dropdown built on this
+ * primitive, with no per-call-site wiring required.
+ */
+const DropdownMenuTriggerRefContext =
+  React.createContext<React.RefObject<HTMLButtonElement | null> | null>(null);
+
+function composeTriggerRefs<T>(...refs: Array<React.Ref<T> | undefined | null>) {
+  return (node: T | null) => {
+    for (const ref of refs) {
+      if (typeof ref === 'function') ref(node);
+      else if (ref) (ref as React.RefObject<T | null>).current = node;
+    }
+  };
+}
+
 function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot='dropdown-menu' {...props} />;
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+  return (
+    <DropdownMenuTriggerRefContext.Provider value={triggerRef}>
+      <DropdownMenuPrimitive.Root data-slot='dropdown-menu' {...props} />
+    </DropdownMenuTriggerRefContext.Provider>
+  );
 }
 
 function DropdownMenuPortal({
@@ -17,16 +61,27 @@ function DropdownMenuPortal({
 }
 
 function DropdownMenuTrigger({
+  ref,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
-  return <DropdownMenuPrimitive.Trigger data-slot='dropdown-menu-trigger' {...props} />;
+}: React.ComponentPropsWithRef<typeof DropdownMenuPrimitive.Trigger>) {
+  const sharedTriggerRef = React.useContext(DropdownMenuTriggerRefContext);
+  const composedRef = React.useMemo(
+    () => (sharedTriggerRef ? composeTriggerRefs(ref, sharedTriggerRef) : ref),
+    [ref, sharedTriggerRef]
+  );
+  return (
+    <DropdownMenuPrimitive.Trigger data-slot='dropdown-menu-trigger' ref={composedRef} {...props} />
+  );
 }
 
 function DropdownMenuContent({
   className,
   sideOffset = 4,
+  onPointerDownOutside,
+  onFocusOutside,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const triggerRef = React.useContext(DropdownMenuTriggerRefContext);
   return (
     <DropdownMenuPrimitive.Portal>
       <DropdownMenuPrimitive.Content
@@ -36,6 +91,31 @@ function DropdownMenuContent({
           'z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
           className
         )}
+        // loxep-wwp — a press on our own trigger is never "outside" this
+        // menu, it's the toggle. Cancel the dismiss so only the trigger's
+        // toggle acts on the event; see the PROVISIONAL note above
+        // `DropdownMenuTriggerRefContext` for the full mechanism and why.
+        //
+        // Radix's `DismissableLayer` dismisses on EITHER a pointerdown
+        // outside OR a focus-in outside (`onFocusOutside`), as two
+        // independent listeners — cancelling only one leaves the other
+        // path live. Reopening moves focus onto the trigger via the click
+        // that reopened it, which is itself "outside" the still-mounted
+        // closing layer, so both have to be guarded the same way or the
+        // reopened menu can still close again through the focus path
+        // instead of the pointerdown path.
+        onPointerDownOutside={(event) => {
+          if (triggerRef?.current?.contains(event.target as Node)) {
+            event.preventDefault();
+          }
+          onPointerDownOutside?.(event);
+        }}
+        onFocusOutside={(event) => {
+          if (triggerRef?.current?.contains(event.target as Node)) {
+            event.preventDefault();
+          }
+          onFocusOutside?.(event);
+        }}
         {...props}
       />
     </DropdownMenuPrimitive.Portal>
