@@ -20,12 +20,13 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
-import { DocumentPreview } from '@/components/document-preview';
+import { DocumentPreview, type DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import {
+  confirmLinesAsAcquisition,
   confirmLinesAsExpense,
   discardDocument,
   setLineDisposition
@@ -33,6 +34,7 @@ import {
 import { documentQuery } from '@/features/documents/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
 import {
+  CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS,
   CONFIRMABLE_DISPOSITIONS,
   documentStatusLabel,
   documentStatusTone
@@ -44,6 +46,8 @@ import {
 } from '@/features/finance/constants';
 import ManualLineForm from './manual-line-form';
 import CandidatesTable from './candidates-table';
+import AcquisitionLotPickerDialog from './acquisition-lot-picker';
+import type { AcquisitionLotTarget } from './acquisition-lot-picker';
 
 const confirmSchema = z.object({
   category: z.string().trim().min(1, 'Category is required'),
@@ -61,13 +65,26 @@ const confirmSchema = z.object({
 /**
  * One document's review screen: side-by-side receipt image (when uploaded)
  * and its staged/transcribed candidate lines on the right, a disposition per
- * line, and a batch "Confirm as expense" action. `acquisition_cost`/
- * `inventory_intake` dispositions are offered on the row but not yet
- * confirmable — see `CONFIRMABLE_DISPOSITIONS`'s doc for the deferred note.
+ * line, and TWO independent batch confirm actions — "Confirm as expense"
+ * (`expense`/`supplies` lines) and "Confirm as acquisition"
+ * (`acquisition_cost`/`inventory_intake` lines, loxep-cd3.6, M6). A mixed
+ * receipt (three items to flip, plus tape, plus tax) runs BOTH actions
+ * against the same document — that is the "one document, two records" rule
+ * (`expense-entry-design.md` section 4), not a single call that mixes
+ * dispositions: each confirm is homogeneous to its own target.
+ *
+ * Dispositioning a line as `acquisition_cost`/`inventory_intake` opens the
+ * acquisition-lot picker so the operator resolves WHICH lot the cost belongs
+ * to before confirming — existing open lots plus a create-new-draft inline
+ * form.
  */
 export default function DocumentReviewPanel({ documentId }: { documentId: string }) {
   const queryClient = useQueryClient();
   const [discardOpen, setDiscardOpen] = React.useState(false);
+  const [lotPickerOpen, setLotPickerOpen] = React.useState(false);
+  const [acquisitionTarget, setAcquisitionTarget] = React.useState<AcquisitionLotTarget | null>(
+    null
+  );
 
   const { data: document, isPending, isError, refetch } = useQuery(documentQuery(documentId));
   const { data: entities } = useQuery(entitiesQuery);
@@ -113,6 +130,29 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
         toast.error('Nothing confirmable — every selected line was already resolved');
       } else {
         toast.success(`Confirmed ${result.lineCount} line(s) onto one expense`);
+      }
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Could not confirm the selected lines')
+  });
+
+  const acquisitionConfirmMutation = useMutation({
+    mutationFn: (input: { candidateIds: string[]; acquisitionId: string }) =>
+      confirmLinesAsAcquisition({
+        data: {
+          documentId,
+          candidateIds: input.candidateIds,
+          acquisitionId: input.acquisitionId,
+          defaultCurrency: document?.currency ?? 'USD'
+        }
+      }),
+    onSuccess: (result) => {
+      if (result.acquisitionId === null) {
+        toast.error('Nothing confirmable — every selected line was already resolved');
+      } else {
+        toast.success(
+          `Confirmed ${result.costCount} cost line(s) onto ${result.acquisitionReferenceCode}`
+        );
       }
       invalidate();
     },
@@ -181,6 +221,46 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
   const readyCount = document.candidates.filter(
     (c) => c.confirmedAt === null && CONFIRMABLE_DISPOSITIONS.has(c.disposition as never)
   ).length;
+  const readyAcquisitionCandidates = document.candidates.filter(
+    (c) =>
+      c.confirmedAt === null && CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(c.disposition as never)
+  );
+  const readyAcquisitionCount = readyAcquisitionCandidates.length;
+
+  // The highlight overlay (loxep-cd3.5, M5) — the SAME `<DocumentPreview>`
+  // overlay mode the evidence pane uses (`expense-entry-design.md`'s "the
+  // weave" calls for the two flows to share one mechanism), mounted
+  // read-only here: this panel already has its own confirm mechanism (the
+  // disposition `Select` + batch "Confirm as..." actions above), so the
+  // overlay's job is spatial context — "here is where on the receipt this
+  // line came from" — not a second drop target. `draggable` stays unset
+  // (mouse-drag is a no-op with no target to land on); every line still
+  // gets its `document_line_candidates.id`-keyed identity in case a future
+  // pass wants to wire a drop target here too.
+  const overlayLines: DocumentPreviewOverlayLine[] = document.candidates.flatMap((candidate) =>
+    candidate.sourceRegion === null
+      ? []
+      : [
+          {
+            id: candidate.id,
+            documentId: candidate.documentId,
+            lineNumber: candidate.lineNumber,
+            text: candidate.description ?? '',
+            region: candidate.sourceRegion
+          }
+        ]
+  );
+
+  function handleDispositionChange(candidateId: string, disposition: string) {
+    dispositionMutation.mutate({ candidateId, disposition });
+    // Opens the lot picker the FIRST time an operator routes a line toward
+    // inventory — once a target lot is chosen it stays chosen for the rest
+    // of this review session, so later lines with the same disposition just
+    // join the same "Confirm as acquisition" batch below.
+    if (CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(disposition as never) && !acquisitionTarget) {
+      setLotPickerOpen(true);
+    }
+  }
 
   return (
     <div className='space-y-4'>
@@ -219,9 +299,7 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
           ) : (
             <CandidatesTable
               candidates={document.candidates}
-              onDispositionChange={(candidateId, disposition) =>
-                dispositionMutation.mutate({ candidateId, disposition })
-              }
+              onDispositionChange={handleDispositionChange}
             />
           )}
 
@@ -237,6 +315,7 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
               servingUrl={document.mediaServingUrl}
               alt={document.originalFilename ?? 'Uploaded document'}
               className='max-h-96'
+              overlay={overlayLines.length > 0 ? { lines: overlayLines } : undefined}
             />
           )}
 
@@ -302,8 +381,66 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
               </form.SubmitButton>
             </form.AppForm>
           </form>
+
+          {readyAcquisitionCount > 0 && (
+            <div className='space-y-3 rounded-md border p-4'>
+              <p className='text-sm font-medium'>Confirm as acquisition</p>
+              <p className='text-muted-foreground text-xs'>
+                Applies to every unconfirmed line currently dispositioned "Cost of a lot" or "Stock
+                (inventory)" — {readyAcquisitionCount} right now. Money that bought goods for resale
+                becomes an acquisition and its cost components, never an expense.
+              </p>
+              {acquisitionTarget ? (
+                <div className='flex flex-wrap items-center gap-2 text-sm'>
+                  <span className='text-muted-foreground'>Lot:</span>
+                  <Badge variant='secondary'>{acquisitionTarget.referenceCode}</Badge>
+                  <span className='truncate'>{acquisitionTarget.title}</span>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    onClick={() => setLotPickerOpen(true)}
+                  >
+                    Change
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => setLotPickerOpen(true)}
+                >
+                  <Icons.add />
+                  Choose a lot
+                </Button>
+              )}
+              <Button
+                type='button'
+                disabled={!acquisitionTarget || acquisitionConfirmMutation.isPending}
+                onClick={() => {
+                  if (!acquisitionTarget) return;
+                  acquisitionConfirmMutation.mutate({
+                    candidateIds: readyAcquisitionCandidates.map((c) => c.id),
+                    acquisitionId: acquisitionTarget.id
+                  });
+                }}
+              >
+                Confirm {readyAcquisitionCount} as acquisition
+              </Button>
+            </div>
+          )}
         </div>
       </div>
+
+      <AcquisitionLotPickerDialog
+        open={lotPickerOpen}
+        onOpenChange={setLotPickerOpen}
+        onSelected={setAcquisitionTarget}
+        defaultTitle={document.originalFilename ?? document.counterpartyName ?? undefined}
+        defaultVendorName={document.counterpartyName}
+        defaultCurrency={document.currency}
+      />
 
       <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <DialogContent>

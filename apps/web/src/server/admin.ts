@@ -79,6 +79,7 @@ import {
   type TransactionalEnqueue
 } from '@loxep/infrastructure';
 import type {
+  AcquisitionConfirmService,
   AcquisitionsService,
   AllocationsService,
   InventoryMediaService,
@@ -138,6 +139,8 @@ interface AdminRegistry {
   inventoryModulePromise?: Promise<typeof import('@loxep/inventory')>;
   itemsServicePromise?: Promise<ItemsService>;
   acquisitionsServicePromise?: Promise<AcquisitionsService>;
+  /** `confirmCandidatesAsAcquisition` (loxep-cd3.6, M6) — depends only on `db`, so it is built lazily behind {@link getInventoryModule} the same way `acquisitionsServicePromise` above is; no `MediaService` needed (it writes `media_links` directly, mirroring `getInventoryMediaService`'s own reasoning). */
+  acquisitionConfirmServicePromise?: Promise<AcquisitionConfirmService>;
   locationsServicePromise?: Promise<LocationsService>;
   movementsServicePromise?: Promise<MovementsService>;
   /** Reservations + depletion-on-fulfillment (`/commerce` manual sale recording, loxep-dgf.6). */
@@ -675,6 +678,22 @@ export function getAcquisitionsService(): Promise<AcquisitionsService> {
     return inventory.createAcquisitionsService({ db: registry.handle.db });
   })();
   return registry.acquisitionsServicePromise;
+}
+
+/**
+ * `confirmCandidatesAsAcquisition` (loxep-cd3.6, M6) — the acquisition-side
+ * counterpart to {@link getExpenseConfirmService}: candidates dispositioned
+ * `acquisition_cost`/`inventory_intake` become an acquisition (new or
+ * existing) plus `acquisition_costs`, never an `expenses` row (the
+ * acquisition seam, `flipping-lifecycle-design.md`).
+ */
+export function getAcquisitionConfirmService(): Promise<AcquisitionConfirmService> {
+  const registry = getAdminServices();
+  registry.acquisitionConfirmServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createAcquisitionConfirmService({ db: registry.handle.db });
+  })();
+  return registry.acquisitionConfirmServicePromise;
 }
 
 /** Locations service (`/inventory/locations`) — the location tree. */

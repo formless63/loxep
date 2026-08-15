@@ -42,6 +42,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
+import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -1064,6 +1065,23 @@ export interface AcquisitionDetailDto extends AcquisitionListItemDto {
    */
   linkedExpenses: LinkedExpenseHintDto[];
   sourcedFrom: MarketItemLinkDto[];
+  evidence: AcquisitionEvidenceDto[];
+}
+
+/**
+ * A `media_links(resource_type='acquisition', purpose='invoice')` row —
+ * `confirmCandidatesAsAcquisition`'s (loxep-cd3.6, M6) evidence attach, the
+ * acquisition-side sibling of `ReceiptGallery`'s expense receipts. Read-only
+ * here: upload/detach affordances are a separate surface this milestone does
+ * not build (the write path is the confirm function; nothing here writes a
+ * `media_links` row).
+ */
+export interface AcquisitionEvidenceDto {
+  mediaObjectId: string;
+  originalFilename: string | null;
+  purpose: string;
+  servingUrl: string | null;
+  createdAt: string;
 }
 
 export const fetchAcquisition = createServerFn({ method: 'GET' })
@@ -1080,23 +1098,24 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
       throw new Error(`Acquisition "${data.id}" not found`);
     }
 
-    const [costRows, itemRows, linkRows, landedCostResult, connection] = await Promise.all([
-      handle.db.query.acquisitionCosts.findMany({
-        where: (table, { eq }) => eq(table.acquisitionId, data.id),
-        orderBy: (table, { asc }) => [asc(table.createdAt)]
-      }),
-      handle.db.query.inventoryItems.findMany({
-        where: (table, { eq }) => eq(table.acquisitionId, data.id),
-        orderBy: (table, { asc }) => [asc(table.createdAt)]
-      }),
-      handle.db.query.acquisitionOpportunityLinks.findMany({
-        where: (table, { eq }) => eq(table.acquisitionId, data.id),
-        orderBy: (table, { desc }) => [desc(table.linkedAt)]
-      }),
-      // Reproduces `@loxep/inventory/acquisitions.ts`'s `landedCost` query
-      // verbatim — a grouped SUM with no allocation logic, safe to mirror.
-      handle.db.execute(
-        `select currency,
+    const [costRows, itemRows, linkRows, landedCostResult, connection, evidenceLinkRows] =
+      await Promise.all([
+        handle.db.query.acquisitionCosts.findMany({
+          where: (table, { eq }) => eq(table.acquisitionId, data.id),
+          orderBy: (table, { asc }) => [asc(table.createdAt)]
+        }),
+        handle.db.query.inventoryItems.findMany({
+          where: (table, { eq }) => eq(table.acquisitionId, data.id),
+          orderBy: (table, { asc }) => [asc(table.createdAt)]
+        }),
+        handle.db.query.acquisitionOpportunityLinks.findMany({
+          where: (table, { eq }) => eq(table.acquisitionId, data.id),
+          orderBy: (table, { desc }) => [desc(table.linkedAt)]
+        }),
+        // Reproduces `@loxep/inventory/acquisitions.ts`'s `landedCost` query
+        // verbatim — a grouped SUM with no allocation logic, safe to mirror.
+        handle.db.execute(
+          `select currency,
                 sum(amount) filter (where capitalize and cost_class = 'goods')
                   ::numeric(20, 6)::text as goods,
                 sum(amount) filter (where capitalize and cost_class = 'ancillary')
@@ -1109,14 +1128,23 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
           where acquisition_id = ${uuidLiteral(data.id)}
           group by currency
           order by currency`
-      ),
-      acquisition.connectionId
-        ? handle.db.query.connections.findFirst({
-            where: (table, { eq }) => eq(table.id, acquisition.connectionId as string),
-            columns: { name: true }
-          })
-        : Promise.resolve(null)
-    ]);
+        ),
+        acquisition.connectionId
+          ? handle.db.query.connections.findFirst({
+              where: (table, { eq }) => eq(table.id, acquisition.connectionId as string),
+              columns: { name: true }
+            })
+          : Promise.resolve(null),
+        // Evidence attached by `confirmCandidatesAsAcquisition` (loxep-cd3.6,
+        // M6) as `resource_type = 'acquisition'` — a plain `text` column with
+        // no `CHECK`, matching `@loxep/inventory/confirm.ts`'s own reasoning
+        // for writing it without a schema-level constant.
+        handle.db.query.mediaLinks.findMany({
+          where: (table, { and, eq }) =>
+            and(eq(table.resourceType, 'acquisition'), eq(table.resourceId, data.id)),
+          orderBy: (table, { asc }) => [asc(table.createdAt)]
+        })
+      ]);
 
     const costIds = costRows.map((row) => row.id);
     const linkedExpenseRows =
@@ -1138,6 +1166,16 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
           })
         : [];
     const locationById = new Map(locations.map((row) => [row.id, row]));
+
+    const evidenceMediaObjectIds = [...new Set(evidenceLinkRows.map((row) => row.mediaObjectId))];
+    const evidenceMediaObjects =
+      evidenceMediaObjectIds.length > 0
+        ? await handle.db.query.mediaObjects.findMany({
+            where: (table, { inArray }) => inArray(table.id, evidenceMediaObjectIds),
+            columns: { id: true, originalFilename: true, metadata: true }
+          })
+        : [];
+    const evidenceMediaObjectById = new Map(evidenceMediaObjects.map((row) => [row.id, row]));
 
     // Resolves the title `sourcedFrom` needs — mirrors `fetchInventoryItem`'s
     // identical lookup verbatim; this handler used to hardcode `null` here
@@ -1243,7 +1281,17 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
         targetPriceAmount: row.targetPriceAmount,
         targetCurrency: row.targetCurrency,
         linkedAt: iso(row.linkedAt)
-      }))
+      })),
+      evidence: evidenceLinkRows.map((row) => {
+        const mediaObject = evidenceMediaObjectById.get(row.mediaObjectId);
+        return {
+          mediaObjectId: row.mediaObjectId,
+          originalFilename: mediaObject?.originalFilename ?? null,
+          purpose: row.purpose,
+          servingUrl: servingUrlFor(mediaObjectPurpose(mediaObject?.metadata), row.mediaObjectId),
+          createdAt: iso(row.createdAt)
+        };
+      })
     };
   });
 

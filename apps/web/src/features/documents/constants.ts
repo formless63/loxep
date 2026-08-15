@@ -38,14 +38,6 @@ export function dispositionLabel(disposition: string): string {
   return DISPOSITION_LABELS[disposition as LineDisposition] ?? disposition;
 }
 
-/**
- * `acquisition_cost`/`inventory_intake` are OFFERED (the schema and the
- * review model support them fully) but this milestone's confirm action only
- * writes `expenses` — see `documents-functions.ts`'s
- * `CONFIRMABLE_AS_EXPENSE`. Picking one of the two here stages the intent
- * correctly; a lot/acquisition-cost or intake CONFIRM action is deferred
- * (needs an acquisition-lot picker this milestone does not build).
- */
 export const DISPOSITION_VALUES: readonly LineDisposition[] = [
   'pending',
   'expense',
@@ -63,8 +55,22 @@ export const dispositionOptions = DISPOSITION_VALUES.map((value) => ({
   label: dispositionLabel(value)
 }));
 
-/** Dispositions this milestone can actually confirm into a domain record (expenses only). */
+/** Dispositions `confirmLinesAsExpense`/`@loxep/accounting`'s `confirmCandidatesAsExpense` can confirm — writes an `expenses` row. */
 export const CONFIRMABLE_DISPOSITIONS = new Set<LineDisposition>(['expense', 'supplies']);
+
+/**
+ * Dispositions `confirmLinesAsAcquisition`/`@loxep/inventory`'s
+ * `confirmCandidatesAsAcquisition` can confirm (loxep-cd3.6, M6) — writes an
+ * `acquisitions` + `acquisition_costs` row, NEVER an `expenses` row (the
+ * acquisition seam, `flipping-lifecycle-design.md`). Picking one of these in
+ * the review panel opens the acquisition-lot picker
+ * (`@/features/documents/components/acquisition-lot-picker.tsx`) — the piece
+ * Phase 9's M4 flagged as the specific gap blocking this.
+ */
+export const CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS = new Set<LineDisposition>([
+  'acquisition_cost',
+  'inventory_intake'
+]);
 
 export type DocumentStatus =
   | 'pending'

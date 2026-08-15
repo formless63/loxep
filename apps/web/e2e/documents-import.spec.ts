@@ -186,6 +186,71 @@ test('a document with no confirmed lines can be discarded', async ({ page }) => 
   await expect(page.getByText('Document discarded')).toBeVisible();
 });
 
+test('acquisition path: dispositioning a line opens the lot picker, creating a draft attaches the receipt as evidence', async ({
+  page
+}) => {
+  // loxep-cd3.6 (M6): a line dispositioned toward inventory NEVER becomes an
+  // expense — it becomes an acquisition plus an `acquisition_costs` row (the
+  // acquisition seam, `flipping-lifecycle-design.md`). The evidence-attach
+  // assertion needs a REAL media object, which a CSV-sourced document never
+  // has (`source_kind = 'csv'` implies `media_object_id is null` by the
+  // schema's own CHECK) — so this exercises the receipt/invoice upload path,
+  // mirroring the "attaches the receipt" expense-side test above.
+  await ensureStorageBackend(page);
+
+  await page.goto('/finance/import');
+  await page.getByRole('tab', { name: 'Receipt / invoice' }).click();
+
+  const fileInput = page.locator('input[type="file"]').first();
+  const fileName = `e2e-acquisition-${runId}.png`;
+  await fileInput.setInputFiles({
+    name: fileName,
+    mimeType: 'image/png',
+    buffer: pngFixture()
+  });
+
+  await expect(page.getByText('0 of 0 line(s) confirmed')).toBeVisible();
+  const main = page.getByRole('main');
+  const lotTitle = `E2E acquisition lot ${runId}`;
+  await main.getByLabel('Description *').fill(`E2E acquisition line ${runId}`);
+  await main.getByLabel('Amount *').fill('55.00');
+  await main.getByRole('button', { name: 'Add line' }).click();
+  await expect(page.getByText('0 of 1 line(s) confirmed')).toBeVisible();
+
+  // Dispositioning the line toward inventory opens the lot picker.
+  const stagedRow = tableRow(page, `E2E acquisition line ${runId}`);
+  await stagedRow.getByRole('combobox').click();
+  await page.getByRole('option', { name: /Cost of a lot/ }).click();
+
+  const pickerDialog = page.getByRole('dialog', { name: 'Choose a lot' });
+  await expect(pickerDialog).toBeVisible();
+  await pickerDialog.getByRole('tab', { name: 'Create a new draft' }).click();
+  await pickerDialog.getByLabel('Title *').fill('');
+  await pickerDialog.getByLabel('Title *').fill(lotTitle);
+  await pickerDialog.getByRole('button', { name: 'Create & attach' }).click();
+  await expect(pickerDialog).toBeHidden();
+
+  // The picked lot is shown, and the batch confirms in one click.
+  await expect(main.getByText(lotTitle)).toBeVisible();
+  await main.getByRole('button', { name: /Confirm 1 as acquisition/ }).click();
+  await expect(page.getByText('1 of 1 line(s) confirmed')).toBeVisible();
+  await expect(stagedRow.getByText('Confirmed')).toBeVisible();
+
+  // The confirmed line produced a real acquisition, reachable from
+  // /inventory/acquisitions, carrying its cost row AND the receipt as
+  // evidence (the acquisition-side sibling of loxep-4mg).
+  await page.goto('/inventory/acquisitions');
+  const lotRow = tableRow(page, lotTitle);
+  await expect(lotRow).toBeVisible();
+  await lotRow.getByRole('link', { name: /^ACQ-/ }).click();
+
+  const detail = page.getByRole('main');
+  await expect(detail.getByText('Cost components')).toBeVisible();
+  await expect(detail.getByText('$55.00').first()).toBeVisible();
+  await expect(detail.getByText('Evidence', { exact: true })).toBeVisible();
+  await expect(detail.getByText(fileName)).toBeVisible();
+});
+
 test('confirming a receipt-backed line attaches the receipt, so it never lands in Missing receipts', async ({
   page
 }) => {

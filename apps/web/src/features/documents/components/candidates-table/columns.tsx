@@ -14,7 +14,7 @@ import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { CandidateDto } from '@/server/documents-functions';
 import {
-  CONFIRMABLE_DISPOSITIONS,
+  CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS,
   dispositionLabel,
   dispositionOptions
 } from '@/features/documents/constants';
@@ -101,13 +101,25 @@ export function createColumns(
               {dispositionLabel(row.original.disposition)}
             </Badge>
           );
-          // `targetKind`/`targetId` are stamped by `confirmLinesAsExpense` —
-          // link out to the record this line became rather than dead-ending
-          // on the badge (loxep-0l5/loxep-4mg).
+          // `targetKind`/`targetId` are stamped by `confirmLinesAsExpense`/
+          // `confirmLinesAsAcquisition` — link out to the record this line
+          // became rather than dead-ending on the badge (loxep-0l5/loxep-4mg,
+          // extended to the acquisition path by loxep-cd3.6, M6).
           if (row.original.targetKind === 'expense' && row.original.targetId) {
             return (
               <Link
                 to='/finance/expenses/$id'
+                params={{ id: row.original.targetId }}
+                className='inline-flex hover:underline'
+              >
+                {badge}
+              </Link>
+            );
+          }
+          if (row.original.targetKind === 'acquisition' && row.original.targetId) {
+            return (
+              <Link
+                to='/inventory/acquisitions/$id'
                 params={{ id: row.original.targetId }}
                 className='inline-flex hover:underline'
               >
@@ -127,29 +139,19 @@ export function createColumns(
             </SelectTrigger>
             <SelectContent>
               {dispositionOptions.map((option) => {
-                // `acquisition_cost`/`inventory_intake` stage the intent
-                // correctly (the model supports them fully) but this
-                // milestone's confirm action only writes `expenses` — see
-                // `CONFIRMABLE_DISPOSITIONS`'s doc. Without this hint,
-                // picking one is a visible dead end: nothing explains why it
-                // never becomes confirmable (loxep-1zg, needs an
-                // acquisition-lot picker this milestone does not build).
-                // `pending` and the terminal non-confirm dispositions
-                // (personal/not_mine/duplicate/discarded) deliberately get no
-                // hint — selecting THEM is the complete action, there is no
-                // separate confirm step to await.
-                const needsLotPicker =
-                  option.value !== 'pending' &&
-                  option.value !== 'personal' &&
-                  option.value !== 'not_mine' &&
-                  option.value !== 'duplicate' &&
-                  option.value !== 'discarded' &&
-                  !CONFIRMABLE_DISPOSITIONS.has(option.value);
+                // `acquisition_cost`/`inventory_intake` open the acquisition-
+                // lot picker (loxep-cd3.6, M6) rather than confirming inline
+                // here — the hint says so instead of leaving the choice
+                // unexplained. Every other option either confirms via the
+                // panel's "Confirm as expense" action or is a terminal,
+                // no-confirm-step disposition (personal/not_mine/duplicate/
+                // discarded/pending), so it gets no hint.
+                const opensLotPicker = CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(option.value);
                 return (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
-                    {needsLotPicker && (
-                      <span className='text-muted-foreground'> — not yet confirmable here</span>
+                    {opensLotPicker && (
+                      <span className='text-muted-foreground'> — opens the lot picker</span>
                     )}
                   </SelectItem>
                 );

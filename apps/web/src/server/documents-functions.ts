@@ -83,6 +83,51 @@ function uuidLiteral(value: string): string {
   return `'${value}'`;
 }
 
+/**
+ * `document_line_candidates.source_region`'s reader, mirroring
+ * `@loxep/documents`'s `source-region.ts` `parseSourceRegion` — duplicated
+ * here per this file's own documented IMPLEMENTATION CHOICE (no
+ * `@loxep/documents` dependency; see the module doc). Deliberately lenient:
+ * a corrupted or shape-mismatched value degrades to "no box drawn" rather
+ * than throwing and breaking the review/evidence UI.
+ */
+export interface SourceRegionDto {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+function parseSourceRegion(raw: string | null): SourceRegionDto | null {
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const value = parsed as Record<string, unknown>;
+  const { page, x, y, w, h } = value;
+  if (
+    typeof page !== 'number' ||
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof w !== 'number' ||
+    typeof h !== 'number' ||
+    !Number.isInteger(page) ||
+    page <= 0 ||
+    x < 0 ||
+    y < 0 ||
+    w < 0 ||
+    h < 0 ||
+    Object.keys(value).length !== 5
+  ) {
+    return null;
+  }
+  return { page, x, y, w, h };
+}
+
 // ---------------------------------------------------------------------------
 // DTOs
 // ---------------------------------------------------------------------------
@@ -117,6 +162,8 @@ export interface CandidateDto {
   confirmedAt: string | null;
   targetKind: string | null;
   targetId: string | null;
+  /** `document_line_candidates.source_region`, parsed — `null` for a manual/CSV-staged line, or a genuinely malformed value. Drives `<DocumentPreview>`'s overlay (loxep-cd3.5, M5). */
+  sourceRegion: SourceRegionDto | null;
 }
 
 export interface DocumentDetailDto extends DocumentQueueRowDto {
@@ -157,6 +204,7 @@ function rowToCandidateDto(row: Record<string, unknown>): CandidateDto {
     disposition: row['disposition'] as string,
     rowFingerprint: (row['row_fingerprint'] as string | null) ?? null,
     confirmedAt: row['confirmed_at'] ? iso(new Date(row['confirmed_at'] as string)) : null,
+    sourceRegion: parseSourceRegion((row['source_region'] as string | null) ?? null),
     targetKind: (row['target_kind'] as string | null) ?? null,
     targetId: (row['target_id'] as string | null) ?? null
   };
@@ -546,6 +594,69 @@ export const confirmLinesAsExpense = createServerFn({ method: 'POST' })
     return {
       expenseId: result.expense?.id ?? null,
       lineCount: result.lines.length,
+      skipped: result.skipped
+    };
+  });
+
+// ---------------------------------------------------------------------------
+// Confirm as acquisition (loxep-cd3.6, M6) — the acquisition-side sibling of
+// `confirmLinesAsExpense` above, wrapping `@loxep/inventory`'s
+// `confirmCandidatesAsAcquisition`. A candidate dispositioned
+// `acquisition_cost`/`inventory_intake` NEVER reaches `@loxep/accounting` —
+// the acquisition seam (`flipping-lifecycle-design.md`) forbids the same
+// dollar being deducted once as an expense and again as COGS at sale.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmLinesAsAcquisitionResultDto {
+  /** `null` only when every candidate in the batch was skipped and no `acquisitionId` was given — nothing was written. */
+  acquisitionId: string | null;
+  acquisitionReferenceCode: string | null;
+  costCount: number;
+  skipped: number;
+}
+
+export const confirmLinesAsAcquisition = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      documentId: uuid,
+      candidateIds: z.array(uuid).min(1),
+      /** Attach to this ALREADY-existing acquisition (the lot picker's "attach" branch) instead of creating one. */
+      acquisitionId: uuid.nullish(),
+      /** Required to create a new acquisition — ignored when `acquisitionId` is given. */
+      title: z.string().trim().min(1).nullish(),
+      sourceKind: z.string().trim().min(1).nullish(),
+      vendorName: z.string().trim().min(1).nullish(),
+      currency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/)
+        .nullish(),
+      defaultCurrency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/)
+        .default('USD')
+    })
+  )
+  .handler(async ({ data }): Promise<ConfirmLinesAsAcquisitionResultDto> => {
+    const { requireSession, getAcquisitionConfirmService } = await import('@/server/admin');
+    const session = await requireSession();
+    const confirmService = await getAcquisitionConfirmService();
+    const result = await confirmService.confirmCandidatesAsAcquisition({
+      documentId: data.documentId,
+      candidateIds: data.candidateIds,
+      actorUserId: session.user.id,
+      ...(data.acquisitionId ? { acquisitionId: data.acquisitionId } : {}),
+      ...(data.title ? { title: data.title } : {}),
+      ...(data.sourceKind ? { sourceKind: data.sourceKind } : {}),
+      vendorName: data.vendorName ?? null,
+      ...(data.currency ? { currency: data.currency } : {}),
+      defaultCurrency: data.defaultCurrency
+    });
+    return {
+      acquisitionId: result.acquisition?.id ?? null,
+      acquisitionReferenceCode: result.acquisition?.referenceCode ?? null,
+      costCount: result.costs.length,
       skipped: result.skipped
     };
   });

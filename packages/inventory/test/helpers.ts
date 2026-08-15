@@ -21,6 +21,8 @@ import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import {
   connections,
+  documentLineCandidates,
+  documents,
   economicEntities,
   orderFees,
   orderFulfillmentLines,
@@ -29,6 +31,7 @@ import {
   orderRefundLines,
   orderRefunds,
   orders,
+  user,
 } from "@loxep/db/schema";
 
 const DEFAULT_TEST_DATABASE_URL =
@@ -291,4 +294,110 @@ export async function feeIdsFor(
     feeType: row["fee_type"] as string,
     amount: row["amount"] as string,
   }));
+}
+
+/* -------------------------------------- Documents fixtures, for confirm.test.ts */
+
+/** A Better Auth user row usable as an FK-valid actor (ADR-0020). Mirrors `@loxep/accounting/test/helpers.ts`'s own. */
+export async function seedUser(scratch: ScratchDb, id: string): Promise<string> {
+  await scratch.handle.db.insert(user).values({
+    id,
+    name: `Test User ${id}`,
+    email: `${id}@example.test`,
+  });
+  return id;
+}
+
+/**
+ * A `documents` row, seeded directly against `@loxep/db` schema — this
+ * package deliberately does not depend on `@loxep/documents` (see
+ * `src/confirm.ts`'s module doc), so `confirm.test.ts` needs its own way to
+ * stand up the document/candidate rows `confirmCandidatesAsAcquisition`
+ * reads. Mirrors `@loxep/accounting/test/helpers.ts`'s `seedDocument`.
+ */
+export async function seedDocument(
+  scratch: ScratchDb,
+  input: {
+    documentKind?: string;
+    mediaObjectId?: string | null;
+    currency?: string | null;
+    documentDate?: string | null;
+    counterpartyName?: string | null;
+    economicEntityId?: string | null;
+  } = {},
+): Promise<string> {
+  const mediaObjectId = input.mediaObjectId ?? null;
+  const rows = await scratch.handle.db
+    .insert(documents)
+    .values({
+      documentKind: input.documentKind ?? "receipt",
+      sourceKind: mediaObjectId === null ? "csv" : "upload",
+      mediaObjectId,
+      currency: input.currency ?? null,
+      documentDate: input.documentDate ?? null,
+      counterpartyName: input.counterpartyName ?? null,
+      economicEntityId: input.economicEntityId ?? null,
+    })
+    .returning({ id: documents.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("document insert returned no row");
+  return id;
+}
+
+/** A `document_line_candidates` row. Mirrors `@loxep/accounting/test/helpers.ts`'s `seedCandidate`, `disposition: 'acquisition_cost'` by default here since this suite is about the acquisition path. */
+export async function seedCandidate(
+  scratch: ScratchDb,
+  input: {
+    documentId: string;
+    lineNumber?: number;
+    description?: string | null;
+    quantity?: string | null;
+    unitAmount?: string | null;
+    lineAmount?: string | null;
+    lineDate?: string | null;
+    disposition?: string;
+  },
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(documentLineCandidates)
+    .values({
+      documentId: input.documentId,
+      lineNumber: input.lineNumber ?? 1,
+      description: input.description ?? null,
+      quantity: input.quantity ?? null,
+      unitAmount: input.unitAmount ?? null,
+      lineAmount: input.lineAmount ?? null,
+      lineDate: input.lineDate ?? null,
+      disposition: input.disposition ?? "acquisition_cost",
+    })
+    .returning({ id: documentLineCandidates.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("document line candidate insert returned no row");
+  return id;
+}
+
+/** A `media_objects` row, seeded directly — mirrors `@loxep/accounting/test/helpers.ts`'s `seedMedia`, minus the `MediaService` (this package has no `@loxep/storage` dependency; `confirm.ts` writes `media_links` directly). */
+export async function seedMediaObject(scratch: ScratchDb, sha256: string): Promise<string> {
+  const backend = await scratch.handle.pool.query<{ id: string }>(
+    `insert into storage_backends (name, driver, config)
+     values ('local-test', 'local', '{"root":"/tmp/loxep-inventory-test"}'::jsonb)
+     on conflict do nothing
+     returning id`,
+  );
+  const backendId =
+    backend.rows[0]?.id ??
+    (await scratch.handle.pool.query<{ id: string }>(`select id from storage_backends limit 1`))
+      .rows[0]?.id;
+  if (backendId === undefined) throw new Error("no storage backend seeded");
+
+  const media = await scratch.handle.pool.query<{ id: string }>(
+    `insert into media_objects (storage_backend_id, storage_key, original_filename,
+                                mime_type, size_bytes, sha256)
+     values ($1, $2, 'invoice.jpg', 'image/jpeg', 1024, $3)
+     returning id`,
+    [backendId, `media/${sha256}.jpg`, sha256],
+  );
+  const mediaObjectId = media.rows[0]?.id;
+  if (mediaObjectId === undefined) throw new Error("media object insert returned no row");
+  return mediaObjectId;
 }

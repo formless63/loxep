@@ -305,6 +305,50 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
         </CardContent>
       </Card>
 
+      {data.evidence.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className='text-base'>Evidence</CardTitle>
+          </CardHeader>
+          <CardContent className='flex flex-col gap-2'>
+            <p className='text-muted-foreground text-sm'>
+              The source document(s) confirmed lines here came from — a receipt photo can cover a
+              lot AND each item unpacked from it (`confirmCandidatesAsAcquisition`, loxep-cd3.6).
+            </p>
+            <ul className='flex flex-col gap-2'>
+              {data.evidence.map((item) => (
+                <li
+                  key={item.mediaObjectId}
+                  className='flex items-center gap-3 rounded-lg border p-3'
+                >
+                  <Icons.media className='text-muted-foreground size-6 shrink-0' />
+                  <div className='min-w-0 flex-1'>
+                    {item.servingUrl === null ? (
+                      <span className='block truncate text-sm font-medium'>
+                        {item.originalFilename ?? item.mediaObjectId}
+                      </span>
+                    ) : (
+                      <a
+                        href={item.servingUrl}
+                        target='_blank'
+                        rel='noreferrer'
+                        className='block truncate text-sm font-medium hover:underline'
+                      >
+                        {item.originalFilename ?? item.mediaObjectId}
+                      </a>
+                    )}
+                    <div className='text-muted-foreground flex items-center gap-2 text-xs'>
+                      <Badge variant='outline'>{item.purpose}</Badge>
+                      <span>{formatDateTime(item.createdAt)}</span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
       {data.linkedExpenses.length > 0 && (
         <Card>
           <CardHeader>

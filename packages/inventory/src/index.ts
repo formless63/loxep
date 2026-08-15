@@ -134,6 +134,13 @@ export type {
   LandedCostGroup,
 } from "./acquisitions.ts";
 
+export { createAcquisitionConfirmService } from "./confirm.ts";
+export type {
+  AcquisitionConfirmService,
+  ConfirmCandidatesAsAcquisitionInput,
+  ConfirmCandidatesAsAcquisitionResult,
+} from "./confirm.ts";
+
 export {
   DEFAULT_PURCHASE_SYNC_ENTRIES_PER_PAGE,
   DEFAULT_PURCHASE_SYNC_INTERVAL_SECONDS,
