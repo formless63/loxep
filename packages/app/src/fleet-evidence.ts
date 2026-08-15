@@ -130,7 +130,16 @@ export async function verifyFleetIngestToken(
   try {
     connection = await options.connections.getConnection(options.connectionId);
   } catch (error) {
-    if (!(error instanceof ConnectionNotFoundError)) throw error;
+    // Matched by name as well as identity: in the built app the web bundle
+    // constructs the connections service against its own bundled copy of
+    // @loxep/domain while this dynamically-imported module compares against
+    // the node_modules copy, so `instanceof` alone fails exactly and only in
+    // production. DomainError stamps `name` from `new.target`, which survives
+    // duplication.
+    const isNotFound =
+      error instanceof ConnectionNotFoundError ||
+      (error instanceof Error && error.name === "ConnectionNotFoundError");
+    if (!isNotFound) throw error;
     connection = null;
   }
 
