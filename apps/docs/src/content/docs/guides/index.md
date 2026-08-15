@@ -24,6 +24,8 @@ Loxep mostly observes and reads from external services. Invoice Ninja is the one
 
 Loxep also pushes in one direction, the reverse of every provider above: [Publishing health to Gatus](./gatus-health-push/) sends Loxep's own overall health outward to an operator-declared Gatus endpoint every five minutes, so Gatus can raise the alert Loxep can never raise about its own outage.
 
+A third direction runs entirely the other way: [Sending fleet alert evidence](./fleet-evidence-webhooks/) is Loxep's first INBOUND webhook receiver — Gatus, Beszel, Databasus, or anything else that can POST JSON sends alert or backup-status evidence to a per-source URL Loxep gives you. Recording is not delivering: the sending tool must still alert you directly, the same way it always has.
+
 ## How these guides relate to the application
 
 Every step described here also appears inside the application, in the dialog where it is needed: each setup form carries a **Where to get these** section with the same path, and the eBay keyset form shows this installation's own callback URL with a copy button rather than an example. These pages exist for planning the work before you start it, for the parts that live outside Loxep entirely, and for reading somewhere other than the machine you are configuring.

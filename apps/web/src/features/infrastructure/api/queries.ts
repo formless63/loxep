@@ -14,6 +14,7 @@ import {
   fetchManagedDomains,
   fetchReconcileRun,
   fetchReconcileRuns,
+  fetchTermixHostSessions,
   fetchUnmatchedTailscaleDevices
 } from '@/server/infrastructure-functions';
 
@@ -94,6 +95,18 @@ export const dockhandHostViewQuery = (hostingTargetId: string) =>
   queryOptions({
     queryKey: ['infrastructure', 'fleet', hostingTargetId, 'dockhand-host-view'],
     queryFn: () => fetchDockhandHostView({ data: { hostingTargetId } })
+  });
+
+/**
+ * The Termix per-session panel's live, request-scoped read (loxep-4ah,
+ * owner-approved). Same "not suspense-preloaded, `null` is a valid answer"
+ * discipline as {@link dockhandHostViewQuery} — enabled only once the caller
+ * knows a termix/host link exists, never persisted.
+ */
+export const termixHostSessionsQuery = (hostingTargetId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'fleet', hostingTargetId, 'termix-host-sessions'],
+    queryFn: () => fetchTermixHostSessions({ data: { hostingTargetId } })
   });
 
 /** Dockhand connections for the "register in Dockhand" section's connection picker (loxep-hb7 Milestone C). */
