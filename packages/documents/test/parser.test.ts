@@ -27,6 +27,7 @@ describe("createParserRegistry", () => {
         parsedAt: new Date(),
         currency: null,
         documentTotal: null,
+        text: null,
         lines: [
           {
             description: "stubbed line",

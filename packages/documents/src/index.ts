@@ -1,5 +1,6 @@
 /**
- * @loxep/documents — receipt/invoice/CSV intake and manual-assisted parsing.
+ * @loxep/documents — receipt/invoice/CSV intake, manual-assisted parsing,
+ * and tier A OCR (loxep-cd3.4).
  *
  * The flipping-lifecycle design's document milestone (loxep-dgf.4,
  * `apps/docs/src/content/docs/architecture/flipping-lifecycle-design.md`
@@ -26,14 +27,26 @@
  * their own confirm transactions); a dependency edge the other way would be
  * a cycle, which is C1's signal to merge packages rather than split them,
  * and merging is wrong here — confirmation is deliberately inverted.
+ * `tesseract.js` is this package's one third-party addition (loxep-cd3.4) —
+ * an in-process WASM OCR engine, never a service, so it does not disturb
+ * this boundary.
  *
- * ## What is NOT here
+ * ## What is here now, and what is still not
  *
- * - **No OCR or LLM parser backend.** OQ3 (owner-review-critical: which
- *   backend a self-hosted Loxep ships with) is resolved as manual-assisted
- *   ONLY this milestone — see `manual-parser.ts`. `parser.ts`'s
- *   {@link ReceiptParser} interface makes a future backend pluggable; adding
- *   one changes no table, no confirm path, and no review UI.
+ * - **OCR, tier A only.** `tesseract-parser.ts`'s `ocr_tesseract` backend
+ *   (design section 3, "SHIP IT, IN-PROCESS, WITH NO NEW CONTAINER")
+ *   extracts a document's whole-page {@link ParseResult.text} — searchable
+ *   evidence, per the design's own tier ladder, NOT structure: it produces
+ *   `lines: []`, same as `manual-parser.ts`. `pdf-text-layer.ts` lifts an
+ *   EXISTING PDF text layer via `pdftotext` rather than OCRing a digital
+ *   invoice; it degrades honestly (`available: false`) where poppler-utils
+ *   is not installed, which is everywhere as of this milestone (no Docker
+ *   change was in this wave's fence). Tier C (structured autofill) remains
+ *   refused by the design and is not built here.
+ * - **`documents.parsed_text` does not exist yet.** Migration D has not
+ *   landed; `extraction-runner.ts`'s module doc records the exact one-line
+ *   SQL a follow-up pass adds once it does. The extraction itself is real
+ *   and tested regardless.
  * - **No `codes.ts`.** Unlike `acquisitions`/`inventory_items`/`expenses`,
  *   neither `documents` nor `document_line_candidates` carries a
  *   human-scannable reference code — nobody labels a staged candidate row,
@@ -69,6 +82,34 @@ export {
   normalizeMoneyString,
   normalizeDateString,
 } from "./manual-parser.ts";
+
+export {
+  TESSERACT_PARSER_ID,
+  TESSERACT_PARSER_LABEL,
+  LOW_CONFIDENCE_THRESHOLD,
+  createTesseractParser,
+  getSharedTesseractWorker,
+  resetSharedTesseractWorkerForTests,
+} from "./tesseract-parser.ts";
+export type {
+  TesseractWorkerLike,
+  TesseractRawOutput,
+  CreateTesseractParserOptions,
+} from "./tesseract-parser.ts";
+
+export { extractPdfTextLayer } from "./pdf-text-layer.ts";
+export type { PdfTextLayerResult } from "./pdf-text-layer.ts";
+
+export {
+  extractDocumentTextPayloadSchema,
+  runDocumentTextExtraction,
+} from "./extraction-runner.ts";
+export type {
+  ExtractDocumentTextPayload,
+  ExtractionRunnerDeps,
+  ExtractionRunResult,
+  RunExtractionLogger,
+} from "./extraction-runner.ts";
 
 export {
   CSV_FIELDS,

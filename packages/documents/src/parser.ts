@@ -67,6 +67,19 @@ export interface ParseResult {
   parsedAt: Date;
   currency: string | null;
   documentTotal: string | null;
+  /**
+   * The full document text, whole-page, for search — tier A's own output
+   * (`documents.parsed_text` in the design's migration D, not yet a real
+   * column; see `tesseract-parser.ts`'s module doc for the current landing
+   * spot pending that migration). `null` for a backend that produces no
+   * text at all (the manual-assisted backend, always) or when a backend
+   * recognized nothing. Deliberately separate from {@link lines}: tier A is
+   * "no boxes, no structure, no guesses" — a document's extracted text and
+   * its (still empty, this milestone) structured candidates are two
+   * different claims, and conflating them would make a document with
+   * searchable text but zero line items look like a parsing failure.
+   */
+  text: string | null;
   lines: ParseResultLine[];
   warnings: string[];
 }

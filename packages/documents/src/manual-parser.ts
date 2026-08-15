@@ -49,6 +49,7 @@ export const manualParser: ReceiptParser = {
       parsedAt: new Date(),
       currency: input.hints?.currency ?? null,
       documentTotal: input.hints?.expectedTotal ?? null,
+      text: null,
       lines: [],
       warnings: [
         "manual-assisted backend produces no automatic lines — transcribe the document by hand in the review screen. A hand-typed line reports confidence 1.0 because a human typed it.",
