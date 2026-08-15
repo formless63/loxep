@@ -14,6 +14,8 @@ This document designs the second generation of expense capture: a dedicated entr
 
 **The storage/search half (migration 0026), completed this pass.** `documents.parsed_text text null` plus `parsed_text_tsv tsvector generated always as to_tsvector('simple', coalesce(parsed_text,'')) stored`, plus a GIN index, landed exactly as this section's own DDL sketch specifies (`packages/db/migrations/0026_document_parsed_text_search.sql`) — drizzle-kit@0.31.10/drizzle-orm@0.45.2 emit the `GENERATED ALWAYS AS (...) STORED` DDL correctly from a `customType` `tsvector` column whose `.generatedAlwaysAs()` callback references the table's own `parsedText` column via closure (the column object does not exist until the enclosing `pgTable()` call returns, so the callback captures the exported table binding rather than a column reference passed in directly), so no hand-written fallback (the 0019 precedent) was needed. `documents.ts`'s `recordParseResult` now writes `parsed_text` in the same `update documents ...` statement that already sets `parser_id`/`parsed_at`. A `documents.extract-text` Graphile Worker task (`packages/app/src/documents-extraction.ts`, wrapping `runDocumentTextExtraction`) is registered in `registry.ts` and enqueued transactionally — in the SAME transaction that inserts the `documents` row — from `apps/web/src/server/documents-media.ts`'s `handleDocumentUpload`, reached through the existing `getFleetModule()` dynamic-import seam (no `apps/web` → `@loxep/app` static dependency). **The `@loxep/storage` gap closed in the same session, as a same-day follow-up.** `@loxep/app`'s `package.json` now declares `@loxep/storage` as a dependency, and `documents-extraction.ts`'s `createDefaultParserRegistry` builds a real `MediaService` the same way `apps/web/src/server/admin.ts`'s `getMediaService()` does (`createStorageBackendsService({ db, keyring })` then `createMediaService({ db, backends })`), so `registry.ts`'s composition now runs `ocr_tesseract` for real — an uploaded receipt image is actually OCR'd once an operator sets `documents.parser_id = "ocr_tesseract"`. A registry gap remains possible only in principle (a caller-supplied override, or a storage-layer failure resolving one specific media object/backend); both still degrade to a recorded `documents.status = 'failed'` plus a note rather than a crash or a silent no-op — see `documents-extraction.ts`'s own module doc. Proven end to end against real PostgreSQL and a real tesseract.js run: `packages/app/test/documents-extraction.test.ts` uploads `@loxep/documents`' own synthetic-receipt PNG fixture through a real `MediaService`, runs the task through the unmodified default registry, and asserts the recognized text lands in `parsed_text` and is found via `parsed_text_tsv`. The search surfaces (`/finance/import`'s `q` filter on the document queue, `/finance/expenses`' "search receipt text" `q` filter joining `media_links`/`media_objects`/`documents`, and the expense-detail `ts_headline` snippet gated on arriving from a search) all ship using `websearch_to_tsquery('simple', ...)`, matching `parsed_text_tsv`'s own config. The snippet is rendered WITHOUT `dangerouslySetInnerHTML` — `ts_headline` is asked for non-HTML match markers (the ASCII SOH/STX control characters) and the client splits on them and renders a real `<b>` element itself, since `parsed_text` is untrusted OCR output from an operator-uploaded document. Round-trip proven against real PostgreSQL: `packages/documents/test/documents.test.ts` (`recordParseResult` → `parsed_text` → `parsed_text_tsv @@ websearch_to_tsquery` finds a synthetic receipt's brand/model text) and `packages/app/test/documents-extraction.test.ts` (the same, through the real worker task); a live end-to-end check against the built app additionally confirmed the transactional enqueue and the real `documents.extract-text` task run on a genuine upload.
 
+**Status update: `M5` (OCR tier B — highlight overlay and drag-to-field) is IMPLEMENTED (loxep-cd3.5).** `document_line_candidates.source_region` is populated for the first time (`@loxep/documents`' `tsv-lines.ts` groups tesseract's `tsv` word rows into per-line boxes from the SAME `recognize()` call M4 already made; `source-region.ts` fixes the serialization format the "contradictions" section below flagged as unfixed). `<DocumentPreview>` gained an image-only `overlay` mode (percentage-of-natural-size boxes, no letterboxing, no pixel math), draggable via `@dnd-kit/core` (the sanctioned library; no hand-rolled `dataTransfer` handling), with an always-present "Detected lines" list as the keyboard/click floor. `/finance/expenses/new` wires drop targets for every header/line field (pure UI, stamps nothing) plus a separate "from a receipt" drop zone that pins a candidate-linked line; `createExpenseWithEvidence` now calls `confirmCandidatesAsExpense` for real (M3's own "no caller yet" is resolved), bumping a dropped candidate's `disposition`/`line_amount` and stamping it in the SAME transaction as the expense — never before, never outside it. `pdfjs-dist` was NOT added (a new `apps/web` dependency this pass's write fence does not authorize), so the PDF preview stays M2's iframe with no overlay — a recorded gap, not a silent one, and inert today since no backend produces PDF-line boxes either. See [its own milestone note](#milestones) for the full account, including the amount-extraction-on-drop rule and the e2e coverage against a real OCR run.
+
 **Status update: `M1` (trading partners as payees) is IMPLEMENTED (loxep-cd3.1).** Migrations 0023 (`counterparty_contacts.given_name`/`family_name`) and 0024 (`expenses.payee_counterparty_id`, FK `expenses_payee_counterparty_fk`, partial index) shipped. `@loxep/accounting`'s `ExpensesService.create`/`update` accept `payeeCounterpartyId` and always snapshot the resolved `display_name` into `payee_name` in the same write; a new `ExpensesService.linkPayee` deliberately bypasses the draft-only lock for the "link this payee" action, matching `reattributeDefaults`' own narrow-bypass precedent. The Invoice Ninja client push (`@loxep/integration-invoiceninja`) is widened to the full mapping table below, including two source-verified static id maps (`id-maps.ts`) and `mapCounterpartyContactForPush`'s given/family-name-with-fallback rule; `private_notes` stays opt-in per push (`pushDraftInvoice`'s `includePrivateNotes`, default `false`). The picker (`PayeeComboboxField`, `apps/web/src/features/finance/components/payee-combobox-field.tsx`) is mounted on the quick-entry dialog and wired to "link this payee" on expense detail — **not yet mounted on `/finance/expenses/new`**, which M2 shipped with the payee field "plain text pending M1's picker" per its own milestone note above; wiring the now-available picker into that page is the natural next step. One honest gap: `@loxep/counterparties` (the real domain service — `create`/`contacts.addContact`/`roles.grant`/`listByEntityRole`) is still not an `apps/web` dependency, so the picker's search and inline-create server functions (`@/server/trading-partner-functions.ts`) talk to `@loxep/db` directly with a small amount of intentionally-duplicated logic (reference-code generation, a lightweight name fold) — see that file's own module doc for the full account and why wiring the real dependency in is follow-up work, not this bead's.
 
 **This design is cross-cutting, not a phase.** Phase 9 is fully implemented; this is the pass that makes its expense surface usable by a human with four receipts and a phone, and it depends on no unshipped phase.
@@ -676,7 +678,7 @@ So the flow for a mixed receipt — three items to flip, plus packing tape, plus
                  whose own comment names this exact case
 ```
 
-`confirmCandidatesAsAcquisition` and `confirmCandidatesAsIntake` **do not exist**; Phase 9's M4 flagged their absence as one of three deliberately-unshipped pieces, blocked on an acquisition-lot picker. Building that picker is what makes the owner's fifth requirement — "line items logged so they relate and flow through to inventory" — actually true, and it is a child of this epic.
+**Status (M6, loxep-cd3.6): `confirmCandidatesAsAcquisition` is IMPLEMENTED**, closing the piece of Phase 9's M4 that was blocked on an acquisition-lot picker — see the milestone list below for the shape and what it left out. `confirmCandidatesAsIntake` (candidates becoming actual `inventory_items`, not cost rows) remains unbuilt.
 
 The weaker connection also stays available and is not the same thing: an expense line's cost can be *attributed* to a lot without being capitalized into its basis, through `expense_allocations.acquisition_id`. Gas to drive to the auction is the canonical case. That is business context, not cost basis, and Phase 9 already said so.
 
@@ -808,8 +810,8 @@ Applying [Phase 6's domain-to-package rule](../services-billing-schema-design/#o
 expense_lines                     @loxep/accounting        — it is expense data
 confirmCandidatesAsExpense        @loxep/accounting        — moved DOWN from apps/web,
                                                              see below
-confirmCandidatesAsAcquisition    @loxep/inventory         — new
-confirmCandidatesAsIntake         @loxep/inventory         — new
+confirmCandidatesAsAcquisition    @loxep/inventory         — IMPLEMENTED (loxep-cd3.6)
+confirmCandidatesAsIntake         @loxep/inventory         — still unbuilt
 counterparty_contacts columns     @loxep/counterparties    — existing service
 the OCR backend adapter           @loxep/documents         — it is a registered
                                                              ReceiptParser and nothing
@@ -942,7 +944,7 @@ Recorded for a human to resolve; this document does not fix them.
 
 1. **There is no ADR governing the Documents domain.** The never-auto-commit rule — arguably the strongest invariant in the codebase, with a test written specifically to prove it — lives only in an architecture design document's section 2b and in schema module comments. Every comparable rule (integration boundaries, order payload retention, notifiable events) has an ADR. *If this design's OCR tiers are accepted, the parse/confirm boundary is about to be crossed by machine-generated candidates for the first time, and that is the moment the rule should become an ADR of its own (take the next free number at the time — 0024 was claimed while this design was being written) rather than a section reference.*
 
-2. **`expenses.acquisition_cost_id` still has no writer.** Phase 9's OQ2 recommended reading it as a void-and-promote supersession pointer and Phase 5's milestone 4 gave it a reader, but nothing writes it. This design does not write it either — it has no promote path — so the contradiction survives another pass and should be closed by whoever builds the acquisition confirm path in section 4.
+2. **`expenses.acquisition_cost_id` still has no writer.** Phase 9's OQ2 recommended reading it as a void-and-promote supersession pointer and Phase 5's milestone 4 gave it a reader, but nothing writes it. M6 (loxep-cd3.6) built the acquisition confirm path this note names but deliberately did NOT take on the void-and-promote writer in the same pass (it has no promote path from an already-recorded expense; scoped out to keep the milestone to "receipt lines to inventory") — so the contradiction survives another pass, and closing it remains a follow-up.
 
 3. **Phase 9 section 1 says "no schema change is required for expense capture", and this design adds four migrations.** That statement was scoped to its own milestone and is true of it; read as a permanent rule it forbids exactly the work the owner has now asked for. This is the same conflation Phase 9 itself recorded about Phase 4's "no existing table gains a column", and the wording deserves the same fix in both places.
 
@@ -1034,17 +1036,191 @@ M4+ OCR tier A+ — the sidecar         no migration. Only if M4's measured accu
                                       opt-in Compose profile, registered as a second
                                       ReceiptParser. A setting, not a rewrite.
 
-M5  OCR tier B — drag to field        no migration. source_region populated for the
-                                      first time, the highlight overlay (pdfjs-dist
-                                      arrives here and only here), drag a line into
-                                      the lines list, drag a value into a field.
-                                      Depends on M2, M3, and M4.
+M5  OCR tier B — drag to field        IMPLEMENTED (loxep-cd3.5). no migration.
+                                      `document_line_candidates.source_region` is
+                                      populated for the first time: `tsv-lines.ts`
+                                      (`@loxep/documents`) groups tesseract's `tsv`
+                                      word rows by (page, block, par, line) into
+                                      per-line `ParseResultLine`s — description
+                                      verbatim, a bounding box from the union of the
+                                      line's words, confidence averaged — and
+                                      `tesseract-parser.ts`'s `parseImage` now
+                                      returns them instead of `lines: []`, from the
+                                      SAME `recognize()` call M4 already made (no
+                                      second OCR pass). `source-region.ts` fixes the
+                                      serialization format the design's own
+                                      "contradictions" section flagged as unfixed:
+                                      `{"page":1,"x":..,"y":..,"w":..,"h":..}`,
+                                      pixel-space in the source image, with a
+                                      strict Zod round-trip
+                                      (`serializeSourceRegion`/`parseSourceRegion`)
+                                      and its own unit suite. PDF stays `lines: []`
+                                      — `pdftotext` reports no per-line geometry, so
+                                      tier B does not extend to PDFs from this
+                                      backend.
 
-M6  Lines to inventory                no migration. confirmCandidatesAsAcquisition and
-                                      confirmCandidatesAsIntake in @loxep/inventory,
-                                      the acquisition-lot picker, the mixed-receipt
-                                      split. Closes Phase 9 M4's flagged gap and makes
-                                      requirement 5 true.
+                                      `<DocumentPreview>` (`apps/web/src/components/
+                                      document-preview.tsx`) gained an `overlay`
+                                      mode for `image/*` documents: boxes positioned
+                                      as PERCENTAGES of the rendered image's natural
+                                      size (the image renders `w-full h-auto`, no
+                                      `object-fit: contain` letterboxing, so a
+                                      percentage of natural size IS the source-to-
+                                      rendered ratio — no manual pixel math or
+                                      resize listener needed), hover-synced with an
+                                      always-present "Detected lines" list (the
+                                      keyboard/click floor — see below), and a
+                                      per-line `@dnd-kit/core` `useDraggable`
+                                      (`PointerSensor` + `KeyboardSensor`,
+                                      `apps/web/src/features/finance/components/
+                                      document-line-dnd.tsx`) — the sanctioned drag
+                                      library per this milestone's own DND rule, no
+                                      hand-rolled `DragEvent`/`dataTransfer`
+                                      anywhere. `pdfjs-dist` was NOT added: it needs
+                                      a new `apps/web/package.json` dependency,
+                                      which this pass's write fence does not
+                                      authorize, so the PDF overlay stays exactly
+                                      the M2 iframe with its own honest "no overlay
+                                      here" caption — a recorded gap, not a silent
+                                      one, and it costs nothing today because no PDF
+                                      backend produces boxes either.
+
+                                      Drop targets, per the design's "drag a line
+                                      into LINES, or a value into a field" split:
+                                      `/finance/expenses/new` wraps payee
+                                      name/amount/category and every line-item
+                                      description/amount subfield in a
+                                      `DocumentLineDropTarget` (pure UI — a drop
+                                      just calls `field.handleChange`, stamping
+                                      nothing), plus a SEPARATE "from a receipt"
+                                      drop zone in the Line items card that adds a
+                                      candidate-linked pinned line
+                                      (`createExpenseWithEvidence`'s new
+                                      `droppedLines` input). The keyboard/click
+                                      equivalent (accessibility floor) is a "Use…"
+                                      menu per detected line — "Add to line items" /
+                                      "Fill payee name" / "Fill amount" / "Fill
+                                      category" — calling the SAME handlers a drop
+                                      calls, so nothing reachable by mouse is
+                                      unreachable by keyboard.
+                                      `document-review-panel.tsx` mounts the SAME
+                                      overlay component read-only (no drop target of
+                                      its own — that panel's confirm mechanism is
+                                      already the disposition `Select` + batch
+                                      "Confirm as..." actions), so the two flows
+                                      share one presentation mechanism even though
+                                      only one of them needed a drop target.
+
+                                      Amount parsing on drop is PROVISIONAL and
+                                      client-side only, per the design's own
+                                      tier-B/tier-C boundary: `extractProvisionalAmount`
+                                      (`document-line-dnd.tsx`) takes the RIGHTMOST
+                                      decimal token in the dragged line's text
+                                      (`"TAPE 2 @ 3.99 7.98"` -> `"7.98"`) — not
+                                      specified by the design, stated as a rule
+                                      here because it needed one. A pinned line's
+                                      amount is an editable input, not a stamped
+                                      value, and an empty one blocks Save with a
+                                      toast rather than defaulting to a guess.
+
+                                      **The stamp still happens only at Save, inside
+                                      the expense's own transaction, exactly as
+                                      designed.** `createExpenseWithEvidence`
+                                      (`apps/web/src/server/expense-functions.ts`)
+                                      is the M3 status note's own "no caller yet" —
+                                      now wired: for each dropped line, it bumps
+                                      the candidate's `disposition` to `expense`
+                                      (only if not already `expense`/`supplies`)
+                                      and fills `line_amount` (only if still null)
+                                      via the same raw-SQL pattern `documents-
+                                      functions.ts` already uses for this table,
+                                      THEN calls `@loxep/accounting`'s
+                                      `confirmCandidatesAsExpense` — the identical
+                                      function `/finance/import`'s flow 1 calls —
+                                      grouped by document, inside the SAME
+                                      transaction that creates the expense.
+                                      Abandoning the page without saving leaves
+                                      every candidate `pending`, exactly as
+                                      designed, because nothing was written.
+
+                                      Tests: `packages/documents/test/tsv-lines.test.ts`
+                                      and `source-region.test.ts` (unit,
+                                      hand-built tsv fixtures plus the
+                                      serialization round-trip),
+                                      `tesseract-parser.test.ts` extended with a
+                                      real-tsv wiring test and updated real-OCR
+                                      assertions (lines now non-empty, each with a
+                                      `sourceRegion`). `apps/web/e2e/
+                                      document-line-drag.spec.ts` runs against the
+                                      REAL pipeline (real tesseract.js, the
+                                      harness's own worker process): one test
+                                      proves a genuine OCR run renders "Detected
+                                      lines"; a second drags a real overlay box
+                                      (`@dnd-kit`'s `PointerSensor` listens on
+                                      native `pointerdown`/`pointermove`, so this
+                                      drives `page.mouse` — dnd-kit is not HTML5
+                                      `dataTransfer` DnD, so `dispatchEvent`-based
+                                      simulation does not apply here) onto a
+                                      line-item description field and asserts the
+                                      value landed, still on `/finance/expenses/new`
+                                      (nothing confirmed by the drop). Enabling
+                                      `ocr_tesseract` in the harness reuses the
+                                      generic `/settings/application` registered-
+                                      setting editor `settings.spec.ts` already
+                                      proves works — no dedicated Documents settings
+                                      page exists yet, which is itself worth
+                                      recording as a gap for a later pass.
+                                      Depends on M2, M3, and M4 — all shipped.
+
+M6  Lines to inventory                IMPLEMENTED (loxep-cd3.6). no migration.
+                                      confirmCandidatesAsAcquisition in @loxep/inventory
+                                      (packages/inventory/src/confirm.ts), mirroring M3's
+                                      confirmCandidatesAsExpense shape exactly: one
+                                      transaction covering the acquisition (new draft or
+                                      an EXISTING one via the lot picker), acquisition_costs
+                                      (description -> description, line_amount -> amount,
+                                      cost_class 'goods', capitalize true — no freight-
+                                      splitting policy invented, per OQ9), the document's
+                                      evidence attached as media_links(acquisition,
+                                      'invoice') — the first writer of that value — the
+                                      candidate stamped target_kind='acquisition' (not
+                                      'acquisition_cost': acquisition_costs carries no
+                                      document_line_candidate_id column, so the stamp
+                                      points at the record an operator can navigate to,
+                                      mirroring confirmCandidatesAsExpense's target_id =
+                                      expense.id, never a line id), counters recomputed,
+                                      document_confirmed emitted, and a required
+                                      actorUserId. Same dependency workaround as M3's
+                                      confirm.ts: @loxep/inventory does not depend on
+                                      @loxep/documents, so document_line_candidates
+                                      stamping/counter/event plumbing is reproduced
+                                      locally rather than imported. The review panel
+                                      (document-review-panel.tsx) opens an
+                                      acquisition-lot picker (acquisition-lot-picker.tsx —
+                                      existing-lot search plus a create-new-draft inline
+                                      form, the PayeeComboboxField inline-create
+                                      precedent) the first time an operator dispositions a
+                                      line acquisition_cost/inventory_intake, and a
+                                      "Confirm as acquisition" action runs ALONGSIDE
+                                      "Confirm as expense" — a mixed receipt (three items
+                                      to flip, packing tape, tax) runs both actions against
+                                      the SAME document rather than one call that mixes
+                                      dispositions; each confirm stays homogeneous to its
+                                      own target. The candidates-table's disposition
+                                      Select no longer says "not yet confirmable here" for
+                                      these two dispositions.
+
+                                      NOT built this pass, both flagged rather than
+                                      silently skipped: confirmCandidatesAsIntake (the
+                                      candidate -> `inventory_items` path — turning a
+                                      confirmed acquisition_costs line into an actual,
+                                      physical stock row — as distinct from the cost-row
+                                      write this milestone ships; the existing manual
+                                      "add item to this lot" + intake-review flow remains
+                                      the only way to mint inventory_items today) and
+                                      expenses.acquisition_cost_id's void-and-promote
+                                      writer (still the contradiction section 4 recorded:
+                                      a shipped FK with no writer anywhere).
 ```
 
 M1 and M2 are independent of each other and of the OCR question entirely, which is what makes this design cheap to start and safe to stop.

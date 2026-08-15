@@ -64,7 +64,7 @@ These were researched for a companion-integration design but nothing has been bu
 | Alexandrie | no — watch-tier: no published API endpoint documentation found despite MIT license and RustFS-native storage fit | no | none | n/a | none | none |
 | Databasus | no — guidance-doc concept only | no | none | n/a | none | `loxep-7kt` (backup deployment guide; its evidence webhook rides `loxep-ovj.7`) |
 | Backrest / restic | no — guidance-doc concept only | no | none | n/a | none | `loxep-7kt` |
-| Pangolin | no — reserved task name only (`infrastructure.sync-proxy-resource`, `hosting_targets.proxy_connection_id`); no `@loxep/integration-pangolin` package exists | no | none | n/a | none | none currently open |
+| Pangolin | no — reserved task name only (`infrastructure.sync-proxy-resource`, `hosting_targets.proxy_connection_id`); no `@loxep/integration-pangolin` package exists. **Designed 2026-08-15** in [Pangolin Integration & Chain-Provisioning Templates](../../architecture/pangolin-chain-design/), including the API verdict against the live OpenAPI spec and an OWNER-REVIEW-CRITICAL write-authorization model | no | none | n/a | none | `loxep-acj` (epic, M1–M7) |
 
 ## Notes on cells that might look wrong but aren't
 
