@@ -57,7 +57,9 @@ function ReceiptCell({ count }: { count: number }) {
 }
 
 export function createColumns(
-  entities: EntityDto[]
+  entities: EntityDto[],
+  /** The active "search receipt text" term, if any — carried onto the detail link's `q` search param so the receipt-gallery snippet can render on arrival (design section 5). */
+  q?: string
 ): ColumnDef<DataTableFeatures, ExpenseListItemDto>[] {
   const entitiesById = new Map(entities.map((entity) => [entity.id, entity.name]));
   const entityOptions = [
@@ -86,6 +88,7 @@ export function createColumns(
         <Link
           to='/finance/expenses/$id'
           params={{ id: row.original.id }}
+          search={q ? { q } : undefined}
           className='font-medium hover:underline'
         >
           {row.original.referenceCode}

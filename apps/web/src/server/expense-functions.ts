@@ -31,6 +31,11 @@ function iso(date: Date | null | undefined): string | null {
   return date ? date.toISOString() : null;
 }
 
+/** Standard single-quoted SQL text literal, embedded quotes doubled — mirrors `@/server/documents-functions.ts`'s own helper. */
+function textLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 const calendarDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a calendar date as YYYY-MM-DD');
@@ -116,14 +121,50 @@ const expenseFilterInput = z.strictObject({
   from: calendarDate.optional(),
   to: calendarDate.optional(),
   category: z.string().trim().min(1).optional(),
-  statuses: z.array(z.enum(EXPENSE_STATUS_VALUES)).optional()
+  statuses: z.array(z.enum(EXPENSE_STATUS_VALUES)).optional(),
+  /**
+   * "Search receipt text" (design section 5, "What surfaces search it") —
+   * deliberately separate from `category`/`payeeName`-style field filters: a
+   * match here is a match inside an ATTACHED RECEIPT's extracted text, not a
+   * match on the expense's own recorded fields. Applied as a POST-filter
+   * below rather than inside `@loxep/accounting`'s `listExpenses` (that
+   * service owns no join to `documents` and this change's write fence does
+   * not extend into `packages/accounting`) — the join runs first, against
+   * `media_links`/`media_objects`/`documents` directly, and its matched
+   * expense-id set narrows the service's own (entity/date/category/status)
+   * result.
+   */
+  q: z.string().trim().min(1).nullish()
 });
+
+/**
+ * The expense ids whose attached receipt text matches `q` — the same join
+ * the design's "How an expense's receipts are searched" section names:
+ * `expenses -> media_links (resource_type='expense') -> media_objects ->
+ * documents.parsed_text_tsv`. `media_links.resource_id` is stored as
+ * `expenses.id::text` (the design's own words), so the comparison is a text
+ * one throughout.
+ */
+async function matchingExpenseIdsForReceiptText(q: string): Promise<Set<string>> {
+  const { getAdminServices } = await import('@/server/admin');
+  const { handle } = getAdminServices();
+  const result = await handle.db.execute(
+    `select distinct ml.resource_id as expense_id
+       from media_links ml
+       join media_objects mo on mo.id = ml.media_object_id
+       join documents d on d.media_object_id = mo.id
+      where ml.resource_type = 'expense'
+        and d.parsed_text_tsv @@ websearch_to_tsquery('simple', ${textLiteral(q)})`
+  );
+  return new Set(result.rows.map((row) => row['expense_id'] as string));
+}
 
 export const fetchExpenses = createServerFn({ method: 'GET' })
   .inputValidator(expenseFilterInput)
   .handler(async ({ data }): Promise<ExpenseListItemDto[]> => {
     const { requireSession, getExpenseReports } = await import('@/server/admin');
     await requireSession();
+    const matchingReceiptTextIds = data.q ? await matchingExpenseIdsForReceiptText(data.q) : null;
     const rows = await getExpenseReports().listExpenses({
       ...(data.economicEntityId !== undefined ? { economicEntityId: data.economicEntityId } : {}),
       ...(data.from !== undefined ? { from: data.from } : {}),
@@ -132,7 +173,11 @@ export const fetchExpenses = createServerFn({ method: 'GET' })
       ...(data.statuses !== undefined ? { statuses: data.statuses } : {}),
       limit: EXPENSE_LIST_LIMIT
     });
-    return rows.map((row) => ({
+    const filtered =
+      matchingReceiptTextIds === null
+        ? rows
+        : rows.filter((row) => matchingReceiptTextIds.has(row.expenseId));
+    return filtered.map((row) => ({
       id: row.expenseId,
       referenceCode: row.referenceCode,
       expenseDate: row.expenseDate,
@@ -175,6 +220,26 @@ export interface ReceiptDto {
    * for the full trap. `null` when the object's purpose has no known route.
    */
   servingUrl: string | null;
+  /**
+   * The attached media object's own `documents` row, when one exists (a
+   * receipt uploaded through the OLD `POST /api/expenses/receipt` route, or
+   * one confirmed before OCR was ever enabled on this installation, has
+   * none — design section 5's "text exists forward, not retroactively").
+   * `null` end to end (`textExtractedAt`/`wordCount`/`snippet`) means
+   * "nothing to show", never "the receipt has no text" — those are
+   * different claims and the UI must not conflate them.
+   */
+  textExtractedAt: string | null;
+  wordCount: number | null;
+  /**
+   * `ts_headline('simple', ...)` around the FIRST match of `fetchExpense`'s
+   * own `q` argument — populated ONLY when the caller arrived from a search
+   * (design: "the matched snippet highlighted via ts_headline when arriving
+   * from a search"). `null` with no `q`, and `null` when `q` was given but
+   * this receipt's text does not actually match it. Never the raw
+   * `parsedText` dump — see this module's own doc.
+   */
+  snippet: string | null;
 }
 
 /**
@@ -251,8 +316,76 @@ export interface ExpenseDetailDto {
   lineSummary: ExpenseLinesSummaryDto;
 }
 
+/**
+ * `ts_headline`'s match markers, deliberately NOT `<b>`/`</b>` (its own
+ * default). `parsed_text` is OCR/PDF-extracted text from an
+ * OPERATOR-UPLOADED document, so it is untrusted content as far as HTML
+ * rendering is concerned — a crafted image could plausibly print something
+ * that looks like a tag. `SNIPPET_MATCH_START`/`SNIPPET_MATCH_STOP` are the
+ * ASCII SOH/STX control characters (0x01/0x02) — never produced by OCR/PDF
+ * text extraction, never meaningful in ordinary text. The client
+ * (`receipt-gallery.tsx`'s `renderSnippet`) splits the returned string on
+ * them and renders each side as plain React text (escaped by React itself)
+ * with a real `<b>` element for the matched span — no
+ * `dangerouslySetInnerHTML` anywhere in this path.
+ */
+export const SNIPPET_MATCH_START = '';
+export const SNIPPET_MATCH_STOP = '';
+
+/**
+ * `documents.parsed_text`/`parsed_at` for one media object, plus a derived
+ * word count and (only when `q` is given AND the text actually matches) a
+ * `ts_headline` snippet. Word count is a plain whitespace split — good
+ * enough for "412 words" as an orientation figure, not a claim of exact
+ * tokenization. Returns all-nulls when no `documents` row references this
+ * media object at all, or when one does but `parsed_text` is still null
+ * (not yet parsed, or the `manual` backend).
+ */
+async function fetchDocumentTextInfo(
+  mediaObjectId: string,
+  q: string | null
+): Promise<Pick<ReceiptDto, 'textExtractedAt' | 'wordCount' | 'snippet'>> {
+  const { getAdminServices } = await import('@/server/admin');
+  const { handle } = getAdminServices();
+  // The query text is validated non-empty by `fetchExpense`'s own Zod
+  // schema before it ever reaches here; `snippetClause` computes the
+  // tsquery once and reuses it, rather than repeating the literal three
+  // times in one statement.
+  const snippetClause = q
+    ? `case when parsed_text is not null
+              and parsed_text_tsv @@ websearch_to_tsquery('simple', ${textLiteral(q)})
+            then ts_headline('simple', parsed_text,
+                   websearch_to_tsquery('simple', ${textLiteral(q)}),
+                   ${textLiteral(
+                     `MaxFragments=1, MinWords=15, MaxWords=40, StartSel=${SNIPPET_MATCH_START}, StopSel=${SNIPPET_MATCH_STOP}`
+                   )})
+            else null
+       end`
+    : 'null';
+  const result = await handle.db.execute(
+    `select parsed_text, parsed_at, ${snippetClause} as snippet
+       from documents
+      where media_object_id = ${textLiteral(mediaObjectId)}
+      limit 1`
+  );
+  const row = result.rows[0];
+  if (row === undefined) return { textExtractedAt: null, wordCount: null, snippet: null };
+  const parsedText = row['parsed_text'] as string | null;
+  const parsedAt = row['parsed_at'] as string | null;
+  return {
+    textExtractedAt: parsedAt ? iso(new Date(parsedAt)) : null,
+    wordCount:
+      parsedText === null
+        ? null
+        : parsedText.trim().length > 0
+          ? parsedText.trim().split(/\s+/).length
+          : 0,
+    snippet: (row['snippet'] as string | null) ?? null
+  };
+}
+
 export const fetchExpense = createServerFn({ method: 'GET' })
-  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .inputValidator(z.strictObject({ id: z.uuid(), q: z.string().trim().min(1).nullish() }))
   .handler(async ({ data }): Promise<ExpenseDetailDto> => {
     const {
       requireSession,
@@ -301,7 +434,10 @@ export const fetchExpense = createServerFn({ method: 'GET' })
     const links = await receiptsService.list(data.id);
     const receipts = await Promise.all(
       links.map(async (link): Promise<ReceiptDto> => {
-        const mediaObject = await mediaService.getMediaObject(link.mediaObjectId);
+        const [mediaObject, textInfo] = await Promise.all([
+          mediaService.getMediaObject(link.mediaObjectId),
+          fetchDocumentTextInfo(link.mediaObjectId, data.q ?? null)
+        ]);
         return {
           mediaObjectId: link.mediaObjectId,
           purpose: link.purpose,
@@ -310,7 +446,8 @@ export const fetchExpense = createServerFn({ method: 'GET' })
           mimeType: mediaObject.mimeType,
           sizeBytes: mediaObject.sizeBytes,
           createdAt: iso(link.createdAt),
-          servingUrl: servingUrlFor(mediaObjectPurpose(mediaObject.metadata), link.mediaObjectId)
+          servingUrl: servingUrlFor(mediaObjectPurpose(mediaObject.metadata), link.mediaObjectId),
+          ...textInfo
         };
       })
     );

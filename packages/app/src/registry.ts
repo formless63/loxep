@@ -21,6 +21,7 @@
  * | `inventory.sync-ebay-purchases` | @loxep/app (mechanics in @loxep/inventory) | on-demand eBay purchase-history sync for one connection |
  * | `infrastructure.sync-token-policy` | @loxep/app (mechanics in @loxep/infrastructure) | Phase 7 m3 DNS-token zone-scope policy rebuild (on-demand, scope-change-triggered) |
  * | `integration-health.project-ingest-evidence` | @loxep/app | Phase 8 m7 fleet evidence webhook projection into integration_health (on-demand) |
+ * | `documents.extract-text` | @loxep/app (mechanics in @loxep/documents) | loxep-cd3.4 M4 OCR tier A text extraction, enqueued transactionally at upload (on-demand) |
  *
  * `infrastructure.sync-proxy-resource` (Phase 7 m3's OTHER reserved task
  * name, `@loxep/infrastructure`'s `tasks.ts`) is DELIBERATELY NOT registered
@@ -211,6 +212,7 @@ import {
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
 import { createAccountingPostFactsTasks } from "./accounting-posting.ts";
+import { createDocumentsExtractionTasks } from "./documents-extraction.ts";
 import { createFleetEvidenceTasks } from "./fleet-evidence.ts";
 import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
@@ -565,6 +567,21 @@ export function buildWorkerRegistry(
   // `infrastructure.sync-token-policy`'s shape.
   const fleetEvidence = createFleetEvidenceTasks({ services });
 
+  // --- documents text extraction (loxep-cd3.4 M4) ------------------------
+  // One on-demand task, no cron item, enqueued transactionally by
+  // `apps/web/src/server/documents-media.ts`'s `handleDocumentUpload` in the
+  // same transaction that inserts the `documents` row — the same
+  // "enqueue inside the write that creates the fact" shape as
+  // `infrastructureTokens`/`fleetEvidence` above. `createDocumentsExtractionTasks`'s
+  // default parser registry (no override passed here) carries BOTH
+  // `manualParser` and `ocr_tesseract` — the latter's media reads bound to a
+  // real `MediaService`, built the same way `apps/web`'s `getMediaService()`
+  // is (`documents-extraction.ts`'s own module doc). See that module's doc
+  // for why a structural extraction failure (an unregistered parser id, or a
+  // storage-layer failure resolving a media object) is recorded on the
+  // `documents` row rather than rethrown.
+  const documentsExtraction = createDocumentsExtractionTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
@@ -579,6 +596,7 @@ export function buildWorkerRegistry(
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,
     ...fleetEvidence.tasks,
+    documentsExtraction.extractTextTask,
   ]);
 
   return {

@@ -19,6 +19,8 @@ export interface ExpenseFilterParams {
   statuses?: ExpenseStatus[];
   from?: string;
   to?: string;
+  /** "Search receipt text" — see `fetchExpenses`'s own doc; distinct from every field filter above. */
+  q?: string | null;
 }
 
 export const expensesQuery = (filter: ExpenseFilterParams) =>
@@ -27,10 +29,16 @@ export const expensesQuery = (filter: ExpenseFilterParams) =>
     queryFn: () => fetchExpenses({ data: filter })
   });
 
-export const expenseQuery = (id: string) =>
+/**
+ * `q`, when given, both filters `/finance/expenses`'s own list (via
+ * `expensesQuery`) AND is forwarded to the detail fetch so a snippet can
+ * render on arrival from a search — see `fetchExpense`'s own doc for why the
+ * snippet is arrival-gated rather than always computed.
+ */
+export const expenseQuery = (id: string, q?: string | null) =>
   queryOptions({
-    queryKey: ['finance', 'expense', id],
-    queryFn: () => fetchExpense({ data: { id } })
+    queryKey: ['finance', 'expense', id, q ?? null],
+    queryFn: () => fetchExpense({ data: { id, q: q ?? null } })
   });
 
 export const missingReceiptsQuery = queryOptions({

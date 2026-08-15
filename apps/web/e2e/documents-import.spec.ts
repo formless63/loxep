@@ -145,6 +145,28 @@ test('CSV import: upload, map, preview, stage, and confirm a row into a recorded
   await expect(expenseRow.getByText('Recorded')).toBeVisible();
 });
 
+test('search receipt text: the filter renders and gives an honest empty state for a non-matching query', async ({
+  page
+}) => {
+  // Cheap render/empty-state check (loxep-cd3.4 M4) — NOT an OCR round-trip:
+  // this harness's worker runs with `documents.parser_id` at its shipped
+  // default ('manual'), which never produces text, so no document in this
+  // environment has anything a real match could ever prove. The round-trip
+  // (extraction -> parsed_text -> tsvector match) is covered against real
+  // PostgreSQL in `packages/documents/test/documents.test.ts` and
+  // `packages/app/test/documents-extraction.test.ts` instead.
+  await page.goto('/finance/import');
+  await expect(page.getByRole('heading', { name: 'Import' })).toBeVisible();
+
+  const searchInput = page.getByLabel('Search receipt text');
+  await expect(searchInput).toBeVisible();
+
+  const needle = `no-such-phrase-${runId}`;
+  await searchInput.fill(needle);
+  await expect(page.getByText('No matches for', { exact: false })).toBeVisible();
+  await expect(page.getByText(needle, { exact: false })).toBeVisible();
+});
+
 test('a document with no confirmed lines can be discarded', async ({ page }) => {
   await ensureStorageBackend(page);
 

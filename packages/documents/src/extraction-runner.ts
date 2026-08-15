@@ -36,21 +36,18 @@
  * delivery for a job enqueued against a document that later changed shape
  * must not fail loudly for something that isn't actually wrong.
  *
- * ## The text is extracted, not yet stored
+ * ## The text is extracted AND stored (migration 0026, loxep-cd3.4 M4 follow-up)
  *
- * `result.text` — the OCR/PDF-text-layer output — is NOT persisted by this
- * run. `documents.parsed_text` (migration D) does not exist yet (verified
- * against `packages/db/src/schema/documents.ts`). Once it lands, the one
- * change this module needs is a single additional assignment inside
- * `documents.ts`'s `recordParseResult` transaction:
- *
- * ```sql
- * update documents set parsed_text = coalesce(<text literal>, parsed_text), ...
- * ```
- *
- * added to the same `update documents ...` statement that already sets
- * `parser_id`/`parsed_at`/`currency`/`document_total` there — this module's
- * return value already carries `text` for that follow-up to consume.
+ * `result.text` — the OCR/PDF-text-layer output — is persisted via
+ * `DocumentsService.recordParseResult`'s `update documents set parsed_text =
+ * coalesce(<text literal>, parsed_text), ...` (`documents.ts`), the same
+ * statement that already sets `parser_id`/`parsed_at`/`currency`/
+ * `document_total`. `documents.parsed_text_tsv` (a `GENERATED ALWAYS AS ...
+ * STORED` `tsvector`) is computed by PostgreSQL from that write — nothing in
+ * this package or its caller ever writes it directly. Registration into a
+ * running worker (a `defineTask` wrapper, `packages/app/src/
+ * documents-extraction.ts`) followed once `@loxep/app` and `apps/web` both
+ * declared `@loxep/documents` as a dependency.
  */
 import { z } from "zod";
 import { PARSEABLE_DOCUMENT_KINDS } from "./parser.ts";

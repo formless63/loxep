@@ -1,0 +1,49 @@
+-- Expense redesign M4 (loxep-cd3.4), migration D — `documents.parsed_text` /
+-- `parsed_text_tsv`. Physical realization of
+-- `apps/docs/src/content/docs/architecture/expense-entry-design.md` section
+-- 5 ("Search: where extracted text lives"), and the exact DDL recorded in
+-- loxep-cd3.4's own notes.
+--
+-- `parsed_text` is nullable `text` — null until a text-producing parser runs
+-- (`@loxep/documents`'s `ocr_tesseract`/`tesseract-parser.ts`, or the
+-- `pdftotext` existing-PDF-text-layer path), and forever null for a document
+-- whose `parser_id` is `'manual'` (the manual-assisted backend never
+-- produces text) or one uploaded before OCR was ever enabled on this
+-- installation — "text exists forward, not retroactively" (design section 5).
+--
+-- `parsed_text_tsv` is `GENERATED ALWAYS AS
+-- to_tsvector('simple', coalesce(parsed_text, '')) STORED`, not
+-- trigger-maintained: `to_tsvector` with a literal config argument is
+-- `IMMUTABLE`, which is what a generated column requires, and a generated
+-- column cannot drift from its source the way a trigger-maintained one can.
+-- `'simple'`, deliberately not `'english'` — OCR output from a receipt is
+-- brand names, model numbers, street names, and amounts, not prose;
+-- stemming/stopword removal would discard exactly the tokens an operator
+-- searches for, and the config is baked into a stored generated column where
+-- changing it later is a migration on a table with rows (design OQ7).
+--
+-- GIN index on `parsed_text_tsv` — the only sane index method for a
+-- `tsvector` column, and what every `websearch_to_tsquery('simple', :q)`
+-- search on `/finance/import` and `/finance/expenses` reads.
+--
+-- No `documents.expense_id` shortcut anywhere near this: the media object
+-- already joins a document to the expense that references it
+-- (`expenses -> media_links -> media_objects -> documents`), and duplicating
+-- that path here would create a second truth a detached receipt could
+-- falsify — see the design's "How an expense's receipts are searched"
+-- section.
+--
+-- Drizzle-generated: `bun --cwd packages/db generate` emitted this from the
+-- `parsedText`/`parsedTextTsv`/GIN-index additions to `documents` in
+-- `packages/db/src/schema/documents.ts` — nothing hand-written. Verified
+-- against drizzle-orm@0.45.2/drizzle-kit@0.31.10: `customType<{ data: string
+-- }>({ dataType: () => "tsvector" })` plus `.generatedAlwaysAs((): SQL =>
+-- sql`to_tsvector('simple', coalesce(${documents.parsedText}, ''))`)`
+-- (referencing the table's own column via closure, since the column object
+-- does not exist until the enclosing `pgTable()` call returns) is enough for
+-- drizzle-kit to emit the exact `GENERATED ALWAYS AS (...) STORED` DDL the
+-- design's own migration-D sketch specifies — no fallback to hand-written
+-- SQL was needed, unlike the 0019 precedent.
+ALTER TABLE "documents" ADD COLUMN "parsed_text" text;--> statement-breakpoint
+ALTER TABLE "documents" ADD COLUMN "parsed_text_tsv" "tsvector" GENERATED ALWAYS AS (to_tsvector('simple', coalesce("documents"."parsed_text", ''))) STORED;--> statement-breakpoint
+CREATE INDEX "documents_parsed_text_tsv_idx" ON "documents" USING gin ("parsed_text_tsv");

@@ -351,6 +351,23 @@ export type {
   VerifyFleetIngestTokenResult,
 } from "./fleet-evidence.ts";
 
+export {
+  DOCUMENTS_EXTRACT_TEXT_TASK_NAME,
+  createDefaultParserRegistry,
+  createDocumentsExtractionTasks,
+  documentsExtractTextJobKey,
+  enqueueDocumentTextExtraction,
+  runDocumentsExtractTextJob,
+} from "./documents-extraction.ts";
+export type {
+  CreateDocumentsExtractionTasksOptions,
+  DocumentsExtractionTasks,
+  DocumentsExtractTextEnqueueExecutor,
+  DocumentsExtractTextPayload,
+  DocumentsExtractTextResult,
+  DocumentsExtractTextTask,
+} from "./documents-extraction.ts";
+
 export { buildCronItems, buildWorkerRegistry } from "./registry.ts";
 export type {
   BuildWorkerRegistryOptions,

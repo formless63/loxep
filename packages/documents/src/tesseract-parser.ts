@@ -27,20 +27,15 @@
  * consume them. `RecognizeRawOutput` on {@link TesseractParseExtras} is the
  * seam M5 reads from; nothing else does.
  *
- * ## `documents.parsed_text` does not exist yet
+ * ## `documents.parsed_text` (migration 0026)
  *
- * Migration D (the design's own numbering; the next free number at
- * implementation time) — `documents.parsed_text text null`,
- * `parsed_text_tsv tsvector generated always as
- * to_tsvector('simple', coalesce(parsed_text,'')) stored`, plus a GIN index
- * — has NOT landed as of this backend's implementation (verified against
- * `packages/db/src/schema/documents.ts`, which still documents "No
- * `parsed_text` column" as deliberate). This module produces
- * {@link ParseResult.text} regardless — the extraction is real and
- * complete — but nothing in `@loxep/documents` yet persists it, because
- * `documents.ts`'s `recordParseResult` cannot write a column that does not
- * exist. `extraction-runner.ts` documents the exact one-line SQL addition a
- * follow-up pass needs once the migration lands.
+ * `documents.parsed_text text null`, `parsed_text_tsv tsvector generated
+ * always as to_tsvector('simple', coalesce(parsed_text,'')) stored`, plus a
+ * GIN index — landed in migration 0026
+ * (`packages/db/migrations/0026_document_parsed_text_search.sql`). This
+ * module's {@link ParseResult.text} is persisted through
+ * `documents.ts`'s `recordParseResult` — see `extraction-runner.ts`'s module
+ * doc.
  *
  * ## Operational bindings (each worth more than a point of accuracy)
  *

@@ -215,8 +215,15 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
-  const { data, isPending, isError, error, refetch } = useQuery(expenseQuery(expenseId));
+export default function ExpenseDetail({
+  expenseId,
+  q = null
+}: {
+  expenseId: string;
+  /** Forwarded to `fetchExpense` — see `expenseQuery`'s own doc; drives the receipt-gallery snippet only. */
+  q?: string | null;
+}) {
+  const { data, isPending, isError, error, refetch } = useQuery(expenseQuery(expenseId, q));
   const { data: entities } = useQuery(entitiesQuery);
   const queryClient = useQueryClient();
 

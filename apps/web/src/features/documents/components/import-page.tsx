@@ -9,6 +9,7 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
@@ -26,7 +27,9 @@ import DocumentReviewPanel from './document-review-panel';
  */
 export default function ImportPage() {
   const [activeDocumentId, setActiveDocumentId] = React.useState<string | null>(null);
-  const { data: queue, isPending } = useQuery(documentQueueQuery);
+  const [search, setSearch] = React.useState('');
+  const trimmedSearch = search.trim();
+  const { data: queue, isPending } = useQuery(documentQueueQuery(trimmedSearch));
 
   if (activeDocumentId) {
     return (
@@ -56,7 +59,30 @@ export default function ImportPage() {
       </Tabs>
 
       <div className='space-y-3'>
-        <h2 className='text-lg font-semibold'>Awaiting review</h2>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <h2 className='text-lg font-semibold'>Awaiting review</h2>
+          <div className='relative w-full max-w-xs'>
+            <Icons.search
+              className='text-muted-foreground/70 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2'
+              aria-hidden='true'
+            />
+            <Input
+              type='search'
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder='Search receipt text (e.g. a brand, model, or store name)'
+              className='pl-9'
+              aria-label='Search receipt text'
+            />
+          </div>
+        </div>
+        {trimmedSearch.length > 0 ? (
+          <p className='text-muted-foreground text-xs'>
+            Searching extracted receipt/invoice text. Only documents processed since text extraction
+            was enabled on this installation are searchable — an older or unprocessed document will
+            not match even if the phrase is on the page.
+          </p>
+        ) : null}
         {isPending ? (
           <Skeleton className='h-24 w-full' />
         ) : queue && queue.length > 0 ? (
@@ -82,6 +108,20 @@ export default function ImportPage() {
               </button>
             ))}
           </div>
+        ) : trimmedSearch.length > 0 ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant='icon'>
+                <Icons.search />
+              </EmptyMedia>
+              <EmptyTitle>No matches for &ldquo;{trimmedSearch}&rdquo;</EmptyTitle>
+              <EmptyDescription>
+                No document awaiting review has extracted text matching that search. This does not
+                mean the phrase is absent from a receipt — only processed documents are searchable
+                (see the note above).
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <Empty>
             <EmptyHeader>

@@ -13,10 +13,45 @@ import {
 import { Icons } from '@/components/icons';
 import { formatBytes, formatDateTime } from '@/lib/format';
 import { toastError } from '@/lib/errors';
-import { detachReceipt } from '@/server/expense-functions';
+import { SNIPPET_MATCH_START, SNIPPET_MATCH_STOP, detachReceipt } from '@/server/expense-functions';
 import type { ReceiptDto } from '@/server/expense-functions';
 import { uploadReceipt } from '@/features/finance/api/receipt-upload';
 import { receiptPurposeLabel } from '@/features/finance/constants';
+
+/**
+ * Renders a `ts_headline` snippet WITHOUT `dangerouslySetInnerHTML` —
+ * `parsed_text` is OCR/PDF text from an operator-uploaded document, so it is
+ * untrusted as far as HTML rendering goes. The server wraps each match in
+ * `SNIPPET_MATCH_START`/`SNIPPET_MATCH_STOP` (control characters, never
+ * `<b>`/`</b>`) instead of asking Postgres for HTML; this function splits on
+ * those markers and renders each side as plain React text (escaped by React
+ * itself) with a real `<b>` element around the matched span.
+ */
+function renderSnippet(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let rest = text;
+  let key = 0;
+  for (;;) {
+    const startIndex = rest.indexOf(SNIPPET_MATCH_START);
+    if (startIndex === -1) {
+      nodes.push(rest);
+      return nodes;
+    }
+    nodes.push(rest.slice(0, startIndex));
+    const afterStart = rest.slice(startIndex + SNIPPET_MATCH_START.length);
+    const stopIndex = afterStart.indexOf(SNIPPET_MATCH_STOP);
+    if (stopIndex === -1) {
+      // Malformed (should not happen — every StartSel from ts_headline has a
+      // matching StopSel); render the remainder as plain text rather than
+      // dropping it.
+      nodes.push(afterStart);
+      return nodes;
+    }
+    // eslint-disable-next-line react/no-array-index-key -- a stable order over an immutable server-rendered string; no reordering ever happens.
+    nodes.push(<b key={key++}>{afterStart.slice(0, stopIndex)}</b>);
+    rest = afterStart.slice(stopIndex + SNIPPET_MATCH_STOP.length);
+  }
+}
 
 function purposeIcon(mimeType: string | null) {
   if (mimeType === 'application/pdf') return Icons.fileTypePdf;
@@ -140,6 +175,28 @@ export default function ReceiptGallery({
                     <span>·</span>
                     <span>{formatDateTime(receipt.createdAt)}</span>
                   </div>
+                  {/*
+                    Design section 5: "Text extracted <date> · N words" plus a
+                    matched snippet ONLY when arriving from a search — NEVER
+                    the raw parsedText dump (OCR text is ugly and showing it
+                    whole invites the operator to trust it as a transcript).
+                    `textExtractedAt`/`wordCount` are both null when no
+                    `documents` row exists at all (an old-route receipt, or
+                    one uploaded before OCR was enabled) — that case renders
+                    nothing here, which is the honest "no claim either way".
+                  */}
+                  {receipt.textExtractedAt !== null && (
+                    <p className='text-muted-foreground mt-1 text-xs'>
+                      <Icons.post className='mr-1 inline-block size-3 align-text-bottom' />
+                      Text extracted {formatDateTime(receipt.textExtractedAt)}
+                      {receipt.wordCount !== null ? ` · ${receipt.wordCount} words` : ''}
+                    </p>
+                  )}
+                  {receipt.snippet !== null && (
+                    <p className='bg-muted/50 mt-1 rounded px-2 py-1 text-xs italic [&_b]:not-italic [&_b]:font-semibold'>
+                      {renderSnippet(receipt.snippet)}
+                    </p>
+                  )}
                 </div>
                 <Button
                   type='button'

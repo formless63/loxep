@@ -111,6 +111,13 @@ function rowToDocument(row: Record<string, unknown>): DocumentRow {
     status: row["status"] as string,
     parserId: (row["parser_id"] as string | null) ?? null,
     parsedAt: row["parsed_at"] ? new Date(row["parsed_at"] as string) : null,
+    parsedText: (row["parsed_text"] as string | null) ?? null,
+    // Generated (`GENERATED ALWAYS AS ... STORED`) — PostgreSQL computes it;
+    // this module never writes it, and no reader of `DocumentRow` consumes
+    // it directly (full-text search reads the column in SQL, not through
+    // this mapper) — carried through only so `DocumentRow` stays a faithful
+    // mirror of `documents.$inferSelect`.
+    parsedTextTsv: (row["parsed_text_tsv"] as string | null) ?? null,
     currency: (row["currency"] as string | null) ?? null,
     documentTotal: (row["document_total"] as string | null) ?? null,
     documentDate: (row["document_date"] as string | null) ?? null,
@@ -382,6 +389,7 @@ export function createDocumentsService(options: { db: Executor }): DocumentsServ
           `update documents
               set parser_id = ${textLiteral(input.result.parserId)},
                   parsed_at = now(),
+                  parsed_text = coalesce(${input.result.text ? textLiteral(input.result.text) : "null"}, parsed_text),
                   currency = coalesce(${input.result.currency ? textLiteral(input.result.currency) : "null"}, currency),
                   document_total = coalesce(${input.result.documentTotal ? numericLiteral(input.result.documentTotal) : "null"}, document_total),
                   updated_at = now()

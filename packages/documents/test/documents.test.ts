@@ -113,6 +113,79 @@ describe("documents service", () => {
     });
   });
 
+  describe("parsed_text / parsed_text_tsv full-text search (migration 0026, loxep-cd3.4 M4)", () => {
+    it("recordParseResult persists parsed_text, and PostgreSQL's generated parsed_text_tsv finds it via websearch_to_tsquery('simple', ...)", async () => {
+      const mediaObjectId = await seedMediaObject(scratch);
+      const document = await documentsService.attachMedia({
+        documentKind: "receipt",
+        mediaObjectId,
+      });
+
+      // A synthetic receipt an OCR backend might plausibly produce — brand
+      // name, model number, total. Exactly the shape 'simple' (not
+      // 'english') is chosen to preserve — see the migration's own header.
+      const text = "HOME DEPOT\nMilwaukee M18 2-inch Impact Driver\nTOTAL 129.99";
+      const { document: after } = await documentsService.recordParseResult({
+        documentId: document.id,
+        result: {
+          parserId: "ocr_tesseract",
+          parsedAt: new Date(),
+          currency: null,
+          documentTotal: null,
+          text,
+          lines: [],
+          warnings: [],
+        },
+      });
+      expect(after.parserId).toBe("ocr_tesseract");
+
+      // The service round-trip: parsed_text comes back through get().
+      const reloaded = await documentsService.get(document.id);
+      expect(reloaded.parsedText).toBe(text);
+
+      // The round-trip proof: a search for a distinctive brand/model token
+      // — the kind of thing 'english' stemming/stopword removal would
+      // actively hurt — finds this document via the GENERATED, GIN-indexed
+      // tsvector column, with no manual index maintenance anywhere in this
+      // service.
+      const found = await scratch.handle.pool.query(
+        `select id from documents
+          where parsed_text_tsv @@ websearch_to_tsquery('simple', $1)`,
+        ["Milwaukee"],
+      );
+      expect(found.rows.map((row: { id: string }) => row.id)).toContain(document.id);
+
+      // An honest negative: a token that never appeared in the text finds
+      // nothing, proving the match above is real and not a vacuous "matches
+      // everything" predicate.
+      const notFound = await scratch.handle.pool.query(
+        `select id from documents
+          where id = $1
+            and parsed_text_tsv @@ websearch_to_tsquery('simple', $2)`,
+        [document.id, "DeWalt"],
+      );
+      expect(notFound.rows).toHaveLength(0);
+    });
+
+    it("a document with no parsed_text (never parsed, or the manual backend) matches no search — an empty tsvector, never a claim of text", async () => {
+      const mediaObjectId = await seedMediaObject(scratch);
+      const document = await documentsService.attachMedia({
+        documentKind: "receipt",
+        mediaObjectId,
+      });
+      const reloaded = await documentsService.get(document.id);
+      expect(reloaded.parsedText).toBeNull();
+
+      const matches = await scratch.handle.pool.query(
+        `select id from documents
+          where id = $1
+            and parsed_text_tsv @@ websearch_to_tsquery('simple', $2)`,
+        [document.id, "anything"],
+      );
+      expect(matches.rows).toHaveLength(0);
+    });
+  });
+
   describe("stageCsvRows and the fingerprint duplicate warning", () => {
     it("stages a clean row as disposition 'expense' and a warned row as 'pending'", async () => {
       const document = await documentsService.createFromCsv({});

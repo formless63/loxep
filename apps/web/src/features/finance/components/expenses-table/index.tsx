@@ -61,6 +61,7 @@ export default function ExpensesTable() {
   const statusParam = search.status as string | undefined;
   const from = search.from as string | undefined;
   const to = search.to as string | undefined;
+  const q = search.q as string | undefined;
 
   const filter: ExpenseFilterParams = {
     ...(category ? { category } : {}),
@@ -72,7 +73,8 @@ export default function ExpensesTable() {
       : {}),
     ...(statusParam ? { statuses: statusParam.split(',') as ExpenseStatus[] } : {}),
     ...(from ? { from } : {}),
-    ...(to ? { to } : {})
+    ...(to ? { to } : {}),
+    ...(q ? { q } : {})
   };
 
   const { data: entities } = useQuery(entitiesQuery);
@@ -135,35 +137,69 @@ export default function ExpensesTable() {
             Clear dates
           </Button>
         )}
+        <div className='grid gap-1.5'>
+          <Label htmlFor='expenses-q'>Search receipt text</Label>
+          <div className='relative w-64'>
+            <Icons.search
+              className='text-muted-foreground/70 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2'
+              aria-hidden='true'
+            />
+            <Input
+              id='expenses-q'
+              type='search'
+              value={q ?? ''}
+              placeholder='e.g. a brand, model, or store name'
+              className='pl-9'
+              onChange={(event) => {
+                const value = event.target.value;
+                void navigate({
+                  search: (prev) => ({ ...prev, page: 1, q: value === '' ? undefined : value }),
+                  replace: true
+                });
+              }}
+            />
+          </div>
+        </div>
       </div>
+      {q ? (
+        <p className='text-muted-foreground text-xs'>
+          Searching extracted receipt/invoice text — distinct from the payee/category filters above.
+          Only expenses whose ATTACHED RECEIPT text matches appear; an expense recorded with no
+          receipt, or one whose receipt predates text extraction being enabled, will not match even
+          if the phrase describes the purchase.
+        </p>
+      ) : null}
 
       {data.length === 0 ? (
         <Empty>
           <EmptyHeader>
-            <EmptyMedia variant='icon'>
-              <Icons.fees />
-            </EmptyMedia>
-            <EmptyTitle>No expenses</EmptyTitle>
+            <EmptyMedia variant='icon'>{q ? <Icons.search /> : <Icons.fees />}</EmptyMedia>
+            <EmptyTitle>{q ? `No matches for "${q}"` : 'No expenses'}</EmptyTitle>
             <EmptyDescription>
-              Every dollar that leaves gets captured here — card, cash, marketplace balance, or
-              anything else. Record one with the quick-entry action, reachable from the command
-              palette too.
+              {q
+                ? 'No expense has an attached receipt with extracted text matching that search.'
+                : 'Every dollar that leaves gets captured here — card, cash, marketplace balance, or anything else. Record one with the quick-entry action, reachable from the command palette too.'}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button
-              size='sm'
-              onClick={() =>
-                void navigate({ search: (prev) => ({ ...prev, quickEntry: true }), replace: true })
-              }
-            >
-              <Icons.add />
-              New expense
-            </Button>
-          </EmptyContent>
+          {!q && (
+            <EmptyContent>
+              <Button
+                size='sm'
+                onClick={() =>
+                  void navigate({
+                    search: (prev) => ({ ...prev, quickEntry: true }),
+                    replace: true
+                  })
+                }
+              >
+                <Icons.add />
+                New expense
+              </Button>
+            </EmptyContent>
+          )}
         </Empty>
       ) : (
-        <ExpensesDataTable expenses={data} entities={entities} />
+        <ExpensesDataTable expenses={data} entities={entities} q={q} />
       )}
     </div>
   );
@@ -171,17 +207,19 @@ export default function ExpensesTable() {
 
 function ExpensesDataTable({
   expenses,
-  entities
+  entities,
+  q
 }: {
   expenses: ExpenseListItemDto[];
   entities: EntityDto[];
+  q?: string;
 }) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? DEFAULT_PAGE_SIZE;
   const sortStr = search.sort as string | undefined;
 
-  const columns = React.useMemo(() => createColumns(entities), [entities]);
+  const columns = React.useMemo(() => createColumns(entities, q), [entities, q]);
 
   const sorting = parseSortingState<ExpenseListItemDto>(sortStr, COLUMN_IDS);
   const sorted = sortRows(expenses, sorting, {

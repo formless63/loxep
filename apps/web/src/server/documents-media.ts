@@ -22,6 +22,23 @@
  * shape through the same `MediaService.upload`, and this route's pane and
  * `/finance/import` are explicitly the same pipeline entered from two
  * directions.
+ *
+ * ## Tier A text extraction, enqueued transactionally (loxep-cd3.4 M4)
+ *
+ * `handleDocumentUpload` wraps the `documents` insert in a transaction and,
+ * inside that SAME transaction, enqueues `documents.extract-text` via
+ * `@loxep/app`'s `enqueueDocumentTextExtraction` (reached through
+ * `@/server/admin`'s `getFleetModule()` dynamic import, never a static
+ * dependency — see that function's own doc for why: pulling `@loxep/app`
+ * statically would drag graphile-worker into the `LOXEP_MODE=web` request
+ * process, which ADR-0013/ADR-0018 forbid). A rollback of the insert takes
+ * the enqueue with it, so a document row and its extraction job either both
+ * exist or neither does — no orphaned job for a document that failed to
+ * persist. Every uploaded document is eligible (`UPLOADABLE_DOCUMENT_KINDS`
+ * below is exactly `PARSEABLE_DOCUMENT_KINDS`), so this route enqueues
+ * unconditionally rather than branching on kind; the task itself (and the
+ * runner it wraps) is the single place that decides whether a given
+ * document/backend combination has anything to extract.
  */
 import { Readable } from 'node:stream';
 import { documentsMediaLimitsSetting } from '@loxep/domain';
@@ -47,7 +64,8 @@ function textLiteral(value: string): string {
 
 /** `POST /api/documents/upload` — multipart upload that CREATES a new `source_kind = 'upload'` document. */
 export async function handleDocumentUpload(request: Request): Promise<Response> {
-  const { requireSession, getAdminServices, getMediaService } = await import('@/server/admin');
+  const { requireSession, getAdminServices, getMediaService, getFleetModule } =
+    await import('@/server/admin');
 
   let session: Awaited<ReturnType<typeof requireSession>>;
   try {
@@ -120,19 +138,35 @@ export async function handleDocumentUpload(request: Request): Promise<Response> 
   const { handle } = getAdminServices();
   let documentId: string;
   try {
-    const inserted = await handle.db.execute(
-      `insert into documents (document_kind, source_kind, media_object_id, original_filename,
-                              status, created_by_user_id)
-       values (${textLiteral(documentKind)}, 'upload', '${mediaObject.id}',
-               ${textLiteral(file.name)}, 'pending', ${textLiteral(session.user.id)})
-       returning id`
-    );
-    const id = inserted.rows[0]?.['id'] as string | undefined;
-    if (id === undefined) throw new Error('documents insert returned no row');
-    documentId = id;
+    documentId = await handle.db.transaction(async (tx) => {
+      const inserted = await tx.execute(
+        `insert into documents (document_kind, source_kind, media_object_id, original_filename,
+                                status, created_by_user_id)
+         values (${textLiteral(documentKind)}, 'upload', '${mediaObject.id}',
+                 ${textLiteral(file.name)}, 'pending', ${textLiteral(session.user.id)})
+         returning id`
+      );
+      const id = inserted.rows[0]?.['id'] as string | undefined;
+      if (id === undefined) throw new Error('documents insert returned no row');
+
+      // Tier A text extraction (loxep-cd3.4 M4): enqueued transactionally,
+      // in the SAME transaction as the documents row above, so a rollback
+      // takes the job with it. `@loxep/app` is reached through the
+      // `getFleetModule()` dynamic import (see its own doc) rather than a
+      // static dependency — `apps/web`'s package.json declares
+      // `@loxep/documents` for the read-path replacement noted at this
+      // module's top, but never `@loxep/app` (that would pull
+      // graphile-worker into the web request process, forbidden by
+      // ADR-0013/ADR-0018 for `LOXEP_MODE=web`).
+      const fleet = await getFleetModule();
+      await fleet.enqueueDocumentTextExtraction(tx, id);
+
+      return id;
+    });
   } catch (error) {
-    // The document row failed for some reason — clean up the object we just
-    // wrote rather than leaving an unreferenced upload behind.
+    // The document row (or its extraction enqueue) failed for some reason —
+    // clean up the object we just wrote rather than leaving an unreferenced
+    // upload behind.
     await mediaService.remove(mediaObject.id).catch(() => undefined);
     throw error;
   }

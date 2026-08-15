@@ -40,13 +40,31 @@
  * CSV row names a calendar day, not an instant, matching
  * `expenses.expense_date`'s reasoning exactly.
  *
- * ## What is deliberately NOT here
+ * ## `parsed_text` / `parsed_text_tsv` (migration 0026, loxep-cd3.4 M4)
  *
- * - **No `parsed_text` column.** OCR text is a Documents-domain asset the
- *   boundary doc names, and it earns a column only when a backend produces
- *   one. Manual-assisted is the only backend this milestone ships (OQ3,
- *   resolved by owner directive); adding the column now would ship an
- *   always-null claim that Loxep extracts text.
+ * Phase 9's original cut of this table deliberately shipped with NO
+ * `parsed_text` column — "OCR text earns a column only when a backend
+ * produces one," and manual-assisted (which never produces text) was the
+ * only backend that milestone shipped. M4 (`expense-entry-design.md`
+ * section 5, "The column") ships a real backend
+ * (`@loxep/documents`'s `ocr_tesseract`, `tesseract-parser.ts`) and answers
+ * that question yes, on exactly the condition that section named: `parsed_text`
+ * is nullable `text` (null until a parser runs, and forever null for a
+ * `manual`-backend document or a document uploaded before OCR was ever
+ * enabled — see that module's own "text exists forward, not retroactively"
+ * rule); `parsed_text_tsv` is a `GENERATED ALWAYS AS ... STORED` `tsvector`
+ * over `to_tsvector('simple', coalesce(parsed_text, ''))`, with a GIN index.
+ * `'simple'`, not `'english'`: OCR output is brand names, model numbers,
+ * street names, and amounts, not prose, and English stemming/stopword
+ * removal would discard exactly the tokens an operator searches for (design
+ * OQ7). Generated-and-stored rather than trigger-maintained because
+ * `to_tsvector` with a literal config argument is `IMMUTABLE`, which is what
+ * a generated column requires, and a generated column cannot drift from its
+ * source the way a trigger-maintained one can. No `document_id`/`expense_id`
+ * shortcut anywhere near this: the media object already joins a document to
+ * the expense that references it (`media_links`), and duplicating that path
+ * here would create a second truth a detached receipt could falsify — see
+ * the design's "How an expense's receipts are searched" section.
  * - **`target_kind`/`target_id` on `document_line_candidates` is a STAMP, not
  *   a foreign key.** It records which of four different tables a
  *   confirmation produced, and deliberately does not constrain — the same
@@ -61,10 +79,12 @@
  *   fingerprint has already been committed and lets the operator decide
  *   (two identical coffees bought the same day is a real thing).
  */
+import type { SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
   char,
   check,
+  customType,
   date,
   index,
   integer,
@@ -78,6 +98,18 @@ import {
 import { user } from "./auth.ts";
 import { economicEntities } from "./entities.ts";
 import { mediaObjects } from "./storage.ts";
+
+/**
+ * PostgreSQL `tsvector`, mapped to a plain string on read (nothing in
+ * `@loxep/documents`/`apps/web` ever constructs one — it is a
+ * `GENERATED ALWAYS AS ... STORED` column, write-only from the application's
+ * point of view). Mirrors `settings.ts`'s `bytea` `customType` precedent.
+ */
+export const tsVector = customType<{ data: string }>({
+  dataType() {
+    return "tsvector";
+  },
+});
 
 /* ------------------------------------------------------------------ unions */
 
@@ -196,6 +228,22 @@ export const documents = pgTable(
     parserId: text("parser_id"),
     parsedAt: timestamp("parsed_at", { withTimezone: true }),
 
+    /**
+     * The full extracted document text (migration 0026, loxep-cd3.4 M4) —
+     * null until a text-producing parser runs, and forever null for a
+     * `manual`-backend document. See the module doc's "parsed_text /
+     * parsed_text_tsv" section.
+     */
+    parsedText: text("parsed_text"),
+    /**
+     * `GENERATED ALWAYS AS to_tsvector('simple', coalesce(parsed_text, ''))
+     * STORED` — see the module doc for why `'simple'` and why stored, not
+     * trigger-maintained. Never written directly; PostgreSQL computes it.
+     */
+    parsedTextTsv: tsVector("parsed_text_tsv").generatedAlwaysAs(
+      (): SQL => sql`to_tsvector('simple', coalesce(${documents.parsedText}, ''))`,
+    ),
+
     currency: char("currency", { length: 3 }),
     documentTotal: numeric("document_total", { precision: 20, scale: 6 }),
     documentDate: date("document_date", { mode: "string" }),
@@ -258,6 +306,11 @@ export const documents = pgTable(
     index("documents_economic_entity_id_idx")
       .on(table.economicEntityId)
       .where(sql`${table.economicEntityId} is not null`),
+
+    // The full-text search surface (design section 5): `/finance/import`'s
+    // and `/finance/expenses`' `q` filters both search this. GIN is the only
+    // sane index method for a `tsvector` column.
+    index("documents_parsed_text_tsv_idx").using("gin", table.parsedTextTsv),
   ],
 );
 

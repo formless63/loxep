@@ -26,6 +26,8 @@ const expensesSearchSchema = z.object({
   status: z.string().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  /** "Search receipt text" (design section 5) — see `ExpensesTable`'s own doc for the field-vs-receipt-match distinction. */
+  q: z.string().optional(),
   quickEntry: z.boolean().optional()
 });
 

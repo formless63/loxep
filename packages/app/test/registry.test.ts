@@ -33,6 +33,7 @@ import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import {
   ACCOUNTING_POST_FACTS_TASK_NAME,
+  DOCUMENTS_EXTRACT_TEXT_TASK_NAME,
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
   FLEET_EVIDENCE_INGEST_TASK,
   GATUS_PUSH_TASK_NAME,
@@ -131,6 +132,10 @@ describe("buildWorkerRegistry", () => {
         // projection — enqueued transactionally by `receiveFleetEvidence`
         // from the inbound webhook, never claimed by the dispatcher.
         FLEET_EVIDENCE_INGEST_TASK,
+        // loxep-cd3.4 M4 (the previously-BLOCKED task-registration half):
+        // on-demand text extraction, enqueued transactionally at upload —
+        // never claimed by the dispatcher, no cron item.
+        DOCUMENTS_EXTRACT_TEXT_TASK_NAME,
       ].sort(),
     );
 

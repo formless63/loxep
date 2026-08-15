@@ -57,6 +57,7 @@
         "@loxep/config": "workspace:*",
         "@loxep/counterparties": "workspace:*",
         "@loxep/db": "workspace:*",
+        "@loxep/documents": "workspace:*",
         "@loxep/domain": "workspace:*",
         "@loxep/infrastructure": "workspace:*",
         "@loxep/integration-ebay": "workspace:*",
@@ -149,6 +150,7 @@
         "@loxep/commerce": "workspace:*",
         "@loxep/config": "workspace:*",
         "@loxep/db": "workspace:*",
+        "@loxep/documents": "workspace:*",
         "@loxep/domain": "workspace:*",
         "@loxep/infrastructure": "workspace:*",
         "@loxep/integration-beszel": "workspace:*",
@@ -167,6 +169,7 @@
         "@loxep/jobs": "workspace:*",
         "@loxep/market": "workspace:*",
         "@loxep/notifications": "workspace:*",
+        "@loxep/storage": "workspace:*",
         "zod": "4.4.3",
       },
       "devDependencies": {

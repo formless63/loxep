@@ -210,17 +210,34 @@ async function recomputeDocumentCounters(
 // Queue / detail
 // ---------------------------------------------------------------------------
 
-export const fetchDocumentQueue = createServerFn({ method: 'GET' }).handler(
-  async (): Promise<DocumentQueueRowDto[]> => {
+/**
+ * The review worklist, optionally filtered by `q` — a `websearch_to_tsquery`
+ * search over `documents.parsed_text_tsv` (design section 5, "How an
+ * expense's receipts are searched" / "What surfaces search it": "a `q`
+ * filter on the document queue — the primary surface. Searching 'Milwaukee'
+ * finds the receipt."). Scoped to the SAME worklist `fetchDocumentQueue`
+ * already returns (`status not in ('confirmed', 'discarded')`) rather than
+ * a universal archive search — this is the review queue, not a document
+ * library. `websearch_to_tsquery` (not `plainto_tsquery`) so an operator's
+ * search box behaves like a familiar search engine (quoted phrases, `-`
+ * exclusion, bare `OR`) rather than requiring `&`/`|` tsquery syntax.
+ * `'simple'` matches the config `parsed_text_tsv` itself is generated with —
+ * see the migration's own header for why.
+ */
+export const fetchDocumentQueue = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ q: z.string().trim().min(1).nullish() }))
+  .handler(async ({ data }): Promise<DocumentQueueRowDto[]> => {
     const { requireSession, getAdminServices } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
+    const searchClause = data.q
+      ? ` and parsed_text_tsv @@ websearch_to_tsquery('simple', ${textLiteral(data.q)})`
+      : '';
     const result = await handle.db.execute(
-      `select * from documents where status not in ('confirmed', 'discarded') order by created_at desc`
+      `select * from documents where status not in ('confirmed', 'discarded')${searchClause} order by created_at desc`
     );
     return result.rows.map(rowToDocumentDto);
-  }
-);
+  });
 
 export const fetchDocument = createServerFn({ method: 'GET' })
   .inputValidator(z.strictObject({ id: uuid }))

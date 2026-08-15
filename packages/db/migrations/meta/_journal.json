@@ -183,6 +183,13 @@
       "when": 1786796478301,
       "tag": "0025_expense_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786802269044,
+      "tag": "0026_document_parsed_text_search",
+      "breakpoints": true
     }
   ]
 }
