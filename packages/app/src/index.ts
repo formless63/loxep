@@ -184,8 +184,19 @@ export {
   DOCKHAND_CONNECTION_PROVIDER,
   DOCKHAND_CREDENTIAL_TYPE,
   containerHostPortFromDockhandAdapter,
+  // loxep-hb7 Milestone B: `apps/web/src/server/admin.ts` needs a live
+  // Dockhand adapter for the containers/stacks panel, loaded through this
+  // package (dynamically, per that file's own SSR-bundling discipline)
+  // rather than declaring a direct `@loxep/integration-dockhand` dependency
+  // of its own — `@loxep/app` already owns that dependency and this is its
+  // one sanctioned re-export seam.
+  createDockhandAdapterFactory,
 } from "./fleet.ts";
-export type { ContainerHostAdapterLike } from "./fleet.ts";
+export type {
+  ContainerHostAdapterLike,
+  DockhandAdapterFactory,
+  DockhandConnectionAdapter,
+} from "./fleet.ts";
 
 export {
   REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,

@@ -12,6 +12,7 @@ import { connections, monitorTargets } from "@loxep/db/schema";
 import type { DbHandle } from "@loxep/db";
 import {
   createHealthService,
+  createRecordingNotificationEnqueue,
   isHealthCheckDue,
   nextHealthCheckDueAt,
   runHealthSweep,
@@ -303,5 +304,199 @@ describe("runHealthSweep never drives retry/backoff on the owning tables", () =>
     expect(reloaded?.consecutiveErrors).toBe(4);
     // No row was ever created for it — monitor_targets is not in the registry.
     expect(await health.getHealth("connection", target.id)).toBeNull();
+  });
+});
+
+/**
+ * Health transitions as notifiable events (loxep-oii / ADR-0023). The sweep
+ * already reads each subject's prior row to compute due-ness, so the
+ * transition costs no extra query and needs no change to `upsertHealth`.
+ */
+describe("runHealthSweep transition notifications", () => {
+  const dbName = scratchDbName("loxep_test_domain_health_transitions");
+  let handle: DbHandle;
+  let health: HealthService;
+  let endpointId = "";
+
+  const CONNECTION_ID = "00000000-0000-4000-8000-0000000000f1";
+  const FLEET_ID = "00000000-0000-4000-8000-0000000000f2";
+
+  beforeAll(async () => {
+    const databaseUrl = await createScratchDb(dbName);
+    await runMigrations({ databaseUrl, logger: silentLogger });
+    handle = createDb(databaseUrl);
+    health = createHealthService({ db: handle.db });
+    const inserted = await handle.db.execute<{ id: string }>(
+      `insert into notification_endpoints (provider, name, config)
+       values ('ntfy', 'transition test', '{}'::jsonb)
+       returning id`,
+    );
+    endpointId = String(inserted.rows[0]!["id"]);
+    await handle.db.execute(
+      `insert into notification_rules (name, event_class, endpoint_id)
+       values ('any health', 'health', '${endpointId}')`,
+    );
+  });
+
+  afterAll(async () => {
+    await closeDb(handle);
+    await dropScratchDb(dbName);
+  });
+
+  function registryFor(
+    subjectType: "connection" | "hosting_target",
+    subjectId: string,
+    status: "ok" | "degraded" | "failing" | "unknown",
+  ): HealthSubjectRegistry {
+    return {
+      [subjectType]: {
+        source: "probe",
+        listCandidates: async () => [{ subjectId }],
+        probe: async () => ({ status, detail: { provider: "ebay" } }),
+      },
+    } as HealthSubjectRegistry;
+  }
+
+  async function events(): Promise<
+    Array<{ event_type: string; subject_type: string; subject_id: string }>
+  > {
+    const result = await handle.db.execute<{
+      event_type: string;
+      subject_type: string;
+      subject_id: string;
+    }>(
+      `select event_type, subject_type, subject_id from notification_events
+        where event_class = 'health' order by created_at asc, id asc`,
+    );
+    return result.rows as never;
+  }
+
+  it("records nothing on the FIRST insert — there is no previous status", async () => {
+    const enqueue = createRecordingNotificationEnqueue();
+    const result = await runHealthSweep({
+      db: handle.db,
+      health,
+      enqueue,
+      registry: registryFor("connection", CONNECTION_ID, "ok"),
+      now: new Date("2026-03-01T00:00:00Z"),
+    });
+    expect(result.probed).toBe(1);
+    expect(result.transitions).toEqual([]);
+    expect(await events()).toEqual([]);
+    expect(enqueue.calls).toHaveLength(0);
+  });
+
+  it("records and routes a degradation, then a recovery", async () => {
+    const enqueue = createRecordingNotificationEnqueue();
+    const degraded = await runHealthSweep({
+      db: handle.db,
+      health,
+      enqueue,
+      registry: registryFor("connection", CONNECTION_ID, "failing"),
+      now: new Date("2026-03-01T01:00:00Z"),
+    });
+    expect(degraded.transitions).toHaveLength(1);
+    expect(degraded.transitions[0]).toMatchObject({
+      subjectType: "connection",
+      subjectId: CONNECTION_ID,
+      previousStatus: "ok",
+      status: "failing",
+      eventType: "health_degraded",
+      recorded: true,
+    });
+    expect(degraded.transitions[0]!.endpointIds).toEqual([endpointId]);
+    expect(enqueue.calls).toHaveLength(1);
+    expect(enqueue.calls[0]!.taskName).toBe("notifications.deliver");
+
+    const recovered = await runHealthSweep({
+      db: handle.db,
+      health,
+      enqueue,
+      registry: registryFor("connection", CONNECTION_ID, "ok"),
+      now: new Date("2026-03-01T02:00:00Z"),
+    });
+    expect(recovered.transitions[0]?.eventType).toBe("health_recovered");
+    expect((await events()).map((row) => row.event_type)).toEqual([
+      "health_degraded",
+      "health_recovered",
+    ]);
+  });
+
+  it("records nothing for an unchanged status", async () => {
+    const before = (await events()).length;
+    const result = await runHealthSweep({
+      db: handle.db,
+      health,
+      registry: registryFor("connection", CONNECTION_ID, "ok"),
+      now: new Date("2026-03-01T03:00:00Z"),
+    });
+    expect(result.transitions).toEqual([]);
+    expect((await events()).length).toBe(before);
+  });
+
+  it("never emits for a transition into or out of unknown", async () => {
+    const before = (await events()).length;
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      registry: registryFor("connection", CONNECTION_ID, "unknown"),
+      now: new Date("2026-03-01T04:00:00Z"),
+    });
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      registry: registryFor("connection", CONNECTION_ID, "ok"),
+      now: new Date("2026-03-01T05:00:00Z"),
+    });
+    // "We could not tell" is not an alert, and neither is recovering from it.
+    expect((await events()).length).toBe(before);
+  });
+
+  it("never emits for a FLEET subject, however it transitions", async () => {
+    // The fleet observability design's open question 1 ruling, enforced:
+    // companion tools alert their own operators; Loxep does not relay them,
+    // and no fleet probe writes a notification_deliveries row.
+    const enqueue = createRecordingNotificationEnqueue();
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      enqueue,
+      registry: registryFor("hosting_target", FLEET_ID, "ok"),
+      now: new Date("2026-03-01T06:00:00Z"),
+    });
+    const result = await runHealthSweep({
+      db: handle.db,
+      health,
+      enqueue,
+      registry: registryFor("hosting_target", FLEET_ID, "failing"),
+      now: new Date("2026-03-01T07:00:00Z"),
+    });
+    expect(result.probed).toBe(1);
+    expect(result.transitions).toEqual([]);
+    expect(enqueue.calls).toHaveLength(0);
+    const fleetEvents = await handle.db.execute(
+      `select count(*)::int as n from notification_events
+        where subject_type = 'hosting_target'`,
+    );
+    expect(Number((fleetEvents.rows[0] as { n: number }).n)).toBe(0);
+    const deliveries = await handle.db.execute(
+      "select count(*)::int as n from notification_deliveries",
+    );
+    expect(Number((deliveries.rows[0] as { n: number }).n)).toBe(0);
+  });
+
+  it("emitNotifications:false records health rows and no events at all", async () => {
+    const before = (await events()).length;
+    await runHealthSweep({
+      db: handle.db,
+      health,
+      emitNotifications: false,
+      registry: registryFor("connection", CONNECTION_ID, "degraded"),
+      now: new Date("2026-03-01T08:00:00Z"),
+    });
+    expect((await health.getHealth("connection", CONNECTION_ID))?.status).toBe(
+      "degraded",
+    );
+    expect((await events()).length).toBe(before);
   });
 });

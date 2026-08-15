@@ -32,6 +32,7 @@ import { z } from 'zod';
 import type { JsonValue } from '@/server/admin-functions';
 import type { TailnetAddressKind } from '@loxep/infrastructure';
 import type {
+  CompanionLink,
   HealthSource,
   HealthStatus,
   HostDiagnosisInput,
@@ -1068,6 +1069,17 @@ export interface CompanionLinkDto {
    * read in this file goes through a dynamic import.
    */
   knownTool: { label: string; embeddable: boolean } | null;
+  /**
+   * The `external_resources` row's own sync metadata (loxep-50t §1.3,
+   * loxep-1au §4.2) — a Tailscale device's addresses/MagicDNS/os/authorized,
+   * a Gatus endpoint's group/observedAt/success, a Beszel system's status/
+   * host/port. Threaded through verbatim rather than pre-shaped per-provider,
+   * so a new discovery writer needs no DTO change to make its metadata
+   * visible; today's one consumer is the fleet detail's "Private network"
+   * row, which reads a `tailscale`/`private_network` link's own fields out of
+   * this bag rather than a dedicated DTO shape.
+   */
+  metadata: Record<string, JsonValue>;
 }
 
 export interface DnsProviderTokenDto {
@@ -1108,6 +1120,46 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
    * refusal, never a derived badge.
    */
   diagnosis: HostDiagnosisResult;
+  /**
+   * The fleet-detail "Private network" row (loxep-50t §1.2), `null` unless
+   * this target carries a `tailscale`/`private_network` companion link.
+   * Server-computed so the client never needs its own copy of the CGNAT/ULA
+   * or reachability-caveat logic — see {@link fetchHostingTarget}'s
+   * `computePrivateNetworkRow`.
+   */
+  privateNetwork: PrivateNetworkRowDto | null;
+}
+
+/**
+ * The rendered "Private network" row's content (loxep-50t §1.2). Every field
+ * but `reachabilityCaveat` is read straight from the linked device's own
+ * sync `metadata`, unchanged — see `projectTailscaleDevices` in
+ * `@loxep/app`'s `fleet-health.ts` for exactly what that payload holds.
+ */
+export interface PrivateNetworkRowDto {
+  /** The device's own admin-console deep link ("[open in Tailscale]"). */
+  url: string;
+  addresses: string[];
+  magicDnsName: string | null;
+  os: string | null;
+  authorized: boolean | null;
+  online: boolean | null;
+  /** Relative-time source when `online` is false. `null` while online, or when Tailscale reported none. */
+  lastSeen: string | null;
+  /**
+   * The OBSERVATION's own age — Loxep's read clock, rendered always and
+   * separately from `online`/`lastSeen` per §1.2's "a stale observation must
+   * not read as a live one" rule. `null` only if the sweep has never reached
+   * this link yet (freshly attached, not yet probed).
+   */
+  checkedAt: string | null;
+  /**
+   * §1.2's conditional, evidence-withdrawn reachability explanation — a
+   * pre-rendered sentence, or `null` when the caveat does not apply (no
+   * OTHER companion link's underlying connection is both host-matched to
+   * this device AND has never once succeeded). See `computePrivateNetworkRow`.
+   */
+  reachabilityCaveat: string | null;
 }
 
 /** `failing` > `degraded` > `unknown` > `ok` — matches `@loxep/app`'s `gatus-push.ts` `STATUS_SEVERITY` convention (duplicated locally, not imported, since this file otherwise takes no `@loxep/app` dependency). */
@@ -1144,24 +1196,31 @@ function worstCompanionHealthStatus(
 
 /**
  * Builds `@loxep/domain`'s `HostDiagnosisInput` from this target's linked
- * companion tools and their tier-2 health projections (loxep-ovj.3).
+ * companion tools and their per-resource health projections (loxep-ovj.3;
+ * loxep-y64 slice 3 for Beszel specifically).
  *
- * **Honesty note, worth restating at the one call site that matters:** every
- * non-null status here today comes from the credential-free tier-2
- * reachability probe (`source: 'probe'` — "Loxep pinged the tool's own
- * health path"). It answers "can Loxep reach this tool at all", not "is
- * THIS SPECIFIC system/device/endpoint up", which needs an authenticated
- * per-resource adapter read (loxep-hb7 Milestone B / loxep-y64 slice 3 /
- * loxep-50t slice B / loxep-wvm slice B — design-complete, unbuilt). Both
- * write to the SAME `integration_health` key (`subject_type=
- * 'external_resource'`, `subject_id=` the link id), so this function needs
- * no change when that richer data lands — `worstCompanionHealthStatus` just
- * starts reading a `source: 'adapter'` row instead of a `'probe'` one.
- * `tailscale` never gets a non-null status from THIS mechanism at all
- * (Tailscale has no unauthenticated health path — see `fleet-tool-
- * registry.ts`), and stays that way until that same future work lands.
+ * **Honesty note, worth restating at the one call site that matters — now
+ * TRUE for Beszel, still aspirational for the others.** A Beszel link's
+ * status here is, since loxep-y64 slice 3, an authenticated PER-SYSTEM
+ * adapter read (`source: 'adapter'` — Loxep read THIS system's own verbatim
+ * status from the hub, written by `@loxep/app`'s `projectBeszelSystems` as a
+ * side effect of the connection probe's `listSystems()` call). Dockhand/
+ * Gatus/Tailscale's links still carry only the credential-free tier-2
+ * reachability probe's status (`source: 'probe'` — "Loxep pinged the tool's
+ * own health path", answering "can Loxep reach this tool at all", not "is
+ * THIS SPECIFIC device/environment/endpoint up") until their own discovery
+ * slices land (loxep-hb7 Milestone B / loxep-50t slice B / loxep-wvm slice
+ * B — design-complete, unbuilt). Every source writes to the SAME
+ * `integration_health` key (`subject_type='external_resource'`, `subject_id=`
+ * the link id), so this function needed NO CHANGE when Beszel's richer data
+ * landed — `worstCompanionHealthStatus` simply started reading a
+ * `source: 'adapter'` row instead of a `'probe'` one, exactly as this
+ * comment predicted before slice 3 existed. `tailscale` never gets a
+ * non-null status from THIS mechanism at all (Tailscale has no
+ * unauthenticated health path — see `fleet-tool-registry.ts`), and stays
+ * that way until its own discovery slice lands.
  */
-function computeHostDiagnosisInput(links: readonly CompanionLinkDto[]): HostDiagnosisInput {
+export function computeHostDiagnosisInput(links: readonly CompanionLinkDto[]): HostDiagnosisInput {
   const input: HostDiagnosisInput = {};
 
   const tailscale = worstCompanionHealthStatus(links, 'tailscale');
@@ -1180,6 +1239,135 @@ function computeHostDiagnosisInput(links: readonly CompanionLinkDto[]): HostDiag
   }
 
   return input;
+}
+
+/** The minimal per-companion-connection shape {@link computePrivateNetworkRow} needs. */
+interface CompanionConnectionLookup {
+  config: Record<string, unknown>;
+  lastSuccessAt: Date | null;
+}
+
+/** The minimal `integration_health` row shape {@link computePrivateNetworkRow} needs. */
+interface CompanionHealthLookup {
+  status: HealthStatus;
+  checkedAt: Date;
+  detail: Record<string, unknown>;
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function metadataBoolean(metadata: Record<string, unknown>, key: string): boolean | null {
+  const value = metadata[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * Every non-secret `connections.config` block in this codebase keys its
+ * provider-specific settings under a block literally named after the
+ * provider (`config.beszel.baseUrl`, `config.gatus.baseUrl`, …) — see
+ * `@loxep/app`'s `fleet.ts`, `*_CONNECTION_CONFIG_KEY` constants, each of
+ * which equals its own `*_CONNECTION_PROVIDER`. Reading it generically here
+ * (rather than importing @loxep/app's five per-provider readers, which
+ * would pull a heavy server-only dependency into this handler) is exactly
+ * that convention exploited once. `null` for a connection with no base URL
+ * or an unparseable one — never treated as a match.
+ */
+function companionConnectionHost(provider: string, config: Record<string, unknown>): string | null {
+  const block = config[provider];
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) return null;
+  const baseUrl = (block as Record<string, unknown>)['baseUrl'];
+  if (typeof baseUrl !== 'string' || baseUrl === '') return null;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The fleet-detail "Private network" row (loxep-50t §1.2) — tailnet
+ * address, online/lastSeen, the observation's own age, and the conditional,
+ * evidence-withdrawn reachability caveat. `null` when this target carries no
+ * `tailscale`/`private_network` link at all.
+ *
+ * **The caveat's two mandatory guards, both enforced here:**
+ *
+ * 1. **The trigger is a cheap string comparison, never a probe.** A SIBLING
+ *    companion link (any OTHER provider on the same target) is a candidate
+ *    only when its own connection's stored base-URL HOST equals one of this
+ *    device's addresses or its MagicDNS name — proving the tool in question
+ *    is genuinely hosted on THIS device, not merely unreachable for some
+ *    unrelated reason.
+ * 2. **Withdrawn on evidence.** Even a host-matched, currently-`unknown`
+ *    sibling does not trigger the caveat if its own connection's
+ *    `last_success_at` is non-null — Loxep reaching that connection even
+ *    once contradicts "Loxep is not on this tailnet."
+ *
+ * A Beszel witness reading `unknown` because an OPERATOR paused it in Beszel
+ * itself (`detail.status === 'paused'`) is deliberately excluded from
+ * triggering the caveat — that `unknown` is not a network fact (see
+ * `beszelSystemHealthStatus`'s own doc in `@loxep/app`'s `fleet-health.ts`).
+ */
+export function computePrivateNetworkRow(input: {
+  companionLinks: readonly CompanionLink[];
+  healthByLinkId: ReadonlyMap<string, CompanionHealthLookup>;
+  connectionsById: ReadonlyMap<string, CompanionConnectionLookup>;
+  /** Display label for the sibling provider named in the caveat sentence. */
+  providerLabel: (provider: string) => string;
+}): PrivateNetworkRowDto | null {
+  const { companionLinks, healthByLinkId, connectionsById, providerLabel } = input;
+  const deviceLink = companionLinks.find(
+    (link) => link.provider === 'tailscale' && link.purpose === 'private_network'
+  );
+  if (deviceLink === undefined) return null;
+
+  const metadata = deviceLink.metadata;
+  const addressesRaw = metadata['addresses'];
+  const addresses = Array.isArray(addressesRaw)
+    ? addressesRaw.filter((value): value is string => typeof value === 'string')
+    : [];
+  const magicDnsName = metadataString(metadata, 'magicDnsName');
+  const online = metadataBoolean(metadata, 'online');
+  const lastSeen = metadataString(metadata, 'lastSeen');
+
+  const matchHosts = new Set<string>();
+  for (const address of addresses) matchHosts.add(address.toLowerCase());
+  if (magicDnsName !== null) matchHosts.add(magicDnsName.toLowerCase());
+
+  let reachabilityCaveat: string | null = null;
+  for (const other of companionLinks) {
+    if (other.externalResourceId === deviceLink.externalResourceId) continue;
+    if (other.connectionId === null) continue;
+    const otherHealth = healthByLinkId.get(other.externalResourceId);
+    if (otherHealth === undefined || otherHealth.status !== 'unknown') continue;
+    if (other.provider === 'beszel' && otherHealth.detail['status'] === 'paused') continue;
+    const connection = connectionsById.get(other.connectionId);
+    if (connection === undefined) continue;
+    const host = companionConnectionHost(other.provider, connection.config);
+    if (host === null || !matchHosts.has(host)) continue;
+    if (connection.lastSuccessAt !== null) continue; // Guard 2 — withdrawn on evidence.
+    reachabilityCaveat =
+      `Loxep reached the Tailscale API, not this host. ${providerLabel(other.provider)} here ` +
+      'is unknown because the Loxep container is not on this tailnet — a topology fact, not an outage.';
+    break;
+  }
+
+  const healthRow = healthByLinkId.get(deviceLink.externalResourceId);
+
+  return {
+    url: deviceLink.url,
+    addresses,
+    magicDnsName,
+    os: metadataString(metadata, 'os'),
+    authorized: metadataBoolean(metadata, 'authorized'),
+    online,
+    lastSeen: online === true ? null : lastSeen,
+    checkedAt: healthRow === undefined ? null : iso(healthRow.checkedAt),
+    reachabilityCaveat
+  };
 }
 
 export const fetchHostingTarget = createServerFn({ method: 'GET' })
@@ -1281,7 +1469,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
                 label: FLEET_TOOL_REGISTRY[link.provider].label,
                 embeddable: FLEET_TOOL_REGISTRY[link.provider].embeddable
               }
-            : null
+            : null,
+          metadata: link.metadata as Record<string, JsonValue>
         };
       })
       // loxep-ovj.3's PROVISIONAL panel order (fundamental-first) — see
@@ -1292,6 +1481,38 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       .sort((a, b) => compareFleetToolPanelOrder(a.provider, b.provider));
 
     const diagnosis = diagnoseHostWitnesses(computeHostDiagnosisInput(companionLinks));
+
+    // loxep-50t §1.2: the connections behind every OTHER companion link on
+    // this target, needed only for the "Private network" row's reachability
+    // caveat (host comparison + last_success_at withdrawal). A target with
+    // no tailscale link at all skips this entirely — `computePrivateNetworkRow`
+    // returns `null` immediately, but the query still runs uniformly rather
+    // than special-casing that here; it is at most a handful of rows.
+    const companionConnectionIds = [
+      ...new Set(
+        rawCompanionLinks.map((link) => link.connectionId).filter((id): id is string => id !== null)
+      )
+    ];
+    const companionConnectionRows =
+      companionConnectionIds.length === 0
+        ? []
+        : await handle.db.query.connections.findMany({
+            where: (table, { inArray }) => inArray(table.id, companionConnectionIds),
+            columns: { id: true, config: true, lastSuccessAt: true }
+          });
+    const connectionsById = new Map(
+      companionConnectionRows.map((row) => [
+        row.id,
+        { config: row.config as Record<string, unknown>, lastSuccessAt: row.lastSuccessAt }
+      ])
+    );
+    const privateNetwork = computePrivateNetworkRow({
+      companionLinks: rawCompanionLinks,
+      healthByLinkId,
+      connectionsById,
+      providerLabel: (provider) =>
+        isFleetToolProvider(provider) ? FLEET_TOOL_REGISTRY[provider].label : provider
+    });
 
     const zonesByToken = new Map<string, string[]>();
     for (const row of tokenZoneRows) {
@@ -1329,7 +1550,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
         createdAt: iso(token.createdAt)
       })),
       companionLinks,
-      diagnosis
+      diagnosis,
+      privateNetwork
     };
   });
 
@@ -1384,7 +1606,11 @@ export const addCompanionLink = createServerFn({ method: 'POST' })
             label: FLEET_TOOL_REGISTRY[link.provider].label,
             embeddable: FLEET_TOOL_REGISTRY[link.provider].embeddable
           }
-        : null
+        : null,
+      // A tier-1 hand-typed link carries no sync metadata — `createLink`
+      // was called with no `metadata` above, so the service defaulted it to
+      // `{}`, echoed here verbatim rather than guessed at.
+      metadata: {}
     };
   });
 
@@ -1407,6 +1633,250 @@ export const removeCompanionLink = createServerFn({ method: 'POST' })
       purpose: data.purpose
     });
     return { ok: true };
+  });
+
+// ---------------------------------------------------------------------------
+// The operator-confirmed attach picker (loxep-y64 slice 3)
+//
+// A discovery sweep (today: only Beszel's, `@loxep/app`'s
+// `projectBeszelSystems`) upserts one `external_resources` row per observed
+// system, linked or not — "discovered-but-unlinked systems are kept," per
+// the design's §2. This picker lists that provider's UNATTACHED rows and
+// lets the operator confirm exactly one attachment; it never joins on a
+// name, and it never writes a link without an explicit operator action. The
+// fixed `(provider, externalType, resourceType) -> purpose` vocabulary lives
+// in `@loxep/domain`'s `fleet-tool-registry.ts` — this handler resolves it
+// server-side rather than trusting a client-supplied purpose, so the picker
+// cannot be made to write an invented purpose even by a modified client.
+// ---------------------------------------------------------------------------
+
+/**
+ * One discovered-but-not-yet-attached `external_resources` row (loxep-y64
+ * slice 3). `host`/`status`/`observedAt` are read straight out of the row's
+ * own sync `metadata` — never a second live read — and are HINTS for the
+ * picker, exactly like the design's §2 rule for the attach form ("showing
+ * name/host as hints and labelling them as unverified when null"); `status`/
+ * `observedAt` are additionally shown so the operator is not confirming an
+ * attachment blind to whether the candidate looks healthy.
+ */
+export interface DiscoveredFleetResourceDto {
+  id: string;
+  provider: string;
+  externalType: string;
+  externalId: string | null;
+  title: string | null;
+  url: string;
+  host: string | null;
+  status: string | null;
+  observedAt: string | null;
+  createdAt: string;
+}
+
+function metadataStringField(metadata: Record<string, unknown>, key: string): string | null {
+  const value = metadata[key];
+  return typeof value === 'string' ? value : null;
+}
+
+const fetchDiscoveredFleetResourcesInput = z.strictObject({
+  provider: z.string().trim().min(1).max(100)
+});
+
+/**
+ * Every provider's discovered-but-unattached resource — the attach picker's
+ * candidate list. `requireSession`, not `requireAdmin`: reading the list is
+ * no more sensitive than reading the companion links panel it feeds, and
+ * matches every other GET in this file.
+ */
+export const fetchDiscoveredFleetResources = createServerFn({ method: 'GET' })
+  .inputValidator(fetchDiscoveredFleetResourcesInput)
+  .handler(async ({ data }): Promise<DiscoveredFleetResourceDto[]> => {
+    const { requireSession, getResourceLinksService } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getResourceLinksService().listUnattachedByProvider(data.provider);
+    return rows.map((row) => ({
+      id: row.id,
+      provider: row.provider,
+      externalType: row.externalType,
+      externalId: row.externalId,
+      title: row.title,
+      url: row.url,
+      host: metadataStringField(row.metadata, 'host'),
+      status: metadataStringField(row.metadata, 'status'),
+      observedAt: metadataStringField(row.metadata, 'observedAt'),
+      createdAt: iso(row.createdAt)
+    }));
+  });
+
+const attachDiscoveredFleetResourceInput = z.strictObject({
+  hostingTargetId: z.uuid(),
+  externalResourceId: z.uuid()
+});
+
+/**
+ * Attaches one operator-CONFIRMED discovered resource to a hosting target.
+ * The purpose is resolved server-side from `@loxep/domain`'s
+ * `fleetDiscoveredResourcePurpose` (the design's fixed vocabulary table) —
+ * never accepted from the client — so this endpoint structurally cannot be
+ * used to write an invented purpose, and refuses outright for a provider/
+ * externalType combination nothing discovers yet rather than guessing one.
+ * `attachLink` is idempotent (`resource_links_resource_purpose_uq`), so a
+ * retried click is harmless.
+ */
+export const attachDiscoveredFleetResource = createServerFn({ method: 'POST' })
+  .inputValidator(attachDiscoveredFleetResourceInput)
+  .handler(async ({ data }): Promise<CompanionLinkDto> => {
+    const { requireAdmin, getAdminServices, getResourceLinksService } =
+      await import('@/server/admin');
+    const { fleetDiscoveredResourcePurpose, FLEET_TOOL_REGISTRY, isFleetToolProvider } =
+      await import('@loxep/domain');
+    await requireAdmin();
+    const resourceLinks = getResourceLinksService();
+    const resource = await resourceLinks.getExternalResource(data.externalResourceId);
+    if (resource === null) {
+      throw new Error(`Discovered resource "${data.externalResourceId}" not found`);
+    }
+    const purpose = fleetDiscoveredResourcePurpose(
+      resource.provider,
+      resource.externalType,
+      'hosting_target'
+    );
+    if (purpose === null) {
+      throw new Error(
+        `Loxep does not yet know an attach purpose for "${resource.provider}/${resource.externalType}" -> hosting_target`
+      );
+    }
+    await resourceLinks.attachLink({
+      externalResourceId: resource.id,
+      resourceType: 'hosting_target',
+      resourceId: data.hostingTargetId,
+      purpose
+    });
+
+    const links = await resourceLinks.listLinksFor('hosting_target', data.hostingTargetId);
+    const link = links.find(
+      (candidate) => candidate.externalResourceId === resource.id && candidate.purpose === purpose
+    );
+    const { health } = getAdminServices();
+    // Discovery already wrote this resource's per-system health row (loxep-
+    // y64 slice 3) BEFORE it was ever attachable — unlike a fresh tier-1
+    // `addCompanionLink`, whose brand-new link genuinely has no health row
+    // yet, this response should show the real status the operator just saw
+    // in the picker, not a fabricated `null`.
+    const healthRow = await health.getHealth('external_resource', resource.id);
+    return {
+      id: resource.id,
+      provider: resource.provider,
+      externalType: resource.externalType,
+      url: resource.url,
+      title: resource.title,
+      resourceId: data.hostingTargetId,
+      purpose,
+      createdAt: iso(link?.createdAt ?? new Date()),
+      health:
+        healthRow === null
+          ? null
+          : {
+              status: healthRow.status,
+              source: healthRow.source,
+              checkedAt: iso(healthRow.checkedAt),
+              detail: healthRow.detail as Record<string, JsonValue>
+            },
+      knownTool: isFleetToolProvider(resource.provider)
+        ? {
+            label: FLEET_TOOL_REGISTRY[resource.provider].label,
+            embeddable: FLEET_TOOL_REGISTRY[resource.provider].embeddable
+          }
+        : null,
+      metadata: resource.metadata as Record<string, JsonValue>
+    };
+  });
+
+// ---------------------------------------------------------------------------
+// Dockhand containers panel (loxep-hb7 Milestone B) — the ONE dedicated
+// tool-specific panel the anti-soup rule licenses (hb7 §3.2 rule 1: "a tool
+// earns a panel only by contributing rows Loxep cannot otherwise show").
+// A LIVE, request-scoped read, NEVER persisted — no table, no cache, no
+// cadence (hb7 §3.3: "why the containers panel is a live read and not a
+// sweep" — two GETs on a page a human opened, never a third scheduled call).
+// ---------------------------------------------------------------------------
+
+export interface DockhandContainerDto {
+  externalContainerId: string;
+  name: string | null;
+  image: string | null;
+  /** Docker's own string, verbatim (`running`, `exited`, …). */
+  state: string;
+  /** Docker's human status line, verbatim (`Up 3 days`). */
+  status: string | null;
+}
+
+export interface DockhandStackDto {
+  name: string;
+  status: string;
+  sourceType: string | null;
+  containerCount: number;
+  runningContainerCount: number;
+}
+
+export interface DockhandHostViewDto {
+  containers: DockhandContainerDto[];
+  stacks: DockhandStackDto[];
+  /**
+   * Loxep's own read clock. This response has no staleness story because it
+   * has no storage — "read just now", never a cache age — per hb7 §3.2
+   * rule 2's "every panel stamps its own provenance and its own clock".
+   */
+  readAt: string;
+}
+
+/**
+ * Resolves `hostingTargetId`'s dockhand/environment companion link (the
+ * fleet design's `container_console` purpose), calls `listContainers`/
+ * `listStacks` live against Dockhand, and returns the result — or `null`
+ * when no such link exists (nothing to show), which the panel renders as
+ * ABSENT, never an empty table (hb7 §3.2 rule 3: "absent, not green, not
+ * empty"). No lifecycle verb is called or exposed anywhere in this
+ * function — `DockhandAdapter` structurally has none (rule 13).
+ */
+export const fetchDockhandHostView = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ hostingTargetId: z.uuid() }))
+  .handler(async ({ data }): Promise<DockhandHostViewDto | null> => {
+    const { requireSession, getResourceLinksService, getDockhandAdapterForConnection } =
+      await import('@/server/admin');
+    await requireSession();
+    const resourceLinks = getResourceLinksService();
+    const links = await resourceLinks.listLinksFor('hosting_target', data.hostingTargetId);
+    const link = links.find(
+      (candidate) => candidate.provider === 'dockhand' && candidate.externalType === 'environment'
+    );
+    if (link === undefined || link.externalId === null) return null;
+
+    const resource = await resourceLinks.getExternalResource(link.externalResourceId);
+    if (resource === null || resource.connectionId === null) return null;
+
+    const adapter = await getDockhandAdapterForConnection(resource.connectionId);
+    const [containers, stacks] = await Promise.all([
+      adapter.listContainers({ externalHostId: link.externalId }),
+      adapter.listStacks({ externalHostId: link.externalId })
+    ]);
+
+    return {
+      containers: containers.map((container) => ({
+        externalContainerId: container.externalContainerId,
+        name: container.name,
+        image: container.image,
+        state: container.state,
+        status: container.status
+      })),
+      stacks: stacks.map((stack) => ({
+        name: stack.name,
+        status: stack.status,
+        sourceType: stack.sourceType,
+        containerCount: stack.containerCount,
+        runningContainerCount: stack.runningContainerCount
+      })),
+      readAt: iso(new Date())
+    };
   });
 
 const createHostingTargetInput = z.strictObject({

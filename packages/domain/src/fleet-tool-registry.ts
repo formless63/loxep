@@ -41,22 +41,76 @@
  * `healthPath` is set only when fleet-observability-design.md's "Per-tool
  * verdicts" table documents a genuinely UNAUTHENTICATED reachability route
  * for that tool — tier 2 ("link + reachability") requires exactly that.
- * Two providers are tier 3 with NO tier-2 predecessor at all, by the
- * design's own verified finding, and therefore carry `healthPath: null`:
+ * All five providers carry `healthPath: null` today (`PROBEABLE_FLEET_TOOL_
+ * PROVIDERS` below is therefore empty — see that constant's doc and `health-
+ * probes.ts`'s explicit `length === 0` short-circuit, which anticipated
+ * exactly this end state), for two DIFFERENT reasons:
  *
  * - `tailscale` — "No whoami/identity endpoint exists … Tailscale requires
  *   the credential for even its cheapest read" (design, Tailscale/Termix
- *   detail section, point 2).
+ *   detail section, point 2). Tier 3 with no tier-2 predecessor at all.
  * - `termix` — "Termix has NO unauthenticated surface at all"
  *   (loxep-wvm §1.1); `openapi.json`'s global `bearerAuth` security
  *   requirement has no per-operation override, so even `probe()` itself is a
- *   login exchange, never a bare GET.
+ *   login exchange, never a bare GET. Tier 3 with no tier-2 predecessor.
+ * - `beszel` (loxep-y64 slice 3, 2026-08) — Beszel DOES publish `/api/health`
+ *   unauthenticated (see `test/live-beszel.test.ts`), so this is NOT the
+ *   "no tier-2 route" reason above. It is `null` because the CONNECTION probe
+ *   (`@loxep/app`'s `fleet-health.ts`, `probeBeszelConnection`) now writes a
+ *   per-system `external_resource` health row directly, as a side effect of
+ *   the SAME credential-proven `listSystems()` read that already determines
+ *   the connection's own status (`source: 'adapter'`, per-system, verbatim
+ *   status) — a strictly richer read than the generic tier-2 probe's bare
+ *   unauthenticated GET (`source: 'probe'`, hub-reachability-only, blind to
+ *   which system it is even naming). If beszel stayed in
+ *   `PROBEABLE_FLEET_TOOL_PROVIDERS`, EVERY discovered Beszel
+ *   `external_resources` row (linked or not — discovery keeps unlinked
+ *   systems too, see `resource-links.ts`'s attach-picker doc) would ALSO be a
+ *   tier-2 candidate, and once its backoff interval elapsed the generic probe
+ *   would eventually overwrite the adapter-sourced row with a coarser
+ *   `source: 'probe'` one — the exact per-resource "last sweep wins" race the
+ *   design's shared law forbids for `subject_type='hosting_target'`, recreated
+ *   here one level down between two WRITERS of the same `external_resource`
+ *   subject instead of two subject types. Excluding beszel from
+ *   `PROBEABLE_FLEET_TOOL_PROVIDERS` is the fix: exactly one writer per
+ *   subject. A future provider (Dockhand/Gatus/Tailscale/Termix) that grows
+ *   its own discovery+per-resource-health side effect should null its
+ *   `healthPath` here too, in the same change, for the same reason.
+ *
+ * - `dockhand` (loxep-hb7, 2026-08-15) — Dockhand DOES publish
+ *   `probeSession()` -> `GET /api/auth/session` unauthenticated (loxep-hb7
+ *   §1.1), so this is the SAME "superseded by a richer adapter read" reason
+ *   as beszel's, not the "no tier-2 route" reason tailscale/termix have. The
+ *   connection probe's discovery side effect (`@loxep/app`'s
+ *   `projectDockhandResources`, run off the SAME credential-proven
+ *   `listHosts()` read `probeDockhandConnection` already makes) now writes a
+ *   per-environment `external_resource` health row directly
+ *   (`source: 'adapter'`, one row per Dockhand environment). Leaving
+ *   `healthPath` set would let the generic tier-2 probe eventually overwrite
+ *   that adapter-sourced row with a coarser `source: 'probe'` hub-
+ *   reachability-only one once its backoff elapsed — the exact race beszel's
+ *   entry above already closed. Nulling it here is the same fix, applied to
+ *   the second provider that grew this side effect.
+ * - `gatus` (loxep-1au slice B, 2026-08-15) — Gatus DOES publish `GET
+ *   /health` unauthenticated, so this is again the "superseded" reason, not
+ *   "no tier-2 route". `@loxep/app`'s `projectGatusEndpoints`, run off the
+ *   SAME `direct`-posture `listEndpointStatuses()` read the connection probe
+ *   already makes, now writes a per-endpoint `external_resource` health row
+ *   directly. Leaving `healthPath` set is a SHARPER version of the same race
+ *   here than for Beszel/Dockhand: `/health` reports the HUB's process
+ *   liveness, not any one endpoint's — every linked Gatus endpoint would
+ *   share the exact same tier-2 probe URL (its link's origin, since all
+ *   endpoints on one connection share one origin), so the generic probe
+ *   would not just race the richer per-endpoint reads, it would write the
+ *   SAME coarse verdict onto every one of them.
  *
  * A `null` healthPath means {@link ../health-probes.ts}'s `external_resource`
  * probe never lists that provider's links as sweep candidates at all — see
  * `PROBEABLE_FLEET_TOOL_PROVIDERS` below. This is "absent renders absent"
  * applied to the registry itself: no fabricated `unknown` row implying a
- * check nothing is actually running.
+ * check nothing is actually running (tailscale/termix), and no COMPETING
+ * check duplicating one a richer read already covers (beszel, dockhand,
+ * gatus).
  *
  * ## The probe targets the link's ORIGIN, never its stored URL verbatim
  *
@@ -158,7 +212,12 @@ export const FLEET_TOOL_REGISTRY: Record<FleetToolProvider, FleetToolRegistryEnt
   gatus: {
     label: "Gatus",
     icon: "pulse",
-    healthPath: "/health",
+    // null since loxep-1au slice B (2026-08-15), NOT because no
+    // unauthenticated route exists (it does: GET /health) — see the module
+    // doc's "Which providers get a healthPath" section, gatus entry, for the
+    // superseded-by-a-richer-adapter-read reason (and why it is a sharper
+    // race here than for Beszel/Dockhand).
+    healthPath: null,
     // "Iframe embedding" is not discussed for Gatus in the design; the
     // design's own "Where this surfaces" section named Netdata as the one
     // genuinely-available embed among the tools it surveyed, but Netdata was
@@ -169,7 +228,11 @@ export const FLEET_TOOL_REGISTRY: Record<FleetToolProvider, FleetToolRegistryEnt
   beszel: {
     label: "Beszel",
     icon: "radar",
-    healthPath: "/api/health",
+    // null since loxep-y64 slice 3, NOT because no unauthenticated route
+    // exists (it does: `/api/health`) — see the module doc's "Which
+    // providers get a healthPath" section, beszel entry, for the
+    // superseded-by-a-richer-adapter-read reason.
+    healthPath: null,
     // "Iframe embedding is effectively unsupported upstream" (design,
     // Beszel detail section).
     embeddable: false,
@@ -177,17 +240,23 @@ export const FLEET_TOOL_REGISTRY: Record<FleetToolProvider, FleetToolRegistryEnt
   dockhand: {
     label: "Dockhand",
     icon: "container",
-    // probeSession() -> GET /api/auth/session (loxep-hb7 §1.1): reachability
-    // only, proves nothing about the credential — see health-probes.ts's
-    // module doc for why the connection-level probe still needs a SECOND,
-    // authenticated call this tier-2 check does not perform.
-    healthPath: "/api/auth/session",
+    // null since loxep-hb7's discovery slice (2026-08-15), NOT because no
+    // unauthenticated route exists (it does: probeSession() ->
+    // GET /api/auth/session) — see the module doc's "Which providers get a
+    // healthPath" section, dockhand entry, for the
+    // superseded-by-a-richer-adapter-read reason.
+    healthPath: null,
     embeddable: false, // rule 13 — no UI may imply container control, embedded or otherwise
   },
   tailscale: {
     label: "Tailscale",
     icon: "radar",
-    healthPath: null, // tier 3 direct, no tier-2 predecessor — see module doc
+    // No unauthenticated route exists at all — the ORIGINAL "tier 3 direct,
+    // no tier-2 predecessor" reason (module doc), unchanged by loxep-50t
+    // slice B: `projectTailscaleDevices` writes per-device health from the
+    // SAME `listDevices()` credential-proving read regardless of whether a
+    // tier-2 predecessor ever existed to supersede.
+    healthPath: null,
     embeddable: false,
   },
   termix: {
@@ -245,4 +314,52 @@ export function compareFleetToolPanelOrder(a: string, b: string): number {
   const rankA = indexA === -1 ? FLEET_TOOL_PANEL_ORDER.length : indexA;
   const rankB = indexB === -1 ? FLEET_TOOL_PANEL_ORDER.length : indexB;
   return rankA - rankB;
+}
+
+/**
+ * The fixed `(provider, externalType, resourceType) -> purpose` vocabulary
+ * the operator-confirmed attach picker (loxep-y64 slice 3) is allowed to
+ * write — copied from fleet-observability-design.md's "The link model, and
+ * its vocabulary" table, never invented at a call site. Deliberately NOT the
+ * design doc's full table: only pairs a SHIPPED discovery mechanism can
+ * actually produce are listed, so `fleetDiscoveredResourcePurpose` refuses a
+ * combination nothing yet discovers rather than guessing a purpose for it —
+ * the same "absent renders absent" discipline this module already applies to
+ * `healthPath`.
+ *
+ * `beszel:system:hosting_target`, `dockhand:environment:hosting_target`,
+ * `termix:host:hosting_target`, `tailscale:device:hosting_target`, and
+ * `gatus:endpoint:hosting_target` are the members today — the five
+ * provider/externalType/resourceType triples `@loxep/app`'s `fleet-health.ts`
+ * (`projectBeszelSystems`/`projectDockhandResources`/`projectTermixResources`/
+ * `projectTailscaleDevices`/`projectGatusEndpoints`) actually write
+ * `external_resources` rows for, copied verbatim from
+ * fleet-observability-design.md's vocabulary table. `beszel:hub:hosting_target
+ * -> metrics_console` and `dockhand:stack:hosting_target -> stack` are in the
+ * design's table but have no discovery writer yet — add each in the same
+ * change that starts writing one. `gatus:endpoint:managed_domain` is
+ * similarly reserved (loxep-1au §5) and deliberately absent: `managed_domain`
+ * is not yet a member of `RESOURCE_LINK_RESOURCE_TYPES`.
+ */
+const FLEET_LINK_VOCABULARY: Readonly<Record<string, string>> = {
+  "beszel:system:hosting_target": "host_metrics",
+  "dockhand:environment:hosting_target": "container_console",
+  "termix:host:hosting_target": "terminal_access",
+  "tailscale:device:hosting_target": "private_network",
+  "gatus:endpoint:hosting_target": "uptime_check",
+};
+
+/**
+ * The fixed purpose an attach picker must use when linking one discovered
+ * resource to one Loxep record — `null` when this provider/externalType/
+ * resourceType combination is not in {@link FLEET_LINK_VOCABULARY}, which the
+ * caller must treat as "cannot be attached through the picker yet," never
+ * fall back to a guessed or operator-typed value for.
+ */
+export function fleetDiscoveredResourcePurpose(
+  provider: string,
+  externalType: string,
+  resourceType: string,
+): string | null {
+  return FLEET_LINK_VOCABULARY[`${provider}:${externalType}:${resourceType}`] ?? null;
 }

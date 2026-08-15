@@ -8,9 +8,7 @@ That boundary is deliberate and permanent. Loxep does not store, chart, or retai
 
 Once connected, `health.sweep` (a five-minute recurring job) checks the hub's health and lists its shared systems on its own schedule, so the status below stays current without anything to trigger by hand.
 
-:::note[Per-system linking is not built yet]
-This connection gives you the hub-level status shown below — is Loxep's stored login accepted, and how many shared systems are up. Linking an individual Beszel system to a specific Loxep fleet record (`hosting_target`), so a system's status shows up on that record's own page, is designed but not yet built. See the [integrations status page](../../product/integrations-status/) for the current state.
-:::
+Every sweep also discovers the systems shared with your read-only user, so you can attach one to a specific fleet record — see [Attaching a system to a host](#attaching-a-system-to-a-host) below.
 
 ## What you will need
 
@@ -55,7 +53,21 @@ Save. The hub URL is kept as ordinary connection configuration and stays visible
 | Whether the stored login is accepted, and how many shared systems are up vs. not | The hub's `systems` collection, read on every sweep |
 | The age of that status | Loxep's own last-checked time for the connection |
 
-This is a single connection-level status today, not a per-system list: Loxep reads every shared system to compute the up/not-up counts, but does not yet render one row per system anywhere (see the note above). Every status is rendered with its age. A status with no visible age is one you would over-trust, so if Loxep cannot say when it last heard from the hub, it says that instead of showing a stale green dot.
+Every status is rendered with its age. A status with no visible age is one you would over-trust, so if Loxep cannot say when it last heard from the hub, it says that instead of showing a stale green dot.
+
+## Attaching a system to a host
+
+The same sweep that reads the hub-level status also discovers each individual system your read-only user can see. A discovered system is not automatically linked to anything — Beszel's `name` field is not guaranteed unique or even present, so Loxep never guesses which fleet record a system belongs to.
+
+To attach one:
+
+1. Go to **Infrastructure → Fleet** and open the hosting target you want to attach a system to.
+2. In the **Companion tools** panel, choose **Attach discovered Beszel system**.
+3. Pick the system that is actually this host from the list — its name, host, and last-reported status are shown as hints, not as a pre-filled guess. Nothing is written until you pick one and confirm.
+
+Once attached, that host's page shows the system's own status string exactly as Beszel reports it (`up`, `down`, `paused`, or whatever a future Beszel release adds), alongside two separate ages: when Beszel itself last updated the record, and when Loxep last read it. A host can have more than one attached system — a machine and a VM running on it, for example — and each is its own row; Loxep never merges them into one verdict. If a linked Gatus endpoint or Dockhand environment is also attached to the same host, each renders its own line: "Beszel (agent) reports up; Gatus (endpoint) reports down" is a diagnosis (the app crashed, not the box), never a single averaged chip.
+
+Detach the same way, from the same panel. Once a system's only link is removed, Loxep drops its discovery record too — there is nothing left pointing at it, so keeping it would be dead weight rather than history. If the system is still shared with your read-only user, the next sweep (within five minutes) discovers it again, and it reappears in the attach picker as a fresh candidate.
 
 ## Alerts stay in Beszel
 

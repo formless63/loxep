@@ -253,50 +253,64 @@ describe("default health subject registry", () => {
       return row;
     }
 
-    it("only lists candidates for providers the registry marks tier-2-probeable", async () => {
+    it("lists NO candidates at all — every one of the five fleet providers is null now", async () => {
+      // As of loxep-1au/loxep-50t slice B (the last two providers to grow
+      // their own discovery + per-resource adapter-sourced health, after
+      // Beszel/Dockhand/Termix), ALL FIVE fleet providers now carry
+      // `healthPath: null` in `fleet-tool-registry.ts` — each superseded by
+      // its own connection probe's richer per-resource read, or (tailscale/
+      // termix) never had an unauthenticated route at all. This is not a
+      // fixture gap; `PROBEABLE_FLEET_TOOL_PROVIDERS` is genuinely empty, and
+      // `listExternalResourceCandidates`'s own `length === 0` short-circuit
+      // (see health-probes.ts) anticipated exactly this end state.
+      const dockhand = await makeLink("dockhand", "https://dockhand.example.test/env/abc");
       const beszel = await makeLink("beszel", "https://beszel.example.test/system/abc");
       const tailscale = await makeLink("tailscale", "https://api.tailscale.com/device/xyz");
+      const gatus = await makeLink("gatus", "https://gatus.example.test/endpoints/some-key");
+      const termix = await makeLink("termix", "https://termix.example.test/host/1");
       const registry = createDefaultHealthSubjectRegistry();
       const candidates = await registry.external_resource?.listCandidates(handle.db);
       const ids = candidates?.map((candidate) => candidate.subjectId) ?? [];
-      expect(ids).toContain(beszel.id);
-      expect(ids).not.toContain(tailscale.id);
+      for (const row of [dockhand, beszel, tailscale, gatus, termix]) {
+        expect(ids).not.toContain(row.id);
+      }
+      expect(ids).toEqual([]);
     });
 
-    it("probes the link's URL ORIGIN plus the registry's health path, unauthenticated", async () => {
+    it("probing a real fleet provider's link directly still returns 'unknown'/'no_health_path', and never calls fetch", async () => {
+      // Even bypassing `listCandidates()` and probing a link id directly —
+      // exactly what `runHealthSweep` does with whatever `listCandidates()`
+      // returned — every one of the five REGISTERED providers now hits the
+      // registry gate (`entry.healthPath === null`) before any network call,
+      // so the origin-resolution + probeUrl HTTP-outcome-mapping code below
+      // it is provably unreached for any current provider. `fetchCalled`
+      // proves that directly rather than trusting the branch alone.
       const link = await makeLink("gatus", "https://gatus.example.test/endpoints/some-key");
-      let capturedUrl: string | undefined;
-      let capturedInit: unknown;
-      const fetchImpl: HealthFetch = async (url, init) => {
-        capturedUrl = url;
-        capturedInit = init;
+      let fetchCalled = false;
+      const fetchImpl: HealthFetch = async () => {
+        fetchCalled = true;
         return { ok: true, status: 200, text: async () => "OK" };
       };
       const registry = createDefaultHealthSubjectRegistry({ fetchImpl });
       const outcome = await registry.external_resource?.probe(handle.db, link.id);
-      expect(capturedUrl).toBe("https://gatus.example.test/health");
-      expect(capturedInit).not.toHaveProperty("headers");
-      expect(outcome?.status).toBe("ok");
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail).toEqual({ kind: "no_health_path", provider: "gatus" });
+      expect(fetchCalled).toBe(false);
     });
 
-    it("reports 'failing' on a definite HTTP error response", async () => {
-      const link = await makeLink("beszel", "https://beszel.example.test/system/def");
+    it("a provider the registry has never heard of ALSO returns 'unknown'/'no_health_path'", async () => {
+      // Distinct from the registered-but-null case above: `entry` itself is
+      // `undefined` here (a hand-typed tier-1 companion link, or a future
+      // knowledge/tasks consumer's provider), and the probe's own defensive
+      // branch treats both the same way — see `createExternalResourceProbe`'s
+      // doc in health-probes.ts.
+      const link = await makeLink("bookstack", "https://wiki.example.test/books/ops");
       const registry = createDefaultHealthSubjectRegistry({
-        fetchImpl: fetchStub(() => ({ ok: false, status: 502, body: "" })),
-      });
-      const outcome = await registry.external_resource?.probe(handle.db, link.id);
-      expect(outcome?.status).toBe("failing");
-      expect(outcome?.detail?.["kind"]).toBe("http_error");
-    });
-
-    it("reports 'unknown' — not 'failing' — on a network-level failure", async () => {
-      const link = await makeLink("dockhand", "https://dockhand.example.test/env/1");
-      const registry = createDefaultHealthSubjectRegistry({
-        fetchImpl: fetchStub(() => "network-error"),
+        fetchImpl: fetchStub(() => ({ ok: true, status: 200, body: "" })),
       });
       const outcome = await registry.external_resource?.probe(handle.db, link.id);
       expect(outcome?.status).toBe("unknown");
-      expect(outcome?.detail?.["kind"]).toBe("unreachable");
+      expect(outcome?.detail).toEqual({ kind: "no_health_path", provider: "bookstack" });
     });
 
     it("returns null for a deleted subject so the sweep clears its row", async () => {

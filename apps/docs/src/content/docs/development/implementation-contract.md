@@ -320,6 +320,8 @@ ntfy is the first notification adapter, but event detection and notification del
 
 The ntfy adapter is implemented behind the transport-neutral `NotificationTransport` interface in `@loxep/notifications`; additional providers implement the same interface rather than extending ntfy-specific code paths.
 
+The **ledger is subject-neutral too** (ADR-0023): a notifiable fact is a `notification_events` row (`event_class` + `event_type`, `subject_type` + `subject_id`, a small Loxep-owned render payload, and a mandatory unique `deduplication_key`), and `notification_deliveries` points at that, not at a market event. Detection writes the event; routing (`notification_rules`, filtered by class × type × monitor target) and delivery are separate steps behind an explicit bridge, and the emitting call site supplies the enqueue seam. Do not add a per-class delivery table, a rules engine on top of `notification_rules`, or a per-user read/inbox table. See [Notifications Design](../../architecture/notifications-design/).
+
 ## External API
 
 Framework-native server functions are appropriate inside the Loxep web application. They must not become the only integration boundary.

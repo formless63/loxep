@@ -1,6 +1,8 @@
 import { queryOptions } from '@tanstack/react-query';
 import {
+  fetchDiscoveredFleetResources,
   fetchDnsConnectionOptions,
+  fetchDockhandHostView,
   fetchHostingTarget,
   fetchHostingTargetOptions,
   fetchHostingTargets,
@@ -64,3 +66,23 @@ export const hostingTargetOptionsQuery = queryOptions({
   queryKey: ['infrastructure', 'hosting-target-options'],
   queryFn: () => fetchHostingTargetOptions()
 });
+
+/** The operator-confirmed attach picker's candidate list (loxep-y64 slice 3), scoped to one provider. */
+export const discoveredFleetResourcesQuery = (provider: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'discovered-fleet-resources', provider],
+    queryFn: () => fetchDiscoveredFleetResources({ data: { provider } })
+  });
+
+/**
+ * The Dockhand containers/stacks panel's live, request-scoped read
+ * (loxep-hb7 Milestone B). Not suspense-preloaded in the fleet-detail
+ * route's own loader — it is enabled only once the caller knows a dockhand
+ * link exists, and its `null` result (no link) is a valid, expected answer
+ * rather than a loading error.
+ */
+export const dockhandHostViewQuery = (hostingTargetId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'fleet', hostingTargetId, 'dockhand-host-view'],
+    queryFn: () => fetchDockhandHostView({ data: { hostingTargetId } })
+  });

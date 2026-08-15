@@ -4,8 +4,8 @@ title: Connecting Dockhand
 
 [Dockhand](https://finsys-dockhand.mintlify.app) manages Docker hosts, containers, and Compose stacks. Loxep connects to it for two things, and the difference between them is the whole design:
 
-- **Reading.** Loxep signs in and, on every `health.sweep` cycle (five minutes), proves the credential and counts the hosts Dockhand manages. This is live today.
-- **Registering hosts.** Loxep can, by design, add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS. **This half is designed but not yet built:** there is no registration form in the product yet, and nothing calls `planContainerHostOperations` outside its own tests. See the [integrations status page](../../product/integrations-status/) for the current state. The rest of this guide's "Registering a host from Loxep" section describes the intended flow, not something you can do today.
+- **Reading.** Loxep signs in and, on every `health.sweep` cycle (five minutes), proves the credential, counts the hosts Dockhand manages, and discovers each managed host (Dockhand calls it an "environment") as its own tracked resource with its own status. This is live today — see "What the sweep discovers" below.
+- **Registering hosts.** Loxep can, by design, add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS. **This half is designed but not yet built:** there is no registration form in the product yet, and nothing calls `planContainerHostOperations` outside its own tests. See the [integrations status page](../../product/integrations-status/) for the current state. The "Registering a host from Loxep" section further down describes the intended flow, not something you can do today.
 
 **Loxep never starts, stops, restarts, execs into, deploys, or redeploys anything.** Those buttons live in Dockhand, where they belong, with your own session and Dockhand's own permissions. This is not a feature gap to be filled later: it is a boundary the codebase enforces with a test that fails if an adapter ever grows a lifecycle call.
 
@@ -26,10 +26,10 @@ Dockhand publishes no API keys, personal access tokens, or service accounts — 
 
    | Permission | Why Loxep needs it |
    |---|---|
-   | `environments:view` | Read the list of managed hosts — this is what powers the connection's health status today |
+   | `environments:view` | Read the list of managed hosts — this is what powers the connection's health status and per-environment discovery today |
    | `environments:edit` | Register and update hosts — reserved for the not-yet-built registration feature described below |
-   | `containers:view` | Read per-host container state — reserved for a future fleet-detail read, not called by anything yet |
-   | `stacks:view` | Read per-host stack state — reserved for a future fleet-detail read, not called by anything yet |
+   | `containers:view` | Read per-host container state — powers the live Containers panel on a linked fleet-detail page |
+   | `stacks:view` | Read per-host stack state — powers the same panel's Stacks list |
 
 All four are still worth granting now: the account is a one-time setup, and Loxep never asks for more than these regardless of which reads are wired yet.
 
@@ -56,6 +56,17 @@ Fill in:
 
 Save. The instance URL is kept as ordinary connection configuration and stays visible; the password is stored application-encrypted and is never displayed again.
 
+## What the sweep discovers
+
+Every five minutes, alongside the connection's own health check, Loxep also lists Dockhand's managed environments and tracks each one as its own resource — the same mechanism Beszel's per-system status uses. On the **Fleet detail** page for a hosting target:
+
+- If a Dockhand environment's name matches the hosting target's name exactly and nothing has claimed it yet, Loxep links them automatically the first time it sees the match. This is the one case in the fleet where Loxep auto-links rather than asking you to confirm — Dockhand's environment names and Loxep's hosting-target names are each guaranteed unique, so an exact match is unambiguous. A rename on either side breaks the automatic match; use **Companion tools → Attach discovered Dockhand environment** on the fleet-detail page to reconnect it, or re-align the two names.
+- Each linked environment gets its own status in the **Companion tools** panel, distinct from the connection's own status. Because Dockhand's own inventory listing does not prove a host is actually reachable right now (only that Dockhand knows about it), an environment reads "unknown" unless it uses a Hawser agent that has actually reported in — Loxep does not invent a green checkmark it cannot back up.
+
+## The Containers panel
+
+When a hosting target has a linked Dockhand environment, its fleet-detail page grows a **Containers** panel listing that host's containers and Compose stacks — name, image, state, and status, each read live from Dockhand at the moment you open the page. Nothing here is stored: there is no history, no chart, and no "last seen" timestamp older than the page load, because there is nothing to refresh on a schedule. Nothing here is a control, either — no start, stop, restart, or any other button that would act on the host. If you need to act on a container, the panel does not offer to; open Dockhand itself with your own session.
+
 ## Registering a host from Loxep
 
 :::note[Designed, not yet built]
@@ -77,7 +88,7 @@ Four connection types are available, matching Dockhand's own:
 
 Two behaviours to know about:
 
-- **Hosts are matched by name.** Loxep does not store a Dockhand identifier for a host; it matches on the name, which is unique on both sides. If you rename a host in either system, Loxep shows the Dockhand-side host as unmatched rather than silently registering a duplicate — rename it on both sides to reconnect them.
+- **Hosts are matched by name, once, and then by Dockhand's own id from then on.** The first time Loxep sees a Dockhand environment whose name matches a hosting target's name, it records that link (see "What the sweep discovers" above) and remembers Dockhand's id for it — name matching is a one-time bootstrap, not something repeated on every sweep. If you rename a host in either system after that, Loxep shows the Dockhand-side host as unmatched rather than silently registering a duplicate — rename it on both sides to reconnect them, or use the attach picker.
 - **Loxep never deletes a Dockhand host.** Decommissioning a machine in Loxep stops Loxep reconciling it; removing it from Dockhand's inventory is your decision to make in Dockhand.
 
 TLS material and Hawser tokens are **write-only**: Loxep can send them when you register or update a host, and can never read them back. Everywhere a certificate or token would appear, Loxep records only whether one is configured — so a private key cannot end up in a log, a diff, or an error message.

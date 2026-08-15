@@ -2,7 +2,7 @@
 title: Connecting Termix
 ---
 
-[Termix](https://termix.site) is a self-hosted SSH host and remote-desktop manager. Loxep signs in to prove the stored login and, best-effort, counts the SSH hosts Termix knows about; reading its host inventory and active terminal sessions in enough detail to attribute them to specific fleet machines is designed but not yet built (see the note below).
+[Termix](https://termix.site) is a self-hosted SSH host and remote-desktop manager. Loxep signs in to prove the stored login and, best-effort, counts the SSH hosts Termix knows about. It also discovers each Termix host as its own tracked resource you can link to a hosting target — see "What Loxep reads" below for exactly what that link does and does not give you.
 
 Loxep never opens a terminal, manages Docker, controls a systemd service, sends a process signal, or touches a file through Termix. Termix's own surface is large — it covers all of those — and Loxep's restraint is enforced entirely in Loxep's own code: no function it exports is capable of any of them, not "capable but unused."
 
@@ -41,8 +41,14 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 |---|---|
 | Whether the stored login was accepted | Termix's own current-user identity endpoint |
 | The connection's own status, and — best-effort, never affecting that status — how many SSH hosts Termix reports | Termix's own current-user check, then a best-effort read of its host inventory |
+| Each Termix host, as a candidate you can link to a hosting target | The same host-inventory read, tracked as its own resource |
+| A linked host's status, and a best-effort count of active terminal sessions on it | The same read, projected only for hosts you have linked |
 
-This is a single connection-level status today, not a per-host list: Loxep proves the login and, best-effort, counts Termix's known hosts, but does not yet render one row per host anywhere, and does not read host connectivity or active terminal sessions at all in production — the adapter carries that capability (Termix's response shapes there are largely undocumented upstream), but nothing calls it yet. Termix publishes no schema for its host-inventory response, so a handful of fields are read defensively when they are read at all; Loxep degrades a missing field to blank rather than failing the whole call.
+Termix publishes no schema for its host-inventory or session responses, so fields are read defensively; Loxep degrades a missing field to blank rather than failing the whole call, and a host's own connectivity reading is treated as weak evidence — it can never turn a linked host's status red on its own.
+
+**Linking a host is never automatic.** Termix host names carry no uniqueness guarantee, so — unlike Dockhand, which Loxep does link automatically on an exact name match — you confirm each Termix host yourself: open a hosting target's **Fleet detail** page and use **Companion tools → Attach discovered Termix host** to pick the right one from the list Loxep has seen. Once linked, that row shows the host's status, an "open Termix" link (Termix's own URL patterns per host are not published, so the link opens the instance itself, not a specific host's page), and the session count above.
+
+**Active sessions are a count, never a list.** Loxep does not show who is connected to what, or from where — session identity is a different, more sensitive kind of data than fleet observability, and Termix's own UI is the place to see it. A session count is context ("someone has an active shell on this host right now"), not a health signal: zero sessions does not mean the host is fine, and a session does not mean the host is reachable from Loxep.
 
 ## When it does not work
 

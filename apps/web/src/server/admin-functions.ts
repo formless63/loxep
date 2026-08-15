@@ -17,10 +17,15 @@ import type { EconomicEntityKind } from '@loxep/db/schema';
 import { GATUS_PUSH_SECRET_KEY, gatusPushSetting, integrationsEnabledSetting } from '@loxep/domain';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
-import type { MarketEventType } from '@loxep/market';
+import type { NotificationEventClass } from '@loxep/db/schema';
+// Pure renderer (no runtime imports at all), so the bell and the outbound
+// ntfy message describe a fact identically. The package index is dynamically
+// imported elsewhere because it reaches graphile-worker; this deep path does
+// not.
+import { renderNotificationEventMessage } from '@loxep/notifications/render';
 import {
   ECONOMIC_ENTITY_KIND_VALUES,
-  MARKET_EVENT_TYPE_VALUES
+  NOTIFICATION_EVENT_CLASS_VALUES
 } from '@/features/settings/constants';
 import {
   EBAY_ORDERS_TARGET_TYPE,
@@ -1556,7 +1561,9 @@ export interface NotificationRuleDto {
   id: string;
   name: string;
   enabled: boolean;
-  marketEventType: string | null;
+  /** ADR-0023: the class dimension; `event_type` null means any type in it. */
+  eventClass: string;
+  eventType: string | null;
   monitorTargetId: string | null;
   endpointId: string;
   createdAt: string;
@@ -1573,7 +1580,8 @@ export const fetchNotificationRules = createServerFn({ method: 'GET' }).handler(
       id: row.id,
       name: row.name,
       enabled: row.enabled,
-      marketEventType: row.marketEventType,
+      eventClass: row.eventClass,
+      eventType: row.eventType,
       monitorTargetId: row.monitorTargetId,
       endpointId: row.endpointId,
       createdAt: iso(row.createdAt),
@@ -1582,15 +1590,16 @@ export const fetchNotificationRules = createServerFn({ method: 'GET' }).handler(
   }
 );
 
-const marketEventTypeSchema = z.enum(
-  MARKET_EVENT_TYPE_VALUES as [MarketEventType, ...MarketEventType[]]
+const notificationEventClassSchema = z.enum(
+  NOTIFICATION_EVENT_CLASS_VALUES as [string, ...string[]]
 );
 
 const createNotificationRuleInput = z.strictObject({
   name: z.string().trim().min(1),
   endpointId: z.uuid(),
   enabled: z.boolean(),
-  marketEventType: marketEventTypeSchema.nullable(),
+  eventClass: notificationEventClassSchema,
+  eventType: z.string().min(1).nullable(),
   monitorTargetId: z.uuid().nullable()
 });
 
@@ -1604,7 +1613,8 @@ export const createNotificationRule = createServerFn({ method: 'POST' })
       name: data.name,
       endpointId: data.endpointId,
       enabled: data.enabled,
-      marketEventType: data.marketEventType,
+      eventClass: data.eventClass as NotificationEventClass,
+      eventType: data.eventType,
       monitorTargetId: data.monitorTargetId,
       createdByUserId: session.user.id
     });
@@ -1615,7 +1625,8 @@ const updateNotificationRuleInput = z.strictObject({
   id: z.uuid(),
   name: z.string().trim().min(1).optional(),
   enabled: z.boolean().optional(),
-  marketEventType: marketEventTypeSchema.nullable().optional(),
+  eventClass: notificationEventClassSchema.optional(),
+  eventType: z.string().min(1).nullable().optional(),
   monitorTargetId: z.uuid().nullable().optional()
 });
 
@@ -1626,7 +1637,11 @@ export const updateNotificationRule = createServerFn({ method: 'POST' })
     await requireAdmin();
     const { id, ...patch } = data;
     const notifications = await getNotificationsService();
-    const rule = await notifications.updateRule(id, patch);
+    const { eventClass, ...rest } = patch;
+    const rule = await notifications.updateRule(id, {
+      ...rest,
+      ...(eventClass === undefined ? {} : { eventClass: eventClass as NotificationEventClass })
+    });
     return { id: rule.id };
   });
 
@@ -1651,6 +1666,7 @@ export const fetchMonitorTargetOptions = createServerFn({ method: 'GET' }).handl
 
 export interface NotificationDeliveryDto {
   id: string;
+  eventClass: string;
   eventType: string;
   endpointId: string;
   endpointName: string;
@@ -1674,22 +1690,25 @@ export const fetchNotificationDeliveries = createServerFn({ method: 'GET' }).han
     });
     if (deliveries.length === 0) return [];
     const endpointIds = [...new Set(deliveries.map((row) => row.endpointId))];
-    const eventIds = [...new Set(deliveries.map((row) => row.marketEventId))];
+    const eventIds = [...new Set(deliveries.map((row) => row.notificationEventId))];
     const [endpoints, events] = await Promise.all([
       handle.db.query.notificationEndpoints.findMany({
         where: (table, { inArray }) => inArray(table.id, endpointIds),
         columns: { id: true, name: true }
       }),
-      handle.db.query.marketEvents.findMany({
+      // ADR-0023: deliveries carry a subject-neutral notification event, so
+      // the class/type come from the ledger instead of a market_events join.
+      handle.db.query.notificationEvents.findMany({
         where: (table, { inArray }) => inArray(table.id, eventIds),
-        columns: { id: true, eventType: true }
+        columns: { id: true, eventClass: true, eventType: true }
       })
     ]);
     const endpointNameById = new Map(endpoints.map((row) => [row.id, row.name]));
-    const eventTypeById = new Map(events.map((row) => [row.id, row.eventType]));
+    const eventById = new Map(events.map((row) => [row.id, row]));
     return deliveries.map((row) => ({
       id: row.id,
-      eventType: eventTypeById.get(row.marketEventId) ?? 'unknown',
+      eventClass: eventById.get(row.notificationEventId)?.eventClass ?? 'unknown',
+      eventType: eventById.get(row.notificationEventId)?.eventType ?? 'unknown',
       endpointId: row.endpointId,
       endpointName: endpointNameById.get(row.endpointId) ?? 'unknown',
       status: row.status,
@@ -1699,5 +1718,111 @@ export const fetchNotificationDeliveries = createServerFn({ method: 'GET' }).han
       deliveredAt: iso(row.deliveredAt),
       createdAt: iso(row.createdAt)
     }));
+  }
+);
+
+// ---------------------------------------------------------------------------
+// The notification feed (the product-shell bell)
+// ---------------------------------------------------------------------------
+
+export interface NotificationFeedItemDto {
+  id: string;
+  eventClass: string;
+  eventType: string;
+  subjectType: string;
+  subjectId: string;
+  occurredAt: string;
+  title: string;
+  body: string;
+  /** In-app deep link for the subject, when one exists. */
+  href: string | null;
+  /** How many endpoints this event was actually delivered to. */
+  deliveredCount: number;
+}
+
+const NOTIFICATION_FEED_LIMIT = 40;
+
+/**
+ * Deep link per subject type. Only routes that exist are returned — an event
+ * whose subject has no surface yet renders without a link rather than with a
+ * broken one.
+ */
+function notificationFeedHref(
+  subjectType: string,
+  subjectId: string,
+  payload: Record<string, unknown>
+): string | null {
+  switch (subjectType) {
+    case 'market_event': {
+      const itemId = payload['marketplaceItemId'];
+      return typeof itemId === 'string' && itemId.length > 0 ? `/market/items/${itemId}` : null;
+    }
+    case 'acquisition':
+      return `/inventory/acquisitions/${subjectId}`;
+    case 'order':
+      return `/commerce/orders/${subjectId}`;
+    case 'document':
+      return '/finance/import';
+    case 'connection':
+    case 'notification_endpoint':
+    case 'storage_backend':
+      return '/settings/overview';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Recent notifiable events for the product shell's bell (loxep-oii).
+ *
+ * Reads the real `notification_events` ledger and renders each row with the
+ * SAME pure renderer that produces the outbound ntfy message, so the bell and
+ * the push cannot describe the same fact differently. It deliberately does not
+ * filter on deliveries: an installation with no transport configured still has
+ * a feed, which is the property the polymorphic-delivery alternative could not
+ * offer (ADR-0023).
+ */
+export const fetchNotificationFeed = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<NotificationFeedItemDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const events = await handle.db.query.notificationEvents.findMany({
+      orderBy: (table, { desc }) => [desc(table.occurredAt), desc(table.id)],
+      limit: NOTIFICATION_FEED_LIMIT
+    });
+    if (events.length === 0) return [];
+    const eventIds = events.map((row) => row.id);
+    const deliveries = await handle.db.query.notificationDeliveries.findMany({
+      where: (table, { inArray }) => inArray(table.notificationEventId, eventIds),
+      columns: { notificationEventId: true, deliveredAt: true }
+    });
+    const deliveredCounts = new Map<string, number>();
+    for (const delivery of deliveries) {
+      if (delivery.deliveredAt === null) continue;
+      deliveredCounts.set(
+        delivery.notificationEventId,
+        (deliveredCounts.get(delivery.notificationEventId) ?? 0) + 1
+      );
+    }
+    return events.map((row) => {
+      const message = renderNotificationEventMessage(row);
+      const payload =
+        typeof row.payload === 'object' && row.payload !== null && !Array.isArray(row.payload)
+          ? (row.payload as Record<string, unknown>)
+          : {};
+      return {
+        id: row.id,
+        eventClass: row.eventClass,
+        eventType: row.eventType,
+        subjectType: row.subjectType,
+        subjectId: row.subjectId,
+        occurredAt: iso(row.occurredAt),
+        title: message.title,
+        body: message.body,
+        href: notificationFeedHref(row.subjectType, row.subjectId, payload),
+        deliveredCount: deliveredCounts.get(row.id) ?? 0
+      };
+    });
   }
 );

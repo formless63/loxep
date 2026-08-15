@@ -604,6 +604,25 @@ Added in migration `0004_link_table_constraints.sql` (`loxep-dyx`): without a un
 
 ## Notifications
 
+Amended 2026-08-15 by [ADR-0023](../../decisions/0023-notifiable-events-and-delivery-subjects/) and migration `0022` — the full mechanism is [Notifications Design](../notifications-design/). The delivery ledger was keyed on `market_event_id NOT NULL`, so a delivery could structurally only ever be about a marketplace item; it is now keyed on a subject-neutral `notification_events` row, and rules gained the event-class dimension.
+
+### `notification_events`
+
+```text
+id                    uuid primary key
+event_class           text not null      -- check: market|purchase|document|sale|health|infrastructure
+event_type            text not null      -- registry-validated, deliberately not CHECKed
+subject_type          text not null      -- check: closed set; which table subject_id is in
+subject_id            uuid not null      -- deliberately NOT a foreign key (polymorphic)
+monitor_target_id     uuid null references monitor_targets(id)
+occurred_at           timestamptz not null
+payload               jsonb not null default '{}'
+deduplication_key     text not null unique
+created_at            timestamptz not null
+```
+
+The detection-side ledger: one row per fact worth telling a human about, written by `@loxep/domain` and read by the delivery pipeline. `subject_id` makes the same non-FK trade as `integration_health.subject_id` and `reconcile_runs.subject_id`. `deduplication_key` is mandatory and unique, so an at-least-once emitter cannot notify twice.
+
 ### `notification_endpoints`
 
 ```text
@@ -626,7 +645,8 @@ A notification endpoint is not necessarily an external account connection. Its s
 id                    uuid primary key
 name                  text not null
 enabled                boolean not null default true
-market_event_type     text null
+event_class           text not null      -- check: same closed set; no "any class" wildcard
+event_type            text null          -- null = any type within the class
 monitor_target_id     uuid null references monitor_targets(id)
 endpoint_id           uuid not null references notification_endpoints(id)
 conditions            jsonb not null default '{}'
@@ -639,7 +659,7 @@ updated_at             timestamptz not null
 
 ```text
 id                    uuid primary key
-market_event_id       uuid not null references market_events(id)
+notification_event_id uuid not null references notification_events(id)
 endpoint_id           uuid not null references notification_endpoints(id)
 status                text not null
 attempt_count         integer not null default 0
@@ -648,8 +668,10 @@ delivered_at          timestamptz null
 provider_message_id   text null
 last_error             text null
 created_at             timestamptz not null
-unique(market_event_id, endpoint_id)
+unique(notification_event_id, endpoint_id)
 ```
+
+The ledger kept its shape through the amendment — one `NOT NULL` foreign key to its subject, one `UNIQUE (subject, endpoint)` pair — because that pair is what makes at-least-once delivery safe. Only the subject changed.
 
 ## Audit events
 
@@ -693,6 +715,9 @@ economic_entities
                                               |
                                               +--> observations (Timescale)
                                               +--> market_events
+                                                       |
+                                                       v
+                                              notification_events
                                                        |
                                                        v
                                               notification_deliveries

@@ -27,7 +27,7 @@ Gatus's own YAML `security` block decides what Loxep can read, and Loxep works w
 Loxep decides which mode applies by probing the instance's own unauthenticated `/api/v1/config` endpoint on every read. **The connection always shows which mode it is reading in.** Silently falling back to a partial view of a status page and calling it a full read is the one failure this integration is designed never to produce — a green dashboard you cannot trust is worse than one that tells you it is only looking at part of the picture.
 
 :::note[OIDC mode reads less]
-In `security.basic` or no-security mode, Loxep's connection status is computed from every endpoint's current status in one call, so an endpoint going down is reflected. In `security.oidc` mode, Loxep can only confirm the Gatus process itself is alive — it says nothing about individual endpoints. The unauthenticated per-endpoint uptime/response-time routes the adapter can also read exist for a future per-endpoint linking feature that has not shipped yet; today the only per-endpoint read that actually happens, in any mode, is the narrow heartbeat check described below.
+In `security.basic` or no-security mode, Loxep's connection status is computed from every endpoint's current status in one call, so an endpoint going down is reflected, and that SAME read discovers every endpoint so you can link one to a hosting target (see below). In `security.oidc` mode, Loxep can only confirm the Gatus process itself is alive — it says nothing about individual endpoints, and no discovery happens: linking endpoints to hosting targets currently needs `security.basic` or no security.
 :::
 
 ## In Loxep
@@ -50,8 +50,12 @@ Save. The instance URL is kept as ordinary connection configuration and stays vi
 | Which security mode the instance is in | The unauthenticated `/api/v1/config` probe | Every mode |
 | The connection's own status, and how many known endpoints are up vs. failing | `/api/v1/endpoints/statuses`, read on every sweep | No security, or `security.basic` only |
 | Whether Gatus itself is reachable at all | Gatus's own unauthenticated `/health` process-liveness path | `security.oidc` only — the one call left once the credential-proving statuses read is unavailable |
+| This instance's endpoints, on **Infrastructure → Fleet → (a hosting target) → Companion tools → Attach discovered Gatus endpoint** | The same statuses read, kept as candidates until you confirm one | No security, or `security.basic` only |
+| A linked endpoint's own up/down status, on its hosting target's fleet page | The linked endpoint's latest read, refreshed on every sweep | No security, or `security.basic` only |
 
-This is a single connection-level status today, not a per-endpoint list: Loxep counts up-vs-failing endpoints to compute it, but does not yet render one row per endpoint anywhere. Every status is rendered with its age, the same discipline [Connecting Beszel](../connecting-beszel/) uses: a status with no visible age is one you would over-trust.
+Every status is rendered with its age, the same discipline [Connecting Beszel](../connecting-beszel/) uses: a status with no visible age is one you would over-trust. Discovery keys each endpoint on its own literal, un-split `key` (Gatus's `<group>_<name>` string, exactly as Gatus reports it) — never a group-name convention, because Gatus's own sanitization is lossy (it collapses several distinct characters to `-` before joining), so no reliable rule could split a key back into its group and name. **Most endpoints on a real instance will never be linked to anything in Loxep, and that is the normal, permanent state** — a Gatus instance commonly watches things that have nothing to do with your own fleet, and Loxep never shows a count or badge nagging you to link the rest.
+
+If you have also set up [Publishing health to Gatus](../gatus-health-push/) and this connection points at the same instance, the endpoint named by that feature's configured key is never offered for linking, never becomes a status of its own, and never appears in the attach picker at all — see the next guide for what Loxep shows about that endpoint instead.
 
 ## Alerts stay in Gatus
 

@@ -54,6 +54,8 @@ Sign in as an administrator and go to **Settings → Application settings**. The
 
 Save. Within five minutes the endpoint should show its first result in Gatus's own dashboard.
 
+If this Gatus instance is also connected as a fleet companion (see [Connecting Gatus](../connecting-gatus/)), Loxep's own connection health includes a small mirror of Gatus's opinion of this exact heartbeat endpoint — most usefully, it detects a mismatched **Endpoint key** as a definitive `404`, which used to be a silent no-op. This one endpoint is also deliberately EXCLUDED from that same connection's endpoint discovery: it will never appear in the attach picker and never becomes a linkable resource, on purpose — mixing "Loxep's read of Gatus" with "Gatus's opinion of Loxep" on the same status would create a loop neither side could recover from on its own.
+
 ## When it does not work
 
 | Symptom | Usual cause |

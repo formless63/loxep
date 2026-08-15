@@ -34,3 +34,15 @@ export function textLiteral(value: string): string {
   }
   return `'${value.replaceAll("'", "''")}'`;
 }
+
+/**
+ * Returns a `jsonb` literal for a JSON-serializable value (the `@loxep/market`
+ * precedent, `packages/market/src/sql.ts`).
+ */
+export function jsonbLiteral(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) {
+    throw new DomainValidationError("value is not JSON-serializable");
+  }
+  return `${textLiteral(json)}::jsonb`;
+}

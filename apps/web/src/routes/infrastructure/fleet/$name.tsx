@@ -22,11 +22,16 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import CompanionLinksPanel from '@/features/infrastructure/components/companion-links-panel';
+import DockhandContainersPanel from '@/features/infrastructure/components/dockhand-containers-panel';
 import HostingTargetTokensPanel from '@/features/infrastructure/components/hosting-target-tokens-panel';
 import { hostingTargetQuery, hostingTargetsQuery } from '@/features/infrastructure/api/queries';
 import { CONTROL_SURFACE_LABELS } from '@/features/infrastructure/constants';
+import { formatDateTime, formatRelativeTime } from '@/lib/format';
 import { decommissionHostingTarget } from '@/server/infrastructure-functions';
-import type { HostingTargetDetailDto } from '@/server/infrastructure-functions';
+import type {
+  HostingTargetDetailDto,
+  PrivateNetworkRowDto
+} from '@/server/infrastructure-functions';
 
 export const Route = createFileRoute('/infrastructure/fleet/$name')({
   loader: async ({ context: { queryClient }, params }) => {
@@ -132,6 +137,52 @@ function TailnetAddressWarning({ target }: { target: HostingTargetDetailDto }) {
   );
 }
 
+/**
+ * The fleet-detail "Private network" row (loxep-50t §1.2) — rendered
+ * directly under the address line, ONLY when this target carries a
+ * `tailscale`/`private_network` link. Every field is server-computed
+ * (`computePrivateNetworkRow` in `infrastructure-functions.ts`); this
+ * component only formats it.
+ */
+function PrivateNetworkRow({ row }: { row: PrivateNetworkRowDto }) {
+  return (
+    <div className='flex flex-col gap-1 rounded-md border px-3 py-2'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <span className='text-sm font-medium'>Private network</span>
+        <span className='text-sm tabular-nums'>{row.addresses.join(' · ') || 'No address'}</span>
+        {row.online === true ? (
+          <Badge variant='success'>online</Badge>
+        ) : row.online === false ? (
+          <Badge variant='outline'>
+            {row.lastSeen ? `last seen ${formatRelativeTime(row.lastSeen)}` : 'offline'}
+          </Badge>
+        ) : null}
+        {row.authorized === false && <Badge variant='warning'>unauthorized device</Badge>}
+        <span
+          className='text-muted-foreground text-xs'
+          title={row.checkedAt ? formatDateTime(row.checkedAt) : undefined}
+        >
+          {row.checkedAt ? `as of ${formatRelativeTime(row.checkedAt)}` : 'not yet checked'}
+        </span>
+      </div>
+      <p className='text-muted-foreground text-sm'>
+        linked device{row.magicDnsName && ` "${row.magicDnsName}"`}
+        {row.os && ` · ${row.os}`}
+        {' · '}
+        <a href={row.url} target='_blank' rel='noreferrer' className='underline'>
+          open in Tailscale
+        </a>
+      </p>
+      {row.reachabilityCaveat && (
+        <Alert>
+          <Icons.info />
+          <AlertDescription>{row.reachabilityCaveat}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 function FleetDetailData({ name }: { name: string }) {
   const { data } = useSuspenseQuery(hostingTargetQuery(name));
   return (
@@ -152,6 +203,7 @@ function FleetDetailData({ name }: { name: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent className='flex flex-col gap-3'>
+          {data.privateNetwork && <PrivateNetworkRow row={data.privateNetwork} />}
           <TailnetAddressWarning target={data} />
           <div>
             <p className='text-sm font-medium'>Domains pointing here ({data.domains.length})</p>
@@ -208,6 +260,13 @@ function FleetDetailData({ name }: { name: string }) {
           diagnosis={data.diagnosis}
         />
       </div>
+
+      {/* loxep-hb7 Milestone B: the one dedicated tool-specific panel the
+          anti-soup rule licenses — mounted ONLY when a dockhand/environment
+          link exists, per hb7 §3.2 rule 3 ("absent, not green, not empty"). */}
+      {data.companionLinks.some(
+        (link) => link.provider === 'dockhand' && link.externalType === 'environment'
+      ) && <DockhandContainersPanel hostingTargetId={data.id} />}
     </div>
   );
 }

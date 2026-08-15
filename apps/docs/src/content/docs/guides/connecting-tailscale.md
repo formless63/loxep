@@ -2,7 +2,7 @@
 title: Connecting Tailscale
 ---
 
-[Tailscale](https://tailscale.com) is a mesh VPN. Loxep reads your tailnet's device list to prove the stored credential and count connected devices; showing a specific machine's private-network address and reachability evidence alongside everything else Loxep knows about it is designed but not yet built (see the note below).
+[Tailscale](https://tailscale.com) is a mesh VPN. Loxep reads your tailnet's device list to prove the stored credential, count connected devices, and — once you confirm which device is which of your fleet records — show that machine's private-network address and reachability evidence alongside everything else Loxep knows about it.
 
 Loxep never authorizes, removes, tags, or otherwise changes a device. There is no path in the product that touches your tailnet's membership or configuration; it only reads the device list Tailscale's API already exposes to a credential with the right access.
 
@@ -68,8 +68,16 @@ Independently, `health.sweep`'s own probe returns a `degraded` status once a rec
 |---|---|
 | Whether the tailnet API accepted the stored credential | The outcome of the device list read itself — Tailscale publishes no separate identity/whoami endpoint |
 | The connection's own status and how many devices the read returned | The tailnet's device list, read on every sweep |
+| The tailnet's own devices, on **Infrastructure → Fleet → (a hosting target) → Companion tools → Attach discovered Tailscale device** | The same device list read, kept as candidates until you confirm one |
+| A "Private network" row on a linked device's fleet page — its tailnet address(es), online/last-seen, and the age of Loxep's own read | The linked device's latest read, refreshed on every sweep |
 
-This is a single connection-level status today, not a per-device list: the read proves the credential and counts the tailnet's devices, but Loxep does not yet render one row per device anywhere. Joining an individual device to a specific fleet record (`hosting_target`), so its address and connectivity show up on that record's own page, is designed but not yet built — see the [integrations status page](../../product/integrations-status/) for the current state.
+Every sweep upserts one record per tailnet device, keyed on its stable `nodeId` (never its name or hostname — neither is unique on Tailscale's side, and a rename never breaks the link once you have confirmed one). A tailnet holds more than just your fleet's own machines — laptops, phones, a contractor's device — so Loxep never guesses which one is which of your hosting targets, and only a device you explicitly confirm through the attach picker gets its own status row. **Loxep never auto-links a device to a hosting target from a name match**, even when one looks obvious; open the fleet record and use the picker.
+
+A device removed from the tailnet, or no longer visible to your credential, does not silently disappear from an ALREADY-linked record — it shows as "unknown" rather than being dropped, since that is a fact worth seeing, not an outage to hide.
+
+## The "Private network" row's reachability caveat
+
+Once a device is linked, its fleet page may show a caveat like *"Loxep reached the Tailscale API, not this host — [tool] here is unknown because the Loxep container is not on this tailnet."* This appears only when ANOTHER companion tool linked to the same host (Beszel, Gatus, Dockhand…) is reading "unknown" in a way that looks like a topology problem, and only while Loxep has never once reached that tool directly. The moment Loxep DOES reach it — even once — the caveat disappears on its own; it is never asserted against evidence.
 
 ## A tailnet address is never a DNS address
 

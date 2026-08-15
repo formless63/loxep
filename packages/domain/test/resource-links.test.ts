@@ -400,4 +400,102 @@ describe("resource links service", () => {
       }),
     ).rejects.toThrow(DomainValidationError);
   });
+
+  // ---------------------------------------------------------------------------
+  // getExternalResource / listUnattachedByProvider (loxep-y64 slice 3, the
+  // operator-confirmed attach picker's read side)
+  // ---------------------------------------------------------------------------
+
+  it("getExternalResource returns the row by id, or null when it does not exist", async () => {
+    const resource = await service.registerExternalResource({
+      provider: "beszel",
+      externalType: "system",
+      externalId: "get-me",
+      url: "https://beszel.example.test/system/get-me",
+      title: "web-1",
+    });
+
+    const found = await service.getExternalResource(resource.id);
+    expect(found?.id).toBe(resource.id);
+    expect(found?.title).toBe("web-1");
+
+    const missing = await service.getExternalResource(
+      "00000000-0000-4000-8000-00000000dead",
+    );
+    expect(missing).toBeNull();
+  });
+
+  it("listUnattachedByProvider lists only rows with zero resource_links, scoped to the given provider", async () => {
+    const unattached = await service.upsertExternalResource({
+      provider: "beszel",
+      externalType: "system",
+      externalId: "picker-unattached",
+      url: "https://beszel.example.test/system/picker-unattached",
+      title: "db-1",
+    });
+    const attached = await service.upsertExternalResource({
+      provider: "beszel",
+      externalType: "system",
+      externalId: "picker-attached",
+      url: "https://beszel.example.test/system/picker-attached",
+      title: "app-1",
+    });
+    await service.attachLink({
+      externalResourceId: attached.id,
+      resourceType: "hosting_target",
+      resourceId: TARGET_A,
+      purpose: "host_metrics",
+    });
+    // A different provider must never show up in beszel's own list.
+    await service.registerExternalResource({
+      provider: "gatus",
+      externalType: "endpoint",
+      url: "https://gatus.example.test/endpoint/picker-noise",
+    });
+
+    const candidates = await service.listUnattachedByProvider("beszel");
+    const ids = candidates.map((row) => row.id);
+    expect(ids).toContain(unattached.id);
+    expect(ids).not.toContain(attached.id);
+    expect(candidates.every((row) => row.provider === "beszel")).toBe(true);
+  });
+
+  it("a re-discovered resource becomes a fresh unattached candidate once its only attachment is detached", async () => {
+    const resource = await service.upsertExternalResource({
+      provider: "beszel",
+      externalType: "system",
+      externalId: "picker-reoffer",
+      url: "https://beszel.example.test/system/picker-reoffer",
+    });
+    await service.attachLink({
+      externalResourceId: resource.id,
+      resourceType: "hosting_target",
+      resourceId: TARGET_B,
+      purpose: "host_metrics",
+    });
+    expect(
+      (await service.listUnattachedByProvider("beszel")).map((row) => row.id),
+    ).not.toContain(resource.id);
+
+    // detachLink deletes the external_resources row once its last link is
+    // gone (see that verb's own doc) — so this is not the same row
+    // reappearing, it is the NEXT sweep's upsert re-registering the system.
+    await service.detachLink({
+      externalResourceId: resource.id,
+      resourceType: "hosting_target",
+      resourceId: TARGET_B,
+      purpose: "host_metrics",
+    });
+    expect(await service.getExternalResource(resource.id)).toBeNull();
+
+    const rediscovered = await service.upsertExternalResource({
+      provider: "beszel",
+      externalType: "system",
+      externalId: "picker-reoffer",
+      url: "https://beszel.example.test/system/picker-reoffer",
+    });
+    expect(
+      (await service.listUnattachedByProvider("beszel")).map((row) => row.id),
+    ).toContain(rediscovered.id);
+  });
 });

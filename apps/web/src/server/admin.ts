@@ -33,12 +33,14 @@ import {
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createDb, type DbHandle } from '@loxep/db';
 import {
+  createConnectionCredentialsService,
   createConnectionsService,
   createEconomicEntitiesService,
   createHealthService,
   createResourceLinksService,
   createSecretsService,
   createSettingsService,
+  type ConnectionCredentialsService,
   type ConnectionsService,
   type EconomicEntitiesService,
   type HealthService,
@@ -167,6 +169,24 @@ interface AdminRegistry {
    * building their own.
    */
   resourceLinks: ResourceLinksService;
+  /** Encrypted provider-credential bundles (`connection_credentials`) — needed only by the fleet adapter factory below, so built eagerly alongside `connections`/`secrets` (same `db`+`keyring` dependency, same low cost). */
+  connectionCredentials: ConnectionCredentialsService;
+  /**
+   * Dynamically-loaded `@loxep/app` module, cached on the registry. `@loxep/app`
+   * depends on `@loxep/jobs`/`@loxep/market`/`@loxep/notifications` (its whole
+   * multi-provider adapter-factory composition), reaching `graphile-worker`
+   * the same way those packages do on their own — see `getNotificationsModule`'s
+   * doc below for the SSR-bundling hazard this avoids. Loaded ONLY for
+   * `createDockhandAdapterFactory` (loxep-hb7 Milestone B's live containers
+   * panel needs a Dockhand adapter reachable from a server function); no other
+   * `@loxep/app` export is used from `apps/web`.
+   */
+  fleetModulePromise?: Promise<typeof import('@loxep/app')>;
+  /** The Dockhand READ adapter factory (loxep-hb7 Milestone B), loaded through the module above. Cached so a page view does not rebuild the per-connection session cache on every request. */
+  dockhandAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').DockhandAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -265,7 +285,11 @@ function buildRegistry(): AdminRegistry {
       providerName: 'cloudflare'
     }),
     infrastructureEnqueue: createTransactionalEnqueue(),
-    resourceLinks: createResourceLinksService({ db: handle.db })
+    resourceLinks: createResourceLinksService({ db: handle.db }),
+    connectionCredentials: createConnectionCredentialsService({
+      db: handle.db,
+      keyring: config.keyring
+    })
   };
 }
 
@@ -368,6 +392,60 @@ export function getInfrastructureEnqueue(): TransactionalEnqueue {
 /** The generic external-resource companion-link service (loxep-v5r.3). */
 export function getResourceLinksService(): ResourceLinksService {
   return getAdminServices().resourceLinks;
+}
+
+/**
+ * Dynamically-loaded `@loxep/app` module, cached on the registry — see the
+ * `fleetModulePromise` field's doc for why this must not be a top-level
+ * import. The `@vite-ignore` variable specifier keeps it out of the SSR
+ * bundle so Node resolves it from real node_modules, matching
+ * `getNotificationsModule`/`getMarketModule`/`getInventoryModule` below.
+ */
+export function getFleetModule(): Promise<typeof import('@loxep/app')> {
+  const registry = getAdminServices();
+  registry.fleetModulePromise ??= (async () => {
+    const specifier = '@loxep/app';
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/app');
+  })();
+  return registry.fleetModulePromise;
+}
+
+/**
+ * The Dockhand READ adapter factory (loxep-hb7 Milestone B), loaded through
+ * the module above. `createDockhandAdapterFactory` caches its own per-
+ * connection session cookie with no TTL (see `@loxep/app`'s `fleet.ts` for
+ * why — Dockhand's login-lockout backoff makes rebuild-on-TTL wasteful), so
+ * this factory itself is cached on the registry for the same reason: a fleet
+ * page view should reuse the same session across requests, not force a fresh
+ * login every time.
+ */
+function getDockhandAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').DockhandAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.dockhandAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createDockhandAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.dockhandAdapterFactoryPromise;
+}
+
+/**
+ * A live Dockhand adapter for one connection — the ONLY fleet-adapter access
+ * `apps/web` needs (loxep-hb7 Milestone B's containers/stacks panel; every
+ * other fleet provider's data reaches `apps/web` already-written by
+ * `health.sweep`, never through a live adapter call from a server function).
+ */
+export async function getDockhandAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').DockhandConnectionAdapter['adapter']> {
+  const factory = await getDockhandAdapterFactory();
+  const { adapter } = await factory.getAdapterForConnection(connectionId);
+  return adapter;
 }
 
 /**

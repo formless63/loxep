@@ -18,6 +18,7 @@ import { user } from "@loxep/db/schema";
 import {
   createConnectionsService,
   createHealthService,
+  createResourceLinksService,
   createSettingsService,
   gatusPushSetting,
   runHealthSweep,
@@ -29,6 +30,7 @@ import { DockhandAdapterError } from "@loxep/integration-dockhand";
 import type { DockhandAdapter } from "@loxep/integration-dockhand";
 import { GatusAdapterError, normalizeGatusBaseUrl } from "@loxep/integration-gatus";
 import type { GatusAdapter } from "@loxep/integration-gatus";
+import { TailscaleAdapterError } from "@loxep/integration-tailscale";
 import type { TailscaleAdapter } from "@loxep/integration-tailscale";
 import { TermixAdapterError } from "@loxep/integration-termix";
 import type { TermixAdapter } from "@loxep/integration-termix";
@@ -225,6 +227,179 @@ describe("createFleetHealthSubjectRegistry", () => {
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("unknown");
       expect(outcome?.detail).toEqual({ kind: "misconfigured" });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Beszel discovery + per-system health projection (loxep-y64 slice 3)
+  // ---------------------------------------------------------------------------
+
+  describe("beszel discovery + per-system health projection", () => {
+    const BESZEL_BASE_URL = "https://beszel-discovery.example.test";
+
+    function beszelDiscoveryConnection(label: string): Promise<Connection> {
+      return createFleetConnection("beszel", label, { beszel: { baseUrl: BESZEL_BASE_URL } });
+    }
+
+    function discoveryAdapter(systems: Record<string, unknown>[]) {
+      return {
+        health: async () => ({ reachable: true, httpStatus: 200, message: null }),
+        listSystems: async () => systems,
+      } as unknown as BeszelAdapter;
+    }
+
+    function discoveryServices(systems: Record<string, unknown>[]) {
+      return fakeServices({
+        getBeszelAdapterForConnection: async (id) => ({
+          connectionId: id,
+          sourceAccountKey: "beszel:test",
+          adapter: discoveryAdapter(systems),
+          minIntervalSeconds: 300,
+        }),
+      });
+    }
+
+    it("upserts one external_resources row per system, and two sweeps collapse to one row (loxep-uhs idempotency)", async () => {
+      const connection = await beszelDiscoveryConnection("discovery-idempotent");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          { externalSystemId: "sys-idempotent-1", name: "web-1", status: "up" },
+        ]),
+      );
+
+      await registry.connection?.probe(handle.db, connection.id);
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const matches = (await resourceLinks.listUnattachedByProvider("beszel")).filter(
+        (row) => row.externalId === "sys-idempotent-1",
+      );
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.title).toBe("web-1");
+      expect(matches[0]?.url).toBe(`${BESZEL_BASE_URL}/system/sys-idempotent-1`);
+      expect(matches[0]?.connectionId).toBe(connection.id);
+    });
+
+    it("writes a per-system integration_health row keyed subject_type='external_resource', source='adapter', never 'hosting_target'", async () => {
+      const connection = await beszelDiscoveryConnection("discovery-health-row");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          {
+            externalSystemId: "sys-health-row",
+            name: "db-1",
+            host: "10.0.0.5",
+            port: 45876,
+            status: "up",
+            observedAt: "2026-08-14T12:00:00.000Z",
+            sharedWithCount: 0,
+          },
+        ]),
+      );
+
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("beszel")).find(
+        (row) => row.externalId === "sys-health-row",
+      );
+      expect(resource).toBeDefined();
+      expect(resource?.metadata).toEqual({
+        status: "up",
+        observedAt: "2026-08-14T12:00:00.000Z",
+        host: "10.0.0.5",
+        port: 45876,
+        sharedWithCount: 0,
+      });
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", resource!.id);
+      expect(healthRow?.status).toBe("ok");
+      expect(healthRow?.source).toBe("adapter");
+      expect(healthRow?.detail).toEqual({
+        status: "up",
+        observedAt: "2026-08-14T12:00:00.000Z",
+      });
+
+      // Never a hosting_target row for this system — the shared-row race
+      // named across every sibling design (loxep-y64 §1, loxep-uhs).
+      const hostingTargetRows = await health.listHealth({ subjectType: "hosting_target" });
+      expect(hostingTargetRows.some((row) => row.subjectId === resource!.id)).toBe(false);
+    });
+
+    it.each([
+      ["up", "ok"],
+      ["down", "failing"],
+      ["paused", "unknown"],
+      ["some-future-status", "unknown"],
+      ["", "unknown"],
+    ] as const)(
+      "maps beszel status %s -> integration_health status %s",
+      async (beszelStatus, expectedHealthStatus) => {
+        const label = beszelStatus === "" ? "empty" : beszelStatus;
+        const connection = await beszelDiscoveryConnection(`discovery-status-${label}`);
+        const externalSystemId = `sys-status-${label}`;
+        const registry = createFleetHealthSubjectRegistry(
+          discoveryServices([{ externalSystemId, status: beszelStatus }]),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const resource = (await resourceLinks.listUnattachedByProvider("beszel")).find(
+          (row) => row.externalId === externalSystemId,
+        );
+        expect(resource).toBeDefined();
+        const health = createHealthService({ db: handle.db });
+        const healthRow = await health.getHealth("external_resource", resource!.id);
+        expect(healthRow?.status).toBe(expectedHealthStatus);
+        expect(healthRow?.detail["status"]).toBe(beszelStatus);
+      },
+    );
+
+    it("keeps a discovered-but-unlinked system rather than deleting it — the attach picker's candidate list", async () => {
+      const connection = await beszelDiscoveryConnection("discovery-kept-unlinked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([{ externalSystemId: "sys-kept", status: "up" }]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const stillThere = (await resourceLinks.listUnattachedByProvider("beszel")).find(
+        (row) => row.externalId === "sys-kept",
+      );
+      expect(stillThere).toBeDefined();
+    });
+
+    it("a connection with no stored base URL discovers nothing but still reports its own status normally", async () => {
+      // No `beszel.baseUrl` in config — createFleetConnection's own default.
+      const connection = await createFleetConnection("beszel", "discovery-no-base-url");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([{ externalSystemId: "sys-no-base-url", status: "up" }]),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("ok");
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const found = (await resourceLinks.listUnattachedByProvider("beszel")).find(
+        (row) => row.externalId === "sys-no-base-url",
+      );
+      expect(found).toBeUndefined();
+    });
+
+    it("the generic tier-2 credential-free probe never lists a discovered beszel resource as a candidate", async () => {
+      const connection = await beszelDiscoveryConnection("discovery-no-tier2-race");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([{ externalSystemId: "sys-no-tier2-race", status: "up" }]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("beszel")).find(
+        (row) => row.externalId === "sys-no-tier2-race",
+      );
+      expect(resource).toBeDefined();
+
+      const candidates = await registry.external_resource?.listCandidates(handle.db);
+      expect(candidates?.map((candidate) => candidate.subjectId)).not.toContain(resource!.id);
     });
   });
 
@@ -708,6 +883,349 @@ describe("createFleetHealthSubjectRegistry", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Gatus discovery + per-endpoint health projection (loxep-1au slice B)
+  // ---------------------------------------------------------------------------
+
+  describe("gatus discovery + per-endpoint health projection", () => {
+    const GATUS_DISCOVERY_BASE_URL = "https://gatus-discovery.example.test";
+
+    function gatusDiscoveryConnection(label: string): Promise<Connection> {
+      return createFleetConnection("gatus", label, { gatus: { baseUrl: GATUS_DISCOVERY_BASE_URL } });
+    }
+
+    function status(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        key: "web_home",
+        name: "home",
+        group: "web",
+        success: true,
+        httpStatus: 200,
+        observedAt: "2026-08-15T00:00:00.000Z",
+        errorCount: 0,
+        ...overrides,
+      };
+    }
+
+    function discoveryServices(statuses: Record<string, unknown>[]): FleetHealthServices {
+      return fakeServices({
+        getGatusAdapterForConnection: async (id) => ({
+          connectionId: id,
+          sourceAccountKey: normalizeGatusBaseUrl(GATUS_DISCOVERY_BASE_URL),
+          adapter: {
+            probeConfig: async () => ({ oidc: false, authenticated: true, mode: "direct" }),
+            listEndpointStatuses: async () => statuses,
+          } as unknown as GatusAdapter,
+          minIntervalSeconds: 300,
+        }),
+      });
+    }
+
+    it("upserts one external_resources row per endpoint keyed on the RAW key, and two sweeps collapse to one row", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-idempotent");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([status({ key: "web_home-idempotent" })]),
+      );
+
+      await registry.connection?.probe(handle.db, connection.id);
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const matches = (await resourceLinks.listUnattachedByProvider("gatus")).filter(
+        (row) => row.externalId === "web_home-idempotent",
+      );
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.title).toBe("home");
+      expect(matches[0]?.url).toBe(
+        `${GATUS_DISCOVERY_BASE_URL}/endpoints/web_home-idempotent`,
+      );
+      expect(matches[0]?.connectionId).toBe(connection.id);
+    });
+
+    it("upserts the full §4.2 metadata payload, verbatim, keyed on the un-split raw key", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-metadata");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          status({
+            key: "public_status-page",
+            name: "status-page",
+            group: "public",
+            success: false,
+            httpStatus: 503,
+            observedAt: "2026-08-15T01:00:00.000Z",
+            errorCount: 3,
+          }),
+        ]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+        (row) => row.externalId === "public_status-page",
+      );
+      expect(resource).toBeDefined();
+      expect(resource?.metadata["group"]).toBe("public");
+      expect(resource?.metadata["observedAt"]).toBe("2026-08-15T01:00:00.000Z");
+      expect(resource?.metadata["success"]).toBe(false);
+      expect(resource?.metadata["httpStatus"]).toBe(503);
+      expect(resource?.metadata["errorCount"]).toBe(3);
+      expect(typeof resource?.metadata["readAt"]).toBe("string");
+    });
+
+    it("discovers an endpoint but writes NO health row when it is not linked to a hosting target", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-unlinked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([status({ key: "unlinked_endpoint" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+        (row) => row.externalId === "unlinked_endpoint",
+      );
+      expect(resource).toBeDefined();
+      const health = createHealthService({ db: handle.db });
+      expect(await health.getHealth("external_resource", resource!.id)).toBeNull();
+    });
+
+    it.each([
+      [true, "ok", {}],
+      [false, "failing", { kind: "check_failing", errorCount: 2, httpStatus: 500 }],
+      [null, "unknown", { kind: "no_result_recorded" }],
+    ] as const)(
+      "maps success=%s -> integration_health status %s, for a LINKED endpoint",
+      async (success, expectedStatus, expectedDetail) => {
+        const label = String(success);
+        const connection = await gatusDiscoveryConnection(`discovery-status-${label}`);
+        const key = `web_status-${label}`;
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const preRegistered = await resourceLinks.upsertExternalResource({
+          provider: "gatus",
+          externalType: "endpoint",
+          externalId: key,
+          connectionId: connection.id,
+          url: `${GATUS_DISCOVERY_BASE_URL}/endpoints/${key}`,
+          title: "placeholder",
+        });
+        await resourceLinks.attachLink({
+          externalResourceId: preRegistered.id,
+          resourceType: "hosting_target",
+          resourceId: "00000000-0000-4000-8000-0000000000a1",
+          purpose: "uptime_check",
+        });
+
+        const registry = createFleetHealthSubjectRegistry(
+          discoveryServices([
+            status({ key, success, httpStatus: success === false ? 500 : 200, errorCount: success === false ? 2 : 0 }),
+          ]),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const health = createHealthService({ db: handle.db });
+        const healthRow = await health.getHealth("external_resource", preRegistered.id);
+        expect(healthRow?.status).toBe(expectedStatus);
+        expect(healthRow?.detail).toEqual(expectedDetail);
+        expect(healthRow?.source).toBe("adapter");
+      },
+    );
+
+    it("an endpoint that vanishes from the sweep, while still linked, becomes unknown/endpoint_missing — the link is kept (Binding Rule 4)", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-missing");
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const preRegistered = await resourceLinks.upsertExternalResource({
+        provider: "gatus",
+        externalType: "endpoint",
+        externalId: "web_vanishing",
+        connectionId: connection.id,
+        url: `${GATUS_DISCOVERY_BASE_URL}/endpoints/web_vanishing`,
+        title: "placeholder",
+      });
+      await resourceLinks.attachLink({
+        externalResourceId: preRegistered.id,
+        resourceType: "hosting_target",
+        resourceId: "00000000-0000-4000-8000-0000000000a2",
+        purpose: "uptime_check",
+      });
+
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([status({ key: "some_other_endpoint" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", preRegistered.id);
+      expect(healthRow?.status).toBe("unknown");
+      expect(healthRow?.detail).toEqual({ kind: "endpoint_missing" });
+
+      const stillLinked = await handle.db.query.resourceLinks.findFirst({
+        where: (table, { eq }) => eq(table.externalResourceId, preRegistered.id),
+      });
+      expect(stillLinked).toBeDefined();
+    });
+
+    it("keeps a discovered-but-unlinked endpoint rather than deleting it", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-kept-unlinked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([status({ key: "web_kept" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const stillThere = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+        (row) => row.externalId === "web_kept",
+      );
+      expect(stillThere).toBeDefined();
+    });
+
+    it("gatus never appears as an external_resource tier-2 sweep candidate (healthPath now null)", async () => {
+      const connection = await gatusDiscoveryConnection("discovery-no-tier2-race");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([status({ key: "web_no-tier2-race" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+        (row) => row.externalId === "web_no-tier2-race",
+      );
+      expect(resource).toBeDefined();
+
+      const candidates = await registry.external_resource?.listCandidates(handle.db);
+      expect(candidates?.map((candidate) => candidate.subjectId)).not.toContain(resource!.id);
+    });
+
+    describe("BINDING RULE 1 quarantine — the push heartbeat endpoint is EXCLUDED from discovery entirely", () => {
+      it("never registers an external_resources row for the endpoint matching gatusPushSetting.endpointKey, even when it appears in the statuses page and would otherwise be linkable", async () => {
+        const baseUrl = "https://gatus-quarantine.example.test";
+        await settings.set(
+          gatusPushSetting,
+          { enabled: true, baseUrl, endpointKey: "public_loxep-quarantine" },
+          {},
+        );
+        const connection = await createFleetConnection("gatus", "quarantine", {
+          gatus: { baseUrl },
+        });
+        const registry = createFleetHealthSubjectRegistry(
+          fakeServices({
+            getGatusAdapterForConnection: async (id) => ({
+              connectionId: id,
+              sourceAccountKey: normalizeGatusBaseUrl(baseUrl),
+              adapter: {
+                probeConfig: async () => ({ oidc: false, authenticated: true, mode: "direct" }),
+                listEndpointStatuses: async () => [
+                  status({ key: "public_loxep-quarantine", name: "loxep" }),
+                  status({ key: "public_other-endpoint", name: "other" }),
+                ],
+              } as unknown as GatusAdapter,
+              minIntervalSeconds: 300,
+            }),
+          }),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const quarantined = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+          (row) => row.externalId === "public_loxep-quarantine",
+        );
+        expect(quarantined).toBeUndefined();
+
+        // The sibling endpoint on the SAME connection is unaffected — the
+        // exclusion is scoped to the one configured key, not the whole sweep.
+        const sibling = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+          (row) => row.externalId === "public_other-endpoint",
+        );
+        expect(sibling).toBeDefined();
+      });
+
+      it("quarantines the key even when the heartbeat mirror itself is disabled", async () => {
+        const baseUrl = "https://gatus-quarantine-disabled.example.test";
+        await settings.set(
+          gatusPushSetting,
+          { enabled: false, baseUrl, endpointKey: "public_loxep-quarantine-disabled" },
+          {},
+        );
+        const connection = await createFleetConnection("gatus", "quarantine-disabled", {
+          gatus: { baseUrl },
+        });
+        const registry = createFleetHealthSubjectRegistry(
+          fakeServices({
+            getGatusAdapterForConnection: async (id) => ({
+              connectionId: id,
+              sourceAccountKey: normalizeGatusBaseUrl(baseUrl),
+              adapter: {
+                probeConfig: async () => ({ oidc: false, authenticated: true, mode: "direct" }),
+                listEndpointStatuses: async () => [
+                  status({ key: "public_loxep-quarantine-disabled", name: "loxep" }),
+                ],
+              } as unknown as GatusAdapter,
+              minIntervalSeconds: 300,
+            }),
+          }),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const quarantined = (await resourceLinks.listUnattachedByProvider("gatus")).find(
+          (row) => row.externalId === "public_loxep-quarantine-disabled",
+        );
+        expect(quarantined).toBeUndefined();
+      });
+
+      it("never becomes an integration_health subject even if it was somehow already registered before the push key was configured", async () => {
+        // Defensive: a key registered as an ordinary endpoint BEFORE an
+        // operator later reused it as the push key must still never receive a
+        // health row from a subsequent sweep — Binding Rule 1 holds
+        // regardless of registration order.
+        const baseUrl = "https://gatus-quarantine-preexisting.example.test";
+        const connection = await createFleetConnection("gatus", "quarantine-preexisting", {
+          gatus: { baseUrl },
+        });
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const preExisting = await resourceLinks.upsertExternalResource({
+          provider: "gatus",
+          externalType: "endpoint",
+          externalId: "public_loxep-preexisting",
+          connectionId: connection.id,
+          url: `${baseUrl}/endpoints/public_loxep-preexisting`,
+          title: "loxep",
+        });
+        await resourceLinks.attachLink({
+          externalResourceId: preExisting.id,
+          resourceType: "hosting_target",
+          resourceId: "00000000-0000-4000-8000-0000000000a3",
+          purpose: "uptime_check",
+        });
+        await settings.set(
+          gatusPushSetting,
+          { enabled: true, baseUrl, endpointKey: "public_loxep-preexisting" },
+          {},
+        );
+
+        const registry = createFleetHealthSubjectRegistry(
+          fakeServices({
+            getGatusAdapterForConnection: async (id) => ({
+              connectionId: id,
+              sourceAccountKey: normalizeGatusBaseUrl(baseUrl),
+              adapter: {
+                probeConfig: async () => ({ oidc: false, authenticated: true, mode: "direct" }),
+                listEndpointStatuses: async () => [
+                  status({ key: "public_loxep-preexisting", name: "loxep", success: true }),
+                ],
+              } as unknown as GatusAdapter,
+              minIntervalSeconds: 300,
+            }),
+          }),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const health = createHealthService({ db: handle.db });
+        // Not upgraded to 'ok' by this sweep — the excluded key's health row
+        // is never TOUCHED at all, quarantined pre-existing row included.
+        expect(await health.getHealth("external_resource", preExisting.id)).toBeNull();
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Tailscale
   // ---------------------------------------------------------------------------
 
@@ -723,6 +1241,7 @@ describe("createFleetHealthSubjectRegistry", () => {
           authMode,
           unauthenticatedHealthProbe: false,
         }),
+        listDevices: async () => [],
         ...adapter,
       } as TailscaleAdapter;
       return fakeServices({
@@ -735,11 +1254,26 @@ describe("createFleetHealthSubjectRegistry", () => {
       });
     }
 
-    it("probe() throws (network-level) -> unknown", async () => {
+    /** A minimal `TailscaleDeviceFact` fixture, overridable per test. */
+    function device(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        externalDeviceId: "node-1",
+        name: "web-1.tailnet.ts.net",
+        hostname: "web-1",
+        addresses: ["100.64.0.1"],
+        online: true,
+        lastSeen: null,
+        os: "linux",
+        authorized: true,
+        ...overrides,
+      };
+    }
+
+    it("listDevices() throws (network-level) -> unknown, never calls projectTailscaleDevices", async () => {
       const connection = await createFleetConnection("tailscale", "unreachable");
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices({
-          probe: async () => {
+          listDevices: async () => {
             throw new Error("network error");
           },
         }),
@@ -749,16 +1283,32 @@ describe("createFleetHealthSubjectRegistry", () => {
       expect(outcome?.detail).toEqual({ kind: "unreachable" });
     });
 
-    it("authenticated === false -> failing, kind auth", async () => {
+    it("listDevices() throws kind 'auth' -> failing, kind auth", async () => {
       const connection = await createFleetConnection("tailscale", "bad-token");
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices({
-          probe: async () => ({ reachable: true, authenticated: false, deviceCount: null }),
+          listDevices: async () => {
+            throw new TailscaleAdapterError("auth", "rejected");
+          },
         }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("failing");
       expect(outcome?.detail).toEqual({ kind: "auth", credentialMode: "api_access_token" });
+    });
+
+    it("listDevices() throws a non-auth TailscaleAdapterError -> unknown, never failing", async () => {
+      const connection = await createFleetConnection("tailscale", "rate-limited");
+      const registry = createFleetHealthSubjectRegistry(
+        makeTailscaleServices({
+          listDevices: async () => {
+            throw new TailscaleAdapterError("rate_limited", "429");
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail).toEqual({ kind: "unreachable" });
     });
 
     it("ok, recorded expiry already past -> degraded, credential_expiry_passed", async () => {
@@ -767,7 +1317,7 @@ describe("createFleetHealthSubjectRegistry", () => {
       });
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices({
-          probe: async () => ({ reachable: true, authenticated: true, deviceCount: 5 }),
+          listDevices: async () => [device(), device({ externalDeviceId: "node-2" })] as never,
         }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
@@ -781,7 +1331,7 @@ describe("createFleetHealthSubjectRegistry", () => {
       });
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices({
-          probe: async () => ({ reachable: true, authenticated: true, deviceCount: 5 }),
+          listDevices: async () => [device()] as never,
         }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
@@ -799,19 +1349,8 @@ describe("createFleetHealthSubjectRegistry", () => {
       });
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices({
-          probe: async () => ({ reachable: true, authenticated: true, deviceCount: 7 }),
-        }),
-      );
-      const outcome = await registry.connection?.probe(handle.db, connection.id);
-      expect(outcome?.status).toBe("ok");
-      expect(outcome?.detail).toEqual({ deviceCount: 7 });
-    });
-
-    it("ok, no recorded expiry -> ok, deviceCount", async () => {
-      const connection = await createFleetConnection("tailscale", "no-expiry");
-      const registry = createFleetHealthSubjectRegistry(
-        makeTailscaleServices({
-          probe: async () => ({ reachable: true, authenticated: true, deviceCount: 3 }),
+          listDevices: async () =>
+            [device(), device({ externalDeviceId: "node-2" }), device({ externalDeviceId: "node-3" })] as never,
         }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
@@ -819,12 +1358,24 @@ describe("createFleetHealthSubjectRegistry", () => {
       expect(outcome?.detail).toEqual({ deviceCount: 3 });
     });
 
+    it("ok, no recorded expiry -> ok, deviceCount", async () => {
+      const connection = await createFleetConnection("tailscale", "no-expiry");
+      const registry = createFleetHealthSubjectRegistry(
+        makeTailscaleServices({
+          listDevices: async () => [device(), device({ externalDeviceId: "node-2" })] as never,
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("ok");
+      expect(outcome?.detail).toEqual({ deviceCount: 2 });
+    });
+
     it("ok, oauth_client mode -> ok, authMode oauth_client", async () => {
       const connection = await createFleetConnection("tailscale", "oauth");
       const registry = createFleetHealthSubjectRegistry(
         makeTailscaleServices(
           {
-            probe: async () => ({ reachable: true, authenticated: true, deviceCount: 9 }),
+            listDevices: async () => [device()] as never,
           },
           "oauth_client",
         ),
@@ -832,6 +1383,256 @@ describe("createFleetHealthSubjectRegistry", () => {
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("ok");
       expect(outcome?.detail).toEqual({ authMode: "oauth_client" });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tailscale discovery + per-device health projection (loxep-50t slice B)
+  // ---------------------------------------------------------------------------
+
+  describe("tailscale discovery + per-device health projection", () => {
+    function tailscaleDiscoveryConnection(label: string): Promise<Connection> {
+      return createFleetConnection("tailscale", label);
+    }
+
+    function device(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        externalDeviceId: "node-discovery-1",
+        name: "hollow.tailnet.ts.net",
+        hostname: "hollow",
+        addresses: ["100.64.1.2", "fd7a:115c:a1e0::1"],
+        online: true,
+        lastSeen: null,
+        os: "linux",
+        authorized: true,
+        ...overrides,
+      };
+    }
+
+    function discoveryServices(devices: Record<string, unknown>[]): FleetHealthServices {
+      return fakeServices({
+        getTailscaleAdapterForConnection: async (id) => ({
+          connectionId: id,
+          sourceAccountKey: "tailscale:test",
+          adapter: {
+            capabilities: () => ({
+              provider: "tailscale",
+              readOnly: true,
+              authMode: "api_access_token",
+              unauthenticatedHealthProbe: false,
+            }),
+            listDevices: async () => devices,
+          } as unknown as TailscaleAdapter,
+          minIntervalSeconds: 300,
+        }),
+      });
+    }
+
+    it("upserts one external_resources row per device keyed on nodeId, and two sweeps collapse to one row", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-idempotent");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "node-idempotent-1" })]),
+      );
+
+      await registry.connection?.probe(handle.db, connection.id);
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const matches = (await resourceLinks.listUnattachedByProvider("tailscale")).filter(
+        (row) => row.externalId === "node-idempotent-1",
+      );
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.title).toBe("hollow.tailnet.ts.net");
+      expect(matches[0]?.url).toBe(
+        "https://login.tailscale.com/admin/machines/node-idempotent-1",
+      );
+      expect(matches[0]?.connectionId).toBe(connection.id);
+    });
+
+    it("upserts the full §1.3 metadata payload, verbatim", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-metadata");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          device({
+            externalDeviceId: "node-metadata",
+            name: "db-1.tailnet.ts.net",
+            addresses: ["100.64.2.3"],
+            online: false,
+            lastSeen: "2026-08-14T12:00:00.000Z",
+            os: "linux",
+            authorized: false,
+          }),
+        ]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("tailscale")).find(
+        (row) => row.externalId === "node-metadata",
+      );
+      expect(resource).toBeDefined();
+      expect(resource?.metadata["online"]).toBe(false);
+      expect(resource?.metadata["lastSeen"]).toBe("2026-08-14T12:00:00.000Z");
+      expect(resource?.metadata["addresses"]).toEqual(["100.64.2.3"]);
+      expect(resource?.metadata["magicDnsName"]).toBe("db-1.tailnet.ts.net");
+      expect(resource?.metadata["os"]).toBe("linux");
+      expect(resource?.metadata["authorized"]).toBe(false);
+      expect(typeof resource?.metadata["observedAt"]).toBe("string");
+    });
+
+    it("discovers a device but writes NO health row when it is not linked to a hosting target", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-unlinked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "node-unlinked" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("tailscale")).find(
+        (row) => row.externalId === "node-unlinked",
+      );
+      expect(resource).toBeDefined();
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", resource!.id);
+      expect(healthRow).toBeNull();
+    });
+
+    it("writes a health row ONLY once the device is linked to a hosting target", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-linked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "node-linked", online: true })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("tailscale")).find(
+        (row) => row.externalId === "node-linked",
+      );
+      expect(resource).toBeDefined();
+      await resourceLinks.attachLink({
+        externalResourceId: resource!.id,
+        resourceType: "hosting_target",
+        resourceId: "00000000-0000-4000-8000-000000000001",
+        purpose: "private_network",
+      });
+
+      // A second sweep is required — the FIRST sweep discovered the device
+      // before it was ever linked, so it wrote no health row (see the
+      // preceding test); linking does not retroactively backfill one.
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", resource!.id);
+      expect(healthRow?.status).toBe("ok");
+      expect(healthRow?.source).toBe("adapter");
+      expect(healthRow?.detail).toEqual({});
+
+      const hostingTargetRows = await health.listHealth({ subjectType: "hosting_target" });
+      expect(hostingTargetRows.some((row) => row.subjectId === resource!.id)).toBe(false);
+    });
+
+    it("maps online -> ok and offline -> degraded with lastSeen, for a linked device", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-offline");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          device({ externalDeviceId: "node-offline", online: false, lastSeen: "2026-08-10T00:00:00.000Z" }),
+        ]),
+      );
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      // Pre-register + link BEFORE the probed sweep, so this one sweep both
+      // discovers and, being already linked, writes the health row.
+      const preRegistered = await resourceLinks.upsertExternalResource({
+        provider: "tailscale",
+        externalType: "device",
+        externalId: "node-offline",
+        connectionId: connection.id,
+        url: "https://login.tailscale.com/admin/machines/node-offline",
+        title: "placeholder",
+      });
+      await resourceLinks.attachLink({
+        externalResourceId: preRegistered.id,
+        resourceType: "hosting_target",
+        resourceId: "00000000-0000-4000-8000-000000000002",
+        purpose: "private_network",
+      });
+
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", preRegistered.id);
+      expect(healthRow?.status).toBe("degraded");
+      expect(healthRow?.detail).toEqual({
+        kind: "device_offline",
+        lastSeen: "2026-08-10T00:00:00.000Z",
+      });
+    });
+
+    it("a device that vanishes from the sweep, while still linked, becomes unknown/device_missing — the link is kept", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-missing");
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const preRegistered = await resourceLinks.upsertExternalResource({
+        provider: "tailscale",
+        externalType: "device",
+        externalId: "node-vanishing",
+        connectionId: connection.id,
+        url: "https://login.tailscale.com/admin/machines/node-vanishing",
+        title: "placeholder",
+      });
+      await resourceLinks.attachLink({
+        externalResourceId: preRegistered.id,
+        resourceType: "hosting_target",
+        resourceId: "00000000-0000-4000-8000-000000000003",
+        purpose: "private_network",
+      });
+
+      // This sweep's listDevices() page does NOT include node-vanishing.
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "some-other-node" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const health = createHealthService({ db: handle.db });
+      const healthRow = await health.getHealth("external_resource", preRegistered.id);
+      expect(healthRow?.status).toBe("unknown");
+      expect(healthRow?.detail).toEqual({ kind: "device_missing" });
+
+      // The link itself is never deleted.
+      const stillLinked = await handle.db.query.resourceLinks.findFirst({
+        where: (table, { eq }) => eq(table.externalResourceId, preRegistered.id),
+      });
+      expect(stillLinked).toBeDefined();
+    });
+
+    it("keeps a discovered-but-unlinked device rather than deleting it — the attach picker's candidate list", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-kept-unlinked");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "node-kept" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const stillThere = (await resourceLinks.listUnattachedByProvider("tailscale")).find(
+        (row) => row.externalId === "node-kept",
+      );
+      expect(stillThere).toBeDefined();
+    });
+
+    it("tailscale never appears as an external_resource tier-2 sweep candidate (no healthPath in either era)", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-no-tier2-race");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([device({ externalDeviceId: "node-no-tier2-race" })]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const resource = (await resourceLinks.listUnattachedByProvider("tailscale")).find(
+        (row) => row.externalId === "node-no-tier2-race",
+      );
+      expect(resource).toBeDefined();
+
+      const candidates = await registry.external_resource?.listCandidates(handle.db);
+      expect(candidates?.map((candidate) => candidate.subjectId)).not.toContain(resource!.id);
     });
   });
 
@@ -938,7 +1739,14 @@ describe("createFleetHealthSubjectRegistry", () => {
           probe: async () => ({ reachable: true, authenticated: false, authRejectedStatus: 403 }),
         }),
       );
-      await runHealthSweep({ db: handle.db, registry });
+      // A generous cap, same reasoning as the "BINDING RULE 1" test below:
+      // this file's shared connection count keeps growing as siblings add
+      // fixtures (Tailscale/Gatus discovery alone adds several dozen), and
+      // `listConnectionCandidates` gives no ordering guarantee — without
+      // this, THIS connection can silently fall outside the sweep's default
+      // 50-per-type batch and the assertion below fails on an unrelated
+      // connection count, not a real regression.
+      await runHealthSweep({ db: handle.db, registry, maxSubjectsPerType: 500 });
 
       const health = createHealthService({ db: handle.db });
       const row = await health.getHealth("connection", connection.id);
@@ -1019,7 +1827,18 @@ describe("createFleetHealthSubjectRegistry", () => {
             connectionId: id,
             sourceAccountKey: "tailscale:test",
             adapter: {
-              probe: async () => ({ reachable: true, authenticated: true, deviceCount: 1 }),
+              listDevices: async () => [
+                {
+                  externalDeviceId: "node-bookkeeping-1",
+                  name: null,
+                  hostname: null,
+                  addresses: [],
+                  online: true,
+                  lastSeen: null,
+                  os: null,
+                  authorized: null,
+                },
+              ],
               capabilities: () => ({
                 provider: "tailscale",
                 readOnly: true,
@@ -1202,8 +2021,18 @@ describe("createFleetHealthSubjectRegistry", () => {
     // Beszel/Dockhand/Tailscale/Termix connections from earlier tests this
     // registry's fake services do not cover — irrelevant to Rule 1, which is
     // about THIS connection's row and the (permanent) absence of any
-    // external_resource row.
-    const result = await runHealthSweep({ db: handle.db, registry });
+    // external_resource row. `maxSubjectsPerType` is raised well past the
+    // sweep's own default (50): this file's shared connection count keeps
+    // growing as siblings add fixtures (loxep-y64 slice 3's discovery tests
+    // alone add a dozen), and `listConnectionCandidates` gives no ordering
+    // guarantee — without a generous cap, THIS connection can silently fall
+    // outside the probed batch and the assertion below fails on an unrelated
+    // connection count, not a Rule 1 regression.
+    const result = await runHealthSweep({
+      db: handle.db,
+      registry,
+      maxSubjectsPerType: 500,
+    });
     expect(result.probed).toBeGreaterThanOrEqual(1);
 
     const health = createHealthService({ db: handle.db });
@@ -1213,10 +2042,17 @@ describe("createFleetHealthSubjectRegistry", () => {
       "public_loxep",
     );
 
-    // No row of ANY subject type exists for the endpoint itself — this module
-    // never registers one (Slice B/per-endpoint discovery is out of this
-    // fence's scope), and Rule 1 requires it stays that way permanently.
-    const externalResourceRows = await health.listHealth({ subjectType: "external_resource" });
-    expect(externalResourceRows).toEqual([]);
+    // No `external_resources` row was ever registered FOR THIS CONNECTION —
+    // Gatus discovery does not exist yet (unlike Beszel's, loxep-y64 slice
+    // 3 — which is why this asserts scoped to `connection.id` rather than
+    // "the whole external_resource subject type is empty": this shared
+    // scratch db legitimately carries Beszel-provider external_resource rows
+    // from earlier tests in this file). Rule 1 requires this connection's
+    // heartbeat-mirrored endpoint never becomes a resource or a health
+    // subject of any kind.
+    const registeredForThisConnection = await handle.db.query.externalResources.findMany({
+      where: (table, { eq }) => eq(table.connectionId, connection.id),
+    });
+    expect(registeredForThisConnection).toEqual([]);
   });
 });

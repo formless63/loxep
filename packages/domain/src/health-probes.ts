@@ -83,6 +83,15 @@ import {
 } from "./fleet-tool-registry.ts";
 import type { FleetToolProvider } from "./fleet-tool-registry.ts";
 import { createHealthService } from "./health.ts";
+import {
+  HEALTH_EVENT_TYPES,
+  NOTIFIABLE_HEALTH_SUBJECT_TYPES,
+  publishNotificationEvent,
+} from "./notification-events.ts";
+import type {
+  NotificationEnqueue,
+  NotificationSubjectType,
+} from "./notification-events.ts";
 import type {
   HealthService,
   HealthSource,
@@ -583,6 +592,50 @@ export interface HealthSweepResult {
   failed: number;
   /** Probed count per subject type. */
   batches: Readonly<Partial<Record<HealthSubjectType, number>>>;
+  /**
+   * Status transitions this run recorded as `health`-class notification events
+   * (loxep-oii). Aggregate counters cannot express which subject changed, and
+   * the transition is exactly the fact a notification is about.
+   */
+  transitions: readonly HealthTransition[];
+}
+
+/** One notifiable status transition observed by {@link runHealthSweep}. */
+export interface HealthTransition {
+  subjectType: HealthSubjectType;
+  subjectId: string;
+  previousStatus: HealthStatus;
+  status: HealthStatus;
+  eventType: (typeof HEALTH_EVENT_TYPES)[number];
+  /** Whether a notification event row was written (false on a re-run). */
+  recorded: boolean;
+  /** Endpoints the transition was routed to, if an enqueue seam was given. */
+  endpointIds: readonly string[];
+}
+
+/**
+ * Which transitions are worth telling a human about.
+ *
+ * Into `degraded`/`failing` is a degradation; back to `ok` from one of those
+ * is a recovery. Transitions into or out of `unknown` are deliberately NOT
+ * emitted: "we could not tell" is not an alert, and a flapping unknown would
+ * be the loudest thing in the feed. First insert (no previous status) is not a
+ * transition at all — the same semantics `previous_status`/`status_changed_at`
+ * already have.
+ */
+export function healthTransitionEventType(
+  previousStatus: HealthStatus | null,
+  status: HealthStatus,
+): (typeof HEALTH_EVENT_TYPES)[number] | null {
+  if (previousStatus === null || previousStatus === status) return null;
+  if (status === "degraded" || status === "failing") return "health_degraded";
+  if (
+    status === "ok" &&
+    (previousStatus === "degraded" || previousStatus === "failing")
+  ) {
+    return "health_recovered";
+  }
+  return null;
 }
 
 export interface RunHealthSweepOptions {
@@ -595,6 +648,18 @@ export interface RunHealthSweepOptions {
   now?: Date;
   maxSubjectsPerType?: number;
   logger?: { warn: (obj: Record<string, unknown>, msg: string) => void };
+  /**
+   * The delivery enqueue seam (ADR-0023). Omit and the sweep still RECORDS
+   * every notifiable transition — detection does not depend on delivery — but
+   * routes none of them. `@loxep/app` composes the transactional one; tests
+   * pass a recorder.
+   */
+  enqueue?: NotificationEnqueue;
+  /**
+   * Set false to record no notification events at all (health rows are still
+   * written). Defaults to true.
+   */
+  emitNotifications?: boolean;
 }
 
 /**
@@ -619,6 +684,8 @@ export async function runHealthSweep(
     );
   }
 
+  const emitNotifications = options.emitNotifications ?? true;
+  const transitions: HealthTransition[] = [];
   const checkedTypes: HealthSubjectType[] = [];
   let scanned = 0;
   let due = 0;
@@ -670,6 +737,7 @@ export async function runHealthSweep(
         cleared += 1;
         continue;
       }
+      const before = existingByKey.get(candidate.subjectId) ?? null;
       await health.upsertHealth({
         subjectType,
         subjectId: candidate.subjectId,
@@ -684,8 +752,110 @@ export async function runHealthSweep(
       });
       probed += 1;
       batches[subjectType] = (batches[subjectType] ?? 0) + 1;
+
+      if (!emitNotifications) continue;
+      const transition = await publishHealthTransition({
+        db,
+        subjectType,
+        subjectId: candidate.subjectId,
+        previousStatus: before?.status ?? null,
+        status: outcome.status,
+        occurredAt: now,
+        detail: outcome.detail ?? {},
+        enqueue: options.enqueue,
+        logger: options.logger,
+      });
+      if (transition !== null) transitions.push(transition);
     }
   }
 
-  return { checkedTypes, scanned, due, probed, more, cleared, failed, batches };
+  return {
+    checkedTypes,
+    scanned,
+    due,
+    probed,
+    more,
+    cleared,
+    failed,
+    batches,
+    transitions,
+  };
+}
+
+/**
+ * Record (and optionally route) one health transition as a `health`-class
+ * notification event.
+ *
+ * Notifiability is decided in two places, both of them narrow on purpose:
+ * {@link NOTIFIABLE_HEALTH_SUBJECT_TYPES} excludes every companion-tool (fleet)
+ * subject per the fleet design's open question 1, and
+ * {@link healthTransitionEventType} excludes `unknown` in either direction.
+ *
+ * A notification problem never fails the sweep: the health row is already
+ * written and correct, and the sweep's job is health, not delivery. Failures
+ * are logged and the pass continues — the same rule the market bridge follows.
+ */
+async function publishHealthTransition(input: {
+  db: LoxepDb;
+  subjectType: HealthSubjectType;
+  subjectId: string;
+  previousStatus: HealthStatus | null;
+  status: HealthStatus;
+  occurredAt: Date;
+  detail: Record<string, unknown>;
+  enqueue?: NotificationEnqueue;
+  logger?: { warn: (obj: Record<string, unknown>, msg: string) => void };
+}): Promise<HealthTransition | null> {
+  const notifiable = (
+    NOTIFIABLE_HEALTH_SUBJECT_TYPES as readonly string[]
+  ).includes(input.subjectType);
+  if (!notifiable) return null;
+  const eventType = healthTransitionEventType(
+    input.previousStatus,
+    input.status,
+  );
+  if (eventType === null || input.previousStatus === null) return null;
+
+  try {
+    const published = await publishNotificationEvent({
+      executor: input.db,
+      enqueue: input.enqueue,
+      event: {
+        eventClass: "health",
+        eventType,
+        subjectType: input.subjectType as NotificationSubjectType,
+        subjectId: input.subjectId,
+        occurredAt: input.occurredAt,
+        payload: {
+          subjectType: input.subjectType,
+          previousStatus: input.previousStatus,
+          status: input.status,
+          // `detail` is already guaranteed credential-free: `guardHealthDetail`
+          // REJECTS (never redacts) body/header/response/payload keys before a
+          // health row is written at all.
+          detail: input.detail,
+        },
+        deduplicationKey: `health:${input.subjectType}:${input.subjectId}:${eventType}:${input.occurredAt.toISOString()}`,
+      },
+    });
+    return {
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      previousStatus: input.previousStatus,
+      status: input.status,
+      eventType,
+      recorded: published.created,
+      endpointIds: published.endpointIds,
+    };
+  } catch (error) {
+    input.logger?.warn(
+      {
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "health transition notification failed; health row is unaffected",
+    );
+    return null;
+  }
 }

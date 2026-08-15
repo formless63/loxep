@@ -123,6 +123,7 @@ export type {
 
 export {
   compareFleetToolPanelOrder,
+  fleetDiscoveredResourcePurpose,
   FLEET_TOOL_PANEL_ORDER,
   FLEET_TOOL_PROVIDERS,
   FLEET_TOOL_REGISTRY,
@@ -155,6 +156,7 @@ export {
   BASE_PROBE_INTERVAL_SECONDS,
   createDefaultHealthSubjectRegistry,
   DEFAULT_MAX_SUBJECTS_PER_TYPE,
+  healthTransitionEventType,
   isHealthCheckDue,
   MAX_PROBE_INTERVAL_SECONDS,
   nextHealthCheckDueAt,
@@ -168,8 +170,44 @@ export type {
   HealthSubjectRegistry,
   HealthSubjectRegistryEntry,
   HealthSweepResult,
+  HealthTransition,
   RunHealthSweepOptions,
 } from "./health-probes.ts";
+
+// The notifiable-event ledger (ADR-0023): detection-side, so it lives here
+// rather than in @loxep/notifications, which every emitting package is
+// forbidden to depend on. See ./notification-events.ts.
+export {
+  createRecordingNotificationEnqueue,
+  createTransactionalNotificationEnqueue,
+  DOCUMENT_EVENT_TYPES,
+  HEALTH_EVENT_TYPES,
+  MARKET_EVENT_TYPES,
+  NOTIFIABLE_HEALTH_SUBJECT_TYPES,
+  NOTIFICATION_DELIVER_TASK,
+  NOTIFICATION_EVENT_CLASSES,
+  NOTIFICATION_SUBJECT_TYPES,
+  notificationDeliverJobKey,
+  notificationEventClasses,
+  notificationEventTypeOptions,
+  publishNotificationEvent,
+  PURCHASE_EVENT_TYPES,
+  recordNotificationEvent,
+  routeNotificationEvent,
+  SALE_EVENT_TYPES,
+} from "./notification-events.ts";
+export type {
+  NotifiableHealthSubjectType,
+  NotificationEnqueue,
+  NotificationEventClass,
+  NotificationEventClassDefinition,
+  NotificationEventExecutor,
+  NotificationEventRow,
+  NotificationSubjectType,
+  PublishNotificationEventOptions,
+  RecordNotificationEventInput,
+  RoutableNotificationEvent,
+} from "./notification-events.ts";
 
 export {
   diagnoseHostWitnesses,

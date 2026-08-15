@@ -91,12 +91,28 @@ test('creates a hosting target with no fronting node, then shows it with an empt
   await expect(page.getByText('No companion tool linked yet')).toBeVisible();
   await expect(page.getByText('None yet.')).toBeVisible(); // "Domains pointing here (0)"
 
+  // loxep-y64 slice 3: the operator-confirmed attach picker over Beszel's
+  // discovery sweep. The e2e harness has no live Beszel hub (no fleet
+  // credentials exist on this box — see that bead's report), so nothing has
+  // ever discovered a system: this asserts the honest empty state rather
+  // than a seeded discovery flow, which is covered at the service level
+  // instead (`packages/app/test/fleet-health.test.ts`'s "beszel discovery"
+  // suite, `packages/domain/test/resource-links.test.ts`'s
+  // `listUnattachedByProvider` tests).
+  const main = page.getByRole('main');
+  await main.getByRole('button', { name: 'Attach discovered Beszel system' }).click();
+  const attachDialog = page.getByRole('dialog');
+  await expect(attachDialog.getByText('Attach a discovered Beszel system')).toBeVisible();
+  await expect(attachDialog.getByText('No discovered Beszel systems')).toBeVisible();
+  await expect(attachDialog.getByRole('button', { name: 'Attach' })).toBeDisabled();
+  await attachDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(attachDialog).toBeHidden();
+
   // loxep-v5r.3: the generic companion-link service, exercised end to end —
   // "Add tool link" writes external_resources + resource_links (no
   // credential, no adapter). Scoped to `main` and exact-matched throughout:
   // this file has been bitten by strict-mode ambiguity before (sidebar nav
   // vs. page body sharing accessible names).
-  const main = page.getByRole('main');
   const linkLabel = `e2e-link-${Date.now()}`;
   await main.getByRole('button', { name: 'Add tool link' }).click();
   const linkDialog = page.getByRole('dialog');

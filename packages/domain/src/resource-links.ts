@@ -72,9 +72,12 @@
  * not by this module, because a tier-1 link has no `metadata` to police yet.
  *
  * Queries go through the Drizzle relational query API and the insert
- * builder; the one delete this module needs goes through `db.execute` with
- * validated literals, so `@loxep/domain` needs no direct `drizzle-orm`
- * dependency (see `sql.ts`).
+ * builder; the handful of statements the API cannot express — the upsert's
+ * `ON CONFLICT ... WHERE ... DO UPDATE`, the one delete, and
+ * `listUnattachedByProvider`'s `LEFT JOIN ... IS NULL` (loxep-y64 slice 3's
+ * attach-picker candidate list) — go through `db.execute` with validated
+ * literals, so `@loxep/domain` needs no direct `drizzle-orm` dependency (see
+ * `sql.ts`).
  */
 import { externalResources, resourceLinks } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
@@ -135,6 +138,16 @@ export interface CompanionLink extends ResourceLinkRow {
   url: string;
   title: string | null;
   metadata: Record<string, unknown>;
+  /**
+   * The `external_resources` row's own `connectionId` (loxep-50t §1.2) —
+   * needed by a caller that wants to correlate a discovered resource back to
+   * ITS OWN connection's config/health (e.g. the fleet-detail "Private
+   * network" row's reachability caveat, which compares a SIBLING companion
+   * connection's stored base-URL host against this resource's own device
+   * addresses). `null` for a tier-1 hand-typed link, exactly like
+   * {@link ExternalResourceRow.connectionId}.
+   */
+  connectionId: string | null;
 }
 
 export interface RegisterExternalResourceInput {
@@ -215,6 +228,29 @@ export interface ResourceLinksService {
     resourceId: string,
   ) => Promise<CompanionLink[]>;
   /**
+   * One `external_resources` row by id, or `null` — the operator-confirmed
+   * attach picker's (loxep-y64 slice 3) way to resolve a candidate the
+   * operator just selected back into its provider/externalType before
+   * deriving the attach purpose (see `fleet-tool-registry.ts`'s
+   * `fleetDiscoveredResourcePurpose`). Never widened into a generic finder —
+   * this is the one place the picker needs to look a discovered resource up
+   * by id rather than by the provider list below.
+   */
+  getExternalResource: (id: string) => Promise<ExternalResourceRow | null>;
+  /**
+   * Every `external_resources` row of one PROVIDER carrying NO
+   * `resource_links` attachment at all — the operator-confirmed attach
+   * picker's candidate list (loxep-y64 slice 3). "Unattached" means zero
+   * links of ANY resource type or purpose, not just none for the caller's
+   * own target: a system already attached elsewhere is not a fresh discovery
+   * to re-offer (see that design's §2, "the sweep DISCOVERS, the operator
+   * CONFIRMS" — confirming a resource twice, onto two targets, is not a
+   * shape the picker offers). Newest-discovered first; no ranking or
+   * pre-selection — see the picker component's own doc for why "grouped/
+   * ranked suggestions allowed, auto-match never" stops at ordering.
+   */
+  listUnattachedByProvider: (provider: string) => Promise<ExternalResourceRow[]>;
+  /**
    * Removes one attachment. If no other `resource_links` row still points at
    * the same `external_resources` row, that row is deleted too — an orphaned
    * companion record with no attachment left is dead weight, not history
@@ -260,6 +296,7 @@ function toCompanionLink(
     url: resource.url,
     title: resource.title,
     metadata: resource.metadata as Record<string, unknown>,
+    connectionId: resource.connectionId,
   };
 }
 
@@ -501,6 +538,47 @@ export function createResourceLinksService(options: {
       .filter((link): link is CompanionLink => link !== null);
   }
 
+  async function getExternalResource(id: string): Promise<ExternalResourceRow | null> {
+    const row = await db.query.externalResources.findFirst({
+      where: (table, { eq }) => eq(table.id, id),
+    });
+    return row === undefined ? null : toExternalResourceRow(row);
+  }
+
+  async function listUnattachedByProvider(
+    provider: string,
+  ): Promise<ExternalResourceRow[]> {
+    const trimmed = requireNonEmpty(provider, "provider");
+    // Hand-written SQL, not the query builder: "no resource_links row at
+    // all" is a LEFT JOIN ... IS NULL / NOT EXISTS shape the Drizzle
+    // relational query API this module otherwise uses cannot express, and
+    // this package takes no direct drizzle-orm dependency for a `notExists`
+    // helper (see the module doc and sql.ts). Mirrors `upsertExternalResource`'s
+    // and `detachLink`'s existing use of `db.execute` + validated literals
+    // for the one statement each needs that the builder cannot reach.
+    const result = await db.execute(
+      `select er.id, er.provider, er.connection_id, er.external_type, er.external_id,
+              er.url, er.title, er.metadata, er.created_at, er.updated_at
+         from external_resources er
+         left join resource_links rl on rl.external_resource_id = er.id
+        where er.provider = ${textLiteral(trimmed)}
+          and rl.external_resource_id is null
+        order by er.created_at desc`,
+    );
+    return result.rows.map((row) => ({
+      id: row["id"] as string,
+      provider: row["provider"] as string,
+      connectionId: row["connection_id"] as string | null,
+      externalType: row["external_type"] as string,
+      externalId: row["external_id"] as string | null,
+      url: row["url"] as string,
+      title: row["title"] as string | null,
+      metadata: row["metadata"] as Record<string, unknown>,
+      createdAt: new Date(row["created_at"] as string | Date),
+      updatedAt: new Date(row["updated_at"] as string | Date),
+    }));
+  }
+
   async function detachLink(input: DetachLinkInput): Promise<void> {
     assertResourceType(input.resourceType);
     const resourceId = requireNonEmpty(input.resourceId, "resourceId");
@@ -532,6 +610,8 @@ export function createResourceLinksService(options: {
     attachLink,
     createLink,
     listLinksFor,
+    getExternalResource,
+    listUnattachedByProvider,
     detachLink,
   };
 }

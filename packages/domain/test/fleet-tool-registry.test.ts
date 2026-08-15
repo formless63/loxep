@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compareFleetToolPanelOrder,
+  fleetDiscoveredResourcePurpose,
   FLEET_TOOL_PANEL_ORDER,
   FLEET_TOOL_PROVIDERS,
   FLEET_TOOL_REGISTRY,
@@ -25,11 +26,17 @@ describe("fleet tool registry", () => {
     }
   });
 
-  it("marks exactly tailscale and termix as having no tier-2 health path", () => {
+  it("marks all five providers as having no tier-2 health path (two different reasons)", () => {
+    // tailscale/termix: no unauthenticated route exists at all. beszel/
+    // dockhand/gatus: a route DOES exist (/api/health, /api/auth/session,
+    // /health respectively) but each is superseded, once its own discovery
+    // slice landed, by the connection probe's own richer per-resource
+    // adapter read — see fleet-tool-registry.ts's module doc, "Which
+    // providers get a healthPath" section, each provider's own entry.
     const noHealthPath = FLEET_TOOL_PROVIDERS.filter(
       (provider) => FLEET_TOOL_REGISTRY[provider].healthPath === null,
     );
-    expect(noHealthPath.sort()).toEqual(["tailscale", "termix"]);
+    expect(noHealthPath.sort()).toEqual(["beszel", "dockhand", "gatus", "tailscale", "termix"]);
   });
 
   it("holds exactly the five integrated providers — link-only tools were removed", () => {
@@ -46,20 +53,48 @@ describe("fleet tool registry", () => {
     ]);
   });
 
-  it("derives PROBEABLE_FLEET_TOOL_PROVIDERS from the registry, not a hand-duplicated list", () => {
+  it("derives PROBEABLE_FLEET_TOOL_PROVIDERS from the registry, not a hand-duplicated list — now EMPTY", () => {
     for (const provider of PROBEABLE_FLEET_TOOL_PROVIDERS) {
       expect(FLEET_TOOL_REGISTRY[provider].healthPath).not.toBeNull();
     }
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("beszel");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("gatus");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toContain("dockhand");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).not.toContain("tailscale");
-    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).not.toContain("termix");
-    expect([...PROBEABLE_FLEET_TOOL_PROVIDERS].sort()).toEqual([
-      "beszel",
-      "dockhand",
-      "gatus",
-    ]);
+    // Every one of the five fleet providers now grows its own discovery +
+    // per-resource adapter-sourced health (Beszel/Dockhand/Gatus/Tailscale/
+    // Termix, in that shipping order) — `health-probes.ts`'s
+    // `listExternalResourceCandidates` anticipated exactly this end state
+    // with its own `length === 0` short-circuit. This is not a bug to fix;
+    // it is the generic tier-2 probe becoming permanently vestigial as each
+    // provider's richer read supersedes it, one at a time.
+    expect(PROBEABLE_FLEET_TOOL_PROVIDERS).toEqual([]);
+  });
+
+  describe("fleetDiscoveredResourcePurpose (loxep-y64 slice 3 attach picker)", () => {
+    it("resolves each shipped provider's discovery type -> hosting_target purpose from the design's vocabulary", () => {
+      expect(fleetDiscoveredResourcePurpose("beszel", "system", "hosting_target")).toBe(
+        "host_metrics",
+      );
+      expect(fleetDiscoveredResourcePurpose("dockhand", "environment", "hosting_target")).toBe(
+        "container_console",
+      );
+      expect(fleetDiscoveredResourcePurpose("termix", "host", "hosting_target")).toBe(
+        "terminal_access",
+      );
+      expect(fleetDiscoveredResourcePurpose("tailscale", "device", "hosting_target")).toBe(
+        "private_network",
+      );
+      expect(fleetDiscoveredResourcePurpose("gatus", "endpoint", "hosting_target")).toBe(
+        "uptime_check",
+      );
+    });
+
+    it("refuses a combination nothing discovers yet, rather than guessing", () => {
+      expect(fleetDiscoveredResourcePurpose("beszel", "hub", "hosting_target")).toBeNull();
+      expect(fleetDiscoveredResourcePurpose("dockhand", "stack", "hosting_target")).toBeNull();
+      // Reserved in the design's vocabulary table but has no discovery
+      // writer yet (managed_domain is not a RESOURCE_LINK_RESOURCE_TYPES
+      // member) — refuses rather than guessing, same as the others above.
+      expect(fleetDiscoveredResourcePurpose("gatus", "endpoint", "managed_domain")).toBeNull();
+      expect(fleetDiscoveredResourcePurpose("bookstack", "page", "hosting_target")).toBeNull();
+    });
   });
 
   it("isFleetToolProvider narrows only the known providers", () => {

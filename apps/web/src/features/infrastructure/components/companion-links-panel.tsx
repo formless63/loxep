@@ -18,6 +18,7 @@ import { formatDateTime, formatRelativeTime } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import { hostingTargetQuery } from '@/features/infrastructure/api/queries';
 import AddCompanionLinkDialog from '@/features/infrastructure/components/add-companion-link-dialog';
+import AttachDiscoveredResourceDialog from '@/features/infrastructure/components/attach-discovered-resource-dialog';
 import { removeCompanionLink } from '@/server/infrastructure-functions';
 import type { CompanionLinkDto, CompanionLinkHealthDto } from '@/server/infrastructure-functions';
 // Type-only — erased at compile time, so this carries no runtime import of
@@ -62,32 +63,96 @@ function healthDetailHint(detail: Record<string, unknown> | undefined): string |
   return undefined;
 }
 
+/** `detail.status`/`detail.observedAt`, read generically — the shape any adapter-sourced per-resource health row carries (loxep-y64 §1 for Beszel; the same two fields any future provider's discovery slice writes). */
+function detailStringField(detail: Record<string, unknown>, key: string): string | null {
+  const value = detail[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function detailNumberField(detail: Record<string, unknown>, key: string): number | null {
+  const value = detail[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Termix's access-affordance chip (loxep-wvm §3/§4.4): the best-effort
+ * active-session COUNT, read straight off this link's own `detail.
+ * sessionCount` (written by `projectTermixResources`, present only for
+ * LINKED hosts). Absent when the enrichment read failed or has not run yet
+ * — never a fabricated zero. A count, never a name — sharedByUsername-style
+ * per-session data is out of scope permanently (wvm §3.3(a)). Termix earns
+ * NO dedicated panel (wvm §4.4) — this is the one row the anti-soup rule
+ * allows, right here in the shared list, with the deep link already
+ * carried by the row's own `<a href>`.
+ */
+function TermixSessionCountChip({ link }: { link: CompanionLinkDto }) {
+  if (link.provider !== 'termix' || link.health === null) return null;
+  const count = detailNumberField(link.health.detail, 'sessionCount');
+  if (count === null) return null;
+  return (
+    <span className='text-muted-foreground text-xs' title='Active terminal sessions, per Termix'>
+      {count} active {count === 1 ? 'session' : 'sessions'}
+    </span>
+  );
+}
+
 /**
  * One companion link's health cell: status/source/age, or an honest "no
  * automated check" when `health` is `null` — never a fabricated `unknown`
  * badge for a link the sweep has not reached (or cannot reach at all; see
  * `@loxep/domain`'s `fleet-tool-registry.ts`).
+ *
+ * **The verbatim chip + two clocks (loxep-y64 §3).** An `adapter`-sourced
+ * row (today: an attached Beszel system) carries the tool's own status
+ * STRING in `detail.status` — rendered verbatim in the badge, never
+ * translated through Loxep's coarser ok/degraded/failing/unknown label,
+ * which still only decides the badge's TONE. When `detail.observedAt` is
+ * also present, two distinct clocks render: the tool's own reported instant
+ * and Loxep's read clock, named separately per the design's rule ("Beszel
+ * updated 40s ago, read by Loxep 3 min ago"). A `probe`-sourced row (the
+ * generic credential-free tier-2 reachability check) has no tool-reported
+ * timestamp at all — it keeps the single "Loxep checked" clock exactly as
+ * before this slice.
  */
-function LinkHealth({ health }: { health: CompanionLinkHealthDto | null }) {
+function LinkHealth({ link }: { link: CompanionLinkDto }) {
+  const health = link.health;
   if (health === null) {
     return <span className='text-muted-foreground text-sm'>No automated check yet</span>;
   }
   const hint = healthDetailHint(health.detail);
+  const label = link.knownTool?.label ?? link.provider;
+  const verbatimStatus = detailStringField(health.detail, 'status');
+  const observedAt = detailStringField(health.detail, 'observedAt');
+
   return (
     <div className='flex flex-col gap-0.5'>
       <div className='flex flex-wrap items-center gap-1.5'>
         <ToneBadge tone={STATUS_TONE[health.status]} title={hint}>
-          {health.status}
+          {verbatimStatus ?? health.status}
         </ToneBadge>
         <span className='text-muted-foreground text-xs'>{health.source}</span>
       </div>
       <span className='text-muted-foreground text-xs' title={formatDateTime(health.checkedAt)}>
-        Loxep checked {formatRelativeTime(health.checkedAt)}
-        {/* This tool reports no observation time of its own today — the
-            tier-2 probe is a credential-free reachability ping, so there is
-            only ONE clock to render. Said explicitly rather than silently
-            implying a second, tool-reported clock exists (the design's
-            two-clock rule, applied to its "reports none" branch). */}
+        {health.source === 'adapter' && observedAt !== null ? (
+          <>
+            {label} updated {formatRelativeTime(observedAt)} · Loxep read{' '}
+            {formatRelativeTime(health.checkedAt)}
+          </>
+        ) : health.source === 'adapter' ? (
+          <>
+            {label} reported no timestamp · Loxep read {formatRelativeTime(health.checkedAt)}
+          </>
+        ) : (
+          <>
+            {/* This tool reports no observation time of its own today — the
+                tier-2 probe is a credential-free reachability ping, so there
+                is only ONE clock to render. Said explicitly rather than
+                silently implying a second, tool-reported clock exists (the
+                design's two-clock rule, applied to its "reports none"
+                branch). */}
+            Loxep checked {formatRelativeTime(health.checkedAt)}
+          </>
+        )}
         {hint !== undefined && ` · ${hint}`}
       </span>
     </div>
@@ -161,6 +226,26 @@ function HostDiagnosisSentence({ diagnosis }: { diagnosis: HostDiagnosisResult }
 }
 
 /**
+ * Every provider with a shipped discovery writer (`@loxep/app`'s
+ * `project<Provider>*` functions) that the operator-confirmed attach picker
+ * (loxep-y64 slice 3) can offer — reusing the SAME generic
+ * `AttachDiscoveredResourceDialog` component with a different `provider`/
+ * `providerLabel`, per that dialog's own doc. Beszel shipped first
+ * (loxep-y64); Tailscale (loxep-50t slice B), Gatus (loxep-1au slice B),
+ * Dockhand (loxep-hb7 Milestone B) and Termix (loxep-wvm Slice B) add their
+ * own entries here in the same shape — nothing else in this component needs
+ * to change per provider.
+ */
+const ATTACHABLE_DISCOVERY_PROVIDERS: readonly { provider: string; label: string; noun: string }[] =
+  [
+    { provider: 'beszel', label: 'Beszel', noun: 'system' },
+    { provider: 'tailscale', label: 'Tailscale', noun: 'device' },
+    { provider: 'gatus', label: 'Gatus', noun: 'endpoint' },
+    { provider: 'dockhand', label: 'Dockhand', noun: 'environment' },
+    { provider: 'termix', label: 'Termix', noun: 'host' }
+  ];
+
+/**
  * `external_resources`/`resource_links` for this hosting target, via
  * `@loxep/domain`'s generic companion-link service (loxep-v5r.3), upgraded
  * by loxep-ovj.3 to project each link's `integration_health` status/source/
@@ -183,6 +268,9 @@ export default function CompanionLinksPanel({
   diagnosis: HostDiagnosisResult;
 }) {
   const [addOpen, setAddOpen] = React.useState(false);
+  // Which discovered-resource provider's attach dialog is open, if any — at
+  // most one at a time, mirroring `addOpen`'s single-dialog shape.
+  const [attachProvider, setAttachProvider] = React.useState<string | null>(null);
 
   const addButton = (
     <Button size='sm' onClick={() => setAddOpen(true)}>
@@ -190,6 +278,18 @@ export default function CompanionLinksPanel({
       Add tool link
     </Button>
   );
+
+  // loxep-y64 slice 3: the operator-confirmed attach picker over a
+  // provider's discovered-but-unlinked resources. A SEPARATE action from
+  // "Add tool link" on purpose — that form writes an operator-typed URL with
+  // no credential behind it; these confirm one of Loxep's own discovery-swept
+  // `external_resources` rows, never a hand-typed one.
+  const attachButtons = ATTACHABLE_DISCOVERY_PROVIDERS.map(({ provider, label, noun }) => (
+    <Button key={provider} size='sm' variant='outline' onClick={() => setAttachProvider(provider)}>
+      <Icons.radar />
+      Attach discovered {label} {noun}
+    </Button>
+  ));
 
   return (
     <div className='flex flex-col gap-3'>
@@ -213,7 +313,12 @@ export default function CompanionLinksPanel({
                   Nothing here links a monitoring or management dashboard to this host.
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>{addButton}</EmptyContent>
+              <EmptyContent>
+                <div className='flex flex-wrap justify-center gap-2'>
+                  {addButton}
+                  {attachButtons}
+                </div>
+              </EmptyContent>
             </Empty>
           ) : (
             <div className='flex flex-col gap-3'>
@@ -241,13 +346,17 @@ export default function CompanionLinksPanel({
                       </span>
                     </a>
                     <div className='flex items-center gap-2'>
-                      <LinkHealth health={link.health} />
+                      <TermixSessionCountChip link={link} />
+                      <LinkHealth link={link} />
                       <RemoveLinkButton link={link} hostingTargetName={hostingTargetName} />
                     </div>
                   </li>
                 ))}
               </ul>
-              <div>{addButton}</div>
+              <div className='flex flex-wrap gap-2'>
+                {addButton}
+                {attachButtons}
+              </div>
             </div>
           )}
         </CardContent>
@@ -258,6 +367,19 @@ export default function CompanionLinksPanel({
           onOpenChange={setAddOpen}
           hostingTargetId={hostingTargetId}
           hostingTargetName={hostingTargetName}
+        />
+      )}
+      {attachProvider !== null && (
+        <AttachDiscoveredResourceDialog
+          open={attachProvider !== null}
+          onOpenChange={(open) => setAttachProvider(open ? attachProvider : null)}
+          hostingTargetId={hostingTargetId}
+          hostingTargetName={hostingTargetName}
+          provider={attachProvider}
+          providerLabel={
+            ATTACHABLE_DISCOVERY_PROVIDERS.find((entry) => entry.provider === attachProvider)
+              ?.label ?? attachProvider
+          }
         />
       )}
     </div>
