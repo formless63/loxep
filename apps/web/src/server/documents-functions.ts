@@ -231,10 +231,10 @@ async function emitDocumentConfirmed(tx: DbHandle['db'], documentId: string): Pr
   const result = await tx.execute<{
     status: string;
     confirmed_at: string | null;
-    file_name: string | null;
+    original_filename: string | null;
     line_count: number;
   }>(
-    `select status, confirmed_at, file_name, line_count
+    `select status, confirmed_at, original_filename, line_count
        from documents where id = ${uuidLiteral(documentId)}`
   );
   const row = result.rows[0];
@@ -249,7 +249,7 @@ async function emitDocumentConfirmed(tx: DbHandle['db'], documentId: string): Pr
     subjectId: documentId,
     occurredAt,
     payload: {
-      ...(row['file_name'] == null ? {} : { fileName: row['file_name'] }),
+      ...(row['original_filename'] == null ? {} : { fileName: row['original_filename'] }),
       lineCount: Number(row['line_count'] ?? 0)
     },
     deduplicationKey: `document:${documentId}:confirmed:${occurredAt.toISOString()}`
