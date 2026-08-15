@@ -19,6 +19,7 @@ describe("secret bundle registry", () => {
     expect([...secretPurposes].sort()).toEqual([
       "beszel_credentials",
       "cloudflare_credentials",
+      "container_host_secret",
       "dns_edit_token",
       "dockhand_credentials",
       "ebay_keyset",
@@ -815,6 +816,74 @@ describe("gatus_credentials bundle (an OPTIONAL Basic-auth pair)", () => {
       const message = (error as Error).message;
       expect(message).toContain("password");
       expect(message).not.toContain(FAKE_GATUS_PASSWORD);
+    }
+  });
+});
+
+describe("container_host_secret bundle (operator-supplied, NOT reveal-once)", () => {
+  const FAKE_TLS_KEY = "-----BEGIN PRIVATE KEY-----\nfakefakefake\n-----END PRIVATE KEY-----";
+  const FAKE_HAWSER_TOKEN = "fake-hawser-agent-token-0000000000";
+
+  it("accepts every field present together", () => {
+    const bundle = {
+      tlsCa: "fake-ca",
+      tlsCert: "fake-cert",
+      tlsKey: FAKE_TLS_KEY,
+      hawserToken: FAKE_HAWSER_TOKEN,
+    };
+    expect(validateBundle("container_host_secret", bundle)).toEqual(bundle);
+  });
+
+  it("accepts an empty bundle — every field is independently optional", () => {
+    // Unlike beszel_credentials/gatus_credentials, there is no atomicity
+    // requirement between these four fields: a `direct` connection may carry
+    // TLS material with no Hawser token, and a `hawser-standard` connection
+    // carries only a token.
+    expect(validateBundle("container_host_secret", {})).toEqual({});
+  });
+
+  it("accepts a lone hawserToken with no TLS material", () => {
+    expect(
+      validateBundle("container_host_secret", { hawserToken: FAKE_HAWSER_TOKEN }),
+    ).toEqual({ hawserToken: FAKE_HAWSER_TOKEN });
+  });
+
+  it("rejects an empty-string field rather than treating it as absent", () => {
+    expect(() =>
+      validateBundle("container_host_secret", { tlsKey: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("carries no hosting target id, connection type, or other non-secret intent", () => {
+    // Identity and non-secret intent live in external_resources.metadata and
+    // the secret key infrastructure.dockhand_host.<id> — the same split
+    // dns_edit_token/mailbox_password enforce.
+    expect(() =>
+      validateBundle("container_host_secret", {
+        hawserToken: FAKE_HAWSER_TOKEN,
+        hostingTargetId: "11111111-1111-1111-1111-111111111111",
+      }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("is a SEPARATE purpose from dockhand_credentials, which Loxep consumes", () => {
+    // dockhand_credentials is the login @loxep/integration-dockhand
+    // authenticates with; container_host_secret is operator-supplied host
+    // material Loxep only ever forwards to ONE registered host's create/
+    // update call, never authenticates with.
+    expect(secretPurposes).toContain("container_host_secret");
+    expect(secretPurposes).toContain("dockhand_credentials");
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("container_host_secret", { tlsKey: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("tlsKey");
+      expect(message).not.toContain(FAKE_TLS_KEY);
     }
   });
 });

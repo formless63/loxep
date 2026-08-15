@@ -49,7 +49,10 @@ function RunDetailData({ id }: { id: string }) {
     onError: (error) => toastError(error, 'Could not retry this run')
   });
 
-  const canRetry = data.subjectType === 'domain' || data.subjectType === 'token';
+  const canRetry =
+    data.subjectType === 'domain' ||
+    data.subjectType === 'token' ||
+    data.subjectType === 'hosting_target';
 
   return (
     <div className='flex flex-col gap-4'>

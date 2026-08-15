@@ -212,6 +212,7 @@ import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
 import { createAccountingPostFactsTasks } from "./accounting-posting.ts";
 import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
+import { createInfrastructureContainerHostTasks } from "./infrastructure-container-host.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createInfrastructureTokenTasks } from "./infrastructure-token.ts";
@@ -522,6 +523,19 @@ export function buildWorkerRegistry(
   // keeps them a request-scoped `apps/web` action instead.
   const infrastructureTokens = createInfrastructureTokenTasks({ services });
 
+  // --- infrastructure container-host reconciler (loxep-hb7 Milestone C) ---
+  // One task, enqueued transactionally by `@loxep/infrastructure`'s
+  // `declareIntent` (an intent change) and manually from the fleet-detail
+  // registration panel's Reconcile/Check-now buttons — never a poll-executor
+  // route or a `monitor_targets` row. Milestone D's drift cadence calls the
+  // SAME underlying `ContainerHostsService.reconcile` directly from
+  // `health-sweep.ts`'s Dockhand connection probe rather than through this
+  // task, so it costs no extra job per target — see `fleet-health.ts`'s
+  // module doc.
+  const infrastructureContainerHosts = createInfrastructureContainerHostTasks({
+    services,
+  });
+
   // --- fleet health (Phase 8 milestone 1, loxep-ovj.1) -----------------
   // One recurring sweep, no monitor_targets row — see health-sweep.ts's
   // module doc. `@loxep/domain` owns the registry/mechanics; this is only
@@ -551,6 +565,7 @@ export function buildWorkerRegistry(
     inventoryPurchases.syncEbayPurchasesTask,
     ...infrastructureMail.tasks,
     ...infrastructureTokens.tasks,
+    ...infrastructureContainerHosts.tasks,
     health.healthSweepTask,
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,

@@ -513,6 +513,47 @@ export const secretBundleSchemas = {
     .refine((value) => (value.username === undefined) === (value.password === undefined), {
       message: "username and password must be provided together, or neither",
     }),
+  /**
+   * Write-only TLS/agent material for a container-host registration intent
+   * (loxep-hb7 Milestone C), stored as the application secret
+   * `infrastructure.dockhand_host.<hostingTargets.id>`.
+   *
+   * **This is operator-SUPPLIED material, not a credential Loxep mints.**
+   * Every field is a `direct`/`hawser-*` connection-type detail the operator
+   * pastes into the "register in Dockhand" form — a client TLS keypair for a
+   * TCP daemon, or a Hawser agent token — exactly the shape
+   * `@loxep/integration-dockhand`'s `DockhandHostPayload` already declares
+   * write-only (`tlsCa`/`tlsCert`/`tlsKey`/`hawserToken`, "write-only here —
+   * they can be sent and never read back").
+   *
+   * ## Reveal-once does NOT apply here, and that is a deliberate divergence
+   *
+   * `dns_edit_token`/`mailbox_password` above are credentials LOXEP MINTS, so
+   * ADR-0022's one-time-reveal contract governs them: a lost value is a
+   * rotation because there is no other copy anywhere. This bundle is the
+   * opposite case — the operator already holds the private key or agent
+   * token on their own machine or password manager; Loxep is not the sole
+   * custodian of it and showing it back would not be "the only remaining
+   * copy," it would just be redundant. So there is still no read-back path
+   * (the container-host planner compares this material by PRESENCE only,
+   * never by value — `packages/infrastructure/src/container-host-port.ts`'s
+   * `differs()`), but the reasoning is "nothing needs it back," not "showing
+   * it back would violate a one-time-reveal promise." An empty field on a
+   * later edit leaves the stored value untouched, matching every other
+   * write-only field in this registry (`mailbox_password`, `dns_edit_token`,
+   * the notification endpoint token).
+   *
+   * Every field is optional and independent — unlike `beszel_credentials`'s
+   * email/password pair, these four have no atomicity requirement with each
+   * other: a `direct` connection may carry TLS material with no Hawser token,
+   * and a `hawser-standard` connection carries only a token.
+   */
+  container_host_secret: z.strictObject({
+    tlsCa: z.string().min(1).optional(),
+    tlsCert: z.string().min(1).optional(),
+    tlsKey: z.string().min(1).optional(),
+    hawserToken: z.string().min(1).optional(),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

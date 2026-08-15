@@ -502,7 +502,15 @@ describe("createFleetHealthSubjectRegistry", () => {
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("ok");
-      expect(outcome?.detail).toEqual({ authMode: "session", hostCount: 2 });
+      // loxep-hb7 Milestone D: the drift cadence's own counts, piggybacked on
+      // this SAME read — zero here because no hosting target has declared a
+      // container-host intent against this connection in this test.
+      expect(outcome?.detail).toEqual({
+        authMode: "session",
+        hostCount: 2,
+        driftingTargetCount: 0,
+        unmatchedObservedCount: 0,
+      });
     });
 
     it("listHosts() rejects the credential mid-run -> failing, kind auth", async () => {

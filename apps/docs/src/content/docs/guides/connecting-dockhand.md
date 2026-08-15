@@ -5,7 +5,7 @@ title: Connecting Dockhand
 [Dockhand](https://finsys-dockhand.mintlify.app) manages Docker hosts, containers, and Compose stacks. Loxep connects to it for two things, and the difference between them is the whole design:
 
 - **Reading.** Loxep signs in and, on every `health.sweep` cycle (five minutes), proves the credential, counts the hosts Dockhand manages, and discovers each managed host (Dockhand calls it an "environment") as its own tracked resource with its own status. This is live today — see "What the sweep discovers" below.
-- **Registering hosts.** Loxep can, by design, add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS. **This half is designed but not yet built:** there is no registration form in the product yet, and nothing calls `planContainerHostOperations` outside its own tests. See the [integrations status page](../../product/integrations-status/) for the current state. The "Registering a host from Loxep" section further down describes the intended flow, not something you can do today.
+- **Registering hosts.** Loxep can add a machine to Dockhand's inventory and keep its connection settings in step — the same declared-intent-and-reconcile relationship Loxep has with DNS. You declare the intent (on the "New hosting target" dialog, or on a fleet-detail page's "Container host registration" panel); a background worker applies it and records the result. See "Registering a host from Loxep" below.
 
 **Loxep never starts, stops, restarts, execs into, deploys, or redeploys anything.** Those buttons live in Dockhand, where they belong, with your own session and Dockhand's own permissions. This is not a feature gap to be filled later: it is a boundary the codebase enforces with a test that fails if an adapter ever grows a lifecycle call.
 
@@ -27,7 +27,7 @@ Dockhand publishes no API keys, personal access tokens, or service accounts — 
    | Permission | Why Loxep needs it |
    |---|---|
    | `environments:view` | Read the list of managed hosts — this is what powers the connection's health status and per-environment discovery today |
-   | `environments:edit` | Register and update hosts — reserved for the not-yet-built registration feature described below |
+   | `environments:edit` | Register and update hosts — see "Registering a host from Loxep" below |
    | `containers:view` | Read per-host container state — powers the live Containers panel on a linked fleet-detail page |
    | `stacks:view` | Read per-host stack state — powers the same panel's Stacks list |
 
@@ -69,11 +69,9 @@ When a hosting target has a linked Dockhand environment, its fleet-detail page g
 
 ## Registering a host from Loxep
 
-:::note[Designed, not yet built]
-Nothing below this point exists in the running product yet — there is no registration form in Loxep today, and `planContainerHostOperations`, the function that would apply these changes to Dockhand, has no caller outside its own tests. This section documents the intended design so the permission you granted above (`environments:edit`) makes sense; see the [integrations status page](../../product/integrations-status/) for the current state.
-:::
+Dockhand calls a managed Docker host an **environment**. Loxep calls it a hosting target. They are the same thing, and Loxep can create and update the Dockhand side of it.
 
-Dockhand calls a managed Docker host an **environment**. Loxep calls it a hosting target. They are the same thing, and Loxep is designed to create and update the Dockhand side of it.
+Declare the intent either from the **New hosting target** dialog's collapsed "Also register this host in Dockhand" section (create time), or from a fleet-detail page's **Container host registration** panel (the durable home — there is no separate hosting-target edit form, so this panel is where a target created before you connected Dockhand, or any later change, goes). Saving does not call Dockhand directly: it records the intent and hands off to a background worker, which applies it and records what happened — visible on **Infrastructure → Runs**. Use **Reconcile** to apply immediately, or **Check now** to see what would change without applying it.
 
 This is the one place Loxep writes to Dockhand, and it is worth being precise about why it is allowed when starting a container is not: registering a host writes a row in Dockhand's own database describing how to reach a machine. **Nothing executes on that machine.** Starting a container runs code on it. That is the line.
 

@@ -24,6 +24,7 @@ import type { MedusaAdapter } from "@loxep/integration-medusa";
 import {
   ENSURE_MAIL_DOMAIN_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
+  RECONCILE_CONTAINER_HOST_TASK,
   SYNC_MAILBOXES_TASK,
   SYNC_TOKEN_POLICY_TASK,
 } from "@loxep/infrastructure";
@@ -108,6 +109,13 @@ describe("buildWorkerRegistry", () => {
         // `mint`, never claimed by the dispatcher. `sync-proxy-resource` is
         // deliberately NOT registered; see `registry.ts`'s module doc.
         SYNC_TOKEN_POLICY_TASK,
+        // loxep-hb7 Milestone C: the container-host reconciler — enqueued by
+        // `declareIntent` (an intent change) and by the fleet-detail
+        // registration panel's Reconcile/Check-now buttons. Milestone D's
+        // drift cadence calls the same underlying service directly from
+        // `fleet-health.ts`'s Dockhand connection probe instead of through
+        // this task, so it registers no cron item of its own.
+        RECONCILE_CONTAINER_HOST_TASK,
         "maintenance.heartbeat",
         // Phase 8 milestone 1 (loxep-ovj.1): the one recurring integration
         // health sweep, no monitor_targets row.

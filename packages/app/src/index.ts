@@ -191,12 +191,23 @@ export {
   // of its own — `@loxep/app` already owns that dependency and this is its
   // one sanctioned re-export seam.
   createDockhandAdapterFactory,
+  // loxep-hb7 Milestone C: `declareContainerHostIntent`
+  // (`apps/web/src/server/infrastructure-functions.ts`) needs the SAME
+  // origin resolution `fleet-health.ts`'s discovery sweep already applies,
+  // so the intent's stored `url` and the discovery-written one can never
+  // disagree about what "the instance origin" means for one connection.
+  readDockhandBaseUrl,
 } from "./fleet.ts";
 export type {
   ContainerHostAdapterLike,
   DockhandAdapterFactory,
   DockhandConnectionAdapter,
 } from "./fleet.ts";
+// Re-exported so `apps/web` never needs its own `@loxep/integration-dockhand`
+// dependency just to normalize a pasted base URL into the origin
+// `declareContainerHostIntent` stores — the same seam `createDockhandAdapterFactory`
+// above uses for the read leg.
+export { normalizeDockhandBaseUrl } from "@loxep/integration-dockhand";
 
 export {
   REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,

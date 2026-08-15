@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
+import { createRecordingNotificationEnqueue } from "@loxep/domain";
 import {
   createDriftService,
   createManagedDomainsService,
@@ -656,5 +657,185 @@ describe("provider_operations — the idempotency ledger", () => {
     const row = await ledger.get(key);
     expect(JSON.stringify(row?.responseSummary)).not.toMatch(/v1\.0-/);
     expect(row?.responseSummary).toMatchObject({ valueOmitted: true });
+  });
+});
+
+/**
+ * ADR-0023 / notifications-design.md's `infrastructure` class (loxep-oii's
+ * own deferred item, closed here): `drift.ts`'s `recordRun` and `sync.ts`'s
+ * `finish` are the write sites, and neither test above seeds a
+ * `notification_rules` row, so the default injected
+ * `createTransactionalNotificationEnqueue()` never actually reaches
+ * `graphile_worker.add_job` in any of them (routing finds no match and
+ * short-circuits before the seam) — these are the tests that exercise
+ * recording AND, in the last one, the enqueue seam itself.
+ */
+describe("ADR-0023 infrastructure notification events", () => {
+  /**
+   * Scoped to THIS test's own subject: other tests in this file (and the
+   * describe blocks above) create their own drift/reconcile-run failures
+   * against their own `beforeEach`-fresh domains, and every one of them now
+   * also writes an `infrastructure`-class event — an unscoped query would
+   * count the whole file's history, not this test's own.
+   */
+  async function notificationEventsFor(
+    eventType: string,
+    subjectId: string,
+  ): Promise<
+    Array<{
+      subject_type: string;
+      subject_id: string;
+      deduplication_key: string;
+      payload: Record<string, unknown>;
+    }>
+  > {
+    const result = await handle.pool.query<{
+      subject_type: string;
+      subject_id: string;
+      deduplication_key: string;
+      payload: Record<string, unknown>;
+    }>(
+      `select subject_type, subject_id, deduplication_key, payload
+         from notification_events
+        where event_class = 'infrastructure' and event_type = $1
+          and subject_id = $2
+        order by created_at asc`,
+      [eventType, subjectId],
+    );
+    return result.rows;
+  }
+
+  /** `reconcile_run_failed`'s subject is the run row, not the domain — scope by the payload's own `domainId` instead. */
+  async function reconcileRunFailuresFor(
+    domainId: string,
+  ): Promise<
+    Array<{
+      subject_type: string;
+      subject_id: string;
+      deduplication_key: string;
+      payload: Record<string, unknown>;
+    }>
+  > {
+    const result = await handle.pool.query<{
+      subject_type: string;
+      subject_id: string;
+      deduplication_key: string;
+      payload: Record<string, unknown>;
+    }>(
+      `select subject_type, subject_id, deduplication_key, payload
+         from notification_events
+        where event_class = 'infrastructure' and event_type = 'reconcile_run_failed'
+          and payload->>'domainId' = $1
+        order by created_at asc`,
+      [domainId],
+    );
+    return result.rows;
+  }
+
+  it("emits drift_found once per NEW finding, never again on re-observation", async () => {
+    const provider = providerFor([
+      observed({ externalRecordId: "notif-r1", type: "TXT", name: "somebody-elses" }),
+    ]);
+    const sync = createRecordSyncService({ db: handle.db, provider });
+
+    await sync.run({ domainId, mode: "check", trigger: "sweep" });
+    const afterFirst = await notificationEventsFor("drift_found", domainId);
+    expect(afterFirst).toHaveLength(1);
+    expect(afterFirst[0]?.subject_type).toBe("managed_domain");
+    expect(afterFirst[0]?.subject_id).toBe(domainId);
+    expect(afterFirst[0]?.payload).toMatchObject({
+      kind: "unexpected",
+      recordType: "TXT",
+      recordName: "somebody-elses",
+    });
+    expect(afterFirst[0]?.deduplication_key).toMatch(/^dns_drift:.+:found$/);
+
+    // Same finding, re-detected on a second sweep — the UPDATE branch, not
+    // a new row, so no second event.
+    await sync.run({ domainId, mode: "check", trigger: "sweep" });
+    const afterSecond = await notificationEventsFor("drift_found", domainId);
+    expect(afterSecond).toHaveLength(1);
+  });
+
+  it("emits drift_disappeared when a finding resolves on its own", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    const sync = createRecordSyncService({ db: handle.db, provider });
+    await sync.run({ domainId, mode: "check", trigger: "sweep" });
+
+    await provider.apply({
+      externalZoneId: `${ZONE_ID}-${seq}`,
+      zoneName: domainName,
+      operations: [
+        {
+          kind: "create",
+          record: {
+            type: "A",
+            name: "@",
+            content: "203.0.113.10",
+            ttlSeconds: null,
+            priority: null,
+            proxied: false,
+          },
+        },
+      ],
+    });
+    await sync.run({ domainId, mode: "check", trigger: "sweep" });
+
+    const disappeared = await notificationEventsFor("drift_disappeared", domainId);
+    expect(disappeared).toHaveLength(1);
+    expect(disappeared[0]?.subject_type).toBe("managed_domain");
+    expect(disappeared[0]?.subject_id).toBe(domainId);
+    expect(disappeared[0]?.deduplication_key).toMatch(/^dns_drift:.+:disappeared$/);
+  });
+
+  it("emits reconcile_run_failed when the provider read fails", async () => {
+    const provider = createStubProvider({
+      zoneName: domainName,
+      externalZoneId: `${ZONE_ID}-${seq}`,
+      failRead: { kind: "auth", message: "token revoked" },
+    });
+    const sync = createRecordSyncService({ db: handle.db, provider });
+
+    await expect(
+      sync.run({ domainId, mode: "check", trigger: "sweep" }),
+    ).rejects.toThrow();
+
+    const failures = await reconcileRunFailuresFor(domainId);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.subject_type).toBe("reconcile_run");
+    expect(failures[0]?.deduplication_key).toMatch(/^reconcile_run:.+:failed$/);
+    expect(failures[0]?.payload).toMatchObject({
+      domainId,
+      domainName,
+      mode: "check",
+      trigger: "sweep",
+    });
+    expect(String(failures[0]?.payload["errorSummary"])).toContain("auth");
+  });
+
+  it("routes and enqueues through an injected seam when a matching rule exists", async () => {
+    const endpoint = await handle.pool.query<{ id: string }>(
+      `insert into notification_endpoints (provider, name, config)
+       values ('ntfy', 'infra notif test', '{}'::jsonb)
+       returning id`,
+    );
+    const endpointId = endpoint.rows[0]?.id;
+    await handle.pool.query(
+      `insert into notification_rules (name, event_class, event_type, endpoint_id, enabled)
+       values ('infra notif rule', 'infrastructure', 'drift_found', $1, true)`,
+      [endpointId],
+    );
+
+    const enqueue = createRecordingNotificationEnqueue();
+    const provider = providerFor([
+      observed({ externalRecordId: "notif-r2", type: "TXT", name: "routed-drift" }),
+    ]);
+    const sync = createRecordSyncService({ db: handle.db, provider, notificationEnqueue: enqueue });
+    await sync.run({ domainId, mode: "check", trigger: "sweep" });
+
+    expect(enqueue.calls).toHaveLength(1);
+    expect(enqueue.calls[0]?.taskName).toBe("notifications.deliver");
+    expect(enqueue.calls[0]?.payload).toMatchObject({ endpointId });
   });
 });

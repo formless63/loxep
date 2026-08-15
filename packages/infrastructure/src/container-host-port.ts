@@ -42,25 +42,30 @@
  *
  * ## The join key is the NAME, and that is what makes this migration-free
  *
- * Loxep never stores a provider identifier for a managed host. The
- * fleet-observability design forbids exactly that — *"No provider-specific
- * column anywhere. There is no `hosting_targets.beszel_system_id`"* — and the
- * general mechanism it prescribes (`external_resources` + `resource_links`)
- * has not shipped.
+ * Loxep never stores a provider identifier for a managed host ON
+ * `hosting_targets` ITSELF. The fleet-observability design forbids exactly
+ * that — *"No provider-specific column anywhere. There is no
+ * `hosting_targets.beszel_system_id`"*.
  *
- * It does not need to have shipped for this seam to work, because both sides
- * already carry a unique name: `hosting_targets_name_uq` on Loxep's side, and
- * *"unique display name for the environment"* on the provider's. Matching on
- * the name is therefore sound today and needs **no new table and no new
- * column**.
+ * Both sides already carry a unique name: `hosting_targets_name_uq` on
+ * Loxep's side, and *"unique display name for the environment"* on the
+ * provider's. Matching on the name is therefore sound from day one and needs
+ * **no new table and no new column** — the bootstrap identity below.
  *
- * **The limitation this accepts, recorded rather than discovered:** renaming a
- * host on either side breaks the correspondence and the next plan reads as
- * "create a new host". Until link rows exist, a rename is an operator action
- * that must be made on both sides, and a caller should refuse to apply a plan
- * whose creates exceed what the operator expected. See
- * {@link ContainerHostPlan.unmatchedObserved}, which exists so that condition
- * is visible rather than silent.
+ * **The limitation the bootstrap accepts, recorded rather than discovered:**
+ * renaming a host on either side breaks the name correspondence and the next
+ * plan reads as "create a new host". {@link ContainerHostPlan.unmatchedObserved}
+ * exists so that condition is visible rather than silent.
+ *
+ * **loxep-hb7 §3.1 closes this for good, without a `hosting_targets` column:**
+ * once a create succeeds or a check-mode plan matches, the caller writes the
+ * provider's returned id into the `external_resources`/`resource_links` row
+ * already backing this desired record (the SAME generic link mechanism, not
+ * a provider-specific one) and threads it back in as
+ * {@link DesiredContainerHost.externalHostId} on every subsequent call. See
+ * that field's own doc and {@link planContainerHostOperations}'s "Identity"
+ * section for the prefer-id-then-name lookup this enables — a rename no
+ * longer breaks the correspondence once the link has recorded an id.
  */
 
 /**
@@ -171,6 +176,25 @@ export interface ContainerHostProviderPort {
 export interface DesiredContainerHost extends ContainerHostPayload {
   /** The `hosting_targets.id` this desired host came from, for attribution. */
   hostingTargetId: string;
+  /**
+   * The provider's own id for this host, once known — the self-retiring half
+   * of the module doc's "join key is the NAME" bootstrap.
+   *
+   * `null`/`undefined` until the first successful match (a create's result or
+   * a check-mode match by name), at which point the caller writes the
+   * returned {@link ObservedContainerHost.externalHostId} into the
+   * `external_resources`/`resource_links` row backing this desired record —
+   * a generic link, never a provider-specific `hosting_targets` column, per
+   * the module doc's own rule. From then on this field is populated, and
+   * {@link planContainerHostOperations} resolves the observed match by THIS
+   * id first, falling back to the name only when the id is absent or no
+   * longer resolves (the environment was deleted and recreated, or Loxep has
+   * not yet observed this connection). A rename on either side no longer
+   * breaks the correspondence once this is set — the exact limitation the
+   * module doc records as accepted "until link rows exist," now closed for a
+   * caller that threads this field through.
+   */
+  externalHostId?: string | null;
 }
 
 export interface ContainerHostPlan {
@@ -244,25 +268,49 @@ function differs(
  * read as "remove it" — the observed side reports presence, not value, so
  * "differs" is unanswerable for those fields and guessing would either
  * re-transmit a private key on every sweep or silently clear one.
+ *
+ * ## Identity: `externalHostId` first, the name only as a fallback
+ *
+ * {@link DesiredContainerHost.externalHostId}'s own doc names the rule; this
+ * is where it is applied. A desired record carrying a known id is looked up
+ * by that id FIRST. Only when no id is known yet, or a known id no longer
+ * resolves against this read (the environment was deleted and recreated
+ * with a fresh id, or the connection has simply never been observed), does
+ * the lookup fall back to the bootstrap name join. This is deliberately the
+ * ONLY fallback — no fuzzy name matching, ever — and it is why a caller
+ * threading `externalHostId` through from the link row converges Dockhand
+ * onto the same identity model as every other fleet tool: the link, not the
+ * provider column, is authoritative.
  */
 export function planContainerHostOperations(input: {
   desired: readonly DesiredContainerHost[];
   observed: readonly ObservedContainerHost[];
 }): ContainerHostPlan {
+  const byId = new Map<string, ObservedContainerHost>();
   const byName = new Map<string, ObservedContainerHost>();
-  for (const host of input.observed) byName.set(host.name, host);
+  for (const host of input.observed) {
+    byId.set(host.externalHostId, host);
+    byName.set(host.name, host);
+  }
 
   const operations: ContainerHostOperation[] = [];
   const matched = new Set<string>();
 
   for (const desired of input.desired) {
-    const observed = byName.get(desired.name);
+    const observed =
+      (desired.externalHostId != null
+        ? byId.get(desired.externalHostId)
+        : undefined) ?? byName.get(desired.name);
     if (observed === undefined) {
-      const { hostingTargetId: _attribution, ...payload } = desired;
+      const {
+        hostingTargetId: _attribution,
+        externalHostId: _identity,
+        ...payload
+      } = desired;
       operations.push({ kind: "create", host: payload });
       continue;
     }
-    matched.add(observed.name);
+    matched.add(observed.externalHostId);
 
     const changes = differs(desired, observed);
     // Secret material is applied only when the caller deliberately supplied it.
@@ -285,6 +333,8 @@ export function planContainerHostOperations(input: {
 
   return {
     operations,
-    unmatchedObserved: input.observed.filter((host) => !matched.has(host.name)),
+    unmatchedObserved: input.observed.filter(
+      (host) => !matched.has(host.externalHostId),
+    ),
   };
 }

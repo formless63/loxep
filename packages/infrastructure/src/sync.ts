@@ -42,7 +42,12 @@
  * calls where that is NOT true (zone create, token create) — none of which
  * this milestone's record sync makes.
  */
+import {
+  createTransactionalNotificationEnqueue,
+  publishNotificationEvent,
+} from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
+import type { NotificationEnqueue } from "@loxep/domain";
 import {
   dnsRecords,
   managedDomains,
@@ -112,9 +117,17 @@ export interface RecordSyncService {
 export function createRecordSyncService(options: {
   db: LoxepDb;
   provider: DnsProviderPort;
+  /**
+   * ADR-0023 domain-service enqueue seam, shared with the internally-built
+   * {@link DriftService} below — see `createDriftService`'s own doc for why
+   * this defaults rather than requiring every composition root to pass one.
+   */
+  notificationEnqueue?: NotificationEnqueue;
 }): RecordSyncService {
   const { db, provider } = options;
-  const drift = createDriftService({ db });
+  const notificationEnqueue =
+    options.notificationEnqueue ?? createTransactionalNotificationEnqueue();
+  const drift = createDriftService({ db, notificationEnqueue });
 
   return {
     async run(input) {
@@ -191,6 +204,48 @@ export function createRecordSyncService(options: {
             errorSummary,
           })
           .where(eq(reconcileRuns.id, run.id));
+
+        // ADR-0023 / notifications-design.md's second wired `infrastructure`
+        // event type. `subject_type = 'reconcile_run'` — the run row already
+        // IS the failure's own identity, and `run.id` is generated fresh per
+        // run, so `reconcile_run:<id>:failed` fires at most once per run
+        // (this function is called at most once per terminal status; a
+        // `finish` call is not retried within one `run()` invocation).
+        //
+        // No shared transaction wraps this whole orchestrator (each `step`/
+        // `finish` write is its own autocommit statement, matching the
+        // "findings recorded outside a transaction" shape everywhere else in
+        // this module), so there is no ambient transaction to savepoint
+        // against — a plain try/catch is the ADR's own rule for emission
+        // outside a caller's transaction.
+        if (status === "failed") {
+          try {
+            await publishNotificationEvent({
+              executor: db,
+              event: {
+                eventClass: "infrastructure",
+                eventType: "reconcile_run_failed",
+                subjectType: "reconcile_run",
+                subjectId: run.id,
+                occurredAt: new Date(),
+                payload: {
+                  domainId: domain.id,
+                  domainName: domain.name,
+                  kind: run.kind,
+                  mode: input.mode,
+                  trigger: input.trigger,
+                  errorSummary,
+                },
+                deduplicationKey: `reconcile_run:${run.id}:failed`,
+              },
+              enqueue: notificationEnqueue,
+            });
+          } catch {
+            // A notification-side failure must never mask the reconcile
+            // failure it was reporting on — the caller still sees the
+            // original error via the re-thrown exception below.
+          }
+        }
       };
 
       try {

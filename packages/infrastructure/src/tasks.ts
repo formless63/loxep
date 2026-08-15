@@ -2,16 +2,18 @@
  * The Infrastructure worker tasks, and the transactional enqueue that makes
  * intent changes and jobs atomic.
  *
- * Milestones 1 through 3 ship six of the design's ten tasks:
+ * Milestones 1 through 3, plus Phase 8's loxep-hb7 Milestone C, ship seven of
+ * the design's job-graph tasks:
  *
  * ```text
- * infrastructure.materialize-records  intent change      key domain:{id}:materialize
- * infrastructure.sync-records         after materialize  key domain:{id}:records
- * infrastructure.ensure-mail-domain   provision, mail on key domain:{id}:mail
- * infrastructure.poll-mail-ownership  GATED ON DELEGATION
- *                                                        key domain:{id}:mailverify
- * infrastructure.sync-mailboxes       after verified     key domain:{id}:mailboxes
- * infrastructure.sync-token-policy    scope change        key token:{id}:policy
+ * infrastructure.materialize-records     intent change      key domain:{id}:materialize
+ * infrastructure.sync-records            after materialize  key domain:{id}:records
+ * infrastructure.ensure-mail-domain      provision, mail on key domain:{id}:mail
+ * infrastructure.poll-mail-ownership     GATED ON DELEGATION
+ *                                                           key domain:{id}:mailverify
+ * infrastructure.sync-mailboxes          after verified     key domain:{id}:mailboxes
+ * infrastructure.sync-token-policy       scope change       key token:{id}:policy
+ * infrastructure.reconcile-container-host intent change/poll key hosting_target:{id}:container-host
  * ```
  *
  * Deferred, listed so the gap is visible rather than forgotten:
@@ -96,6 +98,51 @@ export {
 export const SYNC_PROXY_RESOURCE_TASK = "infrastructure.sync-proxy-resource";
 export interface SyncProxyResourcePayload {
   domainId: string;
+}
+
+/**
+ * loxep-hb7 Milestone C: the container-host reconciler. UNLIKE
+ * `SYNC_PROXY_RESOURCE_TASK` above, this one IS registered — the service it
+ * belongs to (`container-hosts.ts`) exists, and so does the port
+ * implementation (`@loxep/app`'s `containerHostPortFromDockhandAdapter`,
+ * already wired against a real `@loxep/integration-dockhand` adapter).
+ *
+ * `hostingTargetId` and nothing else — rule 1 above applies here exactly as
+ * it does to every other task in this file: the Dockhand connection id, the
+ * TLS material, and the Hawser token all live in
+ * `external_resources`/`resource_links`/`application_secrets` and are
+ * resolved INSIDE the task from `hostingTargetId` alone.
+ *
+ * `mode`/`trigger` follow `SyncRecordsPayload`'s own two-field shape exactly
+ * — `'intent_change'` for the create dialog / registration panel submitting
+ * new desired state, `'manual'` for an operator's Reconcile/Check-now
+ * button, `'poll'` for Milestone D's drift cadence. `'sweep'` is deliberately
+ * absent: there is no cross-connection sweep of this task, only the
+ * per-subject drift cadence — see `container-hosts.ts`'s module doc.
+ */
+export const RECONCILE_CONTAINER_HOST_TASK =
+  "infrastructure.reconcile-container-host";
+export interface ReconcileContainerHostPayload {
+  hostingTargetId: string;
+  mode?: "apply" | "check";
+  trigger?: "intent_change" | "manual" | "poll";
+  /** Structurally a Graphile Worker jsonb payload — see `createTransactionalEnqueue`'s `Record<string, unknown>` parameter. */
+  [key: string]: unknown;
+}
+
+/**
+ * The design's job graph key format for this task: `hosting_target:{id}:
+ * container-host`, mirroring {@link domainJobKey}'s `domain:{id}` shape and
+ * {@link tokenJobKey}'s `token:{id}` shape in `tokens.ts`. One job per
+ * TARGET, never per connection — see `container-hosts.ts`'s module doc for
+ * why a per-connection key would let two targets on the same Dockhand
+ * instance clobber each other's pending job.
+ */
+export function containerHostJobKey(
+  taskName: string,
+  hostingTargetId: string,
+): string {
+  return `${taskName}:hosting_target:${hostingTargetId}`;
 }
 
 /** Payload shapes. `domainId` and nothing else — see rule 1 above. */

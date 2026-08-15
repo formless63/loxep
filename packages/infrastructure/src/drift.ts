@@ -36,8 +36,13 @@
  * deletes anything at a provider — it has no provider port at all, which is
  * the structural version of the rule.
  */
-import { createAuditService } from "@loxep/domain";
+import {
+  createAuditService,
+  createTransactionalNotificationEnqueue,
+  publishNotificationEvent,
+} from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
+import type { NotificationEnqueue } from "@loxep/domain";
 import { dnsDriftFindings, managedDomains } from "@loxep/db/schema";
 import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { InfrastructureNotFoundError } from "./errors.ts";
@@ -144,8 +149,24 @@ export interface DriftService {
   markApplied(findingIds: readonly string[]): Promise<number>;
 }
 
-export function createDriftService(options: { db: LoxepDb }): DriftService {
+export function createDriftService(options: {
+  db: LoxepDb;
+  /**
+   * The ADR-0023 domain-service enqueue seam (loxep-oii's "infrastructure
+   * class unwired" leftover, closed here). Defaults to
+   * {@link createTransactionalNotificationEnqueue}, which issues
+   * `graphile_worker.add_job` through whatever executor `recordRun`'s own
+   * transaction hands it — so every existing call site
+   * (`@loxep/infrastructure`'s own `createRecordSyncService`, `apps/web`'s
+   * `getDriftService`) gets real routing+delivery for free, with no change
+   * needed at either composition root. Override with
+   * `createRecordingNotificationEnqueue()` in tests to observe calls without
+   * a worker schema.
+   */
+  notificationEnqueue?: NotificationEnqueue;
+}): DriftService {
   const { db } = options;
+  const notificationEnqueue = options.notificationEnqueue ?? createTransactionalNotificationEnqueue();
 
   return {
     async recordRun({ domainId, runId, findings }) {
@@ -153,6 +174,7 @@ export function createDriftService(options: { db: LoxepDb }): DriftService {
 
       return db.transaction(async (tx) => {
         const survivingIds: string[] = [];
+        const newFindings: DnsDriftFindingRow[] = [];
 
         for (const finding of findings) {
           // The upsert probe is the unresolved partial unique, which Drizzle
@@ -176,7 +198,11 @@ export function createDriftService(options: { db: LoxepDb }): DriftService {
           const found = existing[0];
           if (found !== undefined) {
             // Second detection: `first_detected_at` is left alone on purpose —
-            // it is the answer to "how long has this been wrong".
+            // it is the answer to "how long has this been wrong". A
+            // re-observation of an already-known finding is deliberately NOT
+            // a notification event — see this function's own emission
+            // comment below for why only the INSERT branch (a genuinely NEW
+            // finding) qualifies.
             await tx
               .update(dnsDriftFindings)
               .set({
@@ -210,9 +236,12 @@ export function createDriftService(options: { db: LoxepDb }): DriftService {
               firstSeenRunId: runId,
               lastSeenRunId: runId,
             })
-            .returning({ id: dnsDriftFindings.id });
+            .returning();
           const row = inserted[0];
-          if (row !== undefined) survivingIds.push(row.id);
+          if (row !== undefined) {
+            survivingIds.push(row.id);
+            newFindings.push(row);
+          }
         }
 
         // Anything unresolved that this run did not see has gone away.
@@ -232,7 +261,7 @@ export function createDriftService(options: { db: LoxepDb }): DriftService {
                 : notInArray(dnsDriftFindings.id, survivingIds),
             ),
           )
-          .returning({ id: dnsDriftFindings.id });
+          .returning();
 
         // The denormalized rollup the domain list renders a badge from. It is
         // derived and recomputable; the findings table stays authoritative.
@@ -244,6 +273,77 @@ export function createDriftService(options: { db: LoxepDb }): DriftService {
             updatedAt: now,
           })
           .where(eq(managedDomains.id, domainId));
+
+        // ADR-0023 / notifications-design.md: one `infrastructure`-class
+        // event per NEWLY DETECTED finding (the insert branch above) and one
+        // per finding that resolved itself by disappearing — never per
+        // re-observation, which is what makes an hourly sweep's repeat
+        // detection silent rather than a notification every hour. Dedup key
+        // is the finding row's OWN id: a genuinely new occurrence always
+        // gets a fresh id (the unresolved partial unique guarantees a
+        // re-observation takes the UPDATE branch instead), so the key is
+        // naturally "per finding identity, not per poll" with no extra
+        // bookkeeping. `subject_type = 'managed_domain'` — there is no
+        // `dns_drift_finding` entry in the closed subject-type set, and the
+        // domain is the natural "what happened to this" answer; the
+        // finding's own specifics (kind/recordType/recordName/desired/
+        // observed) travel in `payload` for the renderer.
+        //
+        // Wrapped in its own savepoint: a notification failure must not roll
+        // back the findings write it is reporting on (ADR-0023's own rule
+        // for every emission inside a caller's transaction).
+        try {
+          await tx.transaction(async (sp) => {
+            for (const row of newFindings) {
+              await publishNotificationEvent({
+                executor: sp,
+                event: {
+                  eventClass: "infrastructure",
+                  eventType: "drift_found",
+                  subjectType: "managed_domain",
+                  subjectId: domainId,
+                  occurredAt: row.firstDetectedAt,
+                  payload: {
+                    findingId: row.id,
+                    kind: row.kind,
+                    recordType: row.recordType,
+                    recordName: row.recordName,
+                    desiredContent: row.desiredContent,
+                    observedContent: row.observedContent,
+                  },
+                  deduplicationKey: `dns_drift:${row.id}:found`,
+                },
+                enqueue: notificationEnqueue,
+              });
+            }
+            for (const row of disappearedRows) {
+              await publishNotificationEvent({
+                executor: sp,
+                event: {
+                  eventClass: "infrastructure",
+                  eventType: "drift_disappeared",
+                  subjectType: "managed_domain",
+                  subjectId: domainId,
+                  occurredAt: now,
+                  payload: {
+                    findingId: row.id,
+                    kind: row.kind,
+                    recordType: row.recordType,
+                    recordName: row.recordName,
+                    desiredContent: row.desiredContent,
+                    observedContent: row.observedContent,
+                  },
+                  deduplicationKey: `dns_drift:${row.id}:disappeared`,
+                },
+                enqueue: notificationEnqueue,
+              });
+            }
+          });
+        } catch {
+          // Detection already committed by the time this runs; a
+          // notification-side failure (routing, enqueue) must never turn a
+          // successful drift-detection write into a failed one.
+        }
 
         return {
           unresolved: survivingIds.length,

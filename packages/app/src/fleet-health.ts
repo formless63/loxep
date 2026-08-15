@@ -142,6 +142,11 @@ import { TailscaleAdapterError } from "@loxep/integration-tailscale";
 import type { TailscaleDeviceFact } from "@loxep/integration-tailscale";
 import { TermixAdapterError, normalizeTermixBaseUrl } from "@loxep/integration-termix";
 import type { TermixAdapter, TermixHostFact } from "@loxep/integration-termix";
+import { createContainerHostsService } from "@loxep/infrastructure";
+import type {
+  ContainerHostProviderPort,
+  ContainerHostsService,
+} from "@loxep/infrastructure";
 import { AppConfigurationError } from "./errors.ts";
 import {
   BESZEL_CONNECTION_PROVIDER,
@@ -609,6 +614,107 @@ async function projectDockhandResources(
   }
 }
 
+/**
+ * A `ContainerHostsService` scoped to THIS module's one use: Milestone D's
+ * drift cadence, which only ever calls `.listDeclaredTargets()` and
+ * `.reconcile(..., { mode: 'check' })`. `writeSecret`/`readSecret`/`enqueue`
+ * are unreachable from that call shape — `container-hosts.ts`'s own
+ * `reconcile()` fetches a secret ONLY in `mode === 'apply'`, and this
+ * function never passes that — so each is a throwing stub rather than a
+ * real `SecretsService`/`TransactionalEnqueue` wiring. This keeps
+ * {@link FleetHealthServices} from having to widen into the full
+ * `AppServices` (`secrets`, `config.keyring`) just for a code path that
+ * never touches either.
+ */
+function containerHostsServiceForDriftCadence(db: LoxepDb): ContainerHostsService {
+  return createContainerHostsService({
+    db,
+    writeSecret: () => {
+      throw new Error("unreachable: the drift cadence never declares intent");
+    },
+    readSecret: () => {
+      throw new Error("unreachable: the drift cadence never applies");
+    },
+    enqueue: () => {
+      throw new Error("unreachable: the drift cadence never enqueues a job");
+    },
+  });
+}
+
+/**
+ * loxep-hb7 Milestone D: the drift cadence for every hosting target with a
+ * DECLARED (operator-confirmed, `desiredAt`-carrying) container-host intent
+ * on THIS connection — piggybacked on the SAME `listHosts()` read
+ * `projectDockhandResources` above already made, per the design's "never a
+ * new cron per host" rule and this module's own "one read, N outputs"
+ * discipline (Beszel/Gatus/Tailscale/Termix all follow it). No second
+ * provider call: the pre-fetched `hosts` becomes the `ContainerHostProviderPort`'s
+ * `read()` answer directly — `DockhandHostFact` and `ObservedContainerHost`
+ * are the SAME shape by construction (`container-host-port.ts`'s module doc).
+ *
+ * ALWAYS `mode: 'check'` — an unattended sweep across every registered
+ * target is a materially different risk posture than an operator's explicit
+ * Reconcile click, exactly the reasoning
+ * `INFRASTRUCTURE_RECONCILE_POLL_MODE` states for DNS's own recurring sweep.
+ * `apply` on this stub port throws if ever reached, which would be a bug —
+ * belt and braces, not a real path.
+ *
+ * One target's failure (a decommissioned target mid-sweep, a transient DB
+ * hiccup) must not take the whole connection probe down — the same posture
+ * `projectDockhandResources` applies per host, one level up.
+ */
+async function reconcileDeclaredContainerHosts(
+  db: LoxepDb,
+  connection: Connection,
+  hosts: readonly DockhandHostFact[],
+): Promise<{ driftingTargetCount: number; unmatchedObservedCount: number }> {
+  const containerHosts = containerHostsServiceForDriftCadence(db);
+  const declared = await containerHosts.listDeclaredTargets();
+  const forThisConnection = declared.filter((target) => target.connectionId === connection.id);
+  if (forThisConnection.length === 0) {
+    return { driftingTargetCount: 0, unmatchedObservedCount: 0 };
+  }
+
+  const provider: ContainerHostProviderPort = {
+    read: async () => [...hosts],
+    apply: () => {
+      throw new Error("unreachable: the drift cadence never applies");
+    },
+    capabilities: () => ({
+      provider: "dockhand",
+      hostRegistration: true,
+      containerLifecycle: false,
+      metricHistory: false,
+      bearerTokenAuth: false,
+      connectionTypes: [],
+    }),
+  };
+
+  let driftingTargetCount = 0;
+  // Each target's OWN `unmatchedObserved` counts every OTHER declared
+  // target's host as "unmatched" too (the planner compares one desired host
+  // against the WHOLE connection's inventory) — taking the max rather than
+  // summing avoids multiplying that overlap into a number that grows with
+  // the number of registered targets rather than with genuine drift. Not
+  // exact set arithmetic; a rough "how much is unaccounted for" signal is
+  // what `integration_health.detail` needs here, per hb7 §2.6.
+  let unmatchedObservedCount = 0;
+  for (const target of forThisConnection) {
+    try {
+      const result = await containerHosts.reconcile(target.hostingTargetId, {
+        mode: "check",
+        trigger: "poll",
+        provider,
+      });
+      if (result.operationCount > 0) driftingTargetCount += 1;
+      unmatchedObservedCount = Math.max(unmatchedObservedCount, result.unmatchedObservedCount);
+    } catch {
+      // See the function doc — swallowed on purpose.
+    }
+  }
+  return { driftingTargetCount, unmatchedObservedCount };
+}
+
 async function probeDockhandConnection(
   services: FleetHealthServices,
   connection: Connection,
@@ -641,10 +747,11 @@ async function probeDockhandConnection(
   }
 
   await projectDockhandResources(db, connection, hosts);
+  const driftSummary = await reconcileDeclaredContainerHosts(db, connection, hosts);
 
   return {
     status: "ok",
-    detail: { authMode: "session", hostCount: hosts.length },
+    detail: { authMode: "session", hostCount: hosts.length, ...driftSummary },
     source: "adapter",
   };
 }

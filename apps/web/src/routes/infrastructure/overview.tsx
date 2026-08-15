@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
 import { FleetSignalsBand } from '@/features/infrastructure/components/fleet-signals-band';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
+import UnmatchedContainerHostsCard from '@/features/infrastructure/components/unmatched-container-hosts-card';
 import { infrastructureOverviewQuery } from '@/features/infrastructure/api/queries';
 import {
   MANAGED_DOMAIN_STATE_LABELS,
@@ -114,6 +115,11 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
       </div>
 
       <FleetSignalsBand signals={data.fleetSignals} />
+
+      {/* loxep-hb7 Milestone D: absent entirely when nothing is unmatched —
+          see the component's own doc for why this reads discovery's
+          candidate set rather than a per-target reconcile diff. */}
+      <UnmatchedContainerHostsCard />
 
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <Card>

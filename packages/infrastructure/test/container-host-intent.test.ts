@@ -233,3 +233,86 @@ describe("what the planner refuses to do", () => {
     expect(plan.unmatchedObserved.map((h) => h.name)).toEqual(["vps-fra-01"]);
   });
 });
+
+describe("identity: externalHostId first, name as a fallback", () => {
+  it("falls back to the name join when externalHostId is not yet known", () => {
+    // Every fixture above omits externalHostId — this asserts the omission
+    // itself is the documented bootstrap state, not an oversight.
+    const plan = planContainerHostOperations({
+      desired: [desired()],
+      observed: [observed()],
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.unmatchedObserved).toEqual([]);
+  });
+
+  it("matches by externalHostId even when the name has since changed at the provider", () => {
+    // The rename hazard the name-join fallback cannot resolve on its own —
+    // closed once the link has recorded an id. No create, no unmatched host:
+    // the SAME machine, addressed by its durable identity.
+    const plan = planContainerHostOperations({
+      desired: [desired({ name: "renamed-in-loxep", externalHostId: "1" })],
+      observed: [observed({ name: "renamed-at-dockhand" })],
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.unmatchedObserved).toEqual([]);
+  });
+
+  it("falls back to the name when a stored externalHostId no longer resolves", () => {
+    // The environment was deleted and recreated at the provider (a fresh id),
+    // or this connection has simply never been observed with that id present.
+    // Exact name only — never fuzzy — is the one fallback.
+    const plan = planContainerHostOperations({
+      desired: [desired({ externalHostId: "stale-id-no-longer-present" })],
+      observed: [observed()],
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.unmatchedObserved).toEqual([]);
+  });
+
+  it("excludes an id-matched host from unmatchedObserved even though its name diverged", () => {
+    const plan = planContainerHostOperations({
+      desired: [
+        desired({ name: "renamed-in-loxep", externalHostId: "1" }),
+        desired({ name: "second-host", externalHostId: "2" }),
+      ],
+      observed: [
+        observed({ name: "renamed-at-dockhand" }),
+        observed({ externalHostId: "2", name: "second-host" }),
+        observed({ externalHostId: "3", name: "orphan" }),
+      ],
+    });
+    expect(plan.operations).toEqual([]);
+    expect(plan.unmatchedObserved.map((h) => h.name)).toEqual(["orphan"]);
+  });
+
+  it("still detects a genuine field drift once matched by id", () => {
+    const plan = planContainerHostOperations({
+      desired: [
+        desired({
+          name: "renamed-in-loxep",
+          externalHostId: "1",
+          publicIp: "203.0.113.10",
+        }),
+      ],
+      observed: [observed({ name: "renamed-at-dockhand" })],
+    });
+    expect(plan.operations).toEqual([
+      {
+        kind: "update",
+        externalHostId: "1",
+        host: { publicIp: "203.0.113.10" },
+      },
+    ]);
+  });
+
+  it("strips externalHostId out of a create payload the same way it strips hostingTargetId", () => {
+    const plan = planContainerHostOperations({
+      desired: [desired({ name: "brand-new", externalHostId: null })],
+      observed: [],
+    });
+    const [operation] = plan.operations;
+    expect(operation?.kind).toBe("create");
+    expect(JSON.stringify(operation)).not.toContain("externalHostId");
+  });
+});

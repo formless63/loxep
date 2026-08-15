@@ -54,10 +54,11 @@
  * deliberately absent, as is any path that reads a stored mailbox password
  * back — `MailboxSecretWriter` has no read member at all.
  *
- * ## What Phase 8 adds (loxep-9j6)
+ * ## What Phase 8 adds (loxep-9j6, extended by loxep-hb7 Milestone C)
  *
  * ```text
  * container-host-port.ts   the container-host contract + desired-state planner
+ * container-hosts.ts       infrastructure.reconcile-container-host — the wired job
  * ```
  *
  * One seam, and it is deliberately types-plus-a-pure-function: the owner's
@@ -65,15 +66,20 @@
  * INVENTORY OF HOSTS (registering a machine writes a row in the manager's own
  * table; it runs nothing on that machine), while container lifecycle verbs stay
  * forbidden. It ships **with no migration**, because the join key is the
- * already-unique host NAME on both sides rather than a stored provider id —
- * see the module doc for the limitation that accepts, and for why
- * `hosting_targets` gains no provider column.
+ * already-unique host NAME on both sides rather than a stored provider id,
+ * self-retiring into a `external_resources`/`resource_links` id once a match
+ * succeeds (`DesiredContainerHost.externalHostId`) — see the module doc for
+ * the limitation the bootstrap accepts, and for why `hosting_targets` gains
+ * no provider column.
  *
- * **Not yet wired to a job.** There is no `infrastructure.sync-container-hosts`
- * task, because the desired state a caller would assemble depends on where the
- * per-host connection detail lives, which is a `/infrastructure` surface
- * question this issue does not answer. The port and planner exist so that
- * milestone lands as wiring rather than as design.
+ * **Now wired to a job.** `infrastructure.reconcile-container-host`
+ * (`container-hosts.ts`) is `planContainerHostOperations`' first non-test
+ * caller — desired state assembled from a `hosting_targets` row plus its
+ * dockhand/environment companion link's `external_resources.metadata`, with
+ * write-only TLS/Hawser material resolved from `application_secrets` only
+ * when an apply might need it. The composition root (`@loxep/app`) supplies
+ * the `ContainerHostProviderPort` and the secret reader; this package still
+ * takes no dependency on `@loxep/integration-dockhand`.
  *
  * ## What loxep-89h adds (rf4/Tailscale slice A leftover)
  *
@@ -201,7 +207,9 @@ export {
   createRecordingEnqueue,
   createTransactionalEnqueue,
   jobKeysInQueue,
+  RECONCILE_CONTAINER_HOST_TASK,
   SYNC_PROXY_RESOURCE_TASK,
+  containerHostJobKey,
 } from "./tasks.ts";
 // SYNC_TOKEN_POLICY_TASK / SYNC_TOKEN_POLICY_RUN_KIND / tokenJobKey are
 // re-exported by tasks.ts internally too (so a caller who only imports
@@ -209,11 +217,15 @@ export {
 // surface takes them from tokens.ts, their defining module — see the
 // "tokens (milestone 3)" section below, matching how MATERIALIZE_RECORDS_TASK
 // and ENSURE_MAIL_DOMAIN_TASK are taken from domains.ts / mail.ts rather than
-// from tasks.ts.
+// from tasks.ts. `RECONCILE_CONTAINER_HOST_TASK`/`containerHostJobKey` above
+// are the one deliberate exception — the task name and job-key shape are
+// declared in `tasks.ts` itself (loxep-hb7 Milestone C), and
+// `container-hosts.ts` imports them FROM here rather than the reverse.
 export type {
   EnsureMailDomainPayload,
   MaterializeRecordsPayload,
   PollMailOwnershipPayload,
+  ReconcileContainerHostPayload,
   SyncMailboxesPayload,
   SyncProxyResourcePayload,
   SyncRecordsPayload,
@@ -257,6 +269,28 @@ export type {
   DesiredContainerHost,
   ObservedContainerHost,
 } from "./container-host-port.ts";
+
+/* ---------------------------------------- container hosts (loxep-hb7 Milestone C) --- */
+
+export {
+  CONTAINER_HOST_EXTERNAL_TYPE,
+  CONTAINER_HOST_LINK_PURPOSE,
+  CONTAINER_HOST_PROVIDER,
+  RECONCILE_CONTAINER_HOST_RUN_KIND,
+  containerHostSecretKey,
+  createContainerHostsService,
+} from "./container-hosts.ts";
+export type {
+  ContainerHostIntentMetadata,
+  ContainerHostSecretPayload,
+  ContainerHostSecretReader,
+  ContainerHostsService,
+  DeclareContainerHostIntentInput,
+  DeclareContainerHostIntentResult,
+  DeclaredContainerHostTarget,
+  ReconcileContainerHostResult,
+  TransactionalContainerHostSecretWriter,
+} from "./container-hosts.ts";
 
 export type {
   CreateMailRoutingRuleInput,

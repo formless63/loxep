@@ -22,6 +22,7 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import CompanionLinksPanel from '@/features/infrastructure/components/companion-links-panel';
+import ContainerHostRegistrationPanel from '@/features/infrastructure/components/container-host-registration-panel';
 import DockhandContainersPanel from '@/features/infrastructure/components/dockhand-containers-panel';
 import HostingTargetTokensPanel from '@/features/infrastructure/components/hosting-target-tokens-panel';
 import { hostingTargetQuery, hostingTargetsQuery } from '@/features/infrastructure/api/queries';
@@ -185,6 +186,9 @@ function PrivateNetworkRow({ row }: { row: PrivateNetworkRowDto }) {
 
 function FleetDetailData({ name }: { name: string }) {
   const { data } = useSuspenseQuery(hostingTargetQuery(name));
+  const hasDockhandLink = data.companionLinks.some(
+    (link) => link.provider === 'dockhand' && link.externalType === 'environment'
+  );
   return (
     <div className='flex flex-col gap-4'>
       <Card>
@@ -264,9 +268,19 @@ function FleetDetailData({ name }: { name: string }) {
       {/* loxep-hb7 Milestone B: the one dedicated tool-specific panel the
           anti-soup rule licenses — mounted ONLY when a dockhand/environment
           link exists, per hb7 §3.2 rule 3 ("absent, not green, not empty"). */}
-      {data.companionLinks.some(
-        (link) => link.provider === 'dockhand' && link.externalType === 'environment'
-      ) && <DockhandContainersPanel hostingTargetId={data.id} />}
+      {hasDockhandLink && <DockhandContainersPanel hostingTargetId={data.id} />}
+
+      {/* loxep-hb7 Milestone C: the desired-vs-observed registration panel
+          and the only Dockhand write surface on this page. DELIBERATELY NOT
+          gated on `hasDockhandLink` — unlike the read-only containers panel
+          above, this is the DURABLE home for declaring intent on a target
+          that has never talked to Dockhand at all (hb7 §2.1(b): "there is no
+          hosting-target edit form… has nowhere else to go"), so gating it on
+          an EXISTING link would make it impossible to register a brand-new
+          target. The panel gates itself on "at least one live Dockhand
+          connection exists" instead (same rule the create dialog's own
+          section uses, hb7 §2.1(a)) — see its own component doc. */}
+      <ContainerHostRegistrationPanel hostingTargetId={data.id} hostingTargetName={data.name} />
     </div>
   );
 }
