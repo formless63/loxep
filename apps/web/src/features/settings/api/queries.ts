@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import {
   fetchApplicationSettings,
+  fetchAuthProvisioning,
   fetchConnections,
   fetchEntities,
   fetchFirstAdminBootstrap,
@@ -82,6 +83,12 @@ export const storageBackendsQuery = queryOptions({
 export const usersQuery = queryOptions({
   queryKey: ['settings', 'users'],
   queryFn: () => fetchUsers()
+});
+
+/** Account provisioning policy (ADR-0024) — admin-only, like the user directory. */
+export const authProvisioningQuery = queryOptions({
+  queryKey: ['settings', 'auth-provisioning'],
+  queryFn: () => fetchAuthProvisioning()
 });
 
 export const firstAdminBootstrapQuery = queryOptions({

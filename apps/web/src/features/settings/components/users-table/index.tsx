@@ -5,6 +5,7 @@ import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
 import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDataTable } from '@/hooks/use-data-table';
@@ -15,6 +16,8 @@ import {
 } from '@/features/settings/lib/client-data-table';
 import { firstAdminBootstrapQuery, usersQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import NewUserDialog from '@/features/settings/components/new-user-dialog';
+import ProvisioningCard from '@/features/settings/components/provisioning-card';
 import type { UserDto } from '@/server/admin-functions';
 import { getColumns } from './columns';
 
@@ -75,6 +78,8 @@ export default function UsersTable({ currentUserId }: { currentUserId: string })
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
 
+  const [creating, setCreating] = React.useState(false);
+
   const { data, isPending, isError, error, refetch } = useQuery(usersQuery);
   const columns = React.useMemo(() => getColumns(currentUserId), [currentUserId]);
 
@@ -91,7 +96,12 @@ export default function UsersTable({ currentUserId }: { currentUserId: string })
   return (
     <div className='flex flex-col gap-4'>
       <BootstrapStatus />
+      <ProvisioningCard />
+      <div className='flex justify-end'>
+        <Button onClick={() => setCreating(true)}>New user</Button>
+      </div>
       {body}
+      <NewUserDialog open={creating} onOpenChange={setCreating} />
     </div>
   );
 }

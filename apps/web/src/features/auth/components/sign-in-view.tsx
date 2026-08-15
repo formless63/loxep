@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { useAppForm } from '@/lib/form';
 import { authClient } from '@/lib/auth-client';
 import type { LoginPaths } from '@/server/auth-functions';
+import { useSearch } from '@tanstack/react-router';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -25,9 +27,51 @@ const signInSchema = z.object({
 /** Where successful sign-ins land (magic-link verification and OAuth callback). */
 const SIGN_IN_CALLBACK_PATH = '/dashboard/overview';
 
+/**
+ * Where a DECLINED sign-in lands. Better Auth otherwise sends magic-link
+ * errors to the success callback and OAuth errors to its own
+ * `/api/auth/error` page; pointing both back here is what lets the message
+ * below be shown at all (ADR-0024 §3).
+ */
+const SIGN_IN_ERROR_PATH = '/auth/sign-in';
+
+/**
+ * Sign-in failures worth explaining. `SIGNUP_DISABLED` is the OAuth callback's
+ * rendering of Loxep's own provisioning refusal; `failed_to_create_user` is
+ * what the magic-link verifier emits when the same refusal aborts the insert.
+ * Anything else is reported verbatim-ish, without inventing a diagnosis.
+ */
+function describeSignInError(error: string): { title: string; body: string } {
+  if (error === 'SIGNUP_DISABLED' || error === 'failed_to_create_user') {
+    return {
+      title: 'This installation is not accepting new accounts',
+      body: 'An administrator must create your account before you can sign in. If you already have one, check that you used the same address it was created with.'
+    };
+  }
+  if (error === 'INVALID_TOKEN') {
+    return {
+      title: 'That sign-in link is no longer valid',
+      body: 'Links expire quickly and can only be used once. Request a new one below.'
+    };
+  }
+  return {
+    title: 'Sign-in could not be completed',
+    body: 'Please try again, or ask your Loxep administrator for help.'
+  };
+}
+
 export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
   const [sentTo, setSentTo] = React.useState<string | null>(null);
   const [ssoPending, setSsoPending] = React.useState(false);
+  const search = useSearch({ strict: false }) as { error?: unknown };
+  const signInError = typeof search.error === 'string' ? search.error : null;
+
+  // Both configured methods decline new accounts: say so up front rather than
+  // letting a newcomer request a link that will never arrive. Stated once for
+  // everyone, so it can never reveal whether a given address has an account.
+  const newAccountsClosed =
+    (!loginPaths.magicLink || !loginPaths.newAccounts.magicLink) &&
+    (!loginPaths.oidc || !loginPaths.newAccounts.oidc);
 
   const form = useAppForm({
     defaultValues: { email: '' },
@@ -51,7 +95,8 @@ export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
     // the server package never enters the client bundle.
     const { error } = await authClient.signIn.oauth2({
       providerId: 'oidc',
-      callbackURL: SIGN_IN_CALLBACK_PATH
+      callbackURL: SIGN_IN_CALLBACK_PATH,
+      errorCallbackURL: SIGN_IN_ERROR_PATH
     });
     if (error) {
       toast.error(error.message || 'Could not start SSO sign-in. Please try again.');
@@ -70,6 +115,21 @@ export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
           <CardDescription>Marketplace intelligence and commerce operations</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
+          {signInError !== null && !sentTo && (
+            <Alert variant='warning'>
+              <AlertTitle>{describeSignInError(signInError).title}</AlertTitle>
+              <AlertDescription>{describeSignInError(signInError).body}</AlertDescription>
+            </Alert>
+          )}
+          {newAccountsClosed && !sentTo && (
+            <Alert>
+              <AlertTitle>New accounts are closed</AlertTitle>
+              <AlertDescription>
+                Sign in below if you already have an account. If you do not, an administrator must
+                create one for you — there is no self-service sign-up.
+              </AlertDescription>
+            </Alert>
+          )}
           {sentTo ? (
             <div className='space-y-4 text-center'>
               <div className='bg-muted mx-auto flex size-10 items-center justify-center rounded-full'>

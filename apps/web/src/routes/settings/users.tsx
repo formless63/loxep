@@ -13,7 +13,7 @@ function SettingsUsers() {
   return (
     <SettingsPage
       title='Users'
-      description='Deployment users and installation-wide roles (admin / member).'
+      description='Who may become a Loxep user, deployment users, and installation-wide roles (admin / member).'
     >
       {isAdmin ? (
         <UsersTable currentUserId={auth?.user.id ?? ''} />

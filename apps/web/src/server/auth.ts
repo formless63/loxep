@@ -13,11 +13,12 @@
  */
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createAuth, type LoxepAuth } from '@loxep/auth';
-import { createDb } from '@loxep/db';
+import { createDb, type DbHandle } from '@loxep/db';
 
 interface AuthRegistry {
   config: BootstrapConfig;
   auth: LoxepAuth;
+  db: DbHandle;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.auth');
@@ -41,7 +42,7 @@ function buildRegistry(): AuthRegistry {
     throw error;
   }
   const db = createDb(config.databaseUrl);
-  return { config, auth: createAuth({ config, db }) };
+  return { config, db, auth: createAuth({ config, db }) };
 }
 
 function getRegistry(): AuthRegistry {
@@ -52,6 +53,16 @@ function getRegistry(): AuthRegistry {
 /** Lazy process-global Better Auth instance. Throws with a clear message when LOXEP_* env is absent. */
 export function getAuth(): LoxepAuth {
   return getRegistry().auth;
+}
+
+/**
+ * The database handle the auth instance itself runs on. Exposed so the
+ * unauthenticated sign-in surface can read the account provisioning policy
+ * (ADR-0024) without constructing a second pool or pulling in the whole
+ * `/settings` service registry.
+ */
+export function getAuthDb(): DbHandle {
+  return getRegistry().db;
 }
 
 /**

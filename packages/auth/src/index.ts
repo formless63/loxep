@@ -33,3 +33,41 @@ export {
   runFirstAdminBootstrap,
 } from "./first-admin.ts";
 export type { FirstAdminBootstrapRecord } from "./first-admin.ts";
+
+export {
+  ADMIN_CREATE_USER_PATH,
+  AUTH_PROVISIONING_SETTING_KEY,
+  DEFAULT_PROVISIONING_POLICY,
+  decideProvisioning,
+  emailDomain,
+  emailDomainAllowed,
+  installationHasAdmin,
+  MAGIC_LINK_VERIFY_PATH,
+  mayCreateUser,
+  mayDeliverMagicLink,
+  OAUTH_CALLBACK_PATH_PREFIX,
+  parseProvisioningPolicy,
+  provisioningMethodForPath,
+  readProvisioningPolicy,
+  userExistsForEmail,
+} from "./provisioning-policy.ts";
+export type {
+  AuthProvisioningPolicy,
+  ClaimApplyMoment,
+  OidcAdminClaimPolicy,
+  ProvisioningDecision,
+  ProvisioningDecisionInput,
+  ProvisioningDenialReason,
+  ProvisioningMethod,
+  ProvisioningStance,
+} from "./provisioning-policy.ts";
+
+export {
+  applyOidcClaimRole,
+  claimGrantsAdmin,
+  claimMappingEnabled,
+  claimTokens,
+  decodeIdTokenClaims,
+  resolveClaimPath,
+} from "./oidc-claim-roles.ts";
+export type { ApplyClaimRoleInput, ClaimRoleOutcome } from "./oidc-claim-roles.ts";

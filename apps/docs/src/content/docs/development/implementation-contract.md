@@ -155,6 +155,8 @@ Initial access is intentionally simple:
 
 Do **not** create `connection_users` or a generic ACL engine as part of Phase 0. Fine-grained authorization may be added later when a real shared-install workflow requires it.
 
+**Account provisioning** (ADR-0024) is a database-backed setting (`auth.provisioning`), never an environment variable and never a construction-time Better Auth plugin option. Enforcement belongs in `@loxep/auth`'s own hooks — `sendMagicLink` and `databaseHooks.user.create.before` — because `/api/auth/*` is a catch-all mount and a rule a web-layer caller can forget is a rule that can be bypassed. Provisioning controls govern account **creation** only: an existing user always keeps their sign-in path, which is what makes the feature lockout-proof. There is no invite system; a closed installation adds people through the admin plugin's `createUser` from `/settings/users`.
+
 Do not equate:
 
 - application user;

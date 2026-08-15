@@ -121,6 +121,30 @@ Recommended behavior:
 
 Implemented behavior (`@loxep/auth`): a Better Auth `session.create` after-hook compares the signed-in user's email case-insensitively against `LOXEP_BOOTSTRAP_ADMIN_EMAIL`; on first match it grants `admin` and records `application_settings` key `auth.first_admin_bootstrap` (`{completedAt, userId, email}`) in one transaction. The recorded completion is authoritative — later sign-ins never re-grant, even after a deliberate demotion. Shell recovery: `loxep admin promote --email=<email>` sets an existing user's role to `admin` directly in the database (worker-level configuration only; refuses unknown emails), and `loxep admin list` prints each user's id/email/role.
 
+## Account provisioning policy
+
+The first-admin mechanism decides *who gets `admin`*. It says nothing about *who gets an account*, and until [ADR-0024](../../decisions/0024-account-provisioning-policy/) nothing did: any address that could receive a magic link and any identity the OIDC issuer would authenticate became a `member` on first sign-in.
+
+Provisioning policy is **runtime policy, not a bootstrap fact**, so it follows this document's own decision rule and lives in PostgreSQL as the registered setting `auth.provisioning` — not in an environment variable. That choice is forced as well as preferred: Better Auth's native `disableSignUp` options (on the magic-link plugin and on each generic-OAuth provider) are plain booleans fixed when the auth instance is constructed, so wiring them to a database value would make changing the policy a restart.
+
+```text
+auth.provisioning
+├── newUsers.magicLink      'open' | 'closed'
+├── newUsers.oidc           'open' | 'closed'
+├── magicLinkEmailDomains   string[]   (empty = no restriction)
+└── oidcAdminClaim          { claim, adminValues, applyOn }
+```
+
+The load-bearing properties:
+
+- **It governs account creation only.** An existing user always keeps their sign-in path, whatever the policy says and whatever their email domain is. Nothing in this feature can lock an administrator out; the domain allowlist in particular is a provisioning control, never a send filter.
+- **Provisioning is force-open while the installation has no `admin` user at all**, so a new deployment can always acquire its first administrator. Every path that produces one — the bootstrap email, `loxep admin promote`, or the claim mapping — closes that window behind itself. The condition is deliberately "an admin exists" rather than the `auth.first_admin_bootstrap` marker, which an installation that never sets `LOXEP_BOOTSTRAP_ADMIN_EMAIL` would never write.
+- **Enforcement lives in `@loxep/auth`, at two layers.** `sendMagicLink` declines to deliver a link an unknown address could never redeem (the endpoint's response is unchanged either way, so it is not an account-existence oracle), and `databaseHooks.user.create.before` is the authoritative gate that both sign-in methods reach — `/magic-link/verify` and `/oauth2/callback/:providerId` alike. `/admin/create-user` is exempt on purpose: it is the escape hatch.
+- **Closed means closed; there is no invite system.** Administrators add people directly from `/settings/users` through Better Auth's admin plugin, which creates a passwordless user row. The person then signs in with whichever method they normally would.
+- **An optional OIDC claim maps to `admin`** — read from the persisted `account.idToken`, `admin` only (ADR-0017's two roles), and by default applied once at account creation so manual role edits in Loxep stay permanent. An `every_sign_in` mode makes the IdP authoritative in both directions, guarded so it never demotes the last remaining administrator and never runs in the same session as a first-admin bootstrap grant.
+
+The shipped default is **closed for both methods**, and it is marked **PROVISIONAL** pending owner review: it is the safe default for an exposed installation, but it is a behavior change for an upgrade in place, where a colleague added next week is declined until an administrator opens the method or creates the account. See ADR-0024 for the full argument, the rejected alternatives, and the operator-facing walkthrough in [Managing access](../../guides/managing-access/).
+
 ## Database-backed settings model
 
 Do not turn one giant untyped JSON document into the configuration system. Settings should have an owning feature/domain and typed validation.

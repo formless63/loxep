@@ -12,6 +12,7 @@
  * can never drift from the generated, checked-in auth schema (ADR-0020).
  */
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { GenericOAuthConfig } from "better-auth/plugins";
 import type { BootstrapConfig, OidcBootstrapConfig } from "@loxep/config";
@@ -22,6 +23,13 @@ import {
   createSmtpMagicLinkSender,
   type SendMagicLinkEmail,
 } from "./magic-link-email.ts";
+import { applyOidcClaimRole, claimMappingEnabled } from "./oidc-claim-roles.ts";
+import {
+  mayCreateUser,
+  mayDeliverMagicLink,
+  provisioningMethodForPath,
+  readProvisioningPolicy,
+} from "./provisioning-policy.ts";
 
 /**
  * `providerId` under which the bootstrap-configured OIDC provider registers
@@ -123,7 +131,15 @@ export interface CreateAuthOptions {
  *   configured (ADR-0007);
  * - admin plugin with roles `admin`/`member`, default `member` (ADR-0017);
  * - first-admin bootstrap installed as a `session.create.after` database
- *   hook so every successful sign-in path is covered (ADR-0016).
+ *   hook so every successful sign-in path is covered (ADR-0016);
+ * - account provisioning policy enforced at `sendMagicLink` and at
+ *   `databaseHooks.user.create.before`, and the OIDC claim→role mapping at
+ *   `account.create.after` / `session.create.after` (ADR-0024).
+ *
+ * Every policy hook lives HERE rather than in a web-layer caller for the
+ * reason `first-admin.ts` already gives about the bootstrap grant: `/api/auth/*`
+ * is a catch-all mount, so a rule a caller can forget is a rule that can be
+ * bypassed.
  */
 export function createAuth({ config, db, sendMagicLinkEmail }: CreateAuthOptions) {
   const { authSecret, publicOrigin } = config;
@@ -164,16 +180,100 @@ export function createAuth({ config, db, sendMagicLinkEmail }: CreateAuthOptions
             "Magic-link delivery is not available: SMTP is not configured (set LOXEP_SMTP_URL and LOXEP_SMTP_FROM)",
           );
         }
+        // ADR-0024 layer 1. An address that could never redeem the link is not
+        // mailed at all — both because the mail would be pointless and because
+        // an unauthenticated "make this server email a stranger" primitive is
+        // worth closing on its own. `/sign-in/magic-link` answers
+        // `{status: true}` either way, so this is not an existence oracle.
+        const decision = await mayDeliverMagicLink(db, email);
+        if (!decision.allowed) return;
         await sender({ to: email, url, token });
       },
       oauthProviders: config.oidc ? [buildOidcProviderConfig(config.oidc)] : [],
     }),
     databaseHooks: {
+      user: {
+        create: {
+          /**
+           * ADR-0024 layer 2 — the authoritative provisioning gate. Reached by
+           * BOTH sign-in methods (`magicLinkVerify` → `createUser`; the OAuth
+           * callback → `createOAuthUser`) and by `/admin/create-user`, which is
+           * always allowed because it is the escape hatch a closed installation
+           * uses to add people.
+           *
+           * The two rejection mechanisms differ because the two call sites
+           * treat them differently, not out of preference: on the magic-link
+           * path `false` aborts the insert and surfaces as a clean redirect,
+           * while a thrown `APIError` would render raw JSON into a browser GET;
+           * on the OAuth path `false` degrades to a misleading
+           * `?error=unable_to_create_user`, while an `APIError` carrying a
+           * `body.code` becomes a precise `?error=SIGNUP_DISABLED` redirect.
+           */
+          before: async (user, context) => {
+            const path = context?.path;
+            const decision = await mayCreateUser(db, {
+              path,
+              email: typeof user.email === "string" ? user.email : undefined,
+            });
+            if (decision.allowed) return;
+            if (provisioningMethodForPath(path) === "oidc") {
+              throw new APIError("FORBIDDEN", {
+                code: "SIGNUP_DISABLED",
+                message:
+                  "New accounts are closed on this Loxep installation. An administrator must create your account.",
+              });
+            }
+            return false;
+          },
+        },
+      },
+      account: {
+        create: {
+          /**
+           * ADR-0024 §6, `applyOn: 'create'` — the OIDC account row is written
+           * exactly once per user, which is the precise "first user creation"
+           * signal the create-only mapping needs, and it is the first moment
+           * the id_token is persisted where a hook can see it. Grant-only.
+           */
+          after: async (account) => {
+            if (account.providerId !== OIDC_PROVIDER_ID) return;
+            const policy = await readProvisioningPolicy(db);
+            if (!claimMappingEnabled(policy)) return;
+            await applyOidcClaimRole(db, {
+              userId: account.userId,
+              policy,
+              moment: "create",
+              providerId: OIDC_PROVIDER_ID,
+            });
+          },
+        },
+      },
       session: {
         create: {
           after: async (session) => {
-            if (bootstrapAdminEmail === undefined) return;
-            await runFirstAdminBootstrap(db, bootstrapAdminEmail, session.userId);
+            // Precedence (ADR-0024 §6): first-admin bootstrap, then the claim
+            // mapping. A session that just performed the bootstrap grant skips
+            // the mapping entirely — otherwise a claim-less bootstrap admin
+            // would be demoted by the same request that promoted them, and the
+            // deployment could never be bootstrapped.
+            let bootstrapped = false;
+            if (bootstrapAdminEmail !== undefined) {
+              bootstrapped = await runFirstAdminBootstrap(
+                db,
+                bootstrapAdminEmail,
+                session.userId,
+              );
+            }
+            if (bootstrapped) return;
+
+            const policy = await readProvisioningPolicy(db);
+            if (!claimMappingEnabled(policy)) return;
+            await applyOidcClaimRole(db, {
+              userId: session.userId,
+              policy,
+              moment: "sign_in",
+              providerId: OIDC_PROVIDER_ID,
+            });
           },
         },
       },

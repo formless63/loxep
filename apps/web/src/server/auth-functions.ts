@@ -30,6 +30,17 @@ export interface SessionInfo {
 export interface LoginPaths {
   magicLink: boolean;
   oidc: boolean;
+  /**
+   * Whether each method may create a NEW account right now (ADR-0024) — the
+   * stored provisioning policy, unless the installation still has no
+   * administrator, in which case both read `true` because provisioning is
+   * force-open until it does.
+   *
+   * Deliberately disclosed to an anonymous visitor: it is the message a
+   * newcomer needs ("an administrator has to create your account"), and it
+   * says nothing about any individual account.
+   */
+  newAccounts: { magicLink: boolean; oidc: boolean };
 }
 
 /**
@@ -158,10 +169,26 @@ export const updateProfile = createServerFn({ method: 'POST' })
     };
   });
 
-/** Which login paths bootstrap config enables — booleans only, never secrets. */
+/**
+ * Which login paths bootstrap config enables, plus whether each may create a
+ * new account. Booleans only, never secrets.
+ */
 export const fetchLoginPaths = createServerFn({ method: 'GET' }).handler(
   async (): Promise<LoginPaths> => {
-    const { getLoginPaths } = await import('@/server/auth');
-    return getLoginPaths();
+    const [{ getLoginPaths, getAuthDb }, { installationHasAdmin, readProvisioningPolicy }] =
+      await Promise.all([import('@/server/auth'), import('@loxep/auth')]);
+    const paths = getLoginPaths();
+    const db = getAuthDb();
+    const [policy, hasAdmin] = await Promise.all([
+      readProvisioningPolicy(db),
+      installationHasAdmin(db)
+    ]);
+    return {
+      ...paths,
+      newAccounts: {
+        magicLink: !hasAdmin || policy.newUsers.magicLink === 'open',
+        oidc: !hasAdmin || policy.newUsers.oidc === 'open'
+      }
+    };
   }
 );
