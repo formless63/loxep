@@ -13,19 +13,24 @@
  * CVE-2026-26832 / GHSA-8j44-735h-w4w2, CVSS 9.8 OS command injection via
  * `child_process.exec`, patched versions: none.
  *
- * ## Tier A's own boundary: text, never structure
+ * ## Tier A and tier B, from the SAME `recognize()` call
  *
  * This backend returns {@link ParseResult.text} — the whole document's
  * recognized text, tier A's entire ask ("no boxes, no structure, no
- * guesses. The cheap win.") — and `lines: []`, always. It does NOT produce
- * `document_line_candidates`; the manual-assisted backend remains the only
- * one that stages a structured line, exactly as it does today. Tier B
- * (M5, loxep-cd3.5) is what turns `tsv`/`hocr` output into per-line
- * `source_region` boxes; this backend already REQUESTS `tsv`/`hocr` in the
- * same recognize() call that requests `text` (see "one pass, all formats"
- * below) so that M5 costs nothing extra to recognize — but M4 does not
- * consume them. `RecognizeRawOutput` on {@link TesseractParseExtras} is the
- * seam M5 reads from; nothing else does.
+ * guesses. The cheap win.") — from the same run that also produces
+ * {@link ParseResult.lines}: tier B (loxep-cd3.5, M5), one `ParseResultLine`
+ * per recognized line of text, each carrying a `sourceRegion` (a pixel-space
+ * bounding box in the SOURCE image) and nothing else — no `quantity`/
+ * `unitAmount`/`lineAmount`, because turning text into a value is tier C
+ * (refused) or the operator's own drag, never this backend's guess. The raw
+ * `tsv` → `ParseResultLine[]` conversion is `tsv-lines.ts`'s
+ * `tesseractLinesFromTsv`, reading exactly the `tsv` output M4 already
+ * requested in the same call it requests `text` (see "one pass, all
+ * formats" below) — recognizing text and boxes was never two capabilities,
+ * only two consumers of one output, and this is the point M5 starts reading
+ * the second one. The manual-assisted backend remains the only OTHER source
+ * of `document_line_candidates`; a CSV import still folds through its own
+ * path.
  *
  * ## `documents.parsed_text` (migration 0026)
  *
@@ -93,6 +98,7 @@ import { createWorker as defaultCreateWorker, OEM } from "tesseract.js";
 import type { ParseableDocumentKind, ParseResult, ReceiptParser } from "./parser.ts";
 import { DocumentsValidationError } from "./errors.ts";
 import { extractPdfTextLayer } from "./pdf-text-layer.ts";
+import { tesseractLinesFromTsv } from "./tsv-lines.ts";
 
 export const TESSERACT_PARSER_ID = "ocr_tesseract";
 export const TESSERACT_PARSER_LABEL = "OCR (tesseract.js, on-device)";
@@ -177,7 +183,7 @@ export function resetSharedTesseractWorkerForTests(): void {
   sharedWorkerPromise = null;
 }
 
-/** Raw per-run outputs tier B (M5) reads; nothing in M4 consumes these — see the module doc's "one pass, all formats". */
+/** Raw per-run outputs — `tsv` is what {@link tesseractLinesFromTsv} reads to build `ParseResult.lines` (loxep-cd3.5, M5); see the module doc's "one pass, all formats". */
 export interface TesseractRawOutput {
   tsv: string | null;
   hocr: string | null;
@@ -195,8 +201,11 @@ export interface CreateTesseractParserOptions {
   getWorker?: () => Promise<TesseractWorkerLike>;
   /**
    * Called with the raw tsv/hocr/confidence from the SAME recognize() call
-   * that produced `text` — the "coordinates captured now" seam for a future
-   * tier B pass. Optional; M4 has no reader by default.
+   * that produced `text` — an observability seam (tests assert on it), not
+   * the tier B read path itself: `parseImage` below calls
+   * {@link tesseractLinesFromTsv} directly on `data.tsv` to build
+   * `ParseResult.lines`, independent of whether a caller also supplied this
+   * callback.
    */
   onRawOutput?: (input: { mediaObjectId: string; raw: TesseractRawOutput }) => void;
 }
@@ -253,13 +262,18 @@ export function createTesseractParser(options: CreateTesseractParserOptions): Re
       );
     }
 
+    // Tier B (loxep-cd3.5, M5): the SAME recognize() call already produced
+    // `tsv`, so building per-line boxes here costs nothing extra — see the
+    // module doc's "tier A and tier B, from the SAME recognize() call".
+    const lines = tesseractLinesFromTsv(data.tsv);
+
     return {
       parserId: TESSERACT_PARSER_ID,
       parsedAt: new Date(),
       currency: null,
       documentTotal: null,
       text,
-      lines: [],
+      lines,
       warnings,
     };
   }

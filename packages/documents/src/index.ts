@@ -33,16 +33,26 @@
  *
  * ## What is here now, and what is still not
  *
- * - **OCR, tier A only.** `tesseract-parser.ts`'s `ocr_tesseract` backend
- *   (design section 3, "SHIP IT, IN-PROCESS, WITH NO NEW CONTAINER")
- *   extracts a document's whole-page {@link ParseResult.text} — searchable
- *   evidence, per the design's own tier ladder, NOT structure: it produces
- *   `lines: []`, same as `manual-parser.ts`. `pdf-text-layer.ts` lifts an
- *   EXISTING PDF text layer via `pdftotext` rather than OCRing a digital
- *   invoice; it degrades honestly (`available: false`) where poppler-utils
- *   is not installed, which is everywhere as of this milestone (no Docker
- *   change was in this wave's fence). Tier C (structured autofill) remains
- *   refused by the design and is not built here.
+ * - **OCR, tiers A and B.** `tesseract-parser.ts`'s `ocr_tesseract` backend
+ *   (design section 3) extracts a document's whole-page
+ *   {@link ParseResult.text} — tier A's searchable-evidence ask — AND, as of
+ *   loxep-cd3.5 (M5), per-line `sourceRegion` boxes via `tsv-lines.ts`'s
+ *   `tesseractLinesFromTsv`, reading the SAME `tsv` output the SAME
+ *   `recognize()` call already produced for tier A. `source-region.ts` fixes
+ *   `document_line_candidates.source_region`'s serialization format, which
+ *   had a column since migration 0017 but no writer that ever ran and no
+ *   reader at all. Tier B still stops at boxes and raw text — no `quantity`/
+ *   `unitAmount`/`lineAmount` is guessed from a line's text; turning text
+ *   into a value is the operator's drag, in `apps/web`, or tier C, which
+ *   remains refused. For an image, this backend now stages real
+ *   `document_line_candidates`, same as the manual-assisted backend but
+ *   machine-produced (`disposition: 'pending'`, never auto-confirmed). For a
+ *   PDF, `pdf-text-layer.ts` lifts an EXISTING text layer via `pdftotext`
+ *   rather than OCRing a digital invoice, and produces `lines: []` always —
+ *   `pdftotext` reports no per-line geometry, so PDF tier B stays out of
+ *   scope for this backend; it degrades honestly (`available: false`) where
+ *   poppler-utils is not installed, which is everywhere as of this
+ *   milestone (no Docker change was in this wave's fence).
  * - **`documents.parsed_text` does not exist yet.** Migration D has not
  *   landed; `extraction-runner.ts`'s module doc records the exact one-line
  *   SQL a follow-up pass adds once it does. The extraction itself is real
@@ -99,6 +109,11 @@ export type {
 
 export { extractPdfTextLayer } from "./pdf-text-layer.ts";
 export type { PdfTextLayerResult } from "./pdf-text-layer.ts";
+
+export { tesseractLinesFromTsv } from "./tsv-lines.ts";
+
+export { sourceRegionSchema, serializeSourceRegion, parseSourceRegion } from "./source-region.ts";
+export type { SourceRegion } from "./source-region.ts";
 
 export {
   extractDocumentTextPayloadSchema,

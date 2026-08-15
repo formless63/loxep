@@ -7,12 +7,25 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field, FieldError, FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
+import type { DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { createExpenseWithEvidence } from '@/server/expense-functions';
 import { entitiesQuery } from '@/features/settings/api/queries';
 import EvidencePane, { type EvidenceAttachment } from '@/features/finance/components/evidence-pane';
+import {
+  DocumentLineDndProvider,
+  DocumentLineDropTarget,
+  extractProvisionalAmount,
+  type DraggedDocumentLine
+} from '@/features/finance/components/document-line-dnd';
 import {
   NO_TRADING_PARTNER_VALUE,
   PayeeComboboxField
@@ -89,6 +102,70 @@ export interface NewExpensePrefill {
 }
 
 /**
+ * A receipt line dragged onto (or "used" via keyboard for) the "Line items"
+ * drop zone (loxep-cd3.5, M5). Deliberately NOT the same shape as
+ * `lineItemSchema`'s typed rows above: this one carries a `document_line_candidates.id`
+ * and the operator NEVER edits its `description` (the OCR'd text stays
+ * verbatim — see `document-preview.tsx`'s own doc), only its provisional
+ * `lineAmount`, because that is the one value tier B declines to guess (the
+ * design's tier C refusal) and the design's "dragging changes nothing in
+ * the database" rule means nothing here is written until save.
+ */
+interface PinnedDocumentLine {
+  candidateId: string;
+  documentId: string;
+  description: string;
+  /** The client-side "rightmost decimal token" guess, or the operator's own correction — PROVISIONAL until Save. */
+  lineAmount: string;
+}
+
+/**
+ * The keyboard/click equivalent for a detected line (`document-preview.tsx`'s
+ * `renderActions` seam) — every action a drag onto this page can perform,
+ * reachable without a pointer. Mirrors the drop targets below exactly: "Add
+ * to line items" calls the SAME `addPinnedLine` a lines-list drop calls;
+ * "Fill payee/amount/category" call the SAME field setters a field drop
+ * calls. No action here does anything a drag could not already do.
+ */
+function UseLineMenu({
+  line,
+  onAddToLines,
+  onFillPayee,
+  onFillAmount,
+  onFillCategory
+}: {
+  line: DocumentPreviewOverlayLine;
+  onAddToLines: (line: DocumentPreviewOverlayLine) => void;
+  onFillPayee: (text: string) => void;
+  onFillAmount: (text: string) => void;
+  onFillCategory: (text: string) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          className='shrink-0'
+          aria-label={`Use this line: "${line.text}"`}
+        >
+          Use…
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='end'>
+        <DropdownMenuItem onSelect={() => onAddToLines(line)}>Add to line items</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onFillPayee(line.text)}>Fill payee name</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onFillAmount(line.text)}>Fill amount</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onFillCategory(line.text)}>
+          Fill category
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
  * `/finance/expenses/new`'s two-pane body (loxep-cd3.2, M2 —
  * `expense-entry-design.md` section 1's layout diagram): the entry form on
  * the left, the evidence pane on the right, side by side on desktop and
@@ -123,11 +200,33 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [attachments, setAttachments] = React.useState<EvidenceAttachment[]>([]);
+  const [pinnedLines, setPinnedLines] = React.useState<PinnedDocumentLine[]>([]);
+  const [hoveredLineId, setHoveredLineId] = React.useState<string | null>(null);
 
   const entityOptions = [
     { value: UNATTRIBUTED_ENTITY_VALUE, label: 'Unattributed' },
     ...entities.map((entity) => ({ value: entity.id, label: entity.name }))
   ];
+
+  // The "Line items" drop zone's own handler (loxep-cd3.5, M5) — adds a
+  // dragged/keyboard-"used" line ONCE (re-dropping the same line updates its
+  // provisional amount rather than duplicating the row; `document_line_candidates.id`
+  // is stable identity for this). Never touches the database — see
+  // `document-line-dnd.tsx`'s doc.
+  function addPinnedLine(line: DraggedDocumentLine) {
+    setPinnedLines((prev) => {
+      if (prev.some((pinned) => pinned.candidateId === line.candidateId)) return prev;
+      return [
+        ...prev,
+        {
+          candidateId: line.candidateId,
+          documentId: line.documentId,
+          description: line.text,
+          lineAmount: extractProvisionalAmount(line.text) ?? ''
+        }
+      ];
+    });
+  }
 
   const mutation = useMutation({
     mutationFn: (input: { values: NewExpenseFormValues; status: 'draft' | 'recorded' }) => {
@@ -158,6 +257,11 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
             quantity: line.quantity.trim() === '' ? null : line.quantity.trim(),
             unitAmount: line.unitAmount.trim() === '' ? null : line.unitAmount.trim(),
             lineAmount: line.lineAmount.trim()
+          })),
+          droppedLines: pinnedLines.map((pinned) => ({
+            documentId: pinned.documentId,
+            candidateId: pinned.candidateId,
+            lineAmount: pinned.lineAmount.trim()
           }))
         }
       });
@@ -203,6 +307,18 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
     onSubmitMeta: { status: 'recorded' as 'draft' | 'recorded' },
     validators: { onSubmit: newExpenseSchema },
     onSubmit: async ({ value, meta }) => {
+      // A pinned line's amount is PROVISIONAL (the "rightmost decimal
+      // token" client-side guess) until the operator confirms/edits it —
+      // never-auto-commit means Loxep does not silently save a guessed
+      // number, so an empty amount blocks submit here rather than being
+      // coerced to anything.
+      const missingAmount = pinnedLines.some((pinned) => pinned.lineAmount.trim() === '');
+      if (missingAmount) {
+        toast.error(
+          'One of the dragged receipt lines has no amount yet — fill it in or remove it.'
+        );
+        return;
+      }
       try {
         await mutation.mutateAsync({ values: value, status: meta.status });
       } catch {
@@ -212,259 +328,404 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
   });
 
   return (
-    <div className='grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_360px]'>
-      <Card>
-        <CardContent className='pt-6'>
-          <form
-            className='space-y-6'
-            onSubmit={(event) => {
-              event.preventDefault();
-              void form.handleSubmit({ status: 'recorded' });
-            }}
-          >
-            <FieldGroup>
-              <form.Field name='payeeCounterpartyId'>
-                {(field) => (
-                  <PayeeComboboxField
-                    label='Payee'
-                    name='payeeCounterpartyId'
-                    value={field.state.value}
-                    onChange={field.handleChange}
-                    onBlur={field.handleBlur}
-                    invalid={field.state.meta.isTouched && !field.state.meta.isValid}
-                    errors={field.state.meta.errors}
-                    economicEntityId={
-                      form.state.values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
-                        ? null
-                        : form.state.values.economicEntityId
-                    }
-                    onPayeeSelected={(payee) =>
-                      form.setFieldValue(
-                        'payeeName',
-                        payee?.displayName ?? form.state.values.payeeName
-                      )
-                    }
-                    description='Trading partners (vendor/payee roles) rank first. Empty selection writes the name below alone.'
-                  />
-                )}
-              </form.Field>
-              <form.AppField
-                name='payeeName'
-                children={(field) => (
-                  <field.TextField
-                    label='Payee name'
-                    placeholder='e.g. USPS'
-                    description='Free text stays valid — a name-less receipt is a real expense.'
-                  />
-                )}
-              />
-              <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+    <DocumentLineDndProvider>
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_360px]'>
+        <Card>
+          <CardContent className='pt-6'>
+            <form
+              className='space-y-6'
+              onSubmit={(event) => {
+                event.preventDefault();
+                void form.handleSubmit({ status: 'recorded' });
+              }}
+            >
+              <FieldGroup>
+                <form.Field name='payeeCounterpartyId'>
+                  {(field) => (
+                    <PayeeComboboxField
+                      label='Payee'
+                      name='payeeCounterpartyId'
+                      value={field.state.value}
+                      onChange={field.handleChange}
+                      onBlur={field.handleBlur}
+                      invalid={field.state.meta.isTouched && !field.state.meta.isValid}
+                      errors={field.state.meta.errors}
+                      economicEntityId={
+                        form.state.values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
+                          ? null
+                          : form.state.values.economicEntityId
+                      }
+                      onPayeeSelected={(payee) =>
+                        form.setFieldValue(
+                          'payeeName',
+                          payee?.displayName ?? form.state.values.payeeName
+                        )
+                      }
+                      description='Trading partners (vendor/payee roles) rank first. Empty selection writes the name below alone.'
+                    />
+                  )}
+                </form.Field>
                 <form.AppField
-                  name='expenseDate'
-                  children={(field) => <field.TextField label='Date' required type='date' />}
-                />
-                <form.AppField
-                  name='amount'
+                  name='payeeName'
                   children={(field) => (
-                    <field.TextField
-                      label='Amount'
-                      required
-                      inputMode='decimal'
-                      placeholder='0.00'
+                    <DocumentLineDropTarget
+                      id='field:payeeName'
+                      onDrop={(line) => field.handleChange(line.text)}
+                    >
+                      <field.TextField
+                        label='Payee name'
+                        placeholder='e.g. USPS'
+                        description='Free text stays valid — a name-less receipt is a real expense. Drop a detected line here to fill it (pure UI — nothing is confirmed by a header-field drop).'
+                      />
+                    </DocumentLineDropTarget>
+                  )}
+                />
+                <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                  <form.AppField
+                    name='expenseDate'
+                    children={(field) => <field.TextField label='Date' required type='date' />}
+                  />
+                  <form.AppField
+                    name='amount'
+                    children={(field) => (
+                      <DocumentLineDropTarget
+                        id='field:amount'
+                        onDrop={(line) => {
+                          const extracted = extractProvisionalAmount(line.text);
+                          if (extracted === null) {
+                            toast.error('No amount found in that line — type it manually.');
+                            return;
+                          }
+                          field.handleChange(extracted);
+                        }}
+                      >
+                        <field.TextField
+                          label='Amount'
+                          required
+                          inputMode='decimal'
+                          placeholder='0.00'
+                        />
+                      </DocumentLineDropTarget>
+                    )}
+                  />
+                </div>
+                <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                  <form.AppField
+                    name='taxAmount'
+                    children={(field) => (
+                      <field.TextField label='Tax' inputMode='decimal' placeholder='0.00' />
+                    )}
+                  />
+                  <form.AppField
+                    name='category'
+                    children={(field) => (
+                      <DocumentLineDropTarget
+                        id='field:category'
+                        onDrop={(line) => field.handleChange(line.text)}
+                      >
+                        <div>
+                          <field.TextField
+                            label='Category'
+                            required
+                            list='new-expense-category-suggestions'
+                            placeholder='e.g. shipping_supplies'
+                            description='Your own vocabulary — an open set, not a fixed list.'
+                          />
+                          <datalist id='new-expense-category-suggestions'>
+                            {SUGGESTED_EXPENSE_CATEGORIES.map((category) => (
+                              <option key={category} value={category}>
+                                {category}
+                              </option>
+                            ))}
+                          </datalist>
+                        </div>
+                      </DocumentLineDropTarget>
+                    )}
+                  />
+                </div>
+                <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                  <form.AppField
+                    name='paymentMethod'
+                    children={(field) => (
+                      <field.SelectField label='Payment' required options={paymentMethodOptions} />
+                    )}
+                  />
+                  <form.AppField
+                    name='currency'
+                    children={(field) => (
+                      <field.TextField label='Currency' required placeholder='USD' maxLength={3} />
+                    )}
+                  />
+                </div>
+                <form.AppField
+                  name='economicEntityId'
+                  children={(field) => (
+                    <field.SelectField
+                      label='Entity'
+                      options={entityOptions}
+                      description='Empty selection means Unattributed — a deliberate choice, not an omission.'
                     />
                   )}
                 />
-              </div>
-              <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
                 <form.AppField
-                  name='taxAmount'
-                  children={(field) => (
-                    <field.TextField label='Tax' inputMode='decimal' placeholder='0.00' />
-                  )}
+                  name='notes'
+                  children={(field) => <field.TextareaField label='Notes' />}
                 />
-                <form.AppField
-                  name='category'
-                  children={(field) => (
-                    <div>
-                      <field.TextField
-                        label='Category'
-                        required
-                        list='new-expense-category-suggestions'
-                        placeholder='e.g. shipping_supplies'
-                        description='Your own vocabulary — an open set, not a fixed list.'
-                      />
-                      <datalist id='new-expense-category-suggestions'>
-                        {SUGGESTED_EXPENSE_CATEGORIES.map((category) => (
-                          <option key={category} value={category}>
-                            {category}
-                          </option>
-                        ))}
-                      </datalist>
-                    </div>
-                  )}
-                />
-              </div>
-              <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
-                <form.AppField
-                  name='paymentMethod'
-                  children={(field) => (
-                    <field.SelectField label='Payment' required options={paymentMethodOptions} />
-                  )}
-                />
-                <form.AppField
-                  name='currency'
-                  children={(field) => (
-                    <field.TextField label='Currency' required placeholder='USD' maxLength={3} />
-                  )}
-                />
-              </div>
-              <form.AppField
-                name='economicEntityId'
-                children={(field) => (
-                  <field.SelectField
-                    label='Entity'
-                    options={entityOptions}
-                    description='Empty selection means Unattributed — a deliberate choice, not an omission.'
-                  />
-                )}
-              />
-              <form.AppField
-                name='notes'
-                children={(field) => <field.TextareaField label='Notes' />}
-              />
-              <div className='flex flex-col gap-3 rounded-md border p-4'>
-                <div>
-                  <p className='text-sm font-medium'>Line items</p>
-                  <p className='text-muted-foreground text-xs'>
-                    Optional — what was on the receipt, not where the money is charged. A
-                    headline-only expense (no lines) stays valid.
-                  </p>
-                </div>
-                <form.Field
-                  name='lines'
-                  mode='array'
-                  children={(field) => (
-                    <div className='flex flex-col gap-3'>
-                      {field.state.value.map((_, index) => (
-                        <div
-                          key={index}
-                          className='grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_5rem_6rem_6rem_auto]'
-                        >
-                          <form.Field
-                            name={`lines[${index}].description`}
-                            children={(subField) => (
-                              <Field>
-                                <Input
-                                  placeholder='e.g. Shelving unit'
-                                  value={subField.state.value}
-                                  onChange={(event) => subField.handleChange(event.target.value)}
-                                  onBlur={subField.handleBlur}
-                                  aria-label={`Line ${index + 1} description`}
-                                />
-                              </Field>
-                            )}
-                          />
-                          <form.Field
-                            name={`lines[${index}].quantity`}
-                            children={(subField) => (
-                              <Field>
-                                <Input
-                                  inputMode='decimal'
-                                  placeholder='qty'
-                                  value={subField.state.value}
-                                  onChange={(event) => subField.handleChange(event.target.value)}
-                                  onBlur={subField.handleBlur}
-                                  aria-label={`Line ${index + 1} quantity`}
-                                />
-                              </Field>
-                            )}
-                          />
-                          <form.Field
-                            name={`lines[${index}].unitAmount`}
-                            children={(subField) => (
-                              <Field>
-                                <Input
-                                  inputMode='decimal'
-                                  placeholder='unit'
-                                  value={subField.state.value}
-                                  onChange={(event) => subField.handleChange(event.target.value)}
-                                  onBlur={subField.handleBlur}
-                                  aria-label={`Line ${index + 1} unit amount`}
-                                />
-                              </Field>
-                            )}
-                          />
-                          <form.Field
-                            name={`lines[${index}].lineAmount`}
-                            children={(subField) => {
-                              const invalid =
-                                subField.state.meta.isTouched && !subField.state.meta.isValid;
-                              return (
-                                <Field data-invalid={invalid}>
+                <div className='flex flex-col gap-3 rounded-md border p-4'>
+                  <div>
+                    <p className='text-sm font-medium'>Line items</p>
+                    <p className='text-muted-foreground text-xs'>
+                      Optional — what was on the receipt, not where the money is charged. A
+                      headline-only expense (no lines) stays valid.
+                    </p>
+                  </div>
+                  <form.Field
+                    name='lines'
+                    mode='array'
+                    children={(field) => (
+                      <div className='flex flex-col gap-3'>
+                        {field.state.value.map((_, index) => (
+                          <div
+                            key={index}
+                            className='grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_5rem_6rem_6rem_auto]'
+                          >
+                            <form.Field
+                              name={`lines[${index}].description`}
+                              children={(subField) => (
+                                <DocumentLineDropTarget
+                                  id={`field:lines.${index}.description`}
+                                  onDrop={(line) => subField.handleChange(line.text)}
+                                >
+                                  <Field>
+                                    <Input
+                                      placeholder='e.g. Shelving unit'
+                                      value={subField.state.value}
+                                      onChange={(event) =>
+                                        subField.handleChange(event.target.value)
+                                      }
+                                      onBlur={subField.handleBlur}
+                                      aria-label={`Line ${index + 1} description`}
+                                    />
+                                  </Field>
+                                </DocumentLineDropTarget>
+                              )}
+                            />
+                            <form.Field
+                              name={`lines[${index}].quantity`}
+                              children={(subField) => (
+                                <Field>
                                   <Input
                                     inputMode='decimal'
-                                    placeholder='0.00'
+                                    placeholder='qty'
                                     value={subField.state.value}
                                     onChange={(event) => subField.handleChange(event.target.value)}
                                     onBlur={subField.handleBlur}
-                                    aria-label={`Line ${index + 1} amount`}
-                                    aria-invalid={invalid}
+                                    aria-label={`Line ${index + 1} quantity`}
                                   />
-                                  {invalid && <FieldError errors={subField.state.meta.errors} />}
                                 </Field>
-                              );
-                            }}
-                          />
-                          <Button
-                            type='button'
-                            variant='ghost'
-                            size='icon'
-                            aria-label={`Remove line ${index + 1}`}
-                            onClick={() => field.removeValue(index)}
+                              )}
+                            />
+                            <form.Field
+                              name={`lines[${index}].unitAmount`}
+                              children={(subField) => (
+                                <Field>
+                                  <Input
+                                    inputMode='decimal'
+                                    placeholder='unit'
+                                    value={subField.state.value}
+                                    onChange={(event) => subField.handleChange(event.target.value)}
+                                    onBlur={subField.handleBlur}
+                                    aria-label={`Line ${index + 1} unit amount`}
+                                  />
+                                </Field>
+                              )}
+                            />
+                            <form.Field
+                              name={`lines[${index}].lineAmount`}
+                              children={(subField) => {
+                                const invalid =
+                                  subField.state.meta.isTouched && !subField.state.meta.isValid;
+                                return (
+                                  <DocumentLineDropTarget
+                                    id={`field:lines.${index}.lineAmount`}
+                                    onDrop={(line) => {
+                                      const extracted = extractProvisionalAmount(line.text);
+                                      if (extracted === null) {
+                                        toast.error(
+                                          'No amount found in that line — type it manually.'
+                                        );
+                                        return;
+                                      }
+                                      subField.handleChange(extracted);
+                                    }}
+                                  >
+                                    <Field data-invalid={invalid}>
+                                      <Input
+                                        inputMode='decimal'
+                                        placeholder='0.00'
+                                        value={subField.state.value}
+                                        onChange={(event) =>
+                                          subField.handleChange(event.target.value)
+                                        }
+                                        onBlur={subField.handleBlur}
+                                        aria-label={`Line ${index + 1} amount`}
+                                        aria-invalid={invalid}
+                                      />
+                                      {invalid && (
+                                        <FieldError errors={subField.state.meta.errors} />
+                                      )}
+                                    </Field>
+                                  </DocumentLineDropTarget>
+                                );
+                              }}
+                            />
+                            <Button
+                              type='button'
+                              variant='ghost'
+                              size='icon'
+                              aria-label={`Remove line ${index + 1}`}
+                              onClick={() => field.removeValue(index)}
+                            >
+                              <Icons.close />
+                            </Button>
+                          </div>
+                        ))}
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          className='self-start'
+                          onClick={() =>
+                            field.pushValue({
+                              description: '',
+                              quantity: '',
+                              unitAmount: '',
+                              lineAmount: ''
+                            })
+                          }
+                        >
+                          <Icons.add />
+                          Add line
+                        </Button>
+                      </div>
+                    )}
+                  />
+
+                  {/*
+                  loxep-cd3.5, M5: the SEPARATE "from a receipt" list — the
+                  design's own "drag a line into LINES" target. A pinned line
+                  is NOT a typed `lines[]` row (that array stays exactly what
+                  the operator typed); it becomes its own `expense_lines` row
+                  at save, carrying `document_line_candidate_id`, via
+                  `createExpenseWithEvidence`'s `droppedLines`. Only its
+                  amount is editable here — the description is the OCR'd
+                  text, verbatim, per `document-preview.tsx`'s own doc.
+                */}
+                  <DocumentLineDropTarget
+                    id='lines-list'
+                    onDrop={addPinnedLine}
+                    className='flex flex-col gap-2 border-t pt-3'
+                    activeClassName='outline-primary bg-accent/40'
+                  >
+                    <p className='text-muted-foreground text-xs'>
+                      Drag a detected receipt line here to add it as its own line item — or drop
+                      anywhere in this box.
+                    </p>
+                    {pinnedLines.length === 0 ? (
+                      <p className='text-muted-foreground rounded-md border border-dashed p-3 text-center text-xs'>
+                        No receipt lines added yet
+                      </p>
+                    ) : (
+                      <ul className='flex flex-col gap-2'>
+                        {pinnedLines.map((pinned) => (
+                          <li
+                            key={pinned.candidateId}
+                            className='grid grid-cols-1 items-center gap-2 rounded-md border p-2 sm:grid-cols-[1fr_7rem_auto]'
                           >
-                            <Icons.close />
-                          </Button>
-                        </div>
-                      ))}
-                      <Button
-                        type='button'
-                        variant='outline'
-                        size='sm'
-                        className='self-start'
-                        onClick={() =>
-                          field.pushValue({
-                            description: '',
-                            quantity: '',
-                            unitAmount: '',
-                            lineAmount: ''
-                          })
-                        }
-                      >
-                        <Icons.add />
-                        Add line
-                      </Button>
-                    </div>
-                  )}
-                />
+                            <span className='min-w-0 truncate text-sm' title={pinned.description}>
+                              {pinned.description}
+                            </span>
+                            <Input
+                              inputMode='decimal'
+                              placeholder='0.00'
+                              value={pinned.lineAmount}
+                              onChange={(event) =>
+                                setPinnedLines((prev) =>
+                                  prev.map((line) =>
+                                    line.candidateId === pinned.candidateId
+                                      ? { ...line, lineAmount: event.target.value }
+                                      : line
+                                  )
+                                )
+                              }
+                              aria-label={`Receipt line "${pinned.description}" amount`}
+                            />
+                            <Button
+                              type='button'
+                              variant='ghost'
+                              size='icon'
+                              aria-label={`Remove receipt line "${pinned.description}"`}
+                              onClick={() =>
+                                setPinnedLines((prev) =>
+                                  prev.filter((line) => line.candidateId !== pinned.candidateId)
+                                )
+                              }
+                            >
+                              <Icons.close />
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </DocumentLineDropTarget>
+                </div>
+              </FieldGroup>
+              <div className='flex justify-end gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={mutation.isPending}
+                  onClick={() => void form.handleSubmit({ status: 'draft' })}
+                >
+                  Save as draft
+                </Button>
+                <Button type='submit' disabled={mutation.isPending}>
+                  Record expense
+                </Button>
               </div>
-            </FieldGroup>
-            <div className='flex justify-end gap-2'>
-              <Button
-                type='button'
-                variant='outline'
-                disabled={mutation.isPending}
-                onClick={() => void form.handleSubmit({ status: 'draft' })}
-              >
-                Save as draft
-              </Button>
-              <Button type='submit' disabled={mutation.isPending}>
-                Record expense
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-      <EvidencePane attachments={attachments} onAttachmentsChange={setAttachments} />
-    </div>
+            </form>
+          </CardContent>
+        </Card>
+        <EvidencePane
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          hoveredLineId={hoveredLineId}
+          onHoveredLineChange={setHoveredLineId}
+          renderLineActions={(line) => (
+            <UseLineMenu
+              line={line}
+              onAddToLines={(l) =>
+                addPinnedLine({
+                  candidateId: l.id,
+                  documentId: l.documentId,
+                  lineNumber: l.lineNumber,
+                  text: l.text
+                })
+              }
+              onFillPayee={(text) => form.setFieldValue('payeeName', text)}
+              onFillAmount={(text) => {
+                const extracted = extractProvisionalAmount(text);
+                if (extracted === null) {
+                  toast.error('No amount found in that line — type it manually.');
+                  return;
+                }
+                form.setFieldValue('amount', extracted);
+              }}
+              onFillCategory={(text) => form.setFieldValue('category', text)}
+            />
+          )}
+        />
+      </div>
+    </DocumentLineDndProvider>
   );
 }

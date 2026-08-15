@@ -28,6 +28,7 @@
  * it; it changes no table, no confirm path, and no review UI.
  */
 import { DocumentsNotFoundError, DocumentsValidationError } from "./errors.ts";
+import type { SourceRegion } from "./source-region.ts";
 
 /** Mirrors `documents.document_kind` minus `csv_import` — a CSV never goes through a {@link ReceiptParser}. */
 export const PARSEABLE_DOCUMENT_KINDS = [
@@ -58,8 +59,13 @@ export interface ParseResultLine {
   /** `0..1`, per line, always present. */
   confidence: number;
   fieldConfidence?: Record<string, number>;
-  /** A small rectangle for the review UI's highlight; nothing downstream depends on it. */
-  sourceRegion?: { page: number; x: number; y: number; w: number; h: number };
+  /**
+   * A small rectangle for the review UI's highlight; nothing downstream
+   * depends on it. Serialized onto `document_line_candidates.source_region`
+   * via `source-region.ts`'s `serializeSourceRegion` — see that module for
+   * the fixed wire format (loxep-cd3.5, M5).
+   */
+  sourceRegion?: SourceRegion;
 }
 
 export interface ParseResult {

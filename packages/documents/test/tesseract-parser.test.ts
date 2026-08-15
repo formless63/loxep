@@ -6,10 +6,12 @@
  *   ("single-worker discipline");
  * - ONE `recognize()` call requests text + tsv + hocr together
  *   ("one pass, all formats");
- * - `ParseResult` stays within tier A's own boundary (`lines: []`, always —
- *   see `parser.ts`'s module doc);
+ * - `ParseResult.lines` is built from that SAME call's `tsv` output
+ *   (loxep-cd3.5, M5 — `tsv-lines.ts`'s own suite covers the tsv→lines
+ *   conversion in detail; this file only proves the parser actually WIRES
+ *   `data.tsv` through to `result.lines` rather than discarding it);
  * - a real, vendored, offline tesseract.js run against a synthetic receipt
- *   image actually extracts legible text, deterministically.
+ *   image actually extracts legible text (and, now, boxes) deterministically.
  *
  * The unit-level tests inject a fake `TesseractWorkerLike` (no WASM, no
  * vendored data needed) so the discipline assertions run in milliseconds;
@@ -144,8 +146,12 @@ describe("createTesseractParser: one pass, all formats", () => {
   });
 });
 
-describe("createTesseractParser: ParseResult shape (tier A's own boundary)", () => {
-  it("returns text but ALWAYS an empty lines array — no structure, no guesses", async () => {
+describe("createTesseractParser: ParseResult shape (text always, lines from tsv)", () => {
+  it("returns text, and an empty lines array when the run's tsv carries no word rows", async () => {
+    // The default fake worker's tsv fixture ("1\t1\t0\n") is a header-only
+    // stub with no level-5 word rows — same shape M4's original fixture
+    // used, kept here to prove a tsv with nothing recognizable degrades to
+    // no boxes rather than throwing.
     const { worker } = fakeWorker();
     const parser = createTesseractParser({
       readMedia: async () => new Uint8Array([0xff, 0xd8, 0xff]),
@@ -158,6 +164,29 @@ describe("createTesseractParser: ParseResult shape (tier A's own boundary)", () 
     expect(result.currency).toBeNull();
     expect(result.documentTotal).toBeNull();
     expect(result.warnings).toEqual([]);
+  });
+
+  it("builds lines with a sourceRegion from a real tsv payload — the tier B wiring itself", async () => {
+    const tsv = [
+      "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext",
+      "5\t1\t1\t1\t1\t1\t10\t10\t80\t40\t95.5\tTOTAL",
+      "5\t1\t1\t1\t1\t2\t100\t10\t60\t40\t91.0\t7.98",
+    ].join("\n");
+    const { worker } = fakeWorker({
+      recognize: async () => ({
+        data: { text: "TOTAL 7.98", confidence: 93, tsv, hocr: "<div/>" },
+      }),
+    });
+    const parser = createTesseractParser({
+      readMedia: async () => new Uint8Array([0xff, 0xd8, 0xff]),
+      getWorker: async () => worker,
+    });
+    const result = await parser.parse({ mediaObjectId: "m1", documentKind: "receipt" });
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0]?.description).toBe("TOTAL 7.98");
+    expect(result.lines[0]?.sourceRegion).toEqual({ page: 1, x: 10, y: 10, w: 150, h: 40 });
+    expect(result.lines[0]?.quantity).toBeNull();
+    expect(result.lines[0]?.lineAmount).toBeNull();
   });
 
   it("normalizes empty/whitespace-only recognition to text: null, with a warning", async () => {
@@ -244,12 +273,32 @@ describe("ocr_tesseract: real end-to-end (vendored language data, no network)", 
     // two words this font renders most unambiguously.
     expect(upper).toContain("TOTAL");
     expect(upper).toContain("COST");
-    expect(result.lines).toEqual([]);
+    // Tier B (loxep-cd3.5, M5): a real recognize() call produces a real
+    // tsv, so this backend now stages real lines with real boxes — no
+    // longer the `lines: []` M4 shipped. Assertions stay loose for the same
+    // reason the text ones do: a hand-rolled font, not a real receipt.
+    expect(result.lines.length).toBeGreaterThan(0);
+    for (const line of result.lines) {
+      expect(line.description).not.toBeNull();
+      expect((line.description ?? '').length).toBeGreaterThan(0);
+      expect(line.quantity).toBeNull();
+      expect(line.unitAmount).toBeNull();
+      expect(line.lineAmount).toBeNull();
+      expect(line.confidence).toBeGreaterThanOrEqual(0);
+      expect(line.confidence).toBeLessThanOrEqual(1);
+      expect(line.sourceRegion).toBeDefined();
+      expect(line.sourceRegion?.page).toBe(1);
+      expect(line.sourceRegion?.w).toBeGreaterThan(0);
+      expect(line.sourceRegion?.h).toBeGreaterThan(0);
+    }
+    const joined = result.lines.map((l) => l.description).join(" ").toUpperCase();
+    expect(joined).toContain("TOTAL");
   }, 30_000);
 
-  it("is deterministic: parsing the same bytes twice yields identical text", async () => {
+  it("is deterministic: parsing the same bytes twice yields identical text and lines", async () => {
     const first = await parser.parse({ mediaObjectId: "synthetic-receipt", documentKind: "receipt" });
     const second = await parser.parse({ mediaObjectId: "synthetic-receipt", documentKind: "receipt" });
     expect(second.text).toBe(first.text);
+    expect(second.lines).toEqual(first.lines);
   }, 30_000);
 });

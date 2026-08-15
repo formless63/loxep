@@ -55,6 +55,7 @@ import { PARSEABLE_DOCUMENT_KINDS } from "./parser.ts";
 import type { CsvCandidateInput } from "./csv.ts";
 import { MANUAL_LINE_CONFIDENCE } from "./manual-parser.ts";
 import { numericLiteral, textLiteral, uuidLiteral, uuidList } from "./sql.ts";
+import { serializeSourceRegion } from "./source-region.ts";
 
 export type DocumentRow = typeof documents.$inferSelect;
 export type CandidateRow = typeof documentLineCandidates.$inferSelect;
@@ -379,7 +380,7 @@ export function createDocumentsService(options: { db: Executor }): DocumentsServ
             currency: input.result.currency,
             lineDate: null,
             confidence: line.confidence.toFixed(3),
-            sourceRegion: line.sourceRegion ? JSON.stringify(line.sourceRegion) : null,
+            sourceRegion: serializeSourceRegion(line.sourceRegion),
             rowFingerprint: null,
             disposition: "pending",
           })),

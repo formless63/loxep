@@ -36,6 +36,13 @@ function textLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+const uuidSchema = z.uuid();
+/** Re-validated even though the Zod input schema already checked it — mirrors `@/server/documents-functions.ts`'s own `uuidLiteral`, defense in depth for a value about to be embedded in raw SQL. */
+function uuidLiteral(value: string): string {
+  if (!uuidSchema.safeParse(value).success) throw new Error('expected a UUID value');
+  return `'${value}'`;
+}
+
 const calendarDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a calendar date as YYYY-MM-DD');
@@ -615,7 +622,31 @@ const createExpenseWithEvidenceInput = z.strictObject({
   /** Media object ids already uploaded through `POST /api/documents/upload` — attached as `purpose: 'receipt'` inside the same transaction. */
   mediaObjectIds: z.array(z.uuid()).max(20).default([]),
   /** The optional line-items editor's rows — inserted in the SAME transaction as the expense, UNGATED (the draft-only lock guards a LATER edit, not an expense's own initial lines; see `@loxep/accounting/lines.ts`'s module doc). */
-  lines: z.array(expenseLineInput).max(100).default([])
+  lines: z.array(expenseLineInput).max(100).default([]),
+  /**
+   * Lines dragged from the evidence pane's highlight overlay onto the
+   * "Line items" drop zone (loxep-cd3.5, M5 — `expense-entry-design.md`
+   * section 4/"the weave"). Distinct from `lines` above: a dropped line is
+   * NOT typed by the operator, it is a `document_line_candidates` row the
+   * candidate confirm path (`@loxep/accounting`'s `confirmCandidatesAsExpense`)
+   * turns into its OWN `expense_lines` row, carrying
+   * `document_line_candidate_id` — the design's "only a drag into the LINES
+   * list creates a candidate→line relationship" rule. `lineAmount` is the
+   * operator's PROVISIONAL amount (client-side "rightmost decimal token"
+   * extraction from the OCR'd text, confirmed/edited by the operator before
+   * submit) — never auto-derived server-side, and only written onto the
+   * candidate if it does not already have one (a manual candidate might).
+   */
+  droppedLines: z
+    .array(
+      z.strictObject({
+        documentId: z.uuid(),
+        candidateId: z.uuid(),
+        lineAmount: decimalString
+      })
+    )
+    .max(100)
+    .default([])
 });
 
 export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
@@ -628,6 +659,8 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
       referenceCode: string;
       attachedCount: number;
       lineCount: number;
+      /** How many dragged candidates actually landed as an `expense_lines` row — see `confirmedLineCount` vs `data.droppedLines.length`'s own doc below for why these can differ. */
+      confirmedLineCount: number;
     }> => {
       const { requireSession, getAdminServices, getStorageBackendsService } =
         await import('@/server/admin');
@@ -635,6 +668,7 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
       const {
         absoluteLineTotal,
         createExpensesService,
+        createExpenseConfirmService,
         createReceiptsService,
         insertExpenseLinesRaw,
         linesFit,
@@ -701,11 +735,68 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
           });
         }
 
+        // Flow 2's own half of "the weave" (loxep-cd3.5, M5): a line dragged
+        // onto the "Line items" drop zone becomes a `document_line_candidates`
+        // confirm, in THIS same transaction, alongside the expense it now
+        // belongs to — never before (dragging itself writes nothing; see
+        // `document-line-dnd.tsx`'s doc). `confirmCandidatesAsExpense`
+        // (`@loxep/accounting`) is the SAME function flow 1
+        // (`/finance/import`'s `confirmLinesAsExpense`) calls — one confirm
+        // mechanism, two entry points, exactly the design's own rule.
+        //
+        // `confirmCandidatesAsExpense` only accepts a candidate already
+        // dispositioned `expense`/`supplies` with a non-null `lineAmount` —
+        // an OCR-produced candidate is always `disposition: 'pending'` with
+        // `lineAmount: null` (tier B stops at boxes and raw text; see
+        // `tsv-lines.ts`'s doc), so the stamp this milestone's design
+        // describes ("disposition ... happens at save") is completed HERE,
+        // via the same raw-SQL pattern `@/server/documents-functions.ts`
+        // already uses for this table (no `@loxep/documents` dependency in
+        // this file — see its own module doc): bump the disposition to
+        // `expense` when it is not already confirmable, and fill
+        // `lineAmount` from the operator's provisional/confirmed amount only
+        // when the candidate does not already carry one (a manual candidate
+        // might). A candidate that vanishes, is already confirmed, or
+        // belongs to a different document is silently skipped by
+        // `confirmCandidatesAsExpense` itself — never an error, matching
+        // every other candidate-batch operation in this domain.
+        let confirmedLineCount = 0;
+        if (data.droppedLines.length > 0) {
+          const byDocument = new Map<string, string[]>();
+          for (const dropped of data.droppedLines) {
+            await tx.execute(
+              `update document_line_candidates
+                  set disposition = case when disposition in ('expense', 'supplies') then disposition else 'expense' end,
+                      line_amount = coalesce(line_amount, ${dropped.lineAmount}::numeric(20,6)),
+                      updated_at = now()
+                where id = ${uuidLiteral(dropped.candidateId)}
+                  and document_id = ${uuidLiteral(dropped.documentId)}
+                  and confirmed_at is null`
+            );
+            const ids = byDocument.get(dropped.documentId) ?? [];
+            ids.push(dropped.candidateId);
+            byDocument.set(dropped.documentId, ids);
+          }
+
+          const confirmService = createExpenseConfirmService({ db: tx, media });
+          for (const [documentId, candidateIds] of byDocument) {
+            const result = await confirmService.confirmCandidatesAsExpense({
+              documentId,
+              candidateIds,
+              expenseId: expense.id,
+              actorUserId: session.user.id,
+              defaultCurrency: data.currency
+            });
+            confirmedLineCount += result.lines.length;
+          }
+        }
+
         return {
           id: expense.id,
           referenceCode: expense.referenceCode,
           attachedCount: data.mediaObjectIds.length,
-          lineCount: data.lines.length
+          lineCount: data.lines.length + confirmedLineCount,
+          confirmedLineCount
         };
       });
     }

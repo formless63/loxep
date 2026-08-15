@@ -1,12 +1,14 @@
 import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { FileUploader } from '@/components/file-uploader';
-import { DocumentPreview } from '@/components/document-preview';
+import { DocumentPreview, type DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { formatBytes } from '@/lib/format';
 import { toastError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { uploadDocument } from '@/features/documents/api/upload';
+import { documentQuery } from '@/features/documents/api/queries';
 
 /**
  * Mirrors `documentsMediaLimitsSetting`'s shipped default
@@ -71,13 +73,33 @@ function attachmentStatusIcon(status: EvidenceAttachmentStatus) {
  * stays `pending` and is reachable through `/finance/import`, exactly like
  * abandoning the whole page (the design's own "nothing is orphaned, nothing
  * is half-confirmed, because nothing was written" rule).
+ *
+ * **The highlight overlay (loxep-cd3.5, M5).** For the currently-selected,
+ * uploaded attachment, this pane polls `fetchDocument` (`documentQuery`,
+ * `@/features/documents/api/queries.ts`) — the SAME read `/finance/import`'s
+ * review panel uses — while the document's OCR extraction is still running
+ * (`status === 'pending'`), and stops once it settles. When the selected
+ * document carries candidates with a `sourceRegion` (an `ocr_tesseract` run
+ * that found lines; the default `manual` parser never does), `<DocumentPreview>`
+ * renders them as a draggable overlay — this pane is a drag SOURCE only; the
+ * drop TARGETS (the form's fields and its "Line items" zone) live on
+ * `new-expense-page.tsx`, which supplies `renderLineActions` so each
+ * detected line's keyboard/click equivalent can reach fields this pane
+ * itself knows nothing about.
  */
 export default function EvidencePane({
   attachments,
-  onAttachmentsChange
+  onAttachmentsChange,
+  renderLineActions,
+  hoveredLineId,
+  onHoveredLineChange
 }: {
   attachments: EvidenceAttachment[];
   onAttachmentsChange: React.Dispatch<React.SetStateAction<EvidenceAttachment[]>>;
+  /** The keyboard/click equivalent per detected line — see `document-preview.tsx`'s own accessibility doc. Omit to render the overlay read-only (no menu, drag still works for a mouse). */
+  renderLineActions?: (line: DocumentPreviewOverlayLine) => React.ReactNode;
+  hoveredLineId?: string | null;
+  onHoveredLineChange?: (id: string | null) => void;
 }) {
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
@@ -131,6 +153,30 @@ export default function EvidencePane({
   }
 
   const selected = attachments.find((attachment) => attachment.key === selectedKey) ?? null;
+
+  // Polls only while the document's OCR extraction is genuinely in flight —
+  // most installations never enable `ocr_tesseract` (the default `manual`
+  // parser never touches `status`), so this stays a single, terminal fetch
+  // for the common case and a short-lived poll only when a backend is
+  // actually working. `enabled` guards against firing for an attachment
+  // still mid-upload (no `documentId` yet).
+  const documentQueryResult = useQuery({
+    ...documentQuery(selected?.documentId ?? ''),
+    enabled: selected?.documentId !== undefined,
+    refetchInterval: (query) => (query.state.data?.status === 'pending' ? 2000 : false)
+  });
+  const selectedDocument =
+    selected?.documentId !== undefined ? documentQueryResult.data : undefined;
+  const overlayLines: DocumentPreviewOverlayLine[] =
+    selectedDocument?.candidates
+      .filter((candidate) => candidate.sourceRegion !== null)
+      .map((candidate) => ({
+        id: candidate.id,
+        documentId: candidate.documentId,
+        lineNumber: candidate.lineNumber,
+        text: candidate.description ?? '',
+        region: candidate.sourceRegion as NonNullable<typeof candidate.sourceRegion>
+      })) ?? [];
 
   return (
     <div className='flex flex-col gap-4'>
@@ -216,8 +262,27 @@ export default function EvidencePane({
           servingUrl={selected.servingUrl ?? null}
           alt={selected.originalFilename ?? selected.file.name}
           className='min-h-64'
+          overlay={
+            overlayLines.length > 0
+              ? {
+                  lines: overlayLines,
+                  draggable: true,
+                  hoveredId: hoveredLineId,
+                  onHoverChange: onHoveredLineChange,
+                  renderActions: renderLineActions
+                }
+              : undefined
+          }
         />
       )}
+      {selected?.documentId !== undefined &&
+        selectedDocument?.status === 'pending' &&
+        overlayLines.length === 0 && (
+          <p className='text-muted-foreground text-xs'>
+            Waiting for text extraction… (only runs when an OCR backend is enabled under Settings →
+            Documents)
+          </p>
+        )}
     </div>
   );
 }
