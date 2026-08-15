@@ -197,11 +197,20 @@ export {
   // so the intent's stored `url` and the discovery-written one can never
   // disagree about what "the instance origin" means for one connection.
   readDockhandBaseUrl,
+  // loxep-4ah: `apps/web/src/server/admin.ts` needs a live Termix adapter
+  // for the fleet-detail per-session panel — the same re-export seam as
+  // Dockhand's above, for the same reason (no direct
+  // `@loxep/integration-termix` dependency in `apps/web`).
+  TERMIX_CONNECTION_PROVIDER,
+  TERMIX_CREDENTIAL_TYPE,
+  createTermixAdapterFactory,
 } from "./fleet.ts";
 export type {
   ContainerHostAdapterLike,
   DockhandAdapterFactory,
   DockhandConnectionAdapter,
+  TermixAdapterFactory,
+  TermixConnectionAdapter,
 } from "./fleet.ts";
 // Re-exported so `apps/web` never needs its own `@loxep/integration-dockhand`
 // dependency just to normalize a pasted base URL into the origin
@@ -313,16 +322,34 @@ export {
   GATUS_PUSH_TASK_NAME,
   createGatusPushTasks,
   pushGatusHealth,
+  pushGatusHealthFacts,
   worstHealthStatus,
 } from "./gatus-push.ts";
 export type {
+  GatusPushFactOutcome,
   GatusPushFetch,
   GatusPushKind,
   GatusPushOutcome,
   GatusPushTask,
   GatusPushTasks,
+  PushGatusHealthFactsOptions,
   PushGatusHealthOptions,
 } from "./gatus-push.ts";
+
+export {
+  FLEET_EVIDENCE_INGEST_TASK,
+  createFleetEvidenceTasks,
+  fleetEvidenceIngestJobKey,
+  receiveFleetEvidence,
+  verifyFleetIngestToken,
+} from "./fleet-evidence.ts";
+export type {
+  FleetEvidenceTasks,
+  ReceiveFleetEvidenceOptions,
+  ReceiveFleetEvidenceResult,
+  VerifyFleetIngestTokenOptions,
+  VerifyFleetIngestTokenResult,
+} from "./fleet-evidence.ts";
 
 export { buildCronItems, buildWorkerRegistry } from "./registry.ts";
 export type {

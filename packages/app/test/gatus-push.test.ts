@@ -16,6 +16,7 @@ import {
   buildAppServices,
   createGatusPushTasks,
   pushGatusHealth,
+  pushGatusHealthFacts,
   worstHealthStatus,
 } from "../src/index.ts";
 import type { AppServices } from "../src/index.ts";
@@ -127,7 +128,7 @@ describe("pushGatusHealth", () => {
   it("reports 'unconfigured' when enabled but the base URL/key are unset", async () => {
     await services.settings.set(
       gatusPushSetting,
-      { enabled: true, baseUrl: null, endpointKey: null },
+      { enabled: true, baseUrl: null, endpointKey: null, mode: "single" },
       {},
     );
     const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
@@ -148,6 +149,7 @@ describe("pushGatusHealth", () => {
         enabled: true,
         baseUrl: "https://gatus.example.test",
         endpointKey: "core_loxep",
+        mode: "single",
       },
       {},
     );
@@ -272,6 +274,7 @@ describe("pushGatusHealth", () => {
         enabled: true,
         baseUrl: "https://gatus.example.test/",
         endpointKey: "core_loxep",
+        mode: "single",
       },
       {},
     );
@@ -286,6 +289,212 @@ describe("pushGatusHealth", () => {
       true,
     );
     expect(requests[0]?.url).not.toContain("//api");
+  });
+});
+
+// =============================================================================
+// pushGatusHealthFacts (loxep-4ah, owner ruling 6b) — the OQ9 five-fact
+// expansion. `pushGatusHealth`'s own suite above is UNCHANGED by any of this,
+// proving `mode: 'single'` (the shipped default) keeps today's behavior.
+// =============================================================================
+
+describe("pushGatusHealthFacts", () => {
+  const dbName = scratchDbName("loxep_test_app_gatus_push_facts");
+  let databaseUrl = "";
+  let handle: DbHandle;
+  let services: AppServices;
+  let testUserId = "gatus-push-facts-test-user";
+
+  beforeAll(async () => {
+    databaseUrl = await createScratchDb(dbName);
+    await runMigrations({ databaseUrl, logger: silentLogger });
+    handle = createDb(databaseUrl);
+    services = buildAppServices({
+      config: testConfig(databaseUrl),
+      logger: silentJobsLogger,
+    });
+    const { user } = await import("@loxep/db/schema");
+    await services.db.insert(user).values({
+      id: testUserId,
+      name: "Gatus Push Facts Test User",
+      email: "gatus-push-facts@example.invalid",
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await services?.close();
+    await closeDb(handle);
+    await dropScratchDb(dbName);
+  });
+
+  it("fans out 'disabled' to all five fact slugs, in GATUS_PUSH_FACT_SLUGS order, no requests made", async () => {
+    const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
+    const outcomes = await pushGatusHealthFacts({
+      db: services.db,
+      settings: services.settings,
+      secrets: services.secrets,
+      connections: services.connections,
+      fetchImpl,
+    });
+    expect(outcomes.map((o) => o.slug)).toEqual([
+      "worker-backlog",
+      "sync-freshness",
+      "notifications",
+      "drift",
+      "readiness",
+    ]);
+    expect(outcomes.every((o) => o.kind === "disabled")).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("fans out 'unconfigured' to all five when enabled but the base URL/key are unset", async () => {
+    await services.settings.set(
+      gatusPushSetting,
+      { enabled: true, baseUrl: null, endpointKey: null, mode: "facts" },
+      {},
+    );
+    const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
+    const outcomes = await pushGatusHealthFacts({
+      db: services.db,
+      settings: services.settings,
+      secrets: services.secrets,
+      connections: services.connections,
+      fetchImpl,
+    });
+    expect(outcomes).toHaveLength(5);
+    expect(outcomes.every((o) => o.kind === "unconfigured")).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it(
+    "POSTs one push per computable fact to its own derived key, skipping a fact whose " +
+      "computation throws (no graphile_worker schema in a fresh scratch database)",
+    async () => {
+      await services.settings.set(
+        gatusPushSetting,
+        {
+          enabled: true,
+          baseUrl: "https://gatus.example.test",
+          endpointKey: "core_loxep",
+          mode: "facts",
+        },
+        {},
+      );
+      await services.secrets.setSecret({
+        secretKey: GATUS_PUSH_SECRET_KEY,
+        purpose: "token",
+        payload: { token: "facts-push-secret-token" },
+      });
+
+      const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
+      const outcomes = await pushGatusHealthFacts({
+        db: services.db,
+        settings: services.settings,
+        secrets: services.secrets,
+        connections: services.connections,
+        fetchImpl,
+      });
+
+      // worker-backlog's computation throws (no graphile_worker schema has
+      // been created in this scratch database — nothing ever started a
+      // worker runtime here) — SKIPPED, never a fabricated failure.
+      const slugs = outcomes.map((o) => o.slug);
+      expect(slugs).not.toContain("worker-backlog");
+      expect(slugs).toEqual(["sync-freshness", "notifications", "drift", "readiness"]);
+      expect(outcomes.every((o) => o.kind === "ok")).toBe(true);
+      // Nothing in this fresh database is failing/drifting, so every
+      // computable fact reports success.
+      expect(outcomes.every((o) => o.reported?.success === true)).toBe(true);
+
+      expect(requests).toHaveLength(4);
+      const requestedKeys = requests
+        .map((request) => new URL(request.url).pathname)
+        .sort();
+      expect(requestedKeys).toEqual(
+        [
+          "/api/v1/endpoints/core_loxep-drift/external",
+          "/api/v1/endpoints/core_loxep-notifications/external",
+          "/api/v1/endpoints/core_loxep-readiness/external",
+          "/api/v1/endpoints/core_loxep-sync-freshness/external",
+        ].sort(),
+      );
+      // The single-key mode's own key is never pushed to in 'facts' mode.
+      expect(requests.some((request) => request.url.includes("/endpoints/core_loxep/"))).toBe(
+        false,
+      );
+      for (const request of requests) {
+        expect(request.headers["Authorization"]).toBe("Bearer facts-push-secret-token");
+      }
+    },
+  );
+
+  it("sync-freshness reports failure and a count when an order-sync connection is failing", async () => {
+    const connection = await services.connections.createConnection({
+      provider: "ebay",
+      kind: "marketplace",
+      name: "ebay sync-freshness fixture",
+      createdByUserId: testUserId,
+    });
+    const health = createHealthService({ db: services.db });
+    await health.upsertHealth({
+      subjectType: "connection",
+      subjectId: connection.id,
+      status: "failing",
+      source: "probe",
+      detail: { kind: "auth" },
+    });
+
+    const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
+    const outcomes = await pushGatusHealthFacts({
+      db: services.db,
+      settings: services.settings,
+      secrets: services.secrets,
+      connections: services.connections,
+      fetchImpl,
+    });
+    const syncFreshness = outcomes.find((o) => o.slug === "sync-freshness");
+    expect(syncFreshness?.reported?.success).toBe(false);
+    expect(syncFreshness?.reported?.error).toMatch(/order-sync connection\(s\) failing/);
+    const request = requests.find((r) => r.url.includes("sync-freshness"));
+    expect(request).toBeDefined();
+    const url = new URL(request!.url);
+    expect(url.searchParams.get("success")).toBe("false");
+  });
+
+  it("drift reports failure and a count from a connection's persisted driftingTargetCount", async () => {
+    const connection = await services.connections.createConnection({
+      provider: "dockhand",
+      kind: "fleet_observability",
+      name: "dockhand drift fixture",
+      createdByUserId: testUserId,
+    });
+    const health = createHealthService({ db: services.db });
+    await health.upsertHealth({
+      subjectType: "connection",
+      subjectId: connection.id,
+      status: "ok",
+      source: "adapter",
+      // The exact shape probeDockhandConnection (fleet-health.ts) writes.
+      detail: { authMode: "session", hostCount: 3, driftingTargetCount: 2, unmatchedObservedCount: 0 },
+    });
+
+    const { fetchImpl, requests } = fakeFetch(() => ({ ok: true, status: 200 }));
+    const outcomes = await pushGatusHealthFacts({
+      db: services.db,
+      settings: services.settings,
+      secrets: services.secrets,
+      connections: services.connections,
+      fetchImpl,
+    });
+    const drift = outcomes.find((o) => o.slug === "drift");
+    expect(drift?.reported?.success).toBe(false);
+    expect(drift?.reported?.error).toMatch(/2 drifting target\(s\)/);
+    const request = requests.find((r) => r.url.includes("core_loxep-drift"));
+    expect(request).toBeDefined();
+    expect(new URL(request!.url).searchParams.get("success")).toBe("false");
   });
 });
 
@@ -338,6 +547,7 @@ describe("infrastructure.gatus-push task/cron wiring", () => {
         enabled: true,
         baseUrl: "https://gatus.example.test",
         endpointKey: "core_loxep",
+        mode: "single",
       },
       {},
     );
@@ -360,5 +570,42 @@ describe("infrastructure.gatus-push task/cron wiring", () => {
     );
     expect((outcome as { kind: string }).kind).toBe("ok");
     expect(requestCount).toBe(1);
+  });
+
+  it("the handler branches to the five-fact push when mode is 'facts', and never throws", async () => {
+    await services.settings.set(
+      gatusPushSetting,
+      {
+        enabled: true,
+        baseUrl: "https://gatus.example.test",
+        endpointKey: "core_loxep",
+        mode: "facts",
+      },
+      {},
+    );
+    await services.secrets.setSecret({
+      secretKey: GATUS_PUSH_SECRET_KEY,
+      purpose: "token",
+      payload: { token: "task-wiring-facts-token" },
+    });
+    let requestCount = 0;
+    const tasks = createGatusPushTasks({
+      services,
+      fetchImpl: async () => {
+        requestCount += 1;
+        return { ok: true, status: 200, text: async () => "" };
+      },
+    });
+    const outcome = await tasks.gatusPushTask.handler(
+      {},
+      { logger: silentJobsLogger, helpers: noopHelpers() },
+    );
+    expect(Array.isArray(outcome)).toBe(true);
+    const outcomes = outcome as { slug: string; kind: string }[];
+    // worker-backlog is skipped in this scratch database (see the
+    // pushGatusHealthFacts suite above) — the other four still push.
+    expect(outcomes.length).toBeGreaterThanOrEqual(4);
+    expect(outcomes.every((entry) => entry.kind === "ok")).toBe(true);
+    expect(requestCount).toBe(outcomes.length);
   });
 });

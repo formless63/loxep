@@ -20,6 +20,7 @@ import {
   createHealthService,
   createResourceLinksService,
   createSettingsService,
+  gatusPushFactKeys,
   gatusPushSetting,
   runHealthSweep,
 } from "@loxep/domain";
@@ -553,7 +554,7 @@ describe("createFleetHealthSubjectRegistry", () => {
 
     beforeAll(async () => {
       // Disabled by default so per-test heartbeat opt-in is explicit.
-      await settings.set(gatusPushSetting, { enabled: false, baseUrl: null, endpointKey: null }, {});
+      await settings.set(gatusPushSetting, { enabled: false, baseUrl: null, endpointKey: null, mode: "single" }, {});
     });
 
     it("probeConfig() throws -> unknown", async () => {
@@ -696,7 +697,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: false, baseUrl, endpointKey: "public_loxep" },
+          { enabled: false, baseUrl, endpointKey: "public_loxep", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "heartbeat-disabled", {
@@ -720,7 +721,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "heartbeat-statuses", {
@@ -767,7 +768,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "heartbeat-paged-out", {
@@ -802,7 +803,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "wrong_key" },
+          { enabled: true, baseUrl, endpointKey: "wrong_key", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "heartbeat-mismatch", {
@@ -836,7 +837,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "heartbeat-oidc", {
@@ -868,7 +869,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const normalized = normalizeGatusBaseUrl(baseUrl);
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep", mode: "single" },
           {},
         );
         await createFleetConnection("gatus", "heartbeat-ambiguous-a", { gatus: { baseUrl } });
@@ -1106,7 +1107,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const baseUrl = "https://gatus-quarantine.example.test";
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep-quarantine" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep-quarantine", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "quarantine", {
@@ -1148,7 +1149,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         const baseUrl = "https://gatus-quarantine-disabled.example.test";
         await settings.set(
           gatusPushSetting,
-          { enabled: false, baseUrl, endpointKey: "public_loxep-quarantine-disabled" },
+          { enabled: false, baseUrl, endpointKey: "public_loxep-quarantine-disabled", mode: "single" },
           {},
         );
         const connection = await createFleetConnection("gatus", "quarantine-disabled", {
@@ -1204,7 +1205,7 @@ describe("createFleetHealthSubjectRegistry", () => {
         });
         await settings.set(
           gatusPushSetting,
-          { enabled: true, baseUrl, endpointKey: "public_loxep-preexisting" },
+          { enabled: true, baseUrl, endpointKey: "public_loxep-preexisting", mode: "single" },
           {},
         );
 
@@ -1229,6 +1230,45 @@ describe("createFleetHealthSubjectRegistry", () => {
         // Not upgraded to 'ok' by this sweep — the excluded key's health row
         // is never TOUCHED at all, quarantined pre-existing row included.
         expect(await health.getHealth("external_resource", preExisting.id)).toBeNull();
+      });
+
+      // loxep-4ah: the quarantine extends to ALL FIVE OQ9 fact keys in
+      // `mode: 'facts'` — the base `endpointKey` is a derivation seed only
+      // in this mode (never itself pushed to), so it is NOT quarantined;
+      // only its five derived keys are.
+      it("mode 'facts': quarantines all five derived keys, never the base endpointKey seed, and leaves a sibling endpoint linkable", async () => {
+        const baseUrl = "https://gatus-quarantine-facts.example.test";
+        const baseKey = "public_loxep-facts";
+        const derivedKeys = gatusPushFactKeys(baseKey);
+        await settings.set(
+          gatusPushSetting,
+          { enabled: true, baseUrl, endpointKey: baseKey, mode: "facts" },
+          {},
+        );
+        const connection = await createFleetConnection("gatus", "quarantine-facts", {
+          gatus: { baseUrl },
+        });
+        const registry = createFleetHealthSubjectRegistry(
+          discoveryServices([
+            status({ key: baseKey, name: "base seed, unpushed" }),
+            ...derivedKeys.map((key) => status({ key, name: key })),
+            status({ key: "public_other-endpoint-facts", name: "other" }),
+          ]),
+        );
+        await registry.connection?.probe(handle.db, connection.id);
+
+        const resourceLinks = createResourceLinksService({ db: handle.db });
+        const unattached = await resourceLinks.listUnattachedByProvider("gatus");
+
+        for (const key of derivedKeys) {
+          expect(unattached.find((row) => row.externalId === key)).toBeUndefined();
+        }
+        // The base key is the derivation SEED in facts mode, never pushed to
+        // directly — it is an ordinary, registerable endpoint like any other.
+        expect(unattached.find((row) => row.externalId === baseKey)).toBeDefined();
+        expect(
+          unattached.find((row) => row.externalId === "public_other-endpoint-facts"),
+        ).toBeDefined();
       });
     });
   });
@@ -1995,7 +2035,7 @@ describe("createFleetHealthSubjectRegistry", () => {
     const baseUrl = "https://gatus-rule1.example.test";
     await settings.set(
       gatusPushSetting,
-      { enabled: true, baseUrl, endpointKey: "public_loxep" },
+      { enabled: true, baseUrl, endpointKey: "public_loxep", mode: "single" },
       {},
     );
     const connection = await createFleetConnection("gatus", "rule1", { gatus: { baseUrl } });

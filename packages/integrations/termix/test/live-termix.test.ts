@@ -74,8 +74,46 @@ describeLive(`live Termix instance (${defaultTermixEnvFilePath()})`, () => {
     expect(first.externalHostId).toBeTruthy();
   });
 
-  it("lists active sessions without error (an empty list is a pass)", async () => {
-    await expect(makeAdapter().listSessions()).resolves.toBeInstanceOf(Array);
+  it("lists active sessions without error, and reports which fields arrived across ALL rows", async () => {
+    const sessions = await makeAdapter().listSessions();
+    expect(Array.isArray(sessions)).toBe(true);
+    if (sessions.length === 0) {
+      // An account with no open tabs right now is a legitimate, non-error
+      // state — the same posture the host-fields test above takes.
+      return;
+    }
+    // Counts alone do NOT verify field names — `sessionSchema.safeParse`
+    // parses defensively, so a field this package guessed wrong degrades to
+    // `null`/a default and the read still "succeeds" with the right row
+    // count. Report presence per field, across ALL rows rather than the
+    // first one (dockhand's `live-dockhand.test.ts` pattern) — a single
+    // session legitimately missing an optional value (its own `hostName`,
+    // say) must not read as a wrong field name. This is the standing job
+    // loxep-4ah's live leg exists to discharge before per-session rows ship.
+    const presence = (get: (session: (typeof sessions)[number]) => unknown) =>
+      sessions.some((session) => get(session) !== null);
+    console.log("[live] termix session fields observed:", {
+      rows: sessions.length,
+      sessionId: presence((s) => s.sessionId),
+      hostId: presence((s) => s.hostId),
+      hostName: presence((s) => s.hostName),
+      isConnected: sessions.some((s) => s.isConnected === true)
+        ? true
+        : sessions.some((s) => s.isConnected === false)
+          ? false
+          : null,
+      createdAt: presence((s) => s.createdAt),
+      isOwnSession: sessions.some((s) => s.isOwnSession === true)
+        ? true
+        : sessions.some((s) => s.isOwnSession === false)
+          ? false
+          : null,
+      sharedByUsername: presence((s) => s.sharedByUsername),
+      permissionLevel: presence((s) => s.permissionLevel),
+    });
+    expect(sessions.every((s) => typeof s.sessionId === "string" && s.sessionId !== "")).toBe(
+      true,
+    );
   });
 
   it("performs one login for several reads", async () => {

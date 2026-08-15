@@ -121,6 +121,7 @@ import {
   createDefaultHealthSubjectRegistry,
   createHealthService,
   createResourceLinksService,
+  gatusPushFactKeys,
   gatusPushSetting,
 } from "@loxep/domain";
 import type {
@@ -830,6 +831,26 @@ interface GatusHeartbeatInput {
  * violate that rule; a future edit that makes it influence `status` is the
  * one to reject in review.
  */
+/**
+ * Every Gatus endpoint key `gatus-push.ts` might push to for the pushed-side
+ * configuration — one key in `mode: 'single'` (today's shape, unchanged
+ * exactly), the five OQ9-derived keys (`@loxep/domain`'s `gatusPushFactKeys`)
+ * in `mode: 'facts'` (loxep-4ah). Empty when no `endpointKey` is configured
+ * at all. Shared by {@link gatusPushHeartbeatDetail} (the read-side mirror)
+ * and {@link projectGatusEndpoints} (discovery exclusion) so BINDING RULE 1's
+ * quarantine can never cover a different set from what `gatus-push.ts`
+ * actually pushes to — the single source of truth for "which keys are
+ * reserved" lives in `@loxep/domain`, not duplicated here.
+ */
+function gatusPushQuarantinedKeys(pushConfig: {
+  endpointKey: string | null;
+  mode: "single" | "facts";
+}): string[] {
+  if (pushConfig.endpointKey === null) return [];
+  if (pushConfig.mode === "facts") return gatusPushFactKeys(pushConfig.endpointKey);
+  return [pushConfig.endpointKey];
+}
+
 async function gatusPushHeartbeatDetail(
   input: GatusHeartbeatInput,
 ): Promise<Record<string, unknown> | undefined> {
@@ -865,7 +886,30 @@ async function gatusPushHeartbeatDetail(
   }
   if (matches !== 1) return undefined;
 
-  const configuredKey = pushConfig.endpointKey;
+  const quarantinedKeys = gatusPushQuarantinedKeys(pushConfig);
+
+  if (pushConfig.mode === "facts") {
+    // Mirror from the bulk `statuses` page ONLY — never issuing up to five
+    // extra unauthenticated GETs per sweep (one per derived key) the way
+    // single-key mode's ONE fallback GET below does for its one key. In
+    // oidc posture (`statuses` undefined) there is nothing free to mirror
+    // from; the block is simply absent — the same "no bulk read, no extra
+    // call" restraint single-key mode applies to its one key, applied here
+    // to all five rather than issuing five.
+    if (statuses === undefined) return undefined;
+    const keys = quarantinedKeys.map((key) => {
+      const found = statuses.find((status) => status.key === key);
+      return {
+        key,
+        keyFound: found !== undefined,
+        gatusObservedAt: found?.observedAt ?? null,
+        gatusSuccess: found?.success ?? null,
+      };
+    });
+    return { mode: "facts", keys, source: "statuses" };
+  }
+
+  const configuredKey = quarantinedKeys[0]!;
 
   if (statuses !== undefined) {
     const found = statuses.find((status) => status.key === configuredKey);
@@ -992,11 +1036,16 @@ async function projectGatusEndpoints(
     return;
   }
 
-  let excludedKey: string | null;
+  // loxep-4ah: the quarantine set is ALL keys `gatus-push.ts` might push to
+  // for the current mode — one key in 'single', five derived keys in
+  // 'facts' — computed by the SAME `gatusPushQuarantinedKeys` helper
+  // `gatusPushHeartbeatDetail` uses, so the two can never disagree.
+  let excludedKeys: Set<string>;
   try {
-    excludedKey = (await services.settings.get(gatusPushSetting)).endpointKey;
+    const pushConfig = await services.settings.get(gatusPushSetting);
+    excludedKeys = new Set(gatusPushQuarantinedKeys(pushConfig));
   } catch {
-    excludedKey = null; // Fail closed on the READ side too: never let a settings hiccup skip the exclusion by defaulting it away — see below, `null` never matches a real key.
+    excludedKeys = new Set(); // Fail closed on the READ side too: never let a settings hiccup skip the exclusion by defaulting it away — see below, an empty set never matches a real key.
   }
 
   const resourceLinks = createResourceLinksService({ db });
@@ -1011,7 +1060,7 @@ async function projectGatusEndpoints(
   const resourceByKey = new Map<string, { id: string }>();
 
   for (const status of statuses) {
-    if (excludedKey !== null && status.key === excludedKey) continue; // BINDING RULE 1 — never registered.
+    if (excludedKeys.has(status.key)) continue; // BINDING RULE 1 — never registered.
     try {
       const resource = await resourceLinks.upsertExternalResource({
         provider: GATUS_CONNECTION_PROVIDER,
@@ -1059,7 +1108,7 @@ async function projectGatusEndpoints(
     const linkedResourceIds = new Set(links.map((link) => link.externalResourceId));
 
     for (const status of statuses) {
-      if (excludedKey !== null && status.key === excludedKey) continue;
+      if (excludedKeys.has(status.key)) continue;
       const resource = resourceByKey.get(status.key);
       if (resource === undefined || !linkedResourceIds.has(resource.id)) continue;
       const { status: healthStatus, detail } = gatusEndpointHealthStatus(status);
@@ -1083,7 +1132,7 @@ async function projectGatusEndpoints(
       // existing row (registered before an operator later reused its key as
       // the push key) must stay untouched too, not get "helpfully" marked
       // endpoint_missing.
-      if (excludedKey !== null && resource.externalId === excludedKey) continue;
+      if (resource.externalId !== null && excludedKeys.has(resource.externalId)) continue;
       await health.upsertHealth({
         subjectType: "external_resource",
         subjectId: resource.id,

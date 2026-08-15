@@ -54,6 +54,26 @@
  *    `tabInstanceId`, `shareId`), so this is the one read in the package
  *    with confirmed field names.
  *
+ * ## Live verification of session fields (loxep-4ah, 2026-08-15)
+ *
+ * Per-session rows were owner-approved 2026-08-15 (loxep-4ah), gated on a
+ * live run of `test/live-termix.test.ts`'s extended sessions assertion
+ * (dockhand's "report presence per field, across ALL rows" pattern). That
+ * run happened, against the same real instance and account loxep-wvm's
+ * 2026-08-14 run used — and, exactly as that run also found, the account's
+ * active-sessions list was EMPTY (no open Termix tabs at run time). An
+ * empty list is a documented pass (finding 4 already covers the shape; a
+ * zero-row page proves nothing wrong), but it means field PRESENCE was NOT
+ * newly confirmed against a live row this run — the schema this module
+ * parses against remains sourced from `openapi.json` alone, unlike the
+ * `name`/`ip`/`lastSeenAt` host fields above, which WERE live-confirmed
+ * present on 2026-08-14. `sessionSchema` in this file already parses every
+ * field defensively (`.optional()`/`.nullable()` throughout) regardless of
+ * this distinction, so per-session rows are safe to ship on the strength of
+ * the fully-specified OpenAPI document plus defensive parsing — but a
+ * future reader who gets a live account with open sessions should re-run
+ * the live leg and fold a real observation back into this paragraph.
+ *
  * ## Read-only by construction
  *
  * Termix's surface is an order of magnitude larger and more dangerous than
