@@ -10,6 +10,7 @@ import {
   fetchIntegrationsEnabled,
   fetchMonitorTargetOptions,
   fetchNotificationDeliveries,
+  fetchNotificationFeed,
   fetchNotificationEndpoints,
   fetchNotificationRules,
   fetchStorageBackends,
@@ -122,6 +123,13 @@ export const notificationRulesQuery = queryOptions({
 export const monitorTargetOptionsQuery = queryOptions({
   queryKey: ['settings', 'monitor-target-options'],
   queryFn: () => fetchMonitorTargetOptions()
+});
+
+/** The product shell's bell (loxep-oii): the real notification-event feed. */
+export const notificationFeedQuery = queryOptions({
+  queryKey: ['notifications', 'feed'],
+  queryFn: () => fetchNotificationFeed(),
+  refetchInterval: 60_000
 });
 
 export const notificationDeliveriesQuery = queryOptions({

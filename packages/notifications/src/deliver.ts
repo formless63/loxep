@@ -1,50 +1,71 @@
 /**
- * Delivery pipeline (loxep-ubx.4): the `notifications.deliver` job plus the
- * EXPLICIT detection→delivery bridge.
+ * Delivery pipeline (loxep-ubx.4, generalized by loxep-oii / ADR-0023): the
+ * `notifications.deliver` job plus the EXPLICIT detection→delivery bridge.
  *
- * Event detection (@loxep/market `market_events`) and notification delivery
- * stay separate concepts: nothing in event derivation enqueues deliveries.
- * {@link enqueueDeliveriesForEvent} is the single explicit bridge — it
- * matches enabled rules for a detected event and enqueues one
- * `notifications.deliver` job per matched endpoint.
+ * Event detection and notification delivery stay separate concepts: nothing in
+ * event derivation enqueues deliveries. The detection side records
+ * `notification_events` rows (`@loxep/domain`); this module routes them and
+ * turns a match into one job per endpoint.
+ *
+ * ## Two bridges, one ledger
+ *
+ * {@link DeliveryPipeline.enqueueDeliveriesForEvent} keeps its exact shipped
+ * signature for the market path — the poll executors already hold a typed
+ * `AddJob` — and now records the `market`-class notification event for the
+ * detected `market_events` row before routing it. Every other class emits
+ * through `@loxep/domain`'s `publishNotificationEvent` with a transactional
+ * enqueue seam, because those call sites are inside domain services that
+ * cannot depend on this package.
  *
  * ## At-least-once safety
  *
  * Job identity: `jobKey = jobKeyFor("notifications.deliver",
- * "<market_event_id>:<endpoint_id>")` (replace mode). Row identity: the
- * UNIQUE `(market_event_id, endpoint_id)` `notification_deliveries` row is
- * created `pending` with `ON CONFLICT DO NOTHING`, then attempted through
- * the transport. Success stamps `delivered_at`/`provider_message_id`;
- * failure increments `attempt_count`, records `last_error`, marks the row
- * `failed`, and RETHROWS so Graphile retries per policy. Re-running a
- * delivered row is a no-op, so duplicate jobs/retries can never notify
- * twice.
+ * "<notification_event_id>:<endpoint_id>")` (replace mode). Row identity: the
+ * UNIQUE `(notification_event_id, endpoint_id)` `notification_deliveries` row
+ * is created `pending` with `ON CONFLICT DO NOTHING`, then attempted through
+ * the transport. Success stamps `delivered_at`/`provider_message_id`; failure
+ * increments `attempt_count`, records `last_error`, marks the row `failed`,
+ * and RETHROWS so Graphile retries per policy. Re-running a delivered row is a
+ * no-op, so duplicate jobs/retries can never notify twice.
  *
  * Delivery statuses (text + TS union): `pending` → `delivered` | `failed`
  * (a failed row returns to `delivered` when a later attempt succeeds).
  */
 import { notificationDeliveries } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
-import type { SecretsService } from "@loxep/domain";
+import {
+  NOTIFICATION_DELIVER_TASK,
+  publishNotificationEvent,
+} from "@loxep/domain";
+import type {
+  NotificationEnqueue,
+  NotificationEventRow,
+  SecretsService,
+} from "@loxep/domain";
 import { defineTask, jobKeyFor } from "@loxep/jobs";
 import type { AddJob, LoxepTask } from "@loxep/jobs";
 import { z } from "zod";
-import { matchRules, endpointSecretKey } from "./endpoints.ts";
+import { endpointSecretKey } from "./endpoints.ts";
 import type { RuleMatchEvent } from "./endpoints.ts";
+import {
+  marketEventFromNotificationEvent,
+  renderNotificationEventMessage,
+} from "./render.ts";
 import { uuidLiteral, textLiteral } from "./sql.ts";
 import type {
   NotificationMessage,
   NotificationTransport,
 } from "./transport.ts";
 
-export const DELIVER_TASK_NAME = "notifications.deliver";
+/** Re-declared in `@loxep/domain` so the detection side needs no import here. */
+export const DELIVER_TASK_NAME = NOTIFICATION_DELIVER_TASK;
 
 /** Delivery row statuses (text + TS union, no PG enum). */
 export const DELIVERY_STATUSES = ["pending", "delivered", "failed"] as const;
 export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
 const deliverPayloadSchema = z.object({
-  marketEventId: z.uuid(),
+  notificationEventId: z.uuid(),
   endpointId: z.uuid(),
   correlationId: z.string().optional(),
 });
@@ -53,7 +74,11 @@ export type DeliverTask = LoxepTask<typeof deliverPayloadSchema>;
 
 export type DeliveryRow = typeof notificationDeliveries.$inferSelect;
 
-/** The market-event fields the pipeline reads (a `market_events` row fits). */
+/**
+ * The market-event fields the market renderer reads. A `market_events` row
+ * fits, and so does the projection {@link marketEventFromNotificationEvent}
+ * rebuilds from a `market`-class notification event.
+ */
 export interface DeliverableMarketEvent {
   id: string;
   marketplaceItemId: string;
@@ -83,8 +108,10 @@ export function renderMarketEventMessage(
 export interface DeliveryPipeline {
   deliverTask: DeliverTask;
   /**
-   * The explicit detection→delivery bridge: match rules, enqueue one
-   * deliver job per distinct matched endpoint. Returns the endpoint ids.
+   * The explicit detection→delivery bridge for the MARKET class: record the
+   * notification event for a detected `market_events` row, match enabled
+   * rules, and enqueue one deliver job per distinct matched endpoint. Returns
+   * the endpoint ids.
    */
   enqueueDeliveriesForEvent: (
     addJob: AddJob,
@@ -100,38 +127,49 @@ export function createDeliveryPipeline(options: {
   db: LoxepDb;
   secrets: SecretsService;
   transport: NotificationTransport;
+  /**
+   * Market-class rendering override (the composition root injects listing
+   * context here). Every other event class renders through
+   * {@link renderNotificationEventMessage}, which needs no join.
+   */
   renderMessage?: (event: DeliverableMarketEvent) => NotificationMessage;
 }): DeliveryPipeline {
   const { db, secrets, transport } = options;
-  const renderMessage = options.renderMessage ?? renderMarketEventMessage;
+  const renderMarket = options.renderMessage ?? renderMarketEventMessage;
+
+  function renderFor(event: NotificationEventRow): NotificationMessage {
+    return event.eventClass === "market"
+      ? renderMarket(marketEventFromNotificationEvent(event))
+      : renderNotificationEventMessage(event);
+  }
 
   const deliverTask: DeliverTask = defineTask({
     name: DELIVER_TASK_NAME,
     payloadSchema: deliverPayloadSchema,
     handler: async (payload, { logger }) => {
-      const { marketEventId, endpointId } = payload;
+      const { notificationEventId, endpointId } = payload;
 
       // Ensure exactly one delivery row per (event, endpoint); at-least-once
       // re-runs land on the existing row.
       await db
         .insert(notificationDeliveries)
-        .values({ marketEventId, endpointId, status: "pending" })
+        .values({ notificationEventId, endpointId, status: "pending" })
         .onConflictDoNothing({
           target: [
-            notificationDeliveries.marketEventId,
+            notificationDeliveries.notificationEventId,
             notificationDeliveries.endpointId,
           ],
         });
       const delivery = await db.query.notificationDeliveries.findFirst({
         where: (table, { and, eq }) =>
           and(
-            eq(table.marketEventId, marketEventId),
+            eq(table.notificationEventId, notificationEventId),
             eq(table.endpointId, endpointId),
           ),
       });
       if (delivery === undefined) {
         throw new Error(
-          `delivery row for event ${marketEventId} endpoint ${endpointId} missing after ensure`,
+          `delivery row for event ${notificationEventId} endpoint ${endpointId} missing after ensure`,
         );
       }
       if (delivery.deliveredAt !== null) {
@@ -145,15 +183,15 @@ export function createDeliveryPipeline(options: {
       const endpoint = await db.query.notificationEndpoints.findFirst({
         where: (table, { eq }) => eq(table.id, endpointId),
       });
-      const event = await db.query.marketEvents.findFirst({
-        where: (table, { eq }) => eq(table.id, marketEventId),
+      const event = await db.query.notificationEvents.findFirst({
+        where: (table, { eq }) => eq(table.id, notificationEventId),
       });
       if (endpoint === undefined || event === undefined) {
         // FKs make this near-impossible; record and stop without retrying.
         await db.execute(
           `update notification_deliveries
               set status = 'failed',
-                  last_error = ${textLiteral("endpoint or market event no longer exists")}
+                  last_error = ${textLiteral("endpoint or notification event no longer exists")}
             where id = ${uuidLiteral(delivery.id)}`,
         );
         logger.warn(
@@ -195,7 +233,7 @@ export function createDeliveryPipeline(options: {
         const result = await transport.send({
           config: endpoint.config,
           token,
-          message: renderMessage(event),
+          message: renderFor(event),
         });
         const messageIdSql =
           result.providerMessageId === null
@@ -237,22 +275,68 @@ export function createDeliveryPipeline(options: {
     addJob: AddJob,
     marketEvent: RuleMatchEvent & { id: string },
   ): Promise<{ endpointIds: string[] }> {
-    const rules = await matchRules(db, marketEvent);
-    const endpointIds = [...new Set(rules.map((rule) => rule.endpointId))];
-    for (const endpointId of endpointIds) {
+    const row = await db.query.marketEvents.findFirst({
+      where: (table, { eq }) => eq(table.id, marketEvent.id),
+    });
+    if (row === undefined) {
+      throw new Error(`unknown market event "${marketEvent.id}"`);
+    }
+    const marketPayload =
+      typeof row.payload === "object" &&
+      row.payload !== null &&
+      !Array.isArray(row.payload)
+        ? (row.payload as Record<string, unknown>)
+        : {};
+
+    // The typed AddJob owns its own connection, so this seam ignores the
+    // executor it is handed — the market bridge was never transactional with
+    // the observation write, and deliberately so (a notification failure must
+    // not roll back an observation).
+    const enqueue: NotificationEnqueue = async (
+      _executor,
+      _taskName,
+      jobPayload,
+      enqueueOptions,
+    ) => {
       await addJob(
         deliverTask,
-        { marketEventId: marketEvent.id, endpointId },
-        {
-          jobKey: jobKeyFor(
-            DELIVER_TASK_NAME,
-            `${marketEvent.id}:${endpointId}`,
-          ),
-        },
+        jobPayload as z.input<typeof deliverPayloadSchema>,
+        enqueueOptions?.jobKey === undefined
+          ? undefined
+          : { jobKey: enqueueOptions.jobKey },
       );
-    }
-    return { endpointIds };
+    };
+
+    const published = await publishNotificationEvent({
+      executor: db,
+      enqueue,
+      event: {
+        eventClass: "market",
+        eventType: row.eventType,
+        subjectType: "market_event",
+        subjectId: row.id,
+        monitorTargetId: row.monitorTargetId,
+        occurredAt: row.toObservedAt,
+        payload: {
+          ...marketPayload,
+          marketplaceItemId: row.marketplaceItemId,
+        },
+        deduplicationKey: `market_event:${row.id}`,
+      },
+    });
+    return { endpointIds: published.endpointIds };
   }
 
   return { deliverTask, enqueueDeliveriesForEvent };
+}
+
+/** Kept exported: the job-key convention is part of the delivery contract. */
+export function deliveryJobKey(
+  notificationEventId: string,
+  endpointId: string,
+): string {
+  return jobKeyFor(
+    DELIVER_TASK_NAME,
+    `${notificationEventId}:${endpointId}`,
+  );
 }

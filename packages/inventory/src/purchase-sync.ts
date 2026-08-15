@@ -81,6 +81,8 @@
 import { createHash } from "node:crypto";
 import type { LoxepDb } from "@loxep/db";
 import { monitorTargets, providerObjects } from "@loxep/db/schema";
+import { publishNotificationEvent } from "@loxep/domain";
+import type { NotificationEnqueue } from "@loxep/domain";
 import { z } from "zod";
 import { createAcquisitionsService } from "./acquisitions.ts";
 import type { AcquisitionRow } from "./acquisitions.ts";
@@ -418,6 +420,14 @@ export interface PurchaseIngestionService {
 
 export function createPurchaseIngestionService(options: {
   db: LoxepDb;
+  /**
+   * Notification delivery seam (ADR-0023). Omit and a newly ingested purchase
+   * is still RECORDED as a `purchase`-class notification event — detection
+   * does not depend on delivery — but routed nowhere.
+   */
+  enqueue?: NotificationEnqueue;
+  /** Called when emitting the notification event fails; never rethrown. */
+  onNotificationError?: (error: unknown) => void;
 }): PurchaseIngestionService {
   const { db } = options;
   const acquisitionsService = createAcquisitionsService({ db });
@@ -540,6 +550,44 @@ export function createPurchaseIngestionService(options: {
         await retainProvenance({ connectionId: input.connectionId, fact, now });
       }
 
+      // Detection→delivery bridge (ADR-0023), emitted after the costs land so
+      // the message can carry the purchase total. Purchase sync has no
+      // transaction at all by design, so this is not transactional either; the
+      // acquisition id in the deduplication key makes a lost emission
+      // recoverable by a re-run, and a notification problem must never fail an
+      // ingestion that already committed.
+      try {
+        await publishNotificationEvent({
+          executor: db,
+          enqueue: options.enqueue,
+          event: {
+            eventClass: "purchase",
+            eventType: "purchase_ingested",
+            subjectType: "acquisition",
+            subjectId: acquisition.id,
+            occurredAt: new Date(fact.purchasedAt),
+            payload: {
+              referenceCode: acquisition.referenceCode,
+              connectionId: input.connectionId,
+              externalOrderId: fact.externalOrderId,
+              title: fact.title,
+              totalAmount: fact.totalAmount,
+              currency: fact.currency,
+              ...(fact.sellerExternalId === null
+                ? {}
+                : { sellerName: fact.sellerExternalId }),
+            },
+            deduplicationKey: `acquisition:${acquisition.id}:purchase_ingested`,
+          },
+        });
+      } catch (error) {
+        // Recorded nowhere else on purpose: the ingestion result is the
+        // caller's contract, and the executor logs its own outcome.
+        if (options.onNotificationError !== undefined) {
+          options.onNotificationError(error);
+        }
+      }
+
       return { created: true, skipped: false, acquisition };
     },
   };
@@ -596,10 +644,15 @@ export function createEbayPurchaseSync(options: {
   fetchPurchases: EbayPurchasePageIterator;
   /** Reuse an already-built ingestion service (tests, composition roots). */
   ingestion?: PurchaseIngestionService;
+  /** Passed through to the ingestion service it builds (ADR-0023). */
+  enqueue?: NotificationEnqueue;
 }): EbayPurchaseSyncService {
   const { db, fetchPurchases } = options;
   const ingestion =
-    options.ingestion ?? createPurchaseIngestionService({ db });
+    options.ingestion ??
+    createPurchaseIngestionService(
+      options.enqueue === undefined ? { db } : { db, enqueue: options.enqueue },
+    );
 
   async function syncConnection(
     input: SyncEbayPurchasesInput,

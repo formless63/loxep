@@ -20,7 +20,15 @@ import {
   notificationRules,
 } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
-import type { SecretsService } from "@loxep/domain";
+import {
+  NOTIFICATION_EVENT_CLASSES,
+  notificationEventClasses,
+  routeNotificationEvent,
+} from "@loxep/domain";
+import type {
+  NotificationEventClass,
+  SecretsService,
+} from "@loxep/domain";
 import { z } from "zod";
 import {
   NotificationNotFoundError,
@@ -65,6 +73,19 @@ export const MARKET_EVENT_TYPES = [
   "listing_ended",
   "new_listing",
 ] as const;
+
+/**
+ * Event types a rule of `eventClass` may filter on, from `@loxep/domain`'s
+ * event-class registry (ADR-0023). A rule is the same two-dimensional filter
+ * it always was — WHAT (class + type, a null type meaning any type in the
+ * class) x WHICH SUBJECT (monitor target, null meaning any) — with the class
+ * dimension added.
+ */
+export function ruleEventTypesForClass(
+  eventClass: NotificationEventClass,
+): readonly string[] {
+  return notificationEventClasses[eventClass].eventTypes;
+}
 
 export type NotificationEndpointRow =
   typeof notificationEndpoints.$inferSelect;
@@ -121,7 +142,8 @@ const createRuleSchema = z.strictObject({
   name: z.string().min(1),
   endpointId: z.uuid(),
   enabled: z.boolean().optional(),
-  marketEventType: z.enum(MARKET_EVENT_TYPES).nullish(),
+  eventClass: z.enum(NOTIFICATION_EVENT_CLASSES),
+  eventType: z.string().min(1).nullish(),
   monitorTargetId: z.uuid().nullish(),
   conditions: z.record(z.string(), z.unknown()).optional(),
   createdByUserId: z.string().min(1).nullish(),
@@ -131,13 +153,32 @@ const updateRuleSchema = z
   .strictObject({
     name: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
-    marketEventType: z.enum(MARKET_EVENT_TYPES).nullish(),
+    eventClass: z.enum(NOTIFICATION_EVENT_CLASSES).optional(),
+    eventType: z.string().min(1).nullish(),
     monitorTargetId: z.uuid().nullish(),
     conditions: z.record(z.string(), z.unknown()).optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, {
     message: "empty update",
   });
+
+/**
+ * A rule that names an event type its class does not register could never
+ * match anything. Refused here rather than silently never firing — the same
+ * reason `recordNotificationEvent` validates the emitting side.
+ */
+function validateRuleEventType(
+  eventClass: NotificationEventClass,
+  eventType: string | null | undefined,
+): void {
+  if (eventType == null) return;
+  const registered = ruleEventTypesForClass(eventClass);
+  if (!registered.includes(eventType)) {
+    throw new NotificationValidationError(
+      `event type "${eventType}" is not registered for notification class "${eventClass}" (registered: ${registered.join(", ") || "none"})`,
+    );
+  }
+}
 
 export type CreateEndpointInput = z.input<typeof createEndpointSchema>;
 export type UpdateEndpointInput = z.input<typeof updateEndpointSchema>;
@@ -323,6 +364,7 @@ export function createNotificationService(options: {
     input: CreateRuleInput,
   ): Promise<NotificationRuleRow> {
     const parsed = createRuleSchema.parse(input);
+    validateRuleEventType(parsed.eventClass, parsed.eventType);
     // The endpoint must exist (FK would enforce; fail with a clearer error).
     await getEndpoint(parsed.endpointId);
     const inserted = await db
@@ -331,7 +373,8 @@ export function createNotificationService(options: {
         name: parsed.name,
         endpointId: parsed.endpointId,
         enabled: parsed.enabled ?? true,
-        marketEventType: parsed.marketEventType ?? null,
+        eventClass: parsed.eventClass,
+        eventType: parsed.eventType ?? null,
         monitorTargetId: parsed.monitorTargetId ?? null,
         conditions: parsed.conditions ?? {},
         createdByUserId: parsed.createdByUserId ?? null,
@@ -358,11 +401,17 @@ export function createNotificationService(options: {
   ): Promise<NotificationRuleRow> {
     const parsed = updateRuleSchema.parse(patch);
     const existing = await getRule(ruleId);
+    const eventClass = (parsed.eventClass ??
+      existing.eventClass) as NotificationEventClass;
+    const eventType =
+      parsed.eventType !== undefined ? parsed.eventType : existing.eventType;
+    validateRuleEventType(eventClass, eventType);
     const set: Record<string, unknown> = { updatedAt: new Date() };
     if (parsed.name !== undefined) set["name"] = parsed.name;
     if (parsed.enabled !== undefined) set["enabled"] = parsed.enabled;
-    if (parsed.marketEventType !== undefined) {
-      set["marketEventType"] = parsed.marketEventType;
+    if (parsed.eventClass !== undefined) set["eventClass"] = parsed.eventClass;
+    if (parsed.eventType !== undefined) {
+      set["eventType"] = parsed.eventType;
     }
     if (parsed.monitorTargetId !== undefined) {
       set["monitorTargetId"] = parsed.monitorTargetId;
@@ -374,6 +423,7 @@ export function createNotificationService(options: {
         id: existing.id,
         name: existing.name,
         endpointId: existing.endpointId,
+        eventClass: existing.eventClass,
       })
       .onConflictDoUpdate({ target: notificationRules.id, set });
     return getRule(ruleId);
@@ -401,36 +451,38 @@ export function createNotificationService(options: {
   };
 }
 
-/** The market-event facts rule matching needs. */
+/**
+ * The event facts rule matching needs. `eventClass` defaults to `"market"` so
+ * the shipped market call sites (the poll executors' detection to delivery
+ * bridge) pass exactly what they always passed.
+ */
 export interface RuleMatchEvent {
+  eventClass?: string;
   eventType: string;
   monitorTargetId: string | null;
 }
 
 /**
- * Enabled rules matching a market event: `market_event_type` matches or is
- * NULL (any type), and `monitor_target_id` matches or is NULL (any target).
- * An event with no monitor target only matches monitor-agnostic rules.
+ * Enabled rules matching an event.
+ *
+ * The predicate itself lives in `@loxep/domain`'s `routeNotificationEvent` —
+ * one source of truth for a rule that both the detection side (which cannot
+ * import this package) and the delivery side apply. This wrapper loads the
+ * matched rule rows for callers that want the rules rather than the endpoints.
  */
 export async function matchRules(
   db: LoxepDb,
-  marketEvent: RuleMatchEvent,
+  event: RuleMatchEvent,
 ): Promise<NotificationRuleRow[]> {
-  return db.query.notificationRules.findMany({
-    where: (table, { and, or, eq, isNull }) =>
-      and(
-        eq(table.enabled, true),
-        or(
-          isNull(table.marketEventType),
-          eq(table.marketEventType, marketEvent.eventType),
-        ),
-        marketEvent.monitorTargetId === null
-          ? isNull(table.monitorTargetId)
-          : or(
-              isNull(table.monitorTargetId),
-              eq(table.monitorTargetId, marketEvent.monitorTargetId),
-            ),
-      ),
+  const { ruleIds } = await routeNotificationEvent(db, {
+    eventClass: event.eventClass ?? "market",
+    eventType: event.eventType,
+    monitorTargetId: event.monitorTargetId,
+  });
+  if (ruleIds.length === 0) return [];
+  const rows = await db.query.notificationRules.findMany({
+    where: (table, { inArray }) => inArray(table.id, ruleIds),
     orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)],
   });
+  return rows;
 }

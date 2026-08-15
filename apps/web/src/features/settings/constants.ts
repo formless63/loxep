@@ -8,6 +8,7 @@ import type { EconomicEntityKind } from '@loxep/db/schema';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { StorageDriverFamily } from '@loxep/storage';
 import type { MarketEventType } from '@loxep/market';
+import type { NotificationEventClass } from '@loxep/db/schema';
 import type { DeliveryStatus, NtfyPriority } from '@loxep/notifications';
 
 const ENTITY_KIND_LABELS = {
@@ -74,6 +75,81 @@ export const marketEventTypeOptions = MARKET_EVENT_TYPE_VALUES.map((value) => ({
 
 export function marketEventTypeLabel(eventType: MarketEventType | string): string {
   return MARKET_EVENT_TYPE_LABELS[eventType as MarketEventType] ?? eventType;
+}
+
+/**
+ * Notification event classes (ADR-0023).
+ *
+ * Mirrored locally, exactly like `MARKET_EVENT_TYPE_LABELS` above and for the
+ * same reason: this module's imports from server packages are type-only so
+ * nothing heavy reaches the client bundle. `satisfies Record<...>` keeps the
+ * union covered, so a class added to `@loxep/domain`'s registry fails
+ * typechecking here instead of silently drifting. The registry — not this
+ * map — remains authoritative: the server revalidates every (class, type)
+ * pair on write.
+ */
+const NOTIFICATION_EVENT_CLASS_LABELS = {
+  market: 'Market',
+  purchase: 'Purchases',
+  document: 'Documents',
+  sale: 'Sales',
+  health: 'Integration health',
+  infrastructure: 'Infrastructure'
+} satisfies Record<NotificationEventClass, string>;
+
+const NON_MARKET_EVENT_TYPE_LABELS: Record<string, string> = {
+  purchase_ingested: 'Purchase ingested',
+  document_confirmed: 'Document confirmed',
+  manual_sale_recorded: 'Sale recorded',
+  health_degraded: 'Degraded',
+  health_recovered: 'Recovered'
+};
+
+/**
+ * Event types each class permits. `infrastructure` is seeded in the schema
+ * CHECK but emits nothing yet, so it has no types and is not offered as a
+ * rule class — a rule for it could never match.
+ */
+const NOTIFICATION_EVENT_TYPES_BY_CLASS = {
+  market: MARKET_EVENT_TYPE_VALUES as readonly string[],
+  purchase: ['purchase_ingested'],
+  document: ['document_confirmed'],
+  sale: ['manual_sale_recorded'],
+  health: ['health_degraded', 'health_recovered'],
+  infrastructure: []
+} satisfies Record<NotificationEventClass, readonly string[]>;
+
+export const NOTIFICATION_EVENT_CLASS_VALUES = (
+  Object.keys(NOTIFICATION_EVENT_CLASS_LABELS) as NotificationEventClass[]
+).filter((value) => NOTIFICATION_EVENT_TYPES_BY_CLASS[value].length > 0);
+
+export const notificationEventClassOptions = NOTIFICATION_EVENT_CLASS_VALUES.map((value) => ({
+  value,
+  label: NOTIFICATION_EVENT_CLASS_LABELS[value]
+}));
+
+export function notificationEventClassLabel(eventClass: string): string {
+  return NOTIFICATION_EVENT_CLASS_LABELS[eventClass as NotificationEventClass] ?? eventClass;
+}
+
+export function notificationEventTypeLabel(eventType: string): string {
+  return (
+    NON_MARKET_EVENT_TYPE_LABELS[eventType] ??
+    MARKET_EVENT_TYPE_LABELS[eventType as MarketEventType] ??
+    eventType
+  );
+}
+
+/** Event types a rule of this class may filter on, labelled for the picker. */
+export function notificationEventTypeOptionsFor(
+  eventClass: string
+): { value: string; label: string }[] {
+  const types = NOTIFICATION_EVENT_TYPES_BY_CLASS[eventClass as NotificationEventClass];
+  if (types === undefined) return [];
+  return types.map((value) => ({
+    value,
+    label: notificationEventTypeLabel(value)
+  }));
 }
 
 /** Mirrors `@loxep/notifications`'s `NTFY_PRIORITIES` (https://docs.ntfy.sh). */

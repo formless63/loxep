@@ -44,6 +44,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { catalogItems, channelListings, orderLines, orders } from '@loxep/db/schema';
+import { createTransactionalNotificationEnqueue, publishNotificationEvent } from '@loxep/domain';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 
@@ -589,6 +590,39 @@ export const recordManualListingSale = createServerFn({ method: 'POST' })
       quantity: data.quantity,
       actorUserId: session.user.id
     });
+
+    // Detection→delivery bridge (ADR-0023). This handler is the LIVE manual
+    // sale path (`@loxep/commerce`'s `recordManualSale` is the same logic
+    // re-declared here pending the dependency edge — see the module doc), so
+    // it emits the same `sale`-class event under the same order-keyed
+    // deduplication key. Unlike the package copy there is no transaction to
+    // join here; a notification failure must never fail a sale that already
+    // wrote real orders, lines, and inventory movements.
+    try {
+      await publishNotificationEvent({
+        executor: handle.db,
+        enqueue: createTransactionalNotificationEnqueue(),
+        event: {
+          eventClass: 'sale',
+          eventType: 'manual_sale_recorded',
+          subjectType: 'order',
+          subjectId: order.id,
+          occurredAt: order.placedAt ?? new Date(),
+          payload: {
+            listingTitle: listing.listingTitle ?? inventoryItem.id,
+            listingCode: listing.listingCode,
+            channelListingId: listing.id,
+            quantity: Number(data.quantity),
+            totalAmount: line.lineTotal,
+            currency: order.currency,
+            listingStatus
+          },
+          deduplicationKey: `order:${order.id}:manual_sale_recorded`
+        }
+      });
+    } catch {
+      // Best effort: the sale is the fact that matters.
+    }
 
     return {
       orderId: order.id,

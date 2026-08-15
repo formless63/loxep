@@ -69,7 +69,7 @@ import {
  *      target; tier-1 links with a null external_id are unaffected. No
  *      column added, no other table touched.
  */
-const MIGRATION_FILE_COUNT = 22;
+const MIGRATION_FILE_COUNT = 23;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

@@ -3,6 +3,7 @@
  * 4a, open question 7, loxep-dgf.6).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createRecordingNotificationEnqueue } from "@loxep/domain";
 import { createCatalogService } from "../src/catalog.ts";
 import type { CatalogService, CatalogItemRow } from "../src/catalog.ts";
 import { CommerceConflictError, CommerceValidationError } from "../src/errors.ts";
@@ -32,6 +33,52 @@ describe("manual sale recording", () => {
 
   afterAll(async () => {
     await scratch.close();
+  });
+
+  it("records the sale as a notification event and routes it (ADR-0023)", async () => {
+    // Detection and delivery stay separate: the ledger row is written inside
+    // the sale's own transaction, and routing only happens because a rule
+    // named the `sale` class.
+    const endpoint = await scratch.handle.db.execute<{ id: string }>(
+      `insert into notification_endpoints (provider, name, config)
+       values ('ntfy', 'sales', '{}'::jsonb) returning id`,
+    );
+    const endpointId = String(endpoint.rows[0]!["id"]);
+    await scratch.handle.db.execute(
+      `insert into notification_rules (name, event_class, endpoint_id)
+       values ('any sale', 'sale', '${endpointId}')`,
+    );
+    const enqueue = createRecordingNotificationEnqueue();
+    const notifying = createManualSalesService({
+      db: scratch.handle.db,
+      enqueue,
+    });
+    const listing = await catalog.createManualListing({
+      catalogItemId: catalogItem.id,
+      channel: "facebook_marketplace",
+      status: "active",
+      currency: "USD",
+    });
+
+    const result = await notifying.recordManualSale({
+      channelListingId: listing.id,
+      quantity: "1",
+      unitPrice: "31.50",
+    });
+
+    const events = await scratch.handle.db.query.notificationEvents.findMany({
+      where: (table, { eq }) =>
+        eq(table.deduplicationKey, `order:${result.orderId}:manual_sale_recorded`),
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.eventClass).toBe("sale");
+    expect(events[0]!.subjectType).toBe("order");
+    expect(events[0]!.subjectId).toBe(result.orderId);
+    expect((events[0]!.payload as Record<string, unknown>)["totalAmount"]).toBe(
+      "31.500000",
+    );
+    expect(enqueue.calls).toHaveLength(1);
+    expect(enqueue.calls[0]!.taskName).toBe("notifications.deliver");
   });
 
   it("records a sale: writes a manual order + line and marks the listing sold_out", async () => {

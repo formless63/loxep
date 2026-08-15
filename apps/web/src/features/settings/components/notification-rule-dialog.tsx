@@ -1,7 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import type { MarketEventType } from '@loxep/market';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -24,14 +23,16 @@ import { notificationRulesQuery } from '@/features/settings/api/queries';
 import {
   ANY_MARKET_EVENT_TYPE_VALUE,
   ANY_MONITOR_TARGET_VALUE,
-  marketEventTypeOptions
+  notificationEventClassOptions,
+  notificationEventTypeOptionsFor
 } from '@/features/settings/constants';
 import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 
 const ruleFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required'),
   endpointId: z.string().min(1, 'Endpoint is required'),
-  marketEventType: z.string(),
+  eventClass: z.string().min(1, 'Event class is required'),
+  eventType: z.string(),
   monitorTargetId: z.string(),
   enabled: z.boolean()
 });
@@ -39,10 +40,15 @@ const ruleFormSchema = z.object({
 type RuleFormValues = z.infer<typeof ruleFormSchema>;
 
 /**
- * Create/edit dialog for notification rules: which market events (any, or
- * one `market_event_type`) for which monitor target (any, or one) route to
- * which endpoint. `matchRules` (`@loxep/notifications`) treats a NULL filter
- * as "any" — the sentinel values here map back to NULL on submit.
+ * Create/edit dialog for notification rules: which events (a required event
+ * CLASS, plus any-or-one event type within it) for which monitor target (any,
+ * or one) route to which endpoint — the two-dimensional filter ADR-0023
+ * extended with the class dimension.
+ *
+ * A NULL event type / monitor target means "any" in the matcher; the sentinel
+ * values here map back to NULL on submit. There is deliberately no "any
+ * class" wildcard: a rule written for market events must not silently start
+ * delivering health transitions.
  */
 export default function NotificationRuleDialog({
   open,
@@ -64,10 +70,7 @@ export default function NotificationRuleDialog({
     value: endpoint.id,
     label: endpoint.name
   }));
-  const eventTypeOptions = [
-    { value: ANY_MARKET_EVENT_TYPE_VALUE, label: 'Any event type' },
-    ...marketEventTypeOptions
-  ];
+
   const monitorTargetOptions = [
     { value: ANY_MONITOR_TARGET_VALUE, label: 'Any monitor target' },
     ...monitorTargets.map((target) => ({ value: target.id, label: target.name }))
@@ -75,10 +78,7 @@ export default function NotificationRuleDialog({
 
   const mutation = useMutation({
     mutationFn: (values: RuleFormValues) => {
-      const marketEventType: MarketEventType | null =
-        values.marketEventType === ANY_MARKET_EVENT_TYPE_VALUE
-          ? null
-          : (values.marketEventType as MarketEventType);
+      const eventType = values.eventType === ANY_MARKET_EVENT_TYPE_VALUE ? null : values.eventType;
       const monitorTargetId =
         values.monitorTargetId === ANY_MONITOR_TARGET_VALUE ? null : values.monitorTargetId;
       if (isEdit) {
@@ -87,7 +87,8 @@ export default function NotificationRuleDialog({
             id: rule.id,
             name: values.name,
             enabled: values.enabled,
-            marketEventType,
+            eventClass: values.eventClass,
+            eventType,
             monitorTargetId
           }
         });
@@ -97,7 +98,8 @@ export default function NotificationRuleDialog({
           name: values.name,
           endpointId: values.endpointId,
           enabled: values.enabled,
-          marketEventType,
+          eventClass: values.eventClass,
+          eventType,
           monitorTargetId
         }
       });
@@ -114,7 +116,8 @@ export default function NotificationRuleDialog({
     defaultValues: {
       name: rule?.name ?? '',
       endpointId: rule?.endpointId ?? endpointOptions[0]?.value ?? '',
-      marketEventType: rule?.marketEventType ?? ANY_MARKET_EVENT_TYPE_VALUE,
+      eventClass: rule?.eventClass ?? 'market',
+      eventType: rule?.eventType ?? ANY_MARKET_EVENT_TYPE_VALUE,
       monitorTargetId: rule?.monitorTargetId ?? ANY_MONITOR_TARGET_VALUE,
       enabled: rule?.enabled ?? true
     },
@@ -136,8 +139,9 @@ export default function NotificationRuleDialog({
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edit notification rule' : 'New notification rule'}</DialogTitle>
           <DialogDescription>
-            A rule matches an event type and/or monitor target ("any" when unset) and routes it to
-            one endpoint. Event detection and delivery stay separate concepts.
+            A rule matches one event class, optionally narrowed to a single event type and/or
+            monitor target ("any" when unset), and routes it to one endpoint. Event detection and
+            delivery stay separate concepts.
           </DialogDescription>
         </DialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
@@ -170,11 +174,31 @@ export default function NotificationRuleDialog({
               />
             )}
             <form.AppField
-              name='marketEventType'
+              name='eventClass'
               children={(field) => (
-                <field.SelectField label='Event type' options={eventTypeOptions} />
+                <field.SelectField
+                  label='Event class'
+                  required
+                  options={notificationEventClassOptions}
+                />
               )}
             />
+            <form.Subscribe selector={(state) => state.values.eventClass}>
+              {(eventClass) => (
+                <form.AppField
+                  name='eventType'
+                  children={(field) => (
+                    <field.SelectField
+                      label='Event type'
+                      options={[
+                        { value: ANY_MARKET_EVENT_TYPE_VALUE, label: 'Any event type' },
+                        ...notificationEventTypeOptionsFor(eventClass)
+                      ]}
+                    />
+                  )}
+                />
+              )}
+            </form.Subscribe>
             <form.AppField
               name='monitorTargetId'
               children={(field) => (

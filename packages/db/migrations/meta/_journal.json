@@ -155,6 +155,13 @@
       "when": 1786655574997,
       "tag": "0021_external_resources_idempotency",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786755353725,
+      "tag": "0022_notification_events",
+      "breakpoints": true
     }
   ]
 }

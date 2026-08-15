@@ -186,21 +186,32 @@ describe("rule CRUD and matching", () => {
     const wildcard = await service.createRule({
       name: "everything",
       endpointId: endpoint.id,
+      eventClass: "market",
     });
     const priceDropsOnly = await service.createRule({
       name: "price drops only",
       endpointId: endpoint.id,
-      marketEventType: "price_dropped",
+      eventClass: "market",
+      eventType: "price_dropped",
     });
     const monitorAOnly = await service.createRule({
       name: "monitor A only",
       endpointId: endpoint.id,
+      eventClass: "market",
       monitorTargetId: monitorA,
     });
     const disabled = await service.createRule({
       name: "disabled",
       endpointId: endpoint.id,
+      eventClass: "market",
       enabled: false,
+    });
+    // A rule in ANOTHER class must never match a market event, however wide
+    // its other dimensions are (ADR-0023: there is no "any class" wildcard).
+    const healthRule = await service.createRule({
+      name: "health degradations",
+      endpointId: endpoint.id,
+      eventClass: "health",
     });
 
     const idsFor = async (eventType: string, monitorTargetId: string | null) =>
@@ -220,6 +231,17 @@ describe("rule CRUD and matching", () => {
     );
     // Disabled rules never match.
     expect(await idsFor("price_dropped", monitorA)).not.toContain(disabled.id);
+    // The class dimension isolates: a health rule never matches a market
+    // event, and a market rule never matches a health transition.
+    expect(await idsFor("price_dropped", monitorA)).not.toContain(
+      healthRule.id,
+    );
+    const healthMatches = await matchRules(handle.db, {
+      eventClass: "health",
+      eventType: "health_degraded",
+      monitorTargetId: null,
+    });
+    expect(healthMatches.map((rule) => rule.id)).toEqual([healthRule.id]);
   });
 
   it("validates rule inputs and updates/deletes rules", async () => {
@@ -232,28 +254,50 @@ describe("rule CRUD and matching", () => {
       service.createRule({
         name: "unknown event type",
         endpointId: endpoint.id,
-        // @ts-expect-error — intentionally invalid event type
-        marketEventType: "price_exploded",
+        eventClass: "market",
+        eventType: "price_exploded",
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/not registered for notification class "market"/);
+    // A real event type from the WRONG class is refused too: the pair, not
+    // the type alone, is what the registry validates.
+    await expect(
+      service.createRule({
+        name: "cross-class type",
+        endpointId: endpoint.id,
+        eventClass: "health",
+        eventType: "price_dropped",
+      }),
+    ).rejects.toThrow(/not registered for notification class "health"/);
     await expect(
       service.createRule({
         name: "unknown endpoint",
         endpointId: "00000000-0000-4000-8000-000000000000",
+        eventClass: "market",
       }),
     ).rejects.toThrow(NotificationNotFoundError);
 
     const rule = await service.createRule({
       name: "to update",
       endpointId: endpoint.id,
-      marketEventType: "restocked",
+      eventClass: "market",
+      eventType: "restocked",
     });
     const updated = await service.updateRule(rule.id, {
       enabled: false,
-      marketEventType: null,
+      eventType: null,
     });
     expect(updated.enabled).toBe(false);
-    expect(updated.marketEventType).toBeNull();
+    expect(updated.eventType).toBeNull();
+    // Switching class re-validates the (class, type) pair.
+    const reclassed = await service.updateRule(rule.id, {
+      eventClass: "health",
+      eventType: "health_degraded",
+    });
+    expect(reclassed.eventClass).toBe("health");
+    expect(reclassed.eventType).toBe("health_degraded");
+    await expect(
+      service.updateRule(rule.id, { eventType: "price_dropped" }),
+    ).rejects.toThrow(/not registered for notification class "health"/);
     await service.deleteRule(rule.id);
     await expect(service.getRule(rule.id)).rejects.toThrow(
       NotificationNotFoundError,

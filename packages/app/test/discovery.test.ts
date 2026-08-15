@@ -228,7 +228,8 @@ beforeAll(async () => {
   await notifications.createRule({
     name: "every new listing",
     endpointId: endpoint.id,
-    marketEventType: "new_listing",
+    eventClass: "market",
+    eventType: "new_listing",
   });
 }, 120_000);
 
@@ -304,8 +305,16 @@ describe("ebay_search poll executor", () => {
     const firstEvent = (await newListingEvents(items[0]!.id))[0]!;
     const delivery = await waitFor(
       async () => {
+        // ADR-0023: deliveries are keyed on the notification EVENT; a
+        // market event reaches the ledger under `market_event:<id>`.
+        const ledgerRow = await handle.db.query.notificationEvents.findFirst({
+          where: (table, { eq }) =>
+            eq(table.deduplicationKey, `market_event:${firstEvent.id}`),
+        });
+        if (ledgerRow === undefined) return undefined;
         const row = await handle.db.query.notificationDeliveries.findFirst({
-          where: (table, { eq }) => eq(table.marketEventId, firstEvent.id),
+          where: (table, { eq }) =>
+            eq(table.notificationEventId, ledgerRow.id),
         });
         return row !== undefined && row.deliveredAt !== null ? row : undefined;
       },

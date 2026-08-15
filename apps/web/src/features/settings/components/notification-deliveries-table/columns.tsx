@@ -4,7 +4,12 @@ import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
 import { formatQuantity, formatTimestampPrecise } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
-import { DELIVERY_STATUS_LABELS, deliveryStatusLabel } from '@/features/settings/constants';
+import {
+  DELIVERY_STATUS_LABELS,
+  deliveryStatusLabel,
+  notificationEventClassLabel,
+  notificationEventTypeLabel
+} from '@/features/settings/constants';
 import type { DeliveryStatus } from '@loxep/notifications';
 import type { NotificationDeliveryDto } from '@/server/admin-functions';
 
@@ -22,6 +27,16 @@ const STATUS_OPTIONS = (Object.keys(DELIVERY_STATUS_LABELS) as DeliveryStatus[])
 
 export const columns: ColumnDef<DataTableFeatures, NotificationDeliveryDto>[] = [
   {
+    id: 'eventClass',
+    accessorKey: 'eventClass',
+    header: 'Class',
+    cell: ({ cell }) => (
+      <span className='text-muted-foreground'>
+        {notificationEventClassLabel(cell.getValue<string>())}
+      </span>
+    )
+  },
+  {
     id: 'eventType',
     accessorKey: 'eventType',
     header: ({
@@ -29,7 +44,7 @@ export const columns: ColumnDef<DataTableFeatures, NotificationDeliveryDto>[] = 
     }: {
       column: Column<DataTableFeatures, NotificationDeliveryDto, unknown>;
     }) => <DataTableColumnHeader column={column} title='Event type' />,
-    cell: ({ cell }) => cell.getValue<string>()
+    cell: ({ cell }) => notificationEventTypeLabel(cell.getValue<string>())
   },
   {
     id: 'endpointName',

@@ -3,7 +3,12 @@ import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import { BooleanStatusBadge } from '@/features/settings/components/status-tone';
-import { marketEventTypeLabel, marketEventTypeOptions } from '@/features/settings/constants';
+import {
+  notificationEventClassLabel,
+  notificationEventClassOptions,
+  notificationEventTypeLabel,
+  notificationEventTypeOptionsFor
+} from '@/features/settings/constants';
 import type { DataTableFeatures } from '@/lib/table-features';
 import type { NotificationRuleDto } from '@/server/admin-functions';
 import { CellAction } from './cell-action';
@@ -31,14 +36,30 @@ export function getColumns(
       enableColumnFilter: true
     },
     {
-      id: 'marketEventType',
-      accessorKey: 'marketEventType',
+      id: 'eventClass',
+      accessorKey: 'eventClass',
+      header: ({ column }: { column: Column<DataTableFeatures, NotificationRuleDto, unknown> }) => (
+        <DataTableColumnHeader column={column} title='Class' />
+      ),
+      cell: ({ row }) => (
+        <Badge variant='secondary'>{notificationEventClassLabel(row.original.eventClass)}</Badge>
+      ),
+      enableColumnFilter: true,
+      meta: {
+        label: 'class',
+        variant: 'multiSelect' as const,
+        options: notificationEventClassOptions
+      }
+    },
+    {
+      id: 'eventType',
+      accessorKey: 'eventType',
       header: ({ column }: { column: Column<DataTableFeatures, NotificationRuleDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Event type' />
       ),
       cell: ({ row }) =>
-        row.original.marketEventType ? (
-          <Badge variant='outline'>{marketEventTypeLabel(row.original.marketEventType)}</Badge>
+        row.original.eventType ? (
+          <Badge variant='outline'>{notificationEventTypeLabel(row.original.eventType)}</Badge>
         ) : (
           <span className='text-muted-foreground'>any</span>
         ),
@@ -46,7 +67,11 @@ export function getColumns(
       meta: {
         label: 'event type',
         variant: 'multiSelect' as const,
-        options: marketEventTypeOptions
+        // Every wired class's types, since the table shows rules of all
+        // classes at once.
+        options: notificationEventClassOptions.flatMap((option) =>
+          notificationEventTypeOptionsFor(option.value)
+        )
       }
     },
     {

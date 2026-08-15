@@ -4,7 +4,10 @@
  * no DB, no network.
  */
 import { describe, expect, it } from "vitest";
-import { renderMarketEventMessage } from "../src/render.ts";
+import {
+  renderMarketEventMessage,
+  renderNotificationEventMessage,
+} from "../src/render.ts";
 import type { RenderableMarketEvent } from "../src/render.ts";
 
 const baseEvent = {
@@ -221,5 +224,209 @@ describe("renderMarketEventMessage", () => {
       "custom_event for Vintage Widget 3000 at 2026-08-10T12:00:00.000Z\nhttps://www.ebay.com/itm/123456789",
     );
     expect(message.tags).toEqual(["custom_event"]);
+  });
+});
+
+describe("new_listing (the discovery event)", () => {
+  it("renders title, price, and the payload's own canonical URL without a joined listing", () => {
+    // Discovery records title/price/currency/canonicalUrl in the payload at
+    // link time, so this event renders fully with NO joined listing row —
+    // the case that previously fell through to the ISO-timestamp default.
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "new_listing",
+      payload: {
+        title: "Rare Widget MkII",
+        price: "149.990000",
+        currency: "USD",
+        canonicalUrl: "https://www.ebay.com/itm/987654321",
+        discoveredByMonitorTargetId: "33333333-3333-4333-8333-333333333333",
+      },
+    });
+    expect(message.title).toBe("New listing: Rare Widget MkII");
+    expect(message.body).toBe(
+      "Rare Widget MkII — $149.99\nhttps://www.ebay.com/itm/987654321",
+    );
+    expect(message.url).toBe("https://www.ebay.com/itm/987654321");
+    expect(message.tags).toContain("new_listing");
+    expect(message.priority).toBe("high");
+  });
+
+  it("renders an end time when the listing carries one", () => {
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "new_listing",
+      payload: {
+        title: "Ending Soon Widget",
+        listingEndsAt: "2026-08-20T09:00:00.000Z",
+      },
+    });
+    expect(message.body).toContain("Ends 2026-08-20T09:00:00.000Z");
+  });
+});
+
+describe("opportunity attribution reaches the message", () => {
+  it("puts the attributing rule's name in the title and its score in the body", () => {
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_dropped",
+      payload: {
+        from: "100.00",
+        to: "60.00",
+        currency: "USD",
+        opportunity: {
+          ruleId: "44444444-4444-4444-8444-444444444444",
+          ruleName: "Deep discounts",
+          priority: 10,
+          score: 82.5,
+          reasons: ["discount: 40%", "price: under $75"],
+          matchCount: 1,
+          evaluatedAt: "2026-08-10T12:00:01.000Z",
+        },
+      },
+      listing,
+    });
+    expect(message.title).toBe("Deep discounts: Price drop: Vintage Widget 3000");
+    expect(message.body).toContain("Opportunity: Deep discounts (score 82.5)");
+    expect(message.body).toContain("discount: 40%");
+    expect(message.tags).toContain("opportunity");
+    expect(message.priority).toBe("high");
+  });
+
+  it("leaves an unattributed event untouched", () => {
+    const message = renderMarketEventMessage({
+      ...baseEvent,
+      eventType: "price_dropped",
+      payload: { from: "100.00", to: "60.00", currency: "USD" },
+      listing,
+    });
+    expect(message.title).toBe("Price drop: Vintage Widget 3000");
+    expect(message.body).not.toContain("Opportunity");
+    expect(message.tags).not.toContain("opportunity");
+  });
+});
+
+describe("renderNotificationEventMessage (classes beyond market)", () => {
+  const baseRow = {
+    id: "55555555-5555-4555-8555-555555555555",
+    monitorTargetId: null,
+    occurredAt: new Date("2026-08-14T08:30:00.000Z"),
+    deduplicationKey: "test",
+    createdAt: new Date("2026-08-14T08:30:00.000Z"),
+  };
+
+  it("renders a market-class row through the market renderer", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "market",
+      eventType: "restocked",
+      subjectType: "market_event",
+      subjectId: "66666666-6666-4666-8666-666666666666",
+      payload: {
+        marketplaceItemId: "22222222-2222-4222-8222-222222222222",
+        fromQuantity: 0,
+        toQuantity: 3,
+        title: "Vintage Widget 3000",
+      },
+    } as never);
+    expect(message.title).toBe("Back in stock: Vintage Widget 3000");
+  });
+
+  it("renders a purchase", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "purchase",
+      eventType: "purchase_ingested",
+      subjectType: "acquisition",
+      subjectId: "77777777-7777-4777-8777-777777777777",
+      payload: {
+        referenceCode: "ACQ-2026-0042",
+        totalAmount: "89.500000",
+        currency: "USD",
+      },
+    } as never);
+    expect(message.title).toBe("Purchase ACQ-2026-0042 ingested");
+    expect(message.body).toContain("Total $89.50");
+    expect(message.body).toContain("Awaiting intake");
+  });
+
+  it("renders a document confirmation", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "document",
+      eventType: "document_confirmed",
+      subjectType: "document",
+      subjectId: "88888888-8888-4888-8888-888888888888",
+      payload: { fileName: "receipt-aug.pdf", lineCount: 3 },
+    } as never);
+    expect(message.title).toBe("Document confirmed: receipt-aug.pdf");
+    expect(message.body).toContain("3 lines");
+  });
+
+  it("renders a manual sale", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "sale",
+      eventType: "manual_sale_recorded",
+      subjectType: "order",
+      subjectId: "99999999-9999-4999-8999-999999999999",
+      payload: {
+        listingTitle: "Vintage Widget 3000",
+        totalAmount: "125.000000",
+        currency: "USD",
+        quantity: 2,
+      },
+    } as never);
+    expect(message.title).toBe("Sale recorded: Vintage Widget 3000");
+    expect(message.body).toBe("Vintage Widget 3000 x2 sold for $125.00.");
+    expect(message.priority).toBe("high");
+  });
+
+  it("renders a health degradation and a recovery differently", () => {
+    const degraded = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "health",
+      eventType: "health_degraded",
+      subjectType: "connection",
+      subjectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      payload: {
+        subjectType: "connection",
+        previousStatus: "ok",
+        status: "failing",
+        detail: { provider: "ebay" },
+      },
+    } as never);
+    expect(degraded.title).toBe("Degraded: Connection (ebay)");
+    expect(degraded.body).toContain("ok → failing");
+    expect(degraded.priority).toBe("high");
+
+    const recovered = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "health",
+      eventType: "health_recovered",
+      subjectType: "storage_backend",
+      subjectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      payload: {
+        subjectType: "storage_backend",
+        previousStatus: "failing",
+        status: "ok",
+        detail: {},
+      },
+    } as never);
+    expect(recovered.title).toBe("Recovered: Storage backend");
+    expect(recovered.priority).toBe("default");
+  });
+
+  it("falls back readably for a class it does not know", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "infrastructure",
+      eventType: "dns_drift_found",
+      subjectType: "managed_domain",
+      subjectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      payload: {},
+    } as never);
+    expect(message.title).toBe("Loxep: dns drift found");
+    expect(message.body).toContain("managed_domain");
   });
 });

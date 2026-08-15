@@ -226,7 +226,8 @@ beforeAll(async () => {
   await notifications.createRule({
     name: "every price drop",
     endpointId: endpoint.id,
-    marketEventType: "price_dropped",
+    eventClass: "market",
+    eventType: "price_dropped",
   });
 
   // An opportunity rule so `market_events.rule_id` attribution is exercised.
@@ -306,8 +307,16 @@ describe("ebay_item poll executor", () => {
     // --- delivery ------------------------------------------------------
     const delivery = await waitFor(
       async () => {
+        // ADR-0023: deliveries are keyed on the notification EVENT; a
+        // market event reaches the ledger under `market_event:<id>`.
+        const ledgerRow = await handle.db.query.notificationEvents.findFirst({
+          where: (table, { eq }) =>
+            eq(table.deduplicationKey, `market_event:${dropped!.id}`),
+        });
+        if (ledgerRow === undefined) return undefined;
         const row = await handle.db.query.notificationDeliveries.findFirst({
-          where: (table, { eq }) => eq(table.marketEventId, dropped!.id),
+          where: (table, { eq }) =>
+            eq(table.notificationEventId, ledgerRow.id),
         });
         return row !== undefined && row.deliveredAt !== null ? row : undefined;
       },
@@ -317,9 +326,14 @@ describe("ebay_item poll executor", () => {
     expect(delivery.providerMessageId).toBe("fake-message-id");
 
     // The ENRICHED renderer ran (per-event-type title, price delta, and the
-    // canonical listing URL from the listing-context bridge).
+    // canonical listing URL from the listing-context bridge) — and, since
+    // loxep-oii, the ATTRIBUTING opportunity rule reaches the message too:
+    // before that fix an operator got a bare "price drop" and had to open the
+    // app to learn which of their rules called it an opportunity.
     const message = sent.at(-1)?.message;
-    expect(message?.title).toBe("Price drop: Fake Widget");
+    expect(message?.title).toBe("any drop is interesting: Price drop: Fake Widget");
+    expect(message?.body).toContain("Opportunity: any drop is interesting");
+    expect(message?.tags).toContain("opportunity");
     // Amounts render through the notifications formatter (Intl fed from the
     // decimal string, display-only) — no raw numeric(20,6) leaks into pushes.
     expect(message?.body).toContain("$100.00 → $80.00");

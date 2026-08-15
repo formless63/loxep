@@ -14,6 +14,7 @@ export {
 export {
   MARKET_EVENT_TYPES,
   NTFY_PRIORITIES,
+  ruleEventTypesForClass,
   createNotificationService,
   endpointConfigSchemas,
   endpointSecretKey,
@@ -47,8 +48,21 @@ export {
   DELIVERY_STATUSES,
   DELIVER_TASK_NAME,
   createDeliveryPipeline,
+  deliveryJobKey,
   renderMarketEventMessage,
 } from "./deliver.ts";
+
+// The notifiable-event renderers (ADR-0023). Pure functions over a recorded
+// row, so the same code renders the outbound message and the in-app feed.
+export {
+  marketEventFromNotificationEvent,
+  renderNotificationEventMessage,
+  renderMarketEventMessage as renderEnrichedMarketEventMessage,
+} from "./render.ts";
+export type {
+  RenderableListingItem,
+  RenderableMarketEvent,
+} from "./render.ts";
 export type {
   DeliverableMarketEvent,
   DeliverTask,

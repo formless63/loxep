@@ -9,19 +9,18 @@ import { ThemeModeToggle } from '../themes/theme-mode-toggle';
 import CtaGithub from './cta-github';
 import { getWorkspaceForPath } from '@/config/workspaces';
 import { NotificationCenter } from '@/features/notifications/components/notification-center';
+import { NotificationBell } from '@/features/notifications/components/notification-bell';
 
 export default function Header() {
   const { pathname } = useLocation();
   const activeWorkspace = getWorkspaceForPath(pathname);
-  // PROVISIONAL (loxep-67w): the notification bell is hidden on every product
-  // surface. features/notifications/** is donor/reference code the repo
-  // deliberately preserves — its mock store is honest inside /starter, but
-  // is actively misleading in the real product shell, which has no real
-  // notification feed yet. Hide here, don't delete. The bell returns to
-  // product surfaces when loxep-oii lands a real feed backed by
-  // notification_deliveries; re-enabling it must NOT mean re-enabling
-  // mockNotifications.
-  const showNotificationBell = activeWorkspace.id === 'starter';
+  // loxep-67w hid the bell on every product surface because the only feed was
+  // `mockNotifications`. loxep-oii landed the real one (`notification_events`,
+  // ADR-0023), so the bell is back on product surfaces — with its DATA SOURCE
+  // replaced, which is exactly what that decision required, not with the mock
+  // store restored. The donor `NotificationCenter` and its fiction stay where
+  // they are honest: inside `/starter`.
+  const isDonorWorkspace = activeWorkspace.id === 'starter';
 
   return (
     <header className='bg-background/60 sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-2 rounded-t-xl border-b backdrop-blur-md px-4'>
@@ -40,7 +39,7 @@ export default function Header() {
         <div className='hidden sm:block'>
           <ThemeSelector />
         </div>
-        {showNotificationBell && <NotificationCenter />}
+        {isDonorWorkspace ? <NotificationCenter /> : <NotificationBell />}
       </div>
     </header>
   );

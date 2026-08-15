@@ -31,6 +31,8 @@ import { randomUUID } from "node:crypto";
 import type { LoxepDb } from "@loxep/db";
 import { orderLines, orders } from "@loxep/db/schema";
 import { MANUAL_PROVIDER } from "@loxep/db/schema";
+import { publishNotificationEvent } from "@loxep/domain";
+import type { NotificationEnqueue } from "@loxep/domain";
 import { z } from "zod";
 import { multiplyDecimals, toMoneyString } from "./decimal.ts";
 import {
@@ -87,6 +89,14 @@ export interface ManualSalesService {
 
 export function createManualSalesService(options: {
   db: LoxepDb;
+  /**
+   * Notification delivery seam (ADR-0023). Omit and a recorded sale is still
+   * RECORDED as a `sale`-class notification event — detection does not depend
+   * on delivery — but routed nowhere.
+   */
+  enqueue?: NotificationEnqueue;
+  /** Called when emitting the notification event fails; never rethrown. */
+  onNotificationError?: (error: unknown) => void;
 }): ManualSalesService {
   const { db } = options;
 
@@ -220,6 +230,42 @@ export function createManualSalesService(options: {
                 updated_at = now()
           where id = ${uuidLiteral(listing.id)}`,
       );
+
+      // Detection→delivery bridge (ADR-0023), inside the sale's own
+      // transaction so a rolled-back sale takes its notification with it.
+      //
+      // The emission runs in a SAVEPOINT: PostgreSQL aborts the whole
+      // transaction on any statement error, so without one a notification
+      // problem would roll back the sale it was reporting on. The sale is the
+      // fact that matters; the notification is not.
+      try {
+        await tx.transaction(async (savepoint: Tx) => {
+          await publishNotificationEvent({
+            executor: savepoint,
+            enqueue: options.enqueue,
+            event: {
+              eventClass: "sale",
+              eventType: "manual_sale_recorded",
+              subjectType: "order",
+              subjectId: order.id,
+              occurredAt: now,
+              payload: {
+                listingTitle: listing.listingTitle ?? catalogItem.name,
+                listingCode: listing.listingCode,
+                channelListingId: listing.id,
+                catalogItemId: catalogItem.id,
+                quantity: value.quantity,
+                totalAmount: lineSubtotal,
+                currency,
+                listingStatus,
+              },
+              deduplicationKey: `order:${order.id}:manual_sale_recorded`,
+            },
+          });
+        });
+      } catch (error) {
+        options.onNotificationError?.(error);
+      }
 
       return {
         orderId: order.id,

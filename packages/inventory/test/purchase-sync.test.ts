@@ -20,6 +20,7 @@ import {
   writePurchaseSyncCursor,
 } from "../src/purchase-sync.ts";
 import type { EbayPurchaseFactLike } from "../src/purchase-sync.ts";
+import { createRecordingNotificationEnqueue } from "@loxep/domain";
 import { InventoryValidationError } from "../src/errors.ts";
 import { createMigratedScratchDb, seedConnection, seedEntity } from "./helpers.ts";
 import type { ScratchDb } from "./helpers.ts";
@@ -276,5 +277,52 @@ describe("createEbayPurchaseSync", () => {
 
     // Reading it again must not throw — the null-watermark regression.
     await expect(sync.readCursor(connectionId)).resolves.not.toThrow();
+  });
+});
+
+describe("purchase ingestion emits a notifiable event (ADR-0023)", () => {
+  it("records the draft acquisition once and routes it to matching rules", async () => {
+    const db = scratch.handle.db;
+    const entityId = await seedEntity(scratch, "notify entity");
+    const connectionId = await seedConnection(scratch, {
+      name: "notify connection",
+      provider: "ebay",
+      economicEntityId: entityId,
+    });
+    const endpoint = await db.execute<{ id: string }>(
+      `insert into notification_endpoints (provider, name, config)
+       values ('ntfy', 'purchases', '{}'::jsonb) returning id`,
+    );
+    const endpointId = String(endpoint.rows[0]!["id"]);
+    await db.execute(
+      `insert into notification_rules (name, event_class, event_type, endpoint_id)
+       values ('purchases', 'purchase', 'purchase_ingested', '${endpointId}')`,
+    );
+    const enqueue = createRecordingNotificationEnqueue();
+    const ingestion = createPurchaseIngestionService({ db, enqueue });
+
+    const first = await ingestion.ingestEbayPurchase({
+      connectionId,
+      fact: fact("ORDER-NOTIFY"),
+    });
+    expect(first.created).toBe(true);
+    const key = `acquisition:${first.acquisition.id}:purchase_ingested`;
+    const events = await db.query.notificationEvents.findMany({
+      where: (table, { eq }) => eq(table.deduplicationKey, key),
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.eventClass).toBe("purchase");
+    expect(events[0]!.subjectType).toBe("acquisition");
+    expect(enqueue.calls).toHaveLength(1);
+
+    // A skipped (already-ingested) purchase notifies nothing: the ingestion
+    // returns early before the bridge, and the dedupe key would refuse it
+    // anyway.
+    const second = await ingestion.ingestEbayPurchase({
+      connectionId,
+      fact: fact("ORDER-NOTIFY"),
+    });
+    expect(second.skipped).toBe(true);
+    expect(enqueue.calls).toHaveLength(1);
   });
 });

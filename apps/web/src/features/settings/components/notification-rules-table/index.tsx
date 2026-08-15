@@ -32,8 +32,13 @@ import { getColumns } from './columns';
 const CLIENT_COLUMNS: ClientColumnSpec<NotificationRuleDto>[] = [
   { id: 'name', accessor: (row) => row.name, filterVariant: 'text' },
   {
-    id: 'marketEventType',
-    accessor: (row) => row.marketEventType ?? '',
+    id: 'eventClass',
+    accessor: (row) => row.eventClass,
+    filterVariant: 'multiSelect'
+  },
+  {
+    id: 'eventType',
+    accessor: (row) => row.eventType ?? '',
     filterVariant: 'multiSelect'
   }
 ];

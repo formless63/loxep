@@ -43,6 +43,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { DbHandle } from '@loxep/db';
+import { createTransactionalNotificationEnqueue, publishNotificationEvent } from '@loxep/domain';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -211,6 +212,63 @@ async function recomputeDocumentCounters(
        from counts
       where d.id = ${uuidLiteral(documentId)}`
   );
+}
+
+/**
+ * Emit the `document`-class notification event when a recompute has just left
+ * the document `confirmed` (ADR-0023).
+ *
+ * Idempotent by construction: `documents.confirmed_at` is stamped exactly
+ * once, so the deduplication key is stable and a repeated confirm records
+ * nothing. Runs in a SAVEPOINT because PostgreSQL aborts the whole
+ * transaction on any statement error — without one, a notification problem
+ * would roll back the confirmation it was reporting on. If the delivery
+ * enqueue is unavailable (a worker that has never started has no
+ * `graphile_worker` schema), the fact is still recorded, unrouted: detection
+ * does not depend on delivery.
+ */
+async function emitDocumentConfirmed(tx: DbHandle['db'], documentId: string): Promise<void> {
+  const result = await tx.execute<{
+    status: string;
+    confirmed_at: string | null;
+    file_name: string | null;
+    line_count: number;
+  }>(
+    `select status, confirmed_at, file_name, line_count
+       from documents where id = ${uuidLiteral(documentId)}`
+  );
+  const row = result.rows[0];
+  if (row === undefined) return;
+  const confirmedAt = row['confirmed_at'];
+  if (row['status'] !== 'confirmed' || confirmedAt == null) return;
+  const occurredAt = new Date(String(confirmedAt));
+  const event = {
+    eventClass: 'document' as const,
+    eventType: 'document_confirmed',
+    subjectType: 'document' as const,
+    subjectId: documentId,
+    occurredAt,
+    payload: {
+      ...(row['file_name'] == null ? {} : { fileName: row['file_name'] }),
+      lineCount: Number(row['line_count'] ?? 0)
+    },
+    deduplicationKey: `document:${documentId}:confirmed:${occurredAt.toISOString()}`
+  };
+  try {
+    await tx.transaction(async (savepoint) => {
+      await publishNotificationEvent({
+        executor: savepoint,
+        enqueue: createTransactionalNotificationEnqueue(),
+        event
+      });
+    });
+  } catch {
+    await tx
+      .transaction(async (savepoint) => {
+        await publishNotificationEvent({ executor: savepoint, event });
+      })
+      .catch(() => undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +635,7 @@ export const confirmLinesAsExpense = createServerFn({ method: 'POST' })
       }
 
       await recomputeDocumentCounters(tx, data.documentId, session.user.id);
+      await emitDocumentConfirmed(tx, data.documentId);
       return { expenseIds, skipped };
     });
   });

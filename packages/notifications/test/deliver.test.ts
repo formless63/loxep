@@ -14,6 +14,7 @@ import {
   createDeliveryPipeline,
   createNotificationService,
   createNtfyTransport,
+  marketEventFromNotificationEvent,
   renderMarketEventMessage,
 } from "../src/index.ts";
 import type {
@@ -95,11 +96,46 @@ afterAll(async () => {
   await dropScratchDb(dbName);
 });
 
-async function deliveryRow(marketEventId: string, endpointId: string) {
+/**
+ * Deliveries are keyed on the NOTIFICATION event (ADR-0023). Market events
+ * reach the ledger through the bridge under the key `market_event:<id>`, so
+ * tests resolve the market event id to its notification event id.
+ */
+async function notificationEventIdFor(marketEventId: string): Promise<string> {
+  const row = await handle.db.query.notificationEvents.findFirst({
+    where: (table, { eq }) =>
+      eq(table.deduplicationKey, `market_event:${marketEventId}`),
+  });
+  if (row === undefined) {
+    throw new Error(`no notification event recorded for ${marketEventId}`);
+  }
+  return row.id;
+}
+
+/** Record the market event in the ledger without enqueueing anything. */
+async function recordOnly(event: {
+  id: string;
+  eventType: string;
+  monitorTargetId: string | null;
+}): Promise<string> {
+  const noopAddJob = (async () => ({}) as never) as AddJob;
+  const disabled = await handle.db.query.notificationRules.findMany({});
+  const previouslyEnabled = disabled.filter((rule) => rule.enabled);
+  for (const rule of previouslyEnabled) {
+    await service.updateRule(rule.id, { enabled: false });
+  }
+  await pipeline.enqueueDeliveriesForEvent(noopAddJob, event);
+  for (const rule of previouslyEnabled) {
+    await service.updateRule(rule.id, { enabled: true });
+  }
+  return notificationEventIdFor(event.id);
+}
+
+async function deliveryRow(notificationEventId: string, endpointId: string) {
   return handle.db.query.notificationDeliveries.findFirst({
     where: (table, { and, eq }) =>
       and(
-        eq(table.marketEventId, marketEventId),
+        eq(table.notificationEventId, notificationEventId),
         eq(table.endpointId, endpointId),
       ),
   });
@@ -113,11 +149,16 @@ describe("enqueueDeliveriesForEvent (the explicit bridge)", () => {
       config: { baseUrl: "https://ntfy.example.test", topic: "bridge" },
     });
     // Two rules to the SAME endpoint must yield one delivery job.
-    await service.createRule({ name: "any", endpointId: endpoint.id });
+    await service.createRule({
+      name: "any",
+      endpointId: endpoint.id,
+      eventClass: "market",
+    });
     await service.createRule({
       name: "drops",
       endpointId: endpoint.id,
-      marketEventType: "price_dropped",
+      eventClass: "market",
+      eventType: "price_dropped",
     });
     const event = await insertMarketEvent(handle.db, {
       externalItemId: "bridge-item",
@@ -141,14 +182,68 @@ describe("enqueueDeliveriesForEvent (the explicit bridge)", () => {
     });
     expect(result.endpointIds).toEqual([endpoint.id]);
     expect(enqueued).toHaveLength(1);
+    const notificationEventId = await notificationEventIdFor(event.id);
     expect(enqueued[0]!.payload).toEqual({
-      marketEventId: event.id,
+      notificationEventId,
       endpointId: endpoint.id,
     });
-    // Documented jobKey convention: taskName:<market_event_id>:<endpoint_id>.
+    // Documented jobKey convention: taskName:<notification_event_id>:<endpoint_id>.
     expect(enqueued[0]!.jobKey).toBe(
-      `${DELIVER_TASK_NAME}:${event.id}:${endpoint.id}`,
+      `${DELIVER_TASK_NAME}:${notificationEventId}:${endpoint.id}`,
     );
+
+    // The ledger row carries the class/subject/payload the renderer needs.
+    const ledgerRow = await handle.db.query.notificationEvents.findFirst({
+      where: (table, { eq }) => eq(table.id, notificationEventId),
+    });
+    expect(ledgerRow?.eventClass).toBe("market");
+    expect(ledgerRow?.subjectType).toBe("market_event");
+    expect(ledgerRow?.subjectId).toBe(event.id);
+    expect(
+      (ledgerRow?.payload as Record<string, unknown>)["marketplaceItemId"],
+    ).toBe(event.marketplaceItemId);
+  });
+
+  it("re-running the bridge for one market event records exactly one ledger row", async () => {
+    const endpoint = await service.createEndpoint({
+      provider: "ntfy",
+      name: "replay endpoint",
+      config: { baseUrl: "https://ntfy.example.test", topic: "replay" },
+    });
+    await service.createRule({
+      name: "replay rule",
+      endpointId: endpoint.id,
+      eventClass: "market",
+    });
+    const event = await insertMarketEvent(handle.db, {
+      externalItemId: "replay-item",
+    });
+    const calls: unknown[] = [];
+    const captureAddJob = (async (_task: unknown, payload: unknown) => {
+      calls.push(payload);
+      return {} as never;
+    }) as AddJob;
+
+    const first = await pipeline.enqueueDeliveriesForEvent(captureAddJob, {
+      id: event.id,
+      eventType: event.eventType,
+      monitorTargetId: event.monitorTargetId,
+    });
+    const second = await pipeline.enqueueDeliveriesForEvent(captureAddJob, {
+      id: event.id,
+      eventType: event.eventType,
+      monitorTargetId: event.monitorTargetId,
+    });
+    expect(first.endpointIds).toContain(endpoint.id);
+    // At-least-once: the duplicate emission recorded nothing and routed
+    // nothing, so it cannot notify twice.
+    expect(second.endpointIds).toEqual([]);
+    expect(calls).toHaveLength(first.endpointIds.length);
+    const rows = await handle.db.query.notificationEvents.findMany({
+      where: (table, { eq }) =>
+        eq(table.deduplicationKey, `market_event:${event.id}`),
+    });
+    expect(rows).toHaveLength(1);
   });
 
   it("enqueues nothing when no rule matches", async () => {
@@ -185,7 +280,11 @@ describe("delivery through the real worker runtime", () => {
       config: { baseUrl: "https://ntfy.example.test", topic: "runtime" },
       token: "tk_runtime_token",
     });
-    await service.createRule({ name: "runtime rule", endpointId: endpoint.id });
+    await service.createRule({
+      name: "runtime rule",
+      endpointId: endpoint.id,
+      eventClass: "market",
+    });
     const event = await insertMarketEvent(handle.db, {
       externalItemId: "runtime-item",
     });
@@ -197,9 +296,10 @@ describe("delivery through the real worker runtime", () => {
       monitorTargetId: event.monitorTargetId,
     });
 
+    const notificationEventId = await notificationEventIdFor(event.id);
     const row = await waitFor(
       async () => {
-        const delivery = await deliveryRow(event.id, endpoint.id);
+        const delivery = await deliveryRow(notificationEventId, endpoint.id);
         return delivery?.deliveredAt != null ? delivery : undefined;
       },
       { label: "delivered row" },
@@ -216,7 +316,13 @@ describe("delivery through the real worker runtime", () => {
     const request = fetchCalls[0]!;
     expect(request.url).toBe("https://ntfy.example.test/runtime");
     expect(request.headers["Authorization"]).toBe("Bearer tk_runtime_token");
-    expect(request.body).toBe(renderMarketEventMessage(event).body);
+    const ledgerRow = await handle.db.query.notificationEvents.findFirst({
+      where: (table, { eq }) => eq(table.id, notificationEventId),
+    });
+    expect(request.body).toBe(
+      renderMarketEventMessage(marketEventFromNotificationEvent(ledgerRow!))
+        .body,
+    );
 
     // Idempotent re-run of the delivered row: enqueue the same delivery
     // again; once the queue drains, no second transport call happened.
@@ -232,7 +338,7 @@ describe("delivery through the real worker runtime", () => {
       },
       { label: "queue drained after re-enqueue" },
     );
-    const after = await deliveryRow(event.id, endpoint.id);
+    const after = await deliveryRow(notificationEventId, endpoint.id);
     expect(after?.attemptCount).toBe(1);
     expect(after?.deliveredAt?.getTime()).toBe(row.deliveredAt?.getTime());
     expect(fetchCalls).toHaveLength(1);
@@ -249,7 +355,12 @@ describe("delivery retry accounting (direct handler invocation)", () => {
     const event = await insertMarketEvent(handle.db, {
       externalItemId: "flaky-item",
     });
-    const payload = { marketEventId: event.id, endpointId: endpoint.id };
+    const notificationEventId = await recordOnly({
+      id: event.id,
+      eventType: event.eventType,
+      monitorTargetId: event.monitorTargetId,
+    });
+    const payload = { notificationEventId, endpointId: endpoint.id };
 
     // Two transport failures: each attempt increments attempt_count,
     // records last_error, marks the row failed, and rethrows (so the job
@@ -258,7 +369,7 @@ describe("delivery retry accounting (direct handler invocation)", () => {
     await expect(
       pipeline.deliverTask.handler(payload, directContext),
     ).rejects.toThrow(/HTTP 500/);
-    let row = await deliveryRow(event.id, endpoint.id);
+    let row = await deliveryRow(notificationEventId, endpoint.id);
     expect(row?.status).toBe("failed");
     expect(row?.attemptCount).toBe(1);
     expect(row?.lastError).toContain("500");
@@ -266,12 +377,12 @@ describe("delivery retry accounting (direct handler invocation)", () => {
     await expect(
       pipeline.deliverTask.handler(payload, directContext),
     ).rejects.toThrow(/HTTP 500/);
-    row = await deliveryRow(event.id, endpoint.id);
+    row = await deliveryRow(notificationEventId, endpoint.id);
     expect(row?.attemptCount).toBe(2);
 
     // Third attempt succeeds: failed → delivered, error cleared.
     await pipeline.deliverTask.handler(payload, directContext);
-    row = await deliveryRow(event.id, endpoint.id);
+    row = await deliveryRow(notificationEventId, endpoint.id);
     expect(row?.status).toBe("delivered");
     expect(row?.attemptCount).toBe(3);
     expect(row?.deliveredAt).not.toBeNull();
@@ -280,7 +391,7 @@ describe("delivery retry accounting (direct handler invocation)", () => {
     // Re-running the delivered row is a no-op: no attempt, no transport.
     const callsBefore = fetchCalls.length;
     await pipeline.deliverTask.handler(payload, directContext);
-    row = await deliveryRow(event.id, endpoint.id);
+    row = await deliveryRow(notificationEventId, endpoint.id);
     expect(row?.attemptCount).toBe(3);
     expect(fetchCalls.length).toBe(callsBefore);
   });
@@ -295,11 +406,16 @@ describe("delivery retry accounting (direct handler invocation)", () => {
     const event = await insertMarketEvent(handle.db, {
       externalItemId: "disabled-item",
     });
+    const notificationEventId = await recordOnly({
+      id: event.id,
+      eventType: event.eventType,
+      monitorTargetId: event.monitorTargetId,
+    });
     await pipeline.deliverTask.handler(
-      { marketEventId: event.id, endpointId: endpoint.id },
+      { notificationEventId, endpointId: endpoint.id },
       directContext,
     );
-    const row = await deliveryRow(event.id, endpoint.id);
+    const row = await deliveryRow(notificationEventId, endpoint.id);
     expect(row?.status).toBe("pending");
     expect(row?.attemptCount).toBe(0);
     expect(row?.deliveredAt).toBeNull();
