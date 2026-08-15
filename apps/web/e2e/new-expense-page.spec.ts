@@ -106,7 +106,7 @@ test('drop one file, preview it, and record the expense with evidence attached',
   // One save both creates the expense and links the evidence in the same
   // transaction — lands on the detail page.
   await page.waitForURL('**/finance/expenses/*');
-  await expect(page.getByText(category)).toBeVisible();
+  await expect(page.getByText(category).first()).toBeVisible();
   await expect(page.getByText('$18.25').first()).toBeVisible();
 
   // The evidence pane's upload IS the receipt: one attached receipt, no
