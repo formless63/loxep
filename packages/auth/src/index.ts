@@ -11,6 +11,7 @@ export {
   createAuth,
   mapOidcProfileToUser,
   OIDC_PROVIDER_ID,
+  resolveOidcEmailClaim,
 } from "./create-auth.ts";
 export type { CreateAuthOptions, LoxepAuth } from "./create-auth.ts";
 

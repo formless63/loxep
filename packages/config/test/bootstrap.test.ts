@@ -58,6 +58,7 @@ describe('loadBootstrapConfig — valid configurations', () => {
       issuer: 'https://id.example.com/realms/loxep',
       clientId: 'loxep',
       clientSecret: 'oidc-client-secret-marker',
+      emailClaim: 'email',
     })
     expect(config.smtp).toBeUndefined()
   })
@@ -72,6 +73,34 @@ describe('loadBootstrapConfig — valid configurations', () => {
     )
     expect(config.oidc).toBeDefined()
     expect(config.smtp).toBeDefined()
+  })
+
+  it('defaults LOXEP_OIDC_EMAIL_CLAIM to the standard "email" claim', () => {
+    const config = loadBootstrapConfig(
+      baseEnv({
+        LOXEP_OIDC_ISSUER: 'https://id.example.com',
+        LOXEP_OIDC_CLIENT_ID: 'loxep',
+        LOXEP_OIDC_CLIENT_SECRET: 'oidc-secret',
+      }),
+    )
+    expect(config.oidc?.emailClaim).toBe('email')
+  })
+
+  it('honours LOXEP_OIDC_EMAIL_CLAIM (loxep-yk8)', () => {
+    const config = loadBootstrapConfig(
+      baseEnv({
+        LOXEP_OIDC_ISSUER: 'https://id.example.com',
+        LOXEP_OIDC_CLIENT_ID: 'loxep',
+        LOXEP_OIDC_CLIENT_SECRET: 'oidc-secret',
+        LOXEP_OIDC_EMAIL_CLAIM: 'acme_email',
+      }),
+    )
+    expect(config.oidc?.emailClaim).toBe('acme_email')
+  })
+
+  it('validates LOXEP_OIDC_EMAIL_CLAIM even when OIDC itself is not configured', () => {
+    const config = loadBootstrapConfig(baseEnv({ LOXEP_OIDC_EMAIL_CLAIM: 'acme_email' }))
+    expect(config.oidc).toBeUndefined()
   })
 
   it('accepts smtp:// as well as smtps://', () => {
@@ -192,6 +221,14 @@ describe('loadBootstrapConfig — required values and formats', () => {
   it('rejects an invalid SMTP from address', () => {
     const error = loadError(baseEnv({ LOXEP_SMTP_FROM: 'not-an-email' }))
     expect(error.message).toContain('LOXEP_SMTP_FROM must be a valid email address')
+  })
+
+  it('treats a whitespace-only LOXEP_OIDC_EMAIL_CLAIM as unset (falls back to the default)', () => {
+    // normalizeEnvValue trims and drops blank input before validation runs —
+    // the same "blank means unset" rule every other bootstrap variable gets —
+    // so this never reaches the loader as a distinguishable invalid format.
+    const config = loadBootstrapConfig(baseEnv({ LOXEP_OIDC_EMAIL_CLAIM: '   ' }))
+    expect(config.oidc).toBeUndefined() // no OIDC group configured in baseEnv()
   })
 })
 

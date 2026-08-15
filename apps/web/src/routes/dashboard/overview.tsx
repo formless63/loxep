@@ -11,6 +11,12 @@
  * (plus draft-acquisition and unconfirmed-document backlog, which sit
  * upstream of it) once a set of books exists.
  *
+ * Above the bands: `OnboardingOidcPromptCard` (ADR-0024 §2, loxep-yk8), a
+ * dismissible one-time surface offering to open OIDC auto-provisioning right
+ * after the installation's first administrator exists. It is not part of the
+ * loader's prefetch — it fetches and renders itself, and renders nothing at
+ * all once its own conditions say not to show it.
+ *
  * ## Loading shape
  *
  * The route loader warms all four queries with `ensureQueryData` and each
@@ -52,6 +58,7 @@ import {
 import { FinancialBand } from '@/features/dashboard/components/financial-band';
 import { MarketPulseBand } from '@/features/dashboard/components/market-pulse-band';
 import { MoneyBand } from '@/features/dashboard/components/money-band';
+import { OnboardingOidcPromptCard } from '@/features/dashboard/components/onboarding-oidc-prompt-card';
 import { OperationsBand } from '@/features/dashboard/components/operations-band';
 
 export const Route = createFileRoute('/dashboard/overview')({
@@ -147,6 +154,8 @@ function DashboardOverview() {
           fleet-tool signals — and the ledger, from real data only.
         </p>
       </div>
+
+      <OnboardingOidcPromptCard />
 
       <BandBoundary
         resetKey='money'

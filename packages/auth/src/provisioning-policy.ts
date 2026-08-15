@@ -65,8 +65,9 @@ export interface AuthProvisioningPolicy {
 }
 
 /**
- * The shipped default — closed for both methods (PROVISIONAL, owner-review).
- * Mirrors `@loxep/domain`'s `authProvisioningSetting.defaultValue`.
+ * The shipped default — closed for both methods, CONFIRMED by owner ruling
+ * 2026-08-15 (`loxep-yk8`; see ADR-0024 §2). Mirrors `@loxep/domain`'s
+ * `authProvisioningSetting.defaultValue`.
  */
 export const DEFAULT_PROVISIONING_POLICY: AuthProvisioningPolicy = {
   newUsers: { magicLink: "closed", oidc: "closed" },

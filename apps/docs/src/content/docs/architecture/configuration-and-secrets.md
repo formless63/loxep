@@ -42,6 +42,7 @@ LOXEP_KEYRING[_FILE]             required in every mode — ADR-0019 keyring JSO
 LOXEP_OIDC_ISSUER                OIDC group — issuer URL
 LOXEP_OIDC_CLIENT_ID             OIDC group
 LOXEP_OIDC_CLIENT_SECRET[_FILE]  OIDC group
+LOXEP_OIDC_EMAIL_CLAIM            optional (default: email) — id_token claim carrying the user's email
 LOXEP_SMTP_URL[_FILE]            SMTP group — smtp:// or smtps:// URL
 LOXEP_SMTP_FROM                  SMTP group — sender email address
 LOXEP_BOOTSTRAP_ADMIN_EMAIL      optional — first-admin bootstrap identity
@@ -121,6 +122,12 @@ Recommended behavior:
 
 Implemented behavior (`@loxep/auth`): a Better Auth `session.create` after-hook compares the signed-in user's email case-insensitively against `LOXEP_BOOTSTRAP_ADMIN_EMAIL`; on first match it grants `admin` and records `application_settings` key `auth.first_admin_bootstrap` (`{completedAt, userId, email}`) in one transaction. The recorded completion is authoritative — later sign-ins never re-grant, even after a deliberate demotion. Shell recovery: `loxep admin promote --email=<email>` sets an existing user's role to `admin` directly in the database (worker-level configuration only; refuses unknown emails), and `loxep admin list` prints each user's id/email/role.
 
+Right after that first administrator exists, `/dashboard/overview` shows a dismissible onboarding card offering to open OIDC auto-provisioning (below) — the discoverability vehicle for what would otherwise be a policy an operator has to already know exists. It only appears when OIDC is bootstrap-configured, provisioning for `oidc` is still closed, and the admin has not already dismissed it; dismissal is permanent and stored as the `auth.onboarding_oidc_prompt_dismissed` setting.
+
+### OIDC email claim override
+
+`LOXEP_OIDC_EMAIL_CLAIM` (optional, default `email`, loxep-yk8) names the id_token claim `@loxep/auth`'s OIDC `mapProfileToUser` hook reads as the account's email address, for an issuer that puts it somewhere other than OIDC's standard `email` claim (an operator-chosen claim such as `acme_email`). It is a bootstrap fact — fixed for the process, like the rest of the OIDC group — because it decides which identity a brand-new account is created with, before any database-backed policy can run. When the configured claim is absent from the profile, Loxep does not invent a value: `mapProfileToUser` returns no `email` field, and Better Auth's own standard-claim fallback and `email_is_missing` redirect take over, so the failure stays legible instead of silently creating an account with the wrong (or no) address. This override changes **which claim carries the email address only** — it has nothing to do with, and does not change, the claim-to-`admin`-role mapping below.
+
 ## Account provisioning policy
 
 The first-admin mechanism decides *who gets `admin`*. It says nothing about *who gets an account*, and until [ADR-0024](../../decisions/0024-account-provisioning-policy/) nothing did: any address that could receive a magic link and any identity the OIDC issuer would authenticate became a `member` on first sign-in.
@@ -143,7 +150,7 @@ The load-bearing properties:
 - **Closed means closed; there is no invite system.** Administrators add people directly from `/settings/users` through Better Auth's admin plugin, which creates a passwordless user row. The person then signs in with whichever method they normally would.
 - **An optional OIDC claim maps to `admin`** — read from the persisted `account.idToken`, `admin` only (ADR-0017's two roles), and by default applied once at account creation so manual role edits in Loxep stay permanent. An `every_sign_in` mode makes the IdP authoritative in both directions, guarded so it never demotes the last remaining administrator and never runs in the same session as a first-admin bootstrap grant.
 
-The shipped default is **closed for both methods**, and it is marked **PROVISIONAL** pending owner review: it is the safe default for an exposed installation, but it is a behavior change for an upgrade in place, where a colleague added next week is declined until an administrator opens the method or creates the account. See ADR-0024 for the full argument, the rejected alternatives, and the operator-facing walkthrough in [Managing access](../../guides/managing-access/).
+The shipped default is **closed for both methods**, **confirmed by owner ruling 2026-08-15 (`loxep-yk8`)**: it is the safe default for an exposed installation, and remains so even though it is a behavior change for an upgrade in place, where a colleague added next week is declined until an administrator opens the method or creates the account. The discoverability concern behind that trade-off is addressed separately, by the onboarding card described above, rather than by changing the default. See ADR-0024 for the full argument, the rejected alternatives, and the operator-facing walkthrough in [Managing access](../../guides/managing-access/).
 
 ## Database-backed settings model
 

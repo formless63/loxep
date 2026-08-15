@@ -41,6 +41,8 @@ Every control on this card governs account **creation** only. People who already
 
 A closed default would be useless if it meant a fresh installation could never sign anybody in. So while the installation has **no administrator at all**, provisioning is force-open for every configured method and the card shows a *not in force* badge explaining that. The moment a first administrator exists — through the bootstrap variable, through `loxep admin promote`, or through the claim mapping below — your stored policy takes over.
 
+If your installation has SSO configured, the very next visit to the dashboard shows a one-time card offering to turn on SSO self-service right then, instead of leaving you to discover the switch on this page later. It only appears while that method is still closed; dismissing it (with or without turning the switch on) is permanent — it will not come back on a later visit.
+
 ### Allowed email domains
 
 Optionally restrict magic-link self-service to your own domains. Enter bare domains (`example.com`, not `@example.com`), one per tag.
@@ -88,4 +90,4 @@ A magic-link request for an unknown address is a deliberate exception: the page 
 
 ## Where this is stored
 
-The policy is an ordinary database-backed application setting (`auth.provisioning`), so changing it takes effect immediately with no restart, and every change is recorded in the audit log with the administrator who made it. Nothing in it is secret. The design rationale, including the parts still marked provisional, is in [ADR-0024](../../decisions/0024-account-provisioning-policy/).
+The policy is an ordinary database-backed application setting (`auth.provisioning`), so changing it takes effect immediately with no restart, and every change is recorded in the audit log with the administrator who made it. Nothing in it is secret. The full design rationale — including the owner ruling that confirmed these defaults and added the one-time dashboard prompt above — is in [ADR-0024](../../decisions/0024-account-provisioning-policy/).

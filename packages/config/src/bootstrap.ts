@@ -28,6 +28,17 @@ export interface OidcBootstrapConfig {
   issuer: string
   clientId: string
   clientSecret: string
+  /**
+   * Claim carrying the user's email address, read by `@loxep/auth`'s
+   * `mapProfileToUser` hook when it differs from OIDC's standard `email`
+   * claim (`LOXEP_OIDC_EMAIL_CLAIM`, default {@link DEFAULT_OIDC_EMAIL_CLAIM}).
+   * A pre-DB bootstrap fact — like the rest of `OidcBootstrapConfig` it is
+   * fixed for the life of the process, and it is what lets an operator whose
+   * IdP names the claim something else (`acme_email`) still create accounts
+   * with the right address. Claim-to-ROLE mapping (ADR-0024 §6) is unrelated
+   * and untouched by this field.
+   */
+  emailClaim: string
 }
 
 export interface SmtpBootstrapConfig {
@@ -59,6 +70,8 @@ export interface BootstrapConfig {
 
 export const DEFAULT_PORT = 3020
 export const DEFAULT_MEDIA_ROOT = './data/media'
+/** OIDC's standard email claim — the default for `LOXEP_OIDC_EMAIL_CLAIM`. */
+export const DEFAULT_OIDC_EMAIL_CLAIM = 'email'
 
 const modeSchema = z.enum(LOXEP_MODES)
 const logLevelSchema = z.enum(LOXEP_LOG_LEVELS)
@@ -211,6 +224,22 @@ export function loadBootstrapConfig(
         'LOXEP_OIDC_CLIENT_ID, and LOXEP_OIDC_CLIENT_SECRET must be set together',
     )
   }
+  // --- OIDC email claim override (independent of the group above: it is a
+  // deployment-wide default validated regardless of whether OIDC itself is
+  // configured, matching LOXEP_MEDIA_ROOT/LOXEP_LOG_LEVEL's always-checked
+  // shape) -------------------------------------------------------------------
+  const oidcEmailClaimRaw = normalizeEnvValue(env['LOXEP_OIDC_EMAIL_CLAIM'])
+  const oidcEmailClaimSchema = z.string().trim().min(1)
+  const oidcEmailClaim: string | undefined =
+    oidcEmailClaimRaw === undefined
+      ? DEFAULT_OIDC_EMAIL_CLAIM
+      : check(
+          oidcEmailClaimSchema,
+          oidcEmailClaimRaw,
+          'LOXEP_OIDC_EMAIL_CLAIM must be a non-empty string',
+          issues,
+        )
+
   let oidc: OidcBootstrapConfig | undefined
   if (oidcComplete) {
     const issuer = check(
@@ -220,7 +249,15 @@ export function loadBootstrapConfig(
       issues,
     )
     if (issuer !== undefined && oidcClientIdRaw !== undefined && oidcSecretInput.value !== undefined) {
-      oidc = { issuer, clientId: oidcClientIdRaw, clientSecret: oidcSecretInput.value }
+      oidc = {
+        issuer,
+        clientId: oidcClientIdRaw,
+        clientSecret: oidcSecretInput.value,
+        // `issues.length > 0` throws below before this value is ever read, so
+        // the fallback here only satisfies the type when validation already
+        // failed — never a silently-wrong default in a returned config.
+        emailClaim: oidcEmailClaim ?? DEFAULT_OIDC_EMAIL_CLAIM,
+      }
     }
   }
 

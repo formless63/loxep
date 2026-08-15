@@ -15,6 +15,7 @@ import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import type { GenericOAuthConfig } from "better-auth/plugins";
+import { DEFAULT_OIDC_EMAIL_CLAIM } from "@loxep/config";
 import type { BootstrapConfig, OidcBootstrapConfig } from "@loxep/config";
 import { buildAuthPluginConfig, schema } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
@@ -52,7 +53,33 @@ function firstNonBlank(...values: unknown[]): string | undefined {
 }
 
 /**
- * Seed Loxep's additional `user` columns from standard OIDC claims.
+ * Read `profile[emailClaim]` as the email address for account creation,
+ * overriding Better Auth's own `userInfo.email` read (loxep-yk8,
+ * `LOXEP_OIDC_EMAIL_CLAIM`, default {@link DEFAULT_OIDC_EMAIL_CLAIM}).
+ *
+ * Deliberately does nothing when `emailClaim` IS the standard claim — there
+ * is no reason to duplicate what Better Auth's own `getUserInfo` already
+ * reads, and the shipped default must behave byte-for-byte as it did before
+ * this override existed. When `emailClaim` names a custom claim and the
+ * profile has no non-blank string under it, this returns `undefined` and lets
+ * Better Auth's own fallback (`userInfo.email`, the standard claim) and its
+ * own `email_is_missing` redirect take over — a legible failure rather than a
+ * silent one, and one Loxep does not have to reinvent.
+ */
+export function resolveOidcEmailClaim(
+  profile: Record<string, unknown>,
+  emailClaim: string,
+): string | undefined {
+  if (emailClaim === DEFAULT_OIDC_EMAIL_CLAIM) return undefined;
+  const raw = profile[emailClaim];
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
+}
+
+/**
+ * Seed Loxep's additional `user` columns from standard OIDC claims, and — when
+ * `emailClaim` names a non-standard claim — the email address itself.
  *
  * Better Auth's generic OAuth provider already maps the standard `name` and
  * `picture` claims onto `user.name` / `user.image` with no help from us (see
@@ -66,24 +93,37 @@ function firstNonBlank(...values: unknown[]): string | undefined {
  *   - `given_name` — last resort, so "Alex Rivera" still gets "William"
  *     rather than nothing.
  *
+ * `emailClaim` defaults to `"email"` — OIDC's own standard claim, which
+ * Better Auth already reads on its own — so a deployment that never sets
+ * `LOXEP_OIDC_EMAIL_CLAIM` gets exactly the pre-existing behavior. See
+ * {@link resolveOidcEmailClaim} for the override itself.
+ *
  * Extra keys returned here flow through Better Auth's
  * `parseAdditionalUserInputFromProviderProfile` into the declared
- * `user.additionalFields` (`@loxep/db` `userAdditionalFields`).
+ * `user.additionalFields` (`@loxep/db` `userAdditionalFields`), and (for
+ * `email`) into `oAuth2Callback`'s `mapUser.email ?? userInfo.email` read
+ * (`generic-oauth/routes.mjs`) — the same mechanism that already lets this
+ * hook's `displayName` win.
  *
  * **This never overwrites an in-app override.** `overrideUserInfo` is left at
  * its default (`false`), so Better Auth applies provider profile values only
- * when it *creates* the user; every later sign-in leaves `name`, `image`, and
- * `displayName` exactly as the profile page last saved them.
+ * when it *creates* the user; every later sign-in leaves `name`, `image`,
+ * `displayName`, and `email` exactly as Loxep last set them.
  */
 export function mapOidcProfileToUser(
   profile: Record<string, unknown>,
+  emailClaim: string = DEFAULT_OIDC_EMAIL_CLAIM,
 ): Record<string, unknown> {
   const displayName = firstNonBlank(
     profile["nickname"],
     profile["preferred_username"],
     profile["given_name"],
   );
-  return displayName === undefined ? {} : { displayName };
+  const email = resolveOidcEmailClaim(profile, emailClaim);
+  return {
+    ...(displayName === undefined ? {} : { displayName }),
+    ...(email === undefined ? {} : { email }),
+  };
 }
 
 /**
@@ -103,9 +143,11 @@ export function buildOidcProviderConfig(
     scopes: ["openid", "profile", "email"],
     pkce: true,
     // Standard `name`/`picture` claims are mapped by the plugin itself; this
-    // only adds Loxep's `displayName`. Deliberately no `overrideUserInfo`:
-    // provider values seed the user at creation and never re-sync after.
-    mapProfileToUser: mapOidcProfileToUser,
+    // adds Loxep's `displayName` and, when `emailClaim` names a non-standard
+    // claim (LOXEP_OIDC_EMAIL_CLAIM), the email address itself. Deliberately
+    // no `overrideUserInfo`: provider values seed the user at creation and
+    // never re-sync after.
+    mapProfileToUser: (profile) => mapOidcProfileToUser(profile, oidc.emailClaim),
   };
 }
 

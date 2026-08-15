@@ -110,6 +110,7 @@ describe("createAuth", () => {
       issuer: "https://pocket-id.example.com/",
       clientId: "client",
       clientSecret: "secret",
+      emailClaim: "email",
     });
     expect(provider.providerId).toBe("oidc");
     expect(provider.discoveryUrl).toBe(
@@ -139,12 +140,17 @@ describe("createAuth", () => {
       issuer: "https://pocket-id.example.com",
       clientId: "client",
       clientSecret: "secret",
+      emailClaim: "email",
     });
     // `overrideUserInfo` stays unset: Better Auth then applies provider values
     // only when creating the user, so an in-app override survives every later
     // sign-in.
     expect(provider.overrideUserInfo).toBeUndefined();
-    expect(provider.mapProfileToUser).toBe(mapOidcProfileToUser);
+    // `emailClaim: "email"` is the standard claim, so the wrapper behaves
+    // identically to calling `mapOidcProfileToUser` with no override.
+    expect(provider.mapProfileToUser?.({ given_name: "William" })).toEqual(
+      mapOidcProfileToUser({ given_name: "William" }),
+    );
 
     // `name`/`picture` are mapped by the plugin itself, so the hook adds only
     // displayName — nickname first, then preferred_username, then given_name.
@@ -167,5 +173,50 @@ describe("createAuth", () => {
       {},
     );
     expect(mapOidcProfileToUser({})).toEqual({});
+  });
+
+  describe("LOXEP_OIDC_EMAIL_CLAIM (loxep-yk8)", () => {
+    it("defaults to the standard 'email' claim and never touches the profile", () => {
+      expect(
+        mapOidcProfileToUser({ email: "person@example.com", given_name: "Person" }),
+      ).toEqual({ displayName: "Person" });
+      expect(mapOidcProfileToUser({ email: "person@example.com" })).toEqual({});
+    });
+
+    it("a user whose email lives in a custom claim creates correctly", () => {
+      const provider = buildOidcProviderConfig({
+        issuer: "https://id.example.com",
+        clientId: "client",
+        clientSecret: "secret",
+        emailClaim: "acme_email",
+      });
+      expect(
+        provider.mapProfileToUser?.({
+          acme_email: "  Person@Example.com ",
+          given_name: "Person",
+        }),
+      ).toEqual({ displayName: "Person", email: "Person@Example.com" });
+    });
+
+    it("absence of the configured claim fails legibly: no email field, so Better Auth's own missing-email path takes over", () => {
+      const provider = buildOidcProviderConfig({
+        issuer: "https://id.example.com",
+        clientId: "client",
+        clientSecret: "secret",
+        emailClaim: "acme_email",
+      });
+      // No `acme_email` claim on the profile at all.
+      expect(provider.mapProfileToUser?.({ given_name: "Person" })).toEqual({
+        displayName: "Person",
+      });
+      // A blank claim value is treated the same as absent.
+      expect(
+        provider.mapProfileToUser?.({ acme_email: "   ", given_name: "Person" }),
+      ).toEqual({ displayName: "Person" });
+      // A non-string claim value is treated the same as absent.
+      expect(
+        provider.mapProfileToUser?.({ acme_email: 12345, given_name: "Person" }),
+      ).toEqual({ displayName: "Person" });
+    });
   });
 });
