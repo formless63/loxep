@@ -5,6 +5,7 @@ import {
   fetchConnections,
   fetchEntities,
   fetchFirstAdminBootstrap,
+  fetchFleetEvidenceSources,
   fetchGatusPushSettings,
   fetchHealthReport,
   fetchIntegrationHealth,
@@ -14,6 +15,7 @@ import {
   fetchNotificationFeed,
   fetchNotificationEndpoints,
   fetchNotificationRules,
+  fetchOnboardingOidcPrompt,
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
@@ -41,6 +43,12 @@ export const entitiesQuery = queryOptions({
 export const connectionsQuery = queryOptions({
   queryKey: ['settings', 'connections'],
   queryFn: () => fetchConnections()
+});
+
+/** Phase 8 milestone 7 (loxep-ovj.7): configured inbound evidence sources. */
+export const fleetEvidenceSourcesQuery = queryOptions({
+  queryKey: ['settings', 'fleet-evidence-sources'],
+  queryFn: () => fetchFleetEvidenceSources()
 });
 
 export const ebayKeysetStatusQuery = queryOptions({
@@ -94,6 +102,17 @@ export const authProvisioningQuery = queryOptions({
 export const firstAdminBootstrapQuery = queryOptions({
   queryKey: ['settings', 'first-admin-bootstrap'],
   queryFn: () => fetchFirstAdminBootstrap()
+});
+
+/**
+ * Onboarding card (ADR-0024 §2, loxep-yk8): whether `/dashboard/overview`
+ * should offer to open OIDC auto-provisioning. Safe for a member to fetch —
+ * the server function itself returns `{show: false}` for a non-admin rather
+ * than 403ing, since the dashboard route is not admin-gated.
+ */
+export const onboardingOidcPromptQuery = queryOptions({
+  queryKey: ['settings', 'onboarding-oidc-prompt'],
+  queryFn: () => fetchOnboardingOidcPrompt()
 });
 
 export const applicationSettingsQuery = queryOptions({

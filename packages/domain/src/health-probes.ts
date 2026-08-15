@@ -77,6 +77,7 @@
 import { access, stat } from "node:fs/promises";
 import type { LoxepDb } from "@loxep/db";
 import { isConnectionArchived } from "./connections.ts";
+import { isEvidenceIngestConnectionKind } from "./fleet-evidence.ts";
 import {
   FLEET_TOOL_REGISTRY,
   PROBEABLE_FLEET_TOOL_PROVIDERS,
@@ -226,10 +227,22 @@ async function listConnectionCandidates(
   db: LoxepDb,
 ): Promise<HealthSubjectCandidate[]> {
   const rows = await db.query.connections.findMany({
-    columns: { id: true, status: true },
+    columns: { id: true, status: true, kind: true },
   });
   return rows
-    .filter((row) => !isConnectionArchived(row.status))
+    .filter(
+      (row) =>
+        !isConnectionArchived(row.status) &&
+        // loxep-ovj.7: an evidence-ingest connection's `integration_health`
+        // row is written EXCLUSIVELY by the fleet-evidence ingest path
+        // (`source: 'ingest'`). Listing it here too would let this derived
+        // `source: 'probe'` read — which can only ever see `never_succeeded`,
+        // since these connections have no adapter and never set
+        // `last_success_at`/`last_error_at` — clobber the ingest write on
+        // the very next sweep tick. See fleet-evidence.ts's module doc for
+        // the full "two writers of one subject" reasoning.
+        !isEvidenceIngestConnectionKind(row.kind),
+    )
     .map((row) => ({ subjectId: row.id }));
 }
 

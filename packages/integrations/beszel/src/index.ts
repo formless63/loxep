@@ -101,3 +101,18 @@ export {
   loadBeszelCredentialsFromEnvFile,
 } from "./credentials.ts";
 export type { BeszelCredentials } from "./credentials.ts";
+
+// Alert-evidence ingestion (Phase 8 milestone 7, loxep-ovj.7): the
+// Shoutrrr-generic-webhook JSON shape Beszel's own guide documents, and the
+// normalizer `@loxep/app`'s fleet-evidence receiver dispatches to. See
+// webhook.ts's module doc.
+export {
+  beszelAlertWebhookSchema,
+  normalizeBeszelAlertWebhook,
+} from "./webhook.ts";
+export type {
+  BeszelAlertWebhookPayload,
+  BeszelEvidenceAccepted,
+  BeszelEvidenceDropped,
+  BeszelEvidenceNormalization,
+} from "./webhook.ts";

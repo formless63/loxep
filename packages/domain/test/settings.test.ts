@@ -9,6 +9,7 @@ import type { DbHandle } from "@loxep/db";
 import {
   SettingNotRegisteredError,
   SettingValidationError,
+  authOnboardingOidcPromptDismissedSetting,
   authProvisioningSetting,
   createSettingsService,
   defineSetting,
@@ -16,8 +17,12 @@ import {
   caaPolicySetting,
   cloudflareRateBudgetSetting,
   documentsMediaLimitsSetting,
+  documentsParserIdSetting,
   inventoryMediaLimitsSetting,
+  deriveGatusPushFactKey,
+  GATUS_PUSH_FACT_SLUGS,
   GATUS_PUSH_SECRET_KEY,
+  gatusPushFactKeys,
   gatusPushSetting,
   gatusRateBudgetSetting,
   integrationsEnabledSetting,
@@ -491,17 +496,71 @@ describe("documents.media_limits setting (loxep-cd3.2, M2)", () => {
   });
 });
 
+describe("documents.parser_id setting (loxep-cd3.4, M4)", () => {
+  it("defaults to the manual-assisted backend — an install upgrades into OCR explicitly", () => {
+    expect(documentsParserIdSetting.key).toBe("documents.parser_id");
+    expect(documentsParserIdSetting.schemaVersion).toBe(1);
+    expect(documentsParserIdSetting.defaultValue).toEqual({ parserId: "manual" });
+  });
+
+  it("is registered", () => {
+    expect(registeredApplicationSettings).toContain(documentsParserIdSetting);
+  });
+
+  it("accepts any non-empty parser id — the ParserRegistry, not this schema, is the source of truth for which ids exist", () => {
+    expect(
+      documentsParserIdSetting.schema.safeParse({ parserId: "ocr_tesseract" }).success,
+    ).toBe(true);
+    expect(documentsParserIdSetting.schema.safeParse({ parserId: "" }).success).toBe(false);
+    expect(documentsParserIdSetting.schema.safeParse({}).success).toBe(false);
+  });
+});
+
 describe("Phase 8 milestone 2 Gatus push setting", () => {
   // Ships disabled with no base URL/key, the same "unreviewed/unconfigured
   // must not look like ready" discipline caaPolicySetting uses — a push job
   // that read this setting with nothing set must have something to no-op on.
-  it("ships disabled with no base URL or endpoint key", () => {
+  it("ships disabled with no base URL or endpoint key, mode 'single'", () => {
     expect(gatusPushSetting.key).toBe("infrastructure.gatus_push");
     expect(gatusPushSetting.defaultValue).toEqual({
       enabled: false,
       baseUrl: null,
       endpointKey: null,
+      mode: "single",
     });
+  });
+
+  // loxep-4ah: `mode` is an ADDITIVE field — a value stored before this field
+  // existed (no `mode` key at all) must still parse, defaulting to 'single'
+  // so an existing installation's behavior never silently changes underneath
+  // it.
+  it("backfills 'mode: single' when parsing a value stored before the field existed", () => {
+    const parsed = gatusPushSetting.schema.safeParse({
+      enabled: true,
+      baseUrl: "https://gatus.example.com",
+      endpointKey: "core_loxep",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.mode).toBe("single");
+  });
+
+  it("accepts 'facts' mode and rejects an unrecognized mode", () => {
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: "https://gatus.example.com",
+        endpointKey: "core_loxep",
+        mode: "facts",
+      }).success,
+    ).toBe(true);
+    expect(
+      gatusPushSetting.schema.safeParse({
+        enabled: true,
+        baseUrl: "https://gatus.example.com",
+        endpointKey: "core_loxep",
+        mode: "both",
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts a well-formed GROUP_ENDPOINT key and rejects a malformed one", () => {
@@ -541,6 +600,31 @@ describe("Phase 8 milestone 2 Gatus push setting", () => {
 
   it("is registered", () => {
     expect(registeredApplicationSettings).toContain(gatusPushSetting);
+  });
+
+  it("derives five stable, distinct fact keys from a base endpoint key, in a fixed order", () => {
+    expect(GATUS_PUSH_FACT_SLUGS).toEqual([
+      "worker-backlog",
+      "sync-freshness",
+      "notifications",
+      "drift",
+      "readiness",
+    ]);
+    expect(deriveGatusPushFactKey("core_loxep", "worker-backlog")).toBe(
+      "core_loxep-worker-backlog",
+    );
+    const keys = gatusPushFactKeys("core_loxep");
+    expect(keys).toEqual([
+      "core_loxep-worker-backlog",
+      "core_loxep-sync-freshness",
+      "core_loxep-notifications",
+      "core_loxep-drift",
+      "core_loxep-readiness",
+    ]);
+    expect(new Set(keys).size).toBe(keys.length);
+    // None of the derived keys ever equals the base key itself — the base
+    // key is a derivation seed in 'facts' mode, never pushed to directly.
+    expect(keys).not.toContain("core_loxep");
   });
 
   it("stores the push token under a stable, shared secret key", () => {
@@ -665,11 +749,13 @@ describe("auth.provisioning account provisioning policy (ADR-0024, loxep-x2s)", 
     expect(registeredApplicationSettings).toContain(authProvisioningSetting);
   });
 
-  // PROVISIONAL default (owner-review, loxep-x2s): closed for BOTH methods,
-  // with @loxep/auth force-opening provisioning while the installation has no
-  // admin user at all so a new deployment can still bootstrap itself. See this
+  // CONFIRMED default (owner ruling 2026-08-15, loxep-yk8, resolving the
+  // question loxep-x2s was filed to ask): closed for BOTH methods, with
+  // @loxep/auth force-opening provisioning while the installation has no admin
+  // user at all so a new deployment can still bootstrap itself. See this
   // setting's own doc comment and ADR-0024 for the asymmetry argument and for
-  // the open sub-question of defaulting `oidc` to 'open'.
+  // why the `oidc`-defaults-to-'open' split was rejected in favor of the
+  // onboarding card (auth.onboarding_oidc_prompt_dismissed, below).
   it("ships closed for both methods, with no allowlist and no claim mapping", () => {
     expect(authProvisioningSetting.defaultValue).toEqual({
       newUsers: { magicLink: "closed", oidc: "closed" },
@@ -732,6 +818,33 @@ describe("auth.provisioning account provisioning policy (ADR-0024, loxep-x2s)", 
         ...valid,
         oidcAdminClaim: { claim: "", adminValues: [], applyOn: "create" },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("auth.onboarding_oidc_prompt_dismissed (ADR-0024, loxep-yk8)", () => {
+  it("is registered under the documented key, defaulting to false", () => {
+    expect(authOnboardingOidcPromptDismissedSetting.key).toBe(
+      "auth.onboarding_oidc_prompt_dismissed",
+    );
+    expect(registeredApplicationSettings).toContain(
+      authOnboardingOidcPromptDismissedSetting,
+    );
+    expect(authOnboardingOidcPromptDismissedSetting.defaultValue).toBe(false);
+  });
+
+  it("accepts only a bare boolean", () => {
+    expect(
+      authOnboardingOidcPromptDismissedSetting.schema.safeParse(true).success,
+    ).toBe(true);
+    expect(
+      authOnboardingOidcPromptDismissedSetting.schema.safeParse(false).success,
+    ).toBe(true);
+    expect(
+      authOnboardingOidcPromptDismissedSetting.schema.safeParse("true").success,
+    ).toBe(false);
+    expect(
+      authOnboardingOidcPromptDismissedSetting.schema.safeParse(null).success,
     ).toBe(false);
   });
 });

@@ -362,6 +362,43 @@ export const documentsMediaLimitsSetting = defineSetting({
 });
 
 /**
+ * The registered-parser selection for `@loxep/documents` (loxep-cd3.4, M4 —
+ * `expense-entry-design.md` section 3, "Deployment shape" / "selection an
+ * `application_settings` key (`documents.parser_id`)"). Until this
+ * milestone there was only one backend (`manual`, `manual-parser.ts`'s
+ * structural placeholder) so there was nothing to select; `ocr_tesseract`
+ * (`tesseract-parser.ts`) is the first real alternative, and any future
+ * backend (the tier A+ neural sidecar, loxep-cd3.7; the PP-OCR/RapidOCR
+ * class) is "a SETTING, not a rewrite" per the design's own words — this
+ * key is where that setting lives.
+ *
+ * Default stays `'manual'`: an installation upgrades into OCR by an
+ * operator choosing it here, never implicitly on deploy — the same
+ * degrade-to-today's-behaviour posture `documentsMediaLimitsSetting` and
+ * every other opt-in capability in this file already follow. The schema
+ * intentionally does NOT enumerate valid parser ids (unlike, say,
+ * {@link inventoryDefaultSaleModeSetting}'s closed `saleMode` union) —
+ * `@loxep/documents`' `ParserRegistry` is the source of truth for which ids
+ * exist, and it lives in a package `@loxep/domain` does not (and must not)
+ * depend on; validating "is this id actually registered" is the READER's
+ * job (the settings surface / the extraction runner), not this schema's.
+ */
+export const documentsParserIdSetting = defineSetting({
+  key: "documents.parser_id",
+  schema: z.strictObject({
+    /** A `ReceiptParser.id` from `@loxep/documents`' registry — `'manual'` or `'ocr_tesseract'` as of this milestone. */
+    parserId: z.string().min(1),
+  }),
+  description:
+    "Which registered @loxep/documents ReceiptParser backend extracts text " +
+    "from newly uploaded receipts/invoices — 'manual' (no automatic " +
+    "extraction) until an operator opts into 'ocr_tesseract' (M4) or a " +
+    "future backend",
+  schemaVersion: 1,
+  defaultValue: { parserId: "manual" },
+});
+
+/**
  * The `sale_mode` a newly intaken item gets when the operator does not
  * choose one — mirrors `monitorDefaultsSetting`'s "a starting point new rows
  * inherit" shape. `'unit'` is the dominant case per the design's own
@@ -417,6 +454,50 @@ export const inventoryDefaultSaleModeSetting = defineSetting({
  * `caaPolicySetting`'s "ships deliberately unreviewed rather than guessed"
  * discipline.
  */
+/**
+ * The five OQ9 candidate facts (fleet-observability-design.md's open
+ * question 9: *"which facts should be published — worker backlog, sync
+ * freshness, drift count, readiness"*, plus the fifth named in the
+ * question's own recommendation prose, notification delivery success),
+ * owner-approved 2026-08-15 (loxep-4ah) as the `mode: 'facts'` expansion of
+ * the single worst-status rollup milestone 2 shipped. Ordered here exactly
+ * as `computeGatusPushFacts` (`@loxep/app`'s `gatus-push.ts`) iterates them,
+ * so the derived-key list and the push order can never drift apart.
+ */
+export const GATUS_PUSH_FACT_SLUGS = [
+  "worker-backlog",
+  "sync-freshness",
+  "notifications",
+  "drift",
+  "readiness",
+] as const;
+
+export type GatusPushFactSlug = (typeof GATUS_PUSH_FACT_SLUGS)[number];
+
+/**
+ * Derive one fact's own Gatus `external-endpoints` key from the base
+ * `endpointKey` an operator configured — `<baseKey>-<slug>`, e.g.
+ * `core_loxep-worker-backlog` from a base key of `core_loxep`. A plain
+ * suffix rather than trying to split `<GROUP>_<ENDPOINT>` and re-join: the
+ * base key's OWN group/endpoint boundary is ambiguous by design (Loxep
+ * never parses it, only echoes it — see this setting's own `endpointKey`
+ * doc), so the derivation appends to the whole string instead of guessing
+ * where that boundary falls. The operator's own gatus YAML must declare a
+ * matching `external-endpoints` entry per fact (see the `gatus-health-push`
+ * guide for the exact five-entry block) — Loxep never creates one.
+ */
+export function deriveGatusPushFactKey(
+  baseEndpointKey: string,
+  slug: GatusPushFactSlug,
+): string {
+  return `${baseEndpointKey}-${slug}`;
+}
+
+/** Every derived key for a base `endpointKey`, in `GATUS_PUSH_FACT_SLUGS` order — what the read-side quarantine (fleet-health.ts) and discovery exclusion both walk. */
+export function gatusPushFactKeys(baseEndpointKey: string): string[] {
+  return GATUS_PUSH_FACT_SLUGS.map((slug) => deriveGatusPushFactKey(baseEndpointKey, slug));
+}
+
 export const gatusPushSetting = defineSetting({
   key: "infrastructure.gatus_push",
   schema: z.strictObject({
@@ -427,7 +508,10 @@ export const gatusPushSetting = defineSetting({
     /**
      * `<GROUP_NAME>_<ENDPOINT_NAME>`, exactly as declared under the
      * operator's own gatus `external-endpoints` — Loxep never derives or
-     * sanitizes this; it is copied verbatim from the operator's YAML.
+     * sanitizes this; it is copied verbatim from the operator's YAML. In
+     * `mode: 'facts'`, this is the DERIVATION SEED for the five fact keys
+     * ({@link deriveGatusPushFactKey}) rather than a key Loxep pushes to
+     * directly.
      */
     endpointKey: z
       .string()
@@ -437,15 +521,31 @@ export const gatusPushSetting = defineSetting({
         "must look like <GROUP_NAME>_<ENDPOINT_NAME>, matching the operator's gatus external-endpoints declaration",
       )
       .nullable(),
+    /**
+     * PROVISIONAL default `'single'` (loxep-4ah owner ruling 6b): an
+     * installation that has never touched this field keeps EXACTLY
+     * milestone 2's shipped behavior — one push, the overall
+     * `integration_health` rollup, to `endpointKey` itself. `'facts'` opts
+     * into OQ9's five-fact expansion — one push per fact, to
+     * {@link deriveGatusPushFactKey}'s five derived keys, none of them
+     * `endpointKey` itself. An operator must both flip this AND declare the
+     * five matching `external-endpoints` entries in their own gatus YAML
+     * (see the `gatus-health-push` guide) before `'facts'` does anything
+     * more than `'single'` did — Gatus's own missing-endpoint 404 already
+     * makes a mismatch visible, the same way it does for the single-key
+     * heartbeat mirror today.
+     */
+    mode: z.enum(["single", "facts"]).default("single"),
   }),
   description:
-    "Gatus outward health push (Phase 8 milestone 2): whether it runs, the " +
-    "base URL of the operator's Gatus instance, and the <GROUP>_<ENDPOINT> " +
-    "key of the external endpoint declared in their own gatus YAML. The " +
-    "bearer token is a secret, stored separately at " +
-    "infrastructure.gatus_push.default",
+    "Gatus outward health push (Phase 8 milestone 2, expanded loxep-4ah): " +
+    "whether it runs, the base URL of the operator's Gatus instance, the " +
+    "<GROUP>_<ENDPOINT> key of the external endpoint (or, in 'facts' mode, " +
+    "the derivation seed for five fact-specific keys) declared in their " +
+    "own gatus YAML, and the push mode itself. The bearer token is a " +
+    "secret, stored separately at infrastructure.gatus_push.default",
   schemaVersion: 1,
-  defaultValue: { enabled: false, baseUrl: null, endpointKey: null },
+  defaultValue: { enabled: false, baseUrl: null, endpointKey: null, mode: "single" },
 });
 
 /**
@@ -642,21 +742,27 @@ export const tailscaleIgnoredDevicesSetting = defineSetting({
  * `LOXEP_BOOTSTRAP_ADMIN_EMAIL`, `loxep admin promote`, or the claim mapping
  * below — closes that window behind itself.
  *
- * DEFAULT (PROVISIONAL — owner-review, loxep-x2s): closed-after-bootstrap is
- * the recommendation because the failure modes are asymmetric — an install
- * that was open when it should have been closed has already handed out
- * accounts, while an install that was closed when it should have been open
+ * DEFAULT (CONFIRMED — owner ruling 2026-08-15, `loxep-yk8`, resolving the
+ * question `loxep-x2s` was filed to ask): closed-after-bootstrap ships exactly
+ * as built. The recommendation held because the failure modes are asymmetric —
+ * an install that was open when it should have been closed has already handed
+ * out accounts, while an install that was closed when it should have been open
  * costs its owner one switch. It is nonetheless a behavior change for an
  * upgrade in place (a colleague added next week is declined until an admin
  * opens the method or creates the account), and it runs against this module's
  * own "an absent setting must not surprise an existing install" habit — see
- * {@link integrationsEnabledSetting}. The open sub-question is whether `oidc`
+ * {@link integrationsEnabledSetting}. The sub-question was whether `oidc`
  * should default to `'open'` while `magicLink` stays `'closed'`, since with
- * SSO the operator's identity provider is already the gate. Do not change this
- * default silently; update this comment, ADR-0024, the bead, and the docs
- * together.
+ * SSO the operator's identity provider is already the gate; the ruling keeps
+ * that split rejected — one coherent default is easier to reason about than a
+ * two-speed one — and instead addresses the discoverability gap with a
+ * dismissible onboarding card on `/dashboard/overview` (shown once an admin
+ * exists, only while OIDC is bootstrap-configured and `newUsers.oidc` is still
+ * `closed`) offering to flip `newUsers.oidc` open. See
+ * {@link authOnboardingOidcPromptDismissedSetting}. Do not change this default
+ * silently; update this comment, ADR-0024, the bead, and the docs together.
  *
- * ## Claim mapping precedence (also PROVISIONAL)
+ * ## Claim mapping precedence (also CONFIRMED, same ruling)
  *
  * `applyOn: 'create'` — the default — runs the mapping once, when the OIDC
  * account row is first written, and can only ever GRANT admin; every later
@@ -666,7 +772,10 @@ export const tailscaleIgnoredDevicesSetting = defineSetting({
  * the provider seeds a user at creation and never re-syncs after.
  * `applyOn: 'every_sign_in'` declares the IdP authoritative and both grants and
  * revokes admin — guarded so it never demotes the only remaining administrator
- * and never runs in the same session as a first-admin bootstrap grant.
+ * and never runs in the same session as a first-admin bootstrap grant. The
+ * ruling ships this default as built, unchanged; it is unrelated to
+ * `LOXEP_OIDC_EMAIL_CLAIM` (`@loxep/config`, `configuration-and-secrets.md`),
+ * a separate bootstrap override for which claim seeds the email address.
  */
 export const authProvisioningSetting = defineSetting({
   key: "auth.provisioning",
@@ -701,13 +810,51 @@ export const authProvisioningSetting = defineSetting({
     "CREATION only — an existing user always keeps their sign-in path, so " +
     "nothing here can lock anybody out. While the installation has no admin " +
     "user at all, provisioning is force-open so a new deployment can bootstrap " +
-    "itself. DEFAULT (PROVISIONAL, loxep-x2s): closed for both methods",
+    "itself. DEFAULT (CONFIRMED, owner ruling loxep-yk8): closed for both methods",
   schemaVersion: 1,
   defaultValue: {
     newUsers: { magicLink: "closed", oidc: "closed" },
     magicLinkEmailDomains: [],
     oidcAdminClaim: { claim: null, adminValues: [], applyOn: "create" },
   },
+});
+
+/**
+ * Whether the admin has dismissed the `/dashboard/overview` onboarding card
+ * offering to open OIDC auto-provisioning (ADR-0024 §2, owner ruling
+ * 2026-08-15, `loxep-yk8`).
+ *
+ * The card exists because the ruling that kept `auth.provisioning`'s
+ * closed-for-both default (above) rejected splitting `oidc` to `open` by
+ * default — SSO-gated installs still start closed, and instead learn the
+ * option exists via this one-time surface right after their first
+ * administrator is bootstrapped. This setting is what makes the surface
+ * ONE-TIME: without it, a card with no persisted "seen it" state would
+ * either reappear on every visit to `/dashboard/overview` or have to be
+ * silently hidden by some other heuristic.
+ *
+ * DEFAULT: `false` (not dismissed) — an absent row means the card has never
+ * been dismissed, so a fresh installation sees it exactly once, the same
+ * "unset means the fresh-install behavior" rule `authProvisioningSetting`
+ * itself follows for the bootstrap window.
+ *
+ * Deliberately its OWN setting rather than a field folded into
+ * `auth.provisioning`: dismissal is UI state about a prompt, not part of the
+ * provisioning policy itself, and keeping it separate means a future prompt
+ * (or a policy reset) never has to reason about the other's shape. Additive:
+ * registering it does not change `authProvisioningSetting`'s schema or
+ * default.
+ */
+export const authOnboardingOidcPromptDismissedSetting = defineSetting({
+  key: "auth.onboarding_oidc_prompt_dismissed",
+  schema: z.boolean(),
+  description:
+    "Whether the admin has dismissed the /dashboard/overview onboarding " +
+    "card offering to open OIDC auto-provisioning (ADR-0024, loxep-yk8). " +
+    "DEFAULT: false — an installation that has never dismissed it sees the " +
+    "card once, the first time its conditions are met.",
+  schemaVersion: 1,
+  defaultValue: false,
 });
 
 /** Every definition this module registers, for diagnostics and tests. */
@@ -720,6 +867,7 @@ export const registeredApplicationSettings = [
   cloudflareRateBudgetSetting,
   caaPolicySetting,
   documentsMediaLimitsSetting,
+  documentsParserIdSetting,
   inventoryMediaLimitsSetting,
   inventoryDefaultSaleModeSetting,
   gatusPushSetting,
@@ -727,4 +875,5 @@ export const registeredApplicationSettings = [
   integrationsEnabledSetting,
   tailscaleIgnoredDevicesSetting,
   authProvisioningSetting,
+  authOnboardingOidcPromptDismissedSetting,
 ] as const;

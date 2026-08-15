@@ -34,6 +34,7 @@ import type { WorkerRuntime } from "@loxep/jobs";
 import {
   ACCOUNTING_POST_FACTS_TASK_NAME,
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  FLEET_EVIDENCE_INGEST_TASK,
   GATUS_PUSH_TASK_NAME,
   HEALTH_SWEEP_TASK_NAME,
   REFRESH_TOKENS_TASK_NAME,
@@ -126,6 +127,10 @@ describe("buildWorkerRegistry", () => {
         // loxep-6fm: the posting-engine sweep — WEAVE AUDIT finding 1's
         // "the ledger has no pump", wired into the worker for the first time.
         ACCOUNTING_POST_FACTS_TASK_NAME,
+        // Phase 8 milestone 7 (loxep-ovj.7): the on-demand fleet-evidence
+        // projection — enqueued transactionally by `receiveFleetEvidence`
+        // from the inbound webhook, never claimed by the dispatcher.
+        FLEET_EVIDENCE_INGEST_TASK,
       ].sort(),
     );
 

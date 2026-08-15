@@ -24,6 +24,7 @@ describe("secret bundle registry", () => {
       "dockhand_credentials",
       "ebay_keyset",
       "etsy_keyset",
+      "fleet_ingest_token",
       "gatus_credentials",
       "invoiceninja_credentials",
       "mailbox_password",

@@ -106,3 +106,20 @@ export {
   loadGatusCredentialsFromEnvFile,
 } from "./credentials.ts";
 export type { GatusCredentials } from "./credentials.ts";
+
+// Alert-evidence ingestion (Phase 8 milestone 7, loxep-ovj.7): the JSON
+// contract Loxep publishes for Gatus's `custom` alerting provider, and the
+// normalizer + feedback-latch check `@loxep/app`'s fleet-evidence receiver
+// dispatches to. See webhook.ts's module doc.
+export {
+  gatusAlertWebhookSchema,
+  gatusExternalEndpointKey,
+  normalizeGatusAlertWebhook,
+} from "./webhook.ts";
+export type {
+  GatusAlertWebhookPayload,
+  GatusEvidenceAccepted,
+  GatusEvidenceDropped,
+  GatusEvidenceNormalization,
+  NormalizeGatusAlertWebhookOptions,
+} from "./webhook.ts";

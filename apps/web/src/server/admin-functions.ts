@@ -11,16 +11,20 @@
  * domain/storage services already enforce metadata-only output and these
  * functions keep it that way.
  */
+import { randomBytes } from 'node:crypto';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
 import {
+  authOnboardingOidcPromptDismissedSetting,
   authProvisioningSetting,
+  EVIDENCE_INGEST_CONNECTION_KIND,
+  FLEET_EVIDENCE_PROVIDERS,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
   integrationsEnabledSetting
 } from '@loxep/domain';
-import type { ConnectionStatus } from '@loxep/domain';
+import type { ConnectionStatus, FleetEvidenceProvider } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { NotificationEventClass } from '@loxep/db/schema';
 // Pure renderer (no runtime imports at all), so the bell and the outbound
@@ -185,6 +189,15 @@ export interface GatusPushSettingsDto {
   enabled: boolean;
   baseUrl: string | null;
   endpointKey: string | null;
+  /**
+   * `'single'` (PROVISIONAL default, loxep-4ah owner ruling 6b) keeps
+   * milestone 2's shipped behavior exactly — one push, to `endpointKey`
+   * itself. `'facts'` opts into the OQ9 five-fact expansion: one push per
+   * fact, to five keys DERIVED from `endpointKey` (never `endpointKey`
+   * itself) — see the `gatus-health-push` guide for the exact YAML block an
+   * operator must declare before flipping this.
+   */
+  mode: 'single' | 'facts';
   hasToken: boolean;
 }
 
@@ -201,6 +214,7 @@ export const fetchGatusPushSettings = createServerFn({ method: 'GET' }).handler(
       enabled: value.enabled,
       baseUrl: value.baseUrl,
       endpointKey: value.endpointKey,
+      mode: value.mode,
       hasToken: storedSecrets.some((secret) => secret.secretKey === GATUS_PUSH_SECRET_KEY)
     };
   }
@@ -217,6 +231,7 @@ const updateGatusPushSettingsInput = z.strictObject({
       'must look like <GROUP_NAME>_<ENDPOINT_NAME>, matching the gatus external-endpoints declaration'
     )
     .nullable(),
+  mode: z.enum(['single', 'facts']),
   /** Write-only: sent once, stored through the encrypted secrets service. */
   token: z.string().trim().min(1).optional()
 });
@@ -252,6 +267,7 @@ export const updateGatusPushSettings = createServerFn({ method: 'POST' })
       enabled: value.enabled,
       baseUrl: value.baseUrl,
       endpointKey: value.endpointKey,
+      mode: value.mode,
       hasToken: storedSecrets.some((secret) => secret.secretKey === GATUS_PUSH_SECRET_KEY)
     };
   });
@@ -527,6 +543,89 @@ export const createConnection = createServerFn({ method: 'POST' })
     }
     return { id: created.id };
   });
+
+const createFleetEvidenceSourceInput = z.strictObject({
+  provider: z.enum(FLEET_EVIDENCE_PROVIDERS),
+  name: z.string().trim().min(1).max(200)
+});
+
+/**
+ * Configure one inbound fleet-evidence source (Phase 8 milestone 7,
+ * loxep-ovj.7): a `connections` row of kind `evidence_ingest` plus a freshly
+ * minted `fleet_ingest_token` credential, in one admin action. ADR-0022
+ * reveal-once: `token` is the plaintext value, returned in THIS response
+ * only — nothing anywhere reads it back afterward. The endpoint URL to paste
+ * into the sender's own configuration is built client-side from
+ * `connectionId` (`/api/v1/hooks/fleet/:connectionId`); there is nothing
+ * secret about the URL itself, only the bearer token.
+ *
+ * Deletion/archival reuse the existing generic `deleteConnection`/
+ * `archiveConnection` — an evidence-ingest connection is an ordinary
+ * `connections` row and needs no dedicated remove action.
+ */
+export const createFleetEvidenceSource = createServerFn({ method: 'POST' })
+  .inputValidator(createFleetEvidenceSourceInput)
+  .handler(async ({ data }): Promise<{ connectionId: string; token: string }> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { connections, connectionCredentials } = getAdminServices();
+
+    const created = await connections.createConnection(
+      {
+        provider: data.provider,
+        kind: EVIDENCE_INGEST_CONNECTION_KIND,
+        name: data.name,
+        createdByUserId: session.user.id
+      },
+      { actorUserId: session.user.id }
+    );
+
+    const token = randomBytes(32).toString('base64url');
+    await connectionCredentials.setCredential({
+      connectionId: created.id,
+      credentialType: 'fleet_ingest_token',
+      payload: { token },
+      actorUserId: session.user.id
+    });
+
+    return { connectionId: created.id, token };
+  });
+
+export interface FleetEvidenceSourceDto {
+  connectionId: string;
+  provider: FleetEvidenceProvider;
+  name: string;
+  createdAt: string;
+  hasToken: boolean;
+}
+
+/**
+ * Evidence-ingest connections only — filtered server-side so the settings
+ * panel never has to know `EVIDENCE_INGEST_CONNECTION_KIND`'s literal value
+ * or re-derive it from the full `fetchConnections` list itself.
+ */
+export const fetchFleetEvidenceSources = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<FleetEvidenceSourceDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { connections } = getAdminServices();
+    const rows = await connections.listConnections({ kind: EVIDENCE_INGEST_CONNECTION_KIND });
+    return Promise.all(
+      rows.map(async (row) => {
+        const credentials = await connections.listConnectionCredentials(row.id);
+        return {
+          connectionId: row.id,
+          provider: row.provider as FleetEvidenceProvider,
+          name: row.name,
+          createdAt: iso(row.createdAt),
+          hasToken: credentials.some(
+            (credential) => credential.credentialType === 'fleet_ingest_token'
+          )
+        };
+      })
+    );
+  }
+);
 
 /**
  * Guided store-connection input. Each variant is one catalog service's form
@@ -1354,6 +1453,94 @@ export const fetchFirstAdminBootstrap = createServerFn({ method: 'GET' }).handle
       completedAt: value.completedAt ?? null,
       email: value.email ?? null
     };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Onboarding: OIDC auto-provisioning prompt (ADR-0024 §2, loxep-yk8)
+//
+// The owner ruling that confirmed auth.provisioning's closed-for-both default
+// rejected defaulting `oidc` to 'open', and addressed the discoverability gap
+// instead with this dismissible /dashboard/overview card. It is shown once —
+// right after the installation's first administrator exists — and only to an
+// admin whose deployment could actually act on it: OIDC has to be
+// bootstrap-configured, and `newUsers.oidc` has to still be closed. Dismissal
+// (with or without enabling) is permanent, tracked by the additive
+// `auth.onboarding_oidc_prompt_dismissed` setting — independent of
+// `auth.provisioning` itself, so a later reset of one never has to reason
+// about the other's shape.
+// ---------------------------------------------------------------------------
+
+export interface OnboardingOidcPromptDto {
+  /** Whether the card's conditions are all met right now. */
+  show: boolean;
+}
+
+/**
+ * `requireSession` rather than `requireAdmin`: a member landing on
+ * `/dashboard/overview` must get a normal `{show: false}` response, not a 403
+ * — this is a discoverability nicety, not a protected resource, and the
+ * dashboard route is not admin-gated.
+ */
+export const fetchOnboardingOidcPrompt = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<OnboardingOidcPromptDto> => {
+    const [
+      { requireSession, getAdminServices },
+      { hasRole, installationHasAdmin, readProvisioningPolicy },
+      { getLoginPaths }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/auth'),
+      import('@/server/auth')
+    ]);
+    const session = await requireSession();
+    if (!hasRole(session, 'admin')) return { show: false };
+
+    const { settings, handle } = getAdminServices();
+    const [dismissed, policy, hasAdmin] = await Promise.all([
+      settings.get(authOnboardingOidcPromptDismissedSetting),
+      readProvisioningPolicy(handle),
+      installationHasAdmin(handle)
+    ]);
+    const show =
+      !dismissed && hasAdmin && getLoginPaths().oidc && policy.newUsers.oidc === 'closed';
+    return { show };
+  }
+);
+
+/**
+ * The card's primary action: flip `auth.provisioning.newUsers.oidc` to
+ * `'open'`, preserving every other field of the stored policy untouched, and
+ * mark the prompt dismissed in the same request so it cannot reappear.
+ */
+export const enableOidcOnboarding = createServerFn({ method: 'POST' }).handler(
+  async (): Promise<OnboardingOidcPromptDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { settings } = getAdminServices();
+
+    const current = await settings.get(authProvisioningSetting);
+    await settings.set(
+      authProvisioningSetting,
+      { ...current, newUsers: { ...current.newUsers, oidc: 'open' } },
+      { actorUserId: session.user.id }
+    );
+    await settings.set(authOnboardingOidcPromptDismissedSetting, true, {
+      actorUserId: session.user.id
+    });
+    return { show: false };
+  }
+);
+
+/** The card's secondary action: dismiss without changing the policy. */
+export const dismissOnboardingOidcPrompt = createServerFn({ method: 'POST' }).handler(
+  async (): Promise<OnboardingOidcPromptDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    await getAdminServices().settings.set(authOnboardingOidcPromptDismissedSetting, true, {
+      actorUserId: session.user.id
+    });
+    return { show: false };
   }
 );
 

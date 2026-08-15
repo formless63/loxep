@@ -26,3 +26,34 @@ test('/health/ready returns 200 JSON with ok status', async ({ request }) => {
   expect(report.status).toBe('ok');
   expect(report.checks).toBeTruthy();
 });
+
+/**
+ * Fleet alert evidence webhook (Phase 8 milestone 7, loxep-ovj.7) — Loxep's
+ * first inbound integration surface, unauthenticated by session on purpose.
+ * A wrong bearer token and an unknown connection id must be
+ * INDISTINGUISHABLE, both a bare 401 — the cheap end-to-end proof that the
+ * real built app answers this way over HTTP, not just in a unit test
+ * against an injected service.
+ */
+test('fleet evidence webhook rejects an unknown connection and a bad token identically', async ({
+  request
+}) => {
+  const unknownConnection = await request.post(
+    '/api/v1/hooks/fleet/00000000-0000-4000-8000-000000000000',
+    {
+      headers: { authorization: 'Bearer anything', 'content-type': 'application/json' },
+      data: { status: 'ok' }
+    }
+  );
+  expect(unknownConnection.status()).toBe(401);
+
+  const missingToken = await request.post(
+    '/api/v1/hooks/fleet/00000000-0000-4000-8000-000000000000',
+    { headers: { 'content-type': 'application/json' }, data: { status: 'ok' } }
+  );
+  expect(missingToken.status()).toBe(401);
+
+  const unknownBody = (await unknownConnection.json()) as unknown;
+  const missingBody = (await missingToken.json()) as unknown;
+  expect(unknownBody).toEqual(missingBody);
+});

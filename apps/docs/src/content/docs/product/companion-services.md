@@ -99,7 +99,7 @@ The integration boundary must preserve other task systems later rather than plac
 
 **CONFIRMED 2026-08-13, with one correction and one caveat.** The correction: `@loxep/work` now owns projects, time entries, billing rates, and the unbilled-work queue, so the framing above — Vikunja as a stand-in "before Loxep's native Projects/Tasks domains are complete" — understates the split. What Loxep genuinely lacks is the **task, kanban, assignee, and due-date layer**, and that is what Vikunja supplies. Verified: AGPL-3.0, an **OpenAPI 3.1** surface at `/api/v2/openapi.json`, HMAC-SHA256-signed webhooks with a documented event taxonomy, API tokens with per-route scoping, free multi-provider OIDC, and **two containers**. Vikunja's paid Pro tier gates exactly three things — the admin panel, **time tracking**, and audit logs — and time tracking is precisely the capability Loxep must own rather than delegate, so the free build loses nothing this integration wants. The caveat: Vikunja is effectively a one-maintainer project, which is an [open question](../../architecture/knowledge-tasks-integration-design/#open-questions) for the owner at the tier where a stored credential exists.
 
-Also worth recording, because it constrains the bullet above: *"consume supported webhook/API updates"* requires an **inbound webhook receiver that Loxep does not have**. That capability is welded to the same `/api/v1` decision [Phase 8](../../architecture/fleet-observability-design/#open-questions) defers, and must not be answered separately here.
+Also worth recording, because it constrains the bullet above: *"consume supported webhook/API updates"* needs an inbound webhook receiver — **IMPLEMENTED 2026-08-15** as the shared `/api/v1` surface [Phase 8](../../architecture/fleet-observability-design/#evidence-ingestion-if-it-ships) built (loxep-ovj.7). A Vikunja-specific normalizer against that same receiver is not built by this bullet and remains separate, smaller follow-up work.
 
 ### OpenProject
 
@@ -179,6 +179,8 @@ Backup tooling is operational infrastructure, not a feature Loxep should reinven
 **Role:** recommended PostgreSQL backup companion; strong candidate for first-class backup-health integration.
 
 Loxep should provide a documented configuration/template for PostgreSQL/Timescale backups with retention and off-host storage appropriate to the deployment.
+
+**IMPLEMENTED 2026-08-15 (Phase 8 milestone 7, loxep-ovj.7):** the inbound receiver this sketch names now exists — see [Fleet Observability Design](../../architecture/fleet-observability-design/#evidence-ingestion-if-it-ships) and the [Sending fleet alert evidence](../../guides/fleet-evidence-webhooks/) guide. What shipped is the "backup status / last successful evidence" half of the sketch below (a `POST` of `{status, message?, occurredAt?}` rolls into `integration_health`, `source: 'ingest'`); the "ntfy alert if stale" half — Loxep noticing a sender has gone quiet and raising its own alert about that silence — is explicitly NOT built yet, recorded as a scope boundary in the design doc's own implementation-status note.
 
 A useful first integration is inbound backup-health reporting:
 

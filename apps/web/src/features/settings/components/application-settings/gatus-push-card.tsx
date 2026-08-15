@@ -24,6 +24,7 @@ const gatusPushFormSchema = z.object({
         message: 'Must look like <GROUP_NAME>_<ENDPOINT_NAME>'
       }
     ),
+  mode: z.enum(['single', 'facts']),
   token: z.string()
 });
 
@@ -80,6 +81,8 @@ export default function GatusPushCard({ isAdmin }: { isAdmin: boolean }) {
           <dd>{data.baseUrl ?? '—'}</dd>
           <dt className='text-muted-foreground'>Endpoint key</dt>
           <dd>{data.endpointKey ?? '—'}</dd>
+          <dt className='text-muted-foreground'>Mode</dt>
+          <dd>{data.mode === 'facts' ? 'Five facts' : 'Single (overall status)'}</dd>
           <dt className='text-muted-foreground'>Push token</dt>
           <dd>{data.hasToken ? 'Configured' : 'Not set'}</dd>
         </dl>
@@ -121,6 +124,7 @@ function GatusPushForm({ data, onSaved }: { data: GatusPushSettingsDto; onSaved:
           enabled: values.enabled,
           baseUrl: values.baseUrl.trim() === '' ? null : values.baseUrl.trim(),
           endpointKey: values.endpointKey.trim() === '' ? null : values.endpointKey.trim(),
+          mode: values.mode,
           token: values.token.trim() === '' ? undefined : values.token.trim()
         }
       }),
@@ -136,6 +140,7 @@ function GatusPushForm({ data, onSaved }: { data: GatusPushSettingsDto; onSaved:
       enabled: data.enabled,
       baseUrl: data.baseUrl ?? '',
       endpointKey: data.endpointKey ?? '',
+      mode: data.mode,
       token: ''
     },
     validators: {
@@ -179,7 +184,24 @@ function GatusPushForm({ data, onSaved }: { data: GatusPushSettingsDto; onSaved:
             <field.TextField
               label='Endpoint key'
               placeholder='core_loxep'
-              description="<GROUP_NAME>_<ENDPOINT_NAME>, exactly as declared under external-endpoints in the operator's gatus YAML."
+              description="<GROUP_NAME>_<ENDPOINT_NAME>, exactly as declared under external-endpoints in the operator's gatus YAML. In 'Five facts' mode this is the derivation seed for five keys, never pushed to directly."
+            />
+          )}
+        />
+        <form.AppField
+          name='mode'
+          children={(field) => (
+            <field.SelectField
+              label='What gets published'
+              options={[
+                { value: 'single', label: 'Single (overall status) — today’s behavior' },
+                {
+                  value: 'facts',
+                  label:
+                    'Five facts (worker backlog, sync freshness, notifications, drift, readiness)'
+                }
+              ]}
+              description="'Five facts' needs five matching external-endpoints entries declared in the operator's gatus YAML, one per fact, before it does anything more than 'Single' did — see the Gatus push guide."
             />
           )}
         />

@@ -48,12 +48,17 @@ export type {
 // process that reaches the registry through `@loxep/domain` therefore sees
 // the same keys (see the module doc for why they live in this package).
 export {
+  authOnboardingOidcPromptDismissedSetting,
   authProvisioningSetting,
   caaPolicySetting,
   cloudflareRateBudgetSetting,
+  deriveGatusPushFactKey,
   documentsMediaLimitsSetting,
+  documentsParserIdSetting,
   ebayRateBudgetSetting,
+  GATUS_PUSH_FACT_SLUGS,
   GATUS_PUSH_SECRET_KEY,
+  gatusPushFactKeys,
   gatusPushSetting,
   gatusRateBudgetSetting,
   integrationsEnabledSetting,
@@ -66,6 +71,7 @@ export {
   tailscaleIgnoredDevicesSetting,
   wooRateBudgetSetting,
 } from "./settings-defaults.ts";
+export type { GatusPushFactSlug } from "./settings-defaults.ts";
 
 export {
   applicationSecretAad,
@@ -242,3 +248,23 @@ export type {
   ResourceLinkRow,
   ResourceLinksService,
 } from "./resource-links.ts";
+
+// Fleet alert evidence ingestion (Phase 8 milestone 7, loxep-ovj.7): the
+// ingest-only connection kind and the generic (Databasus-class) evidence
+// contract. Provider-specific normalizers live at their own integration
+// boundary — see fleet-evidence.ts's module doc.
+export {
+  EVIDENCE_INGEST_CONNECTION_KIND,
+  FLEET_EVIDENCE_PROVIDERS,
+  genericEvidenceWebhookSchema,
+  isEvidenceIngestConnectionKind,
+  isFleetEvidenceProvider,
+  normalizeGenericEvidenceWebhook,
+} from "./fleet-evidence.ts";
+export type {
+  FleetEvidenceAccepted,
+  FleetEvidenceDropped,
+  FleetEvidenceNormalization,
+  FleetEvidenceProvider,
+  GenericEvidenceWebhookPayload,
+} from "./fleet-evidence.ts";

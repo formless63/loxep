@@ -554,6 +554,34 @@ export const secretBundleSchemas = {
     tlsKey: z.string().min(1).optional(),
     hawserToken: z.string().min(1).optional(),
   }),
+  /**
+   * A minted per-connection fleet-evidence ingest token (ADR-0019,
+   * loxep-ovj.7): the bearer credential
+   * `POST /api/v1/hooks/fleet/:connectionId` verifies in constant time
+   * before accepting a webhook body. Stored as the connection credential
+   * `fleet_ingest_token` on an `connections` row of kind
+   * `evidence_ingest` — see `@loxep/domain`'s `fleet-evidence.ts`.
+   *
+   * **This is a credential Loxep MINTS, not one it consumes** — the same
+   * class as `dns_edit_token` above, and for the same reason ADR-0022's
+   * reveal-once contract governs it: the mint is a request-scoped admin
+   * server action (`createFleetEvidenceSource` in `apps/web`) that returns
+   * the plaintext in its own response, exactly once, before the stored row
+   * is ever read back. After that response, this value is write-only
+   * forever — no route reads it back — and a lost value is a ROTATION
+   * (re-mint), never a recovery. Unlike `dns_edit_token`, no Loxep adapter
+   * ever authenticates WITH this value either; Loxep is the one VERIFYING
+   * it, which is the opposite direction from every other purpose in this
+   * registry that carries a `token` field.
+   *
+   * Single field, matching the shape of `dns_edit_token`/every other
+   * single-secret bearer purpose here — there is no non-secret half to
+   * bundle it with (the connection's `provider`/`name`/`kind` already carry
+   * the non-secret identity, in `connections` itself).
+   */
+  fleet_ingest_token: z.strictObject({
+    token: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

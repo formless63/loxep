@@ -211,6 +211,19 @@ interface AdminRegistry {
     getAdapterForConnection: import('@loxep/app').DockhandAdapterFactory;
     invalidate: (connectionId: string) => void;
   }>;
+  /**
+   * The Termix READ adapter factory (loxep-4ah, owner-approved per-session
+   * rows), loaded through the module above. Mirrors
+   * `dockhandAdapterFactoryPromise` exactly: cached on the registry so the
+   * fleet-detail sessions panel's live `listSessions()` read reuses the same
+   * cached bearer token across requests rather than logging in on every page
+   * view — see `@loxep/app`'s `fleet.ts` for why a Termix adapter's cache
+   * carries no TTL (the login-attempt 429 loxep-wvm §1.6/§2.2(f) names).
+   */
+  termixAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').TermixAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -494,6 +507,40 @@ export async function getDockhandAdapterForConnection(
   connectionId: string
 ): Promise<import('@loxep/app').DockhandConnectionAdapter['adapter']> {
   const factory = await getDockhandAdapterFactory();
+  const { adapter } = await factory.getAdapterForConnection(connectionId);
+  return adapter;
+}
+
+/**
+ * The Termix READ adapter factory (loxep-4ah), loaded through
+ * {@link getFleetModule}. Mirrors {@link getDockhandAdapterFactory} exactly —
+ * same caching rationale, same registry shape.
+ */
+function getTermixAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').TermixAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.termixAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createTermixAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.termixAdapterFactoryPromise;
+}
+
+/**
+ * A live Termix adapter for one connection (loxep-4ah's fleet-detail
+ * sessions panel) — mirrors {@link getDockhandAdapterForConnection}: the
+ * ONLY fleet-adapter access `apps/web` needs for Termix, since every other
+ * read reaches `apps/web` already-written by `health.sweep`.
+ */
+export async function getTermixAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').TermixConnectionAdapter['adapter']> {
+  const factory = await getTermixAdapterFactory();
   const { adapter } = await factory.getAdapterForConnection(connectionId);
   return adapter;
 }

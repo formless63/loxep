@@ -24,6 +24,7 @@ import { InfrastructurePage } from '@/features/infrastructure/components/infrast
 import CompanionLinksPanel from '@/features/infrastructure/components/companion-links-panel';
 import ContainerHostRegistrationPanel from '@/features/infrastructure/components/container-host-registration-panel';
 import DockhandContainersPanel from '@/features/infrastructure/components/dockhand-containers-panel';
+import TermixSessionsPanel from '@/features/infrastructure/components/termix-sessions-panel';
 import HostingTargetTokensPanel from '@/features/infrastructure/components/hosting-target-tokens-panel';
 import { hostingTargetQuery, hostingTargetsQuery } from '@/features/infrastructure/api/queries';
 import { CONTROL_SURFACE_LABELS } from '@/features/infrastructure/constants';
@@ -189,6 +190,9 @@ function FleetDetailData({ name }: { name: string }) {
   const hasDockhandLink = data.companionLinks.some(
     (link) => link.provider === 'dockhand' && link.externalType === 'environment'
   );
+  const hasTermixLink = data.companionLinks.some(
+    (link) => link.provider === 'termix' && link.externalType === 'host'
+  );
   return (
     <div className='flex flex-col gap-4'>
       <Card>
@@ -269,6 +273,12 @@ function FleetDetailData({ name }: { name: string }) {
           anti-soup rule licenses — mounted ONLY when a dockhand/environment
           link exists, per hb7 §3.2 rule 3 ("absent, not green, not empty"). */}
       {hasDockhandLink && <DockhandContainersPanel hostingTargetId={data.id} />}
+
+      {/* loxep-4ah: Termix per-session rows for a linked host (owner-approved
+          2026-08-15) — the one dedicated panel the anti-soup rule now
+          licenses for Termix, mounted ONLY when a termix/host link exists,
+          same "absent, not empty" discipline as the Dockhand panel above. */}
+      {hasTermixLink && <TermixSessionsPanel hostingTargetId={data.id} />}
 
       {/* loxep-hb7 Milestone C: the desired-vs-observed registration panel
           and the only Dockhand write surface on this page. DELIBERATELY NOT

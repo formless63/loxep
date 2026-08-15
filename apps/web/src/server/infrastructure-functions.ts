@@ -2065,6 +2065,111 @@ export const fetchDockhandHostView = createServerFn({ method: 'GET' })
   });
 
 // ---------------------------------------------------------------------------
+// Termix per-session rows (loxep-4ah, owner-approved 2026-08-15 ruling —
+// "the more info the better, this tool is meant to be used by people that
+// trust one another"). The wvm design double-gated this on (a) a live run
+// confirming the active-sessions field names and (b) an explicit owner
+// ruling on the trust model; both are now satisfied — see loxep-4ah's own
+// notes and the corrected loxep-wvm docs.
+//
+// Sessions stay LIVE-READ, exactly like Dockhand's containers panel above:
+// no table, no cache, no cadence. `TermixSessionFact` is never persisted —
+// wvm §3's "no session history, no per-instant storage of a session" rule
+// still holds; only the best-effort COUNT (`detail.sessionCount`, already
+// written by `projectTermixResources`) is ever stored, unchanged by this
+// slice.
+// ---------------------------------------------------------------------------
+
+/**
+ * A defensive cap on how many session rows one page render will ever ask
+ * for — Termix's active-sessions read has no documented page size, and a
+ * live-read panel must not become an unbounded render just because an
+ * instance happens to have many open tabs. Not a UX limit (a real fleet used
+ * by "people who trust one another" is expected to stay well under this),
+ * a correctness ceiling matching this package's other honestly-conservative
+ * caps (`DEFAULT_MAX_SUBJECTS_PER_TYPE`, `TERMIX_RATE_BUDGET_CAPACITY`).
+ */
+export const TERMIX_SESSION_ROWS_MAX = 200;
+
+export interface TermixSessionRowDto {
+  sessionId: string;
+  hostId: string;
+  hostName: string | null;
+  isConnected: boolean;
+  /** Epoch milliseconds, Termix's own clock — `null` when Termix omitted it. Formatted client-side. */
+  createdAt: number | null;
+  isOwnSession: boolean;
+  /**
+   * The human this session was shared BY, when it is not the caller's own —
+   * `null` for an own session. Rendered verbatim as the username Termix
+   * itself reports: the owner's 2026-08-15 ruling is that this tool is used
+   * by people who trust one another, so "who is logged into which host" is
+   * the intended value, not a surveillance surface to redact.
+   */
+  sharedByUsername: string | null;
+  permissionLevel: string | null;
+}
+
+export interface TermixHostSessionsDto {
+  /** The linked host's own Termix externalHostId — echoed for the empty-state copy. */
+  hostId: string;
+  hostName: string | null;
+  sessions: TermixSessionRowDto[];
+  /** Loxep's own read clock — this response has no staleness story, same discipline as `DockhandHostViewDto.readAt`. */
+  readAt: string;
+}
+
+/**
+ * Resolves `hostingTargetId`'s termix/host companion link, calls
+ * `listSessions()` live against Termix, and returns every session for THAT
+ * host — or `null` when no such link exists (nothing to show; the caller
+ * renders this as ABSENT, never an empty table, matching
+ * `fetchDockhandHostView`'s own "absent, not green, not empty" rule).
+ *
+ * Filters the WHOLE-INSTANCE session list down to this one host's
+ * `externalHostId` — Termix's `/open-tabs/active-sessions` carries every
+ * session the caller can see across every host, own and shared-with-me
+ * alike (wvm §3's fully-specified read), and a per-host panel must only
+ * ever show the sessions that belong to the host it was mounted for.
+ */
+export const fetchTermixHostSessions = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ hostingTargetId: z.uuid() }))
+  .handler(async ({ data }): Promise<TermixHostSessionsDto | null> => {
+    const { requireSession, getResourceLinksService, getTermixAdapterForConnection } =
+      await import('@/server/admin');
+    await requireSession();
+    const resourceLinks = getResourceLinksService();
+    const links = await resourceLinks.listLinksFor('hosting_target', data.hostingTargetId);
+    const link = links.find(
+      (candidate) => candidate.provider === 'termix' && candidate.externalType === 'host'
+    );
+    if (link === undefined || link.externalId === null) return null;
+
+    const resource = await resourceLinks.getExternalResource(link.externalResourceId);
+    if (resource === null || resource.connectionId === null) return null;
+
+    const adapter = await getTermixAdapterForConnection(resource.connectionId);
+    const sessions = await adapter.listSessions();
+    const forThisHost = sessions.filter((session) => session.hostId === link.externalId);
+
+    return {
+      hostId: link.externalId,
+      hostName: resource.title,
+      sessions: forThisHost.slice(0, TERMIX_SESSION_ROWS_MAX).map((session) => ({
+        sessionId: session.sessionId,
+        hostId: session.hostId,
+        hostName: session.hostName,
+        isConnected: session.isConnected,
+        createdAt: session.createdAt,
+        isOwnSession: session.isOwnSession,
+        sharedByUsername: session.sharedByUsername,
+        permissionLevel: session.permissionLevel
+      })),
+      readAt: iso(new Date())
+    };
+  });
+
+// ---------------------------------------------------------------------------
 // Dockhand host-registration intent (loxep-hb7 Milestone C) — the create
 // dialog's "also register this host in Dockhand" section and the
 // fleet-detail registration panel both call these. Declaring intent NEVER

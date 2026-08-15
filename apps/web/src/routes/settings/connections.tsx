@@ -4,6 +4,7 @@ import { zodValidator } from '@tanstack/zod-adapter';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import ConnectionsTable from '@/features/settings/components/connections-table';
+import FleetEvidenceSourcesCard from '@/features/settings/components/fleet-evidence-sources-card';
 import { SettingsPage } from '@/features/settings/components/settings-page';
 
 /**
@@ -77,7 +78,10 @@ function SettingsConnections() {
       title='Connections'
       description='The accounts, stores, and services this installation is connected to.'
     >
-      <ConnectionsTable isAdmin={isAdmin} />
+      <div className='space-y-6'>
+        <ConnectionsTable isAdmin={isAdmin} />
+        <FleetEvidenceSourcesCard isAdmin={isAdmin} />
+      </div>
     </SettingsPage>
   );
 }

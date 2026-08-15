@@ -263,11 +263,11 @@ Reuse `integration_health` with **no schema change** — `external_resource` and
 
 The Phase 8 rules bind unchanged: one row per subject overwritten in place, `detail` carries no credential and no response body, staleness is derived from `checked_at` rather than asserted as a status, and **`integration_health` never drives retry or backoff.**
 
-### Tier 4 is blocked, and must stay blocked on the same question as Phase 8
+### Tier 4 was blocked on the same question as Phase 8 — that question is now answered
 
-[Companion Services](../../product/companion-services/#vikunja) sketches *"consume supported webhook/API updates for task completion/status"*. That is tier 4, and **Loxep has no inbound webhook receiver.** [Phase 8's open question 4](../fleet-observability-design/#open-questions) asks whether one should exist, treats it as the opening move of the `/api/v1` surface rather than a feature of any one integration, and defers it.
+**IMPLEMENTED 2026-08-15 (Phase 8 milestone 7, loxep-ovj.7):** [Phase 8's open question 4](../fleet-observability-design/#open-questions) is answered YES — `POST /api/v1/hooks/fleet/:connectionId` now exists, exactly on the terms this section already committed to reusing: a per-connection bearer token verified constant-time, one `source_events` row, a projection job, and never a `notification_deliveries` row. What shipped is the RECEIVER and normalizers for Gatus, Beszel, and a generic (Databasus-class) contract — **not** a Vikunja or BookStack normalizer. Wiring either tool's webhook signature (Vikunja's HMAC-SHA256, BookStack's Slack-compatible payload) into this same receiver is a small, separate follow-up now that the shared question is settled, not blocked work anymore.
 
-**This design does not reopen that question and must not answer it differently.** If a receiver is built, these tools reuse it on identical terms — a per-connection bearer token, one `source_events` row, a projection job, and never a `notification_deliveries` row. Vikunja's HMAC-SHA256 body signing and BookStack's Slack-compatible payload make them good first consumers whenever that surface lands; neither justifies building it alone.
+[Companion Services](../../product/companion-services/#vikunja) sketches *"consume supported webhook/API updates for task completion/status"* — that promise can now be scheduled.
 
 ## Milestones
 
@@ -307,8 +307,9 @@ m2  tier 2 — @loxep/integration-vikunja. Read-only against the v2 OpenAPI
 
 m3  tier 3 — create a Vikunja task from a Loxep record. OWNER-GATED.
 
-m4  tier 4 — webhook ingest. BLOCKED on the /api/v1 receiver decision
-    (Phase 8 open question 4). Not schedulable until that is answered.
+m4  tier 4 — webhook ingest. The /api/v1 receiver decision (Phase 8 open
+    question 4) is now ANSWERED (loxep-ovj.7) — schedulable, but a
+    Vikunja/BookStack-specific normalizer at that receiver is still unbuilt.
 ```
 
 **The three m1s are one piece of work — and the shared piece shipped.** [loxep-v5r.3](../../product/roadmap/) built the one link service in `@loxep/domain` (`createResourceLinksService`, see the pointer at the top of this document) that [Phase 8 milestone 3](../fleet-observability-design/#the-link-model-and-its-vocabulary) already consumes for fleet records. This design's own m1 (a BookStack/Outline/Vikunja "Attach a document" form and provider dropdown) still needs to be built on top of it — the mechanism existing is not the same as either knowledge or task m1 shipping.
@@ -321,7 +322,7 @@ a tasks table mirroring a companion's schema        same
 a full-text index over imported wiki pages          the companion owns search
 a two-way sync of titles, statuses, or assignees    one authority per purpose
 provider-specific columns on any domain table       external_resources exists for this
-a second inbound webhook receiver                   Phase 8 open question 4 owns that
+a second inbound webhook receiver                   reuse Phase 8's (loxep-ovj.7), now shipped
 native task/kanban capability in @loxep/work        deliberately deferred; see the
                                                     roadmap's "Later directions"
 time tracking delegated to a companion              @loxep/work owns it, permanently
@@ -357,9 +358,7 @@ Each is genuinely unresolved and carries a recommendation. **A recommendation is
 
    *The owner must confirm:* whether "one companion instead of two" is a goal worth nine containers and enterprise-gated SSO. Also worth a decision: **Gitea/Forgejo** covers both under MIT/GPL in a single binary if a plain git wiki is enough, which is close to free for an installation that already runs a forge.
 
-5. **Does tier 4 stay welded to Phase 8's receiver decision?** This design says yes and refuses to answer it independently.
-
-   *Recommendation:* answer [Phase 8 open question 4](../fleet-observability-design/#open-questions) once, for the whole installation. Two inbound webhook surfaces with different auth models would be strictly worse than none.
+5. **ANSWERED 2026-08-15 — Does tier 4 stay welded to Phase 8's receiver decision?** Yes, and it was: [Phase 8 open question 4](../fleet-observability-design/#open-questions) is now answered once, for the whole installation (loxep-ovj.7) — there is exactly one inbound webhook surface, not one per integration. Building a Vikunja or BookStack normalizer against it remains open, but the receiver-vs-no-receiver question this item asked is closed.
 
 6. **Do tier-1 links get an integrations-catalog card?** Phase 8's rule says no — a card implies an account, a credential, and a connection.
 
@@ -381,7 +380,7 @@ Recorded for a human to resolve; this document does not fix them.
 
 2. **The Master Domain Map's knowledge list omits the recommended tool.** It reads *"Knowledge/docs: Outline, AFFiNE, compatible alternatives."* If BookStack becomes the first adapter, that line is stale in the specific way this project's [documentation discipline](../../development/dependency-policy/) warns about.
 
-3. **Companion Services assumes a capability Loxep does not have.** Its Vikunja bullet promises to *"consume supported webhook/API updates for task completion/status"* — tier 4, which requires an inbound receiver that has never existed. Phase 8 raised the same gap independently. Two documents now promise webhook consumption while a third defers the receiver.
+3. **RESOLVED 2026-08-15 — Companion Services assumed a capability Loxep did not have.** Its Vikunja bullet promises to *"consume supported webhook/API updates for task completion/status"* — tier 4, which needed an inbound receiver that did not exist. Phase 8 raised the same gap independently and closed it (loxep-ovj.7): the receiver now exists. Vikunja's own webhook normalizer against it is still unbuilt, which is ordinary unstarted work, not a documentation contradiction anymore.
 
 4. **RESOLVED 2026-08-13 — three designs scoped the same link service; loxep-v5r.3 shipped first and owns it.** [loxep-v5r.3](../../product/roadmap/) (external-resource links in product UI), [Phase 8 milestone 3](../fleet-observability-design/#the-link-model-and-its-vocabulary) (fleet tool links), and this design's m1 all described creating `external_resources` + `resource_links` rows from a form. `createResourceLinksService` in `@loxep/domain` is now that one service (see the pointer at the top of this document); loxep-ovj.3, loxep-p1j, and loxep-juk consume it rather than building their own.
 

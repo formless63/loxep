@@ -20,6 +20,7 @@
  * | `accounting.post-facts`      | @loxep/app (mechanics in @loxep/accounting) | loxep-6fm posting-engine sweep, PROVISIONAL cadence (5 min) |
  * | `inventory.sync-ebay-purchases` | @loxep/app (mechanics in @loxep/inventory) | on-demand eBay purchase-history sync for one connection |
  * | `infrastructure.sync-token-policy` | @loxep/app (mechanics in @loxep/infrastructure) | Phase 7 m3 DNS-token zone-scope policy rebuild (on-demand, scope-change-triggered) |
+ * | `integration-health.project-ingest-evidence` | @loxep/app | Phase 8 m7 fleet evidence webhook projection into integration_health (on-demand) |
  *
  * `infrastructure.sync-proxy-resource` (Phase 7 m3's OTHER reserved task
  * name, `@loxep/infrastructure`'s `tasks.ts`) is DELIBERATELY NOT registered
@@ -210,6 +211,7 @@ import {
 import { createOrderPayloadRedactors } from "./commerce-retention.ts";
 import { createEtsyPollExecutor } from "./etsy-poll-executor.ts";
 import { createAccountingPostFactsTasks } from "./accounting-posting.ts";
+import { createFleetEvidenceTasks } from "./fleet-evidence.ts";
 import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureContainerHostTasks } from "./infrastructure-container-host.ts";
@@ -556,6 +558,13 @@ export function buildWorkerRegistry(
   // the idempotency/books-gating contract it relies on.
   const accountingPostFacts = createAccountingPostFactsTasks({ services });
 
+  // --- fleet evidence ingestion (Phase 8 milestone 7, loxep-ovj.7) ------
+  // One on-demand task, enqueued transactionally by `fleet-evidence.ts`'s
+  // `receiveFleetEvidence` from the (unauthenticated-by-session) inbound
+  // webhook route — no cron item, matching
+  // `infrastructure.sync-token-policy`'s shape.
+  const fleetEvidence = createFleetEvidenceTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
@@ -569,6 +578,7 @@ export function buildWorkerRegistry(
     health.healthSweepTask,
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,
+    ...fleetEvidence.tasks,
   ]);
 
   return {
