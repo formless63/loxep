@@ -181,6 +181,23 @@ export interface InventoryMovementDto {
   locationId: string | null;
   locationCode: string | null;
   transferGroupId: string | null;
+  /**
+   * Provenance FKs the `inventory_movements` row actually carries
+   * (loxep-1zg): dropping these made a `depletion_sale` movement a GUI dead
+   * end — visible in the ledger with no way to trace WHY it happened (which
+   * order line sold it, which allocation reserved it, which shipment carried
+   * it, or which earlier movement a `reversal` undoes). None of these is a
+   * link to a page that exists yet except `acquisitionId` (the item's own
+   * "Sourced from" already shows THAT relationship at the item level; here
+   * it is per-movement, e.g. distinguishing which lot a `receipt` restocked
+   * from when an item spans more than one), so the rest render as plain
+   * identifiers rather than fabricated links.
+   */
+  acquisitionId: string | null;
+  inventoryAllocationId: string | null;
+  orderLineId: string | null;
+  shipmentId: string | null;
+  reversesMovementId: string | null;
   reasonCode: string | null;
   note: string | null;
   occurredAt: string;
@@ -435,6 +452,11 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
           ? (movementLocationCodeById.get(row.locationId) ?? null)
           : null,
         transferGroupId: row.transferGroupId,
+        acquisitionId: row.acquisitionId,
+        inventoryAllocationId: row.inventoryAllocationId,
+        orderLineId: row.orderLineId,
+        shipmentId: row.shipmentId,
+        reversesMovementId: row.reversesMovementId,
         reasonCode: row.reasonCode,
         note: row.note,
         occurredAt: iso(row.occurredAt),
@@ -881,6 +903,11 @@ export const fetchInventoryMovements = createServerFn({ method: 'GET' })
           locationId: row.locationId,
           locationCode: row.locationId ? (locationCodeById.get(row.locationId) ?? null) : null,
           transferGroupId: row.transferGroupId,
+          acquisitionId: row.acquisitionId,
+          inventoryAllocationId: row.inventoryAllocationId,
+          orderLineId: row.orderLineId,
+          shipmentId: row.shipmentId,
+          reversesMovementId: row.reversesMovementId,
           reasonCode: row.reasonCode,
           note: row.note,
           occurredAt: iso(row.occurredAt),
@@ -917,7 +944,8 @@ export interface AcquisitionListItemDto {
 
 const acquisitionFilterInput = z.strictObject({
   status: z.string().trim().min(1).optional(),
-  sourceKind: z.string().trim().min(1).optional()
+  sourceKind: z.string().trim().min(1).optional(),
+  connectionId: z.uuid().optional()
 });
 
 const ACQUISITION_LIST_LIMIT = 500;
@@ -934,6 +962,8 @@ export const fetchAcquisitions = createServerFn({ method: 'GET' })
         const clauses = [];
         if (data.status !== undefined) clauses.push(eq(table.status, data.status));
         if (data.sourceKind !== undefined) clauses.push(eq(table.sourceKind, data.sourceKind));
+        if (data.connectionId !== undefined)
+          clauses.push(eq(table.connectionId, data.connectionId));
         return clauses.length > 0 ? and(...clauses) : undefined;
       },
       orderBy: (table, { desc }) => [desc(table.createdAt)],
@@ -1010,6 +1040,15 @@ export interface AcquisitionDetailDto extends AcquisitionListItemDto {
   vendorLocation: string | null;
   externalReference: string | null;
   connectionId: string | null;
+  /**
+   * `connections.name`, resolved so the "Imported — needs review" badge can
+   * link to the connection instead of just naming the fact that one exists
+   * (loxep-1zg) — there is no per-connection detail route yet, so the badge
+   * links to the unified `/settings/connections` table pre-filtered to this
+   * name via its "Account" search filter. `null` when `connectionId` is
+   * `null`, or in the (should-not-happen) case the connection row is gone.
+   */
+  connectionName: string | null;
   expectedItemCount: number | null;
   notes: string | null;
   receivedAt: string | null;
@@ -1041,7 +1080,7 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
       throw new Error(`Acquisition "${data.id}" not found`);
     }
 
-    const [costRows, itemRows, linkRows, landedCostResult] = await Promise.all([
+    const [costRows, itemRows, linkRows, landedCostResult, connection] = await Promise.all([
       handle.db.query.acquisitionCosts.findMany({
         where: (table, { eq }) => eq(table.acquisitionId, data.id),
         orderBy: (table, { asc }) => [asc(table.createdAt)]
@@ -1070,7 +1109,13 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
           where acquisition_id = ${uuidLiteral(data.id)}
           group by currency
           order by currency`
-      )
+      ),
+      acquisition.connectionId
+        ? handle.db.query.connections.findFirst({
+            where: (table, { eq }) => eq(table.id, acquisition.connectionId as string),
+            columns: { name: true }
+          })
+        : Promise.resolve(null)
     ]);
 
     const costIds = costRows.map((row) => row.id);
@@ -1094,6 +1139,26 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
         : [];
     const locationById = new Map(locations.map((row) => [row.id, row]));
 
+    // Resolves the title `sourcedFrom` needs — mirrors `fetchInventoryItem`'s
+    // identical lookup verbatim; this handler used to hardcode `null` here
+    // (loxep-1zg), the one thing that made its "Sourced from /market" card
+    // diverge from the item-detail page's near-identical one.
+    const linkMarketItemIds = [
+      ...new Set(
+        linkRows.map((row) => row.marketplaceItemId).filter((id): id is string => id !== null)
+      )
+    ];
+    const linkMarketItems =
+      linkMarketItemIds.length > 0
+        ? await handle.db.query.marketplaceItems.findMany({
+            where: (table, { inArray }) => inArray(table.id, linkMarketItemIds),
+            columns: { id: true, title: true, externalItemId: true }
+          })
+        : [];
+    const linkMarketItemTitleById = new Map(
+      linkMarketItems.map((row) => [row.id, row.title ?? row.externalItemId])
+    );
+
     return {
       id: acquisition.id,
       referenceCode: acquisition.referenceCode,
@@ -1110,6 +1175,7 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
       vendorLocation: acquisition.vendorLocation,
       externalReference: acquisition.externalReference,
       connectionId: acquisition.connectionId,
+      connectionName: connection?.name ?? null,
       expectedItemCount: acquisition.expectedItemCount,
       notes: acquisition.notes,
       receivedAt: iso(acquisition.receivedAt),
@@ -1169,7 +1235,9 @@ export const fetchAcquisition = createServerFn({ method: 'GET' })
         id: row.id,
         linkKind: row.linkKind,
         marketplaceItemId: row.marketplaceItemId,
-        marketplaceItemTitle: null,
+        marketplaceItemTitle: row.marketplaceItemId
+          ? (linkMarketItemTitleById.get(row.marketplaceItemId) ?? null)
+          : null,
         marketEventId: row.marketEventId,
         scoreAtLink: row.scoreAtLink,
         targetPriceAmount: row.targetPriceAmount,

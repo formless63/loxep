@@ -1,3 +1,4 @@
+import type * as React from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +16,48 @@ import {
   channelListingStatusOptions,
   MANUAL_PROVIDER
 } from '@/features/commerce/constants';
+
+const CARD_LINK_CLASS =
+  'block rounded-xl outline-none focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-[3px] focus-visible:ring-offset-2';
+
+/**
+ * Every stat card here links out to the list it counts (loxep-1zg): these
+ * were plain, non-clickable numbers while `/market`'s and the dashboard's
+ * own KPI tiles already navigate on click.
+ *
+ * Presentational only — deliberately not wrapping its own `<Link>`; see
+ * `/inventory/overview`'s identical `StatCardBody` doc for why a shared
+ * wrapper that also owned `to`/`search` mistyped the search shape.
+ */
+function StatCardBody({
+  label,
+  value,
+  isPending,
+  detail
+}: {
+  label: string;
+  value: number;
+  isPending: boolean;
+  detail?: React.ReactNode;
+}) {
+  return (
+    <Card className='hover:border-primary/50 h-full transition-colors'>
+      <CardHeader>
+        <CardTitle className='text-sm text-muted-foreground'>{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isPending ? (
+          <Skeleton className='h-8 w-16' />
+        ) : (
+          <>
+            <p className='text-3xl font-semibold tabular-nums'>{value}</p>
+            {detail}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export const Route = createFileRoute('/commerce/overview')({
   component: CommerceOverview
@@ -41,73 +84,46 @@ function CommerceOverview() {
       description='Catalog items, channel listings, and orders — connector-synced and manually recorded alike.'
     >
       <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5'>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-sm text-muted-foreground'>Orders</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {ordersPending ? (
-              <Skeleton className='h-8 w-16' />
-            ) : (
-              <>
-                <p className='text-3xl font-semibold tabular-nums'>{orders?.length ?? 0}</p>
-                <p className='text-muted-foreground text-xs'>
-                  {connectorOrderCount} connector-synced · {manualOrderCount} manual
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-sm text-muted-foreground'>Listings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {listingsPending ? (
-              <Skeleton className='h-8 w-16' />
-            ) : (
-              <p className='text-3xl font-semibold tabular-nums'>{listings?.length ?? 0}</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-sm text-muted-foreground'>Active listings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {listingsPending ? (
-              <Skeleton className='h-8 w-16' />
-            ) : (
-              <p className='text-3xl font-semibold tabular-nums'>
-                {countByStatus.get('active') ?? 0}
+        <Link to='/commerce/orders' className={CARD_LINK_CLASS}>
+          <StatCardBody
+            label='Orders'
+            value={orders?.length ?? 0}
+            isPending={ordersPending}
+            detail={
+              <p className='text-muted-foreground text-xs'>
+                {connectorOrderCount} connector-synced · {manualOrderCount} manual
               </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-sm text-muted-foreground'>Manual / offline</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {listingsPending ? (
-              <Skeleton className='h-8 w-16' />
-            ) : (
-              <p className='text-3xl font-semibold tabular-nums'>{manualCount}</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className='text-sm text-muted-foreground'>Catalog items</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {catalogPending ? (
-              <Skeleton className='h-8 w-16' />
-            ) : (
-              <p className='text-3xl font-semibold tabular-nums'>{catalogItems?.length ?? 0}</p>
-            )}
-          </CardContent>
-        </Card>
+            }
+          />
+        </Link>
+        <Link to='/commerce/listings' className={CARD_LINK_CLASS}>
+          <StatCardBody
+            label='Listings'
+            value={listings?.length ?? 0}
+            isPending={listingsPending}
+          />
+        </Link>
+        <Link to='/commerce/listings' search={{ status: 'active' }} className={CARD_LINK_CLASS}>
+          <StatCardBody
+            label='Active listings'
+            value={countByStatus.get('active') ?? 0}
+            isPending={listingsPending}
+          />
+        </Link>
+        <Link
+          to='/commerce/listings'
+          search={{ provider: MANUAL_PROVIDER }}
+          className={CARD_LINK_CLASS}
+        >
+          <StatCardBody label='Manual / offline' value={manualCount} isPending={listingsPending} />
+        </Link>
+        <Link to='/commerce/catalog' className={CARD_LINK_CLASS}>
+          <StatCardBody
+            label='Catalog items'
+            value={catalogItems?.length ?? 0}
+            isPending={catalogPending}
+          />
+        </Link>
       </div>
 
       <Link
@@ -128,9 +144,16 @@ function CommerceOverview() {
             <Skeleton className='h-6 w-full' />
           ) : (
             channelListingStatusOptions.map((option) => (
-              <Badge key={option.value} variant='outline'>
-                {channelListingStatusLabel(option.value)}: {countByStatus.get(option.value) ?? 0}
-              </Badge>
+              <Link
+                key={option.value}
+                to='/commerce/listings'
+                search={{ status: option.value }}
+                className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
+              >
+                <Badge variant='outline' className='hover:bg-accent cursor-pointer'>
+                  {channelListingStatusLabel(option.value)}: {countByStatus.get(option.value) ?? 0}
+                </Badge>
+              </Link>
             ))
           )}
         </CardContent>

@@ -20,9 +20,15 @@ import { columns, columnIds } from './columns';
 
 const DEFAULT_PAGE_SIZE = 20;
 
-/** The append-only movement ledger across every item — `/inventory/movements`. */
-export default function MovementsTable() {
-  const { data, isPending, isError, error, refetch } = useQuery(inventoryMovementsQuery({}));
+/**
+ * The append-only movement ledger — `/inventory/movements`, unfiltered by
+ * default, or narrowed to one lot's movements when `acquisitionId` is set
+ * (`/inventory/acquisitions/$id`'s "View movements" link, loxep-1zg).
+ */
+export default function MovementsTable({ acquisitionId }: { acquisitionId?: string }) {
+  const { data, isPending, isError, error, refetch } = useQuery(
+    inventoryMovementsQuery(acquisitionId ? { acquisitionId } : {})
+  );
 
   if (isPending) {
     return <DataTableSkeleton columnCount={columns.length} filterCount={0} />;
@@ -43,8 +49,9 @@ export default function MovementsTable() {
           </EmptyMedia>
           <EmptyTitle>No movements yet</EmptyTitle>
           <EmptyDescription>
-            Every quantity or location change on a stock row is logged here, append-only — a
-            receipt, a transfer, a sale depletion, a correction reversal.
+            {acquisitionId
+              ? 'No movement has recorded this lot as its source yet — items from it may not have shipped, sold, or moved since intake.'
+              : 'Every quantity or location change on a stock row is logged here, append-only — a receipt, a transfer, a sale depletion, a correction reversal.'}
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

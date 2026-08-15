@@ -223,6 +223,7 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
                   <TableHead>Kind</TableHead>
                   <TableHead className='text-right'>Quantity</TableHead>
                   <TableHead>Location</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead>Reason</TableHead>
                   <TableHead>Occurred</TableHead>
                 </TableRow>
@@ -242,6 +243,36 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
                     </TableCell>
                     <TableCell className='text-muted-foreground'>
                       {movement.locationCode ?? '—'}
+                    </TableCell>
+                    <TableCell className='text-muted-foreground text-xs'>
+                      {/*
+                        Provenance the row actually carries (loxep-1zg):
+                        `acquisitionId` links out (the lot this receipt/found
+                        movement traces to); the rest have no detail page yet
+                        (order lines, allocations, shipments, and reversed
+                        movements are not independently browsable), so they
+                        render as a labeled, titled identifier rather than a
+                        fabricated link.
+                      */}
+                      {movement.acquisitionId ? (
+                        <Link
+                          to='/inventory/acquisitions/$id'
+                          params={{ id: movement.acquisitionId }}
+                          className='hover:underline'
+                        >
+                          lot
+                        </Link>
+                      ) : movement.orderLineId ? (
+                        <span title={`order_line_id ${movement.orderLineId}`}>order line</span>
+                      ) : movement.shipmentId ? (
+                        <span title={`shipment_id ${movement.shipmentId}`}>shipment</span>
+                      ) : movement.reversesMovementId ? (
+                        <span title={`reverses movement ${movement.reversesMovementId}`}>
+                          reversal
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </TableCell>
                     <TableCell className='text-muted-foreground'>
                       {movement.reasonCode ?? '—'}

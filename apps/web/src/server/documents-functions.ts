@@ -44,6 +44,7 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { DbHandle } from '@loxep/db';
 import { createTransactionalNotificationEnqueue, publishNotificationEvent } from '@loxep/domain';
+import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -131,6 +132,8 @@ export interface CandidateDto {
 
 export interface DocumentDetailDto extends DocumentQueueRowDto {
   candidates: CandidateDto[];
+  /** The attached media object's own MIME type — `null` when there is none. Drives `<DocumentPreview>`'s image-vs-PDF-vs-fallback branch. */
+  mimeType: string | null;
   mediaServingUrl: string | null;
 }
 
@@ -304,10 +307,27 @@ export const fetchDocument = createServerFn({ method: 'GET' })
       `select * from document_line_candidates where document_id = ${uuidLiteral(data.id)} order by line_number asc`
     );
     const mediaObjectId = docRow['media_object_id'] as string | null;
+    // The serving URL is derived from the OBJECT's own `metadata.purpose`,
+    // never assumed from the resource it hangs off — see
+    // `@/server/media-serving-url.ts`'s doc for the trap this avoids. A
+    // document-sourced upload is always stamped 'document' today, but this
+    // still goes through the one shared mapper rather than a literal string,
+    // so every `servingUrl`-returning DTO derives it the same way.
+    let mimeType: string | null = null;
+    let mediaServingUrl: string | null = null;
+    if (mediaObjectId !== null) {
+      const mediaResult = await handle.db.execute(
+        `select mime_type, metadata from media_objects where id = ${uuidLiteral(mediaObjectId)}`
+      );
+      const mediaRow = mediaResult.rows[0];
+      mimeType = (mediaRow?.['mime_type'] as string | null) ?? null;
+      mediaServingUrl = servingUrlFor(mediaObjectPurpose(mediaRow?.['metadata']), mediaObjectId);
+    }
     return {
       ...rowToDocumentDto(docRow),
       candidates: candidatesResult.rows.map(rowToCandidateDto),
-      mediaServingUrl: mediaObjectId ? `/api/media/document/${mediaObjectId}` : null
+      mimeType,
+      mediaServingUrl
     };
   });
 

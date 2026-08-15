@@ -17,7 +17,11 @@ const acquisitionsSearchSchema = z.object({
   perPage: z.number().optional().default(10),
   sort: z.string().optional(),
   status: z.string().optional(),
-  sourceKind: z.string().optional()
+  sourceKind: z.string().optional(),
+  // `fetchAcquisitions`'s `connectionId` filter had no caller (loxep-1zg) —
+  // this is what `/settings/connections`' "View acquisitions" row action
+  // uses to land here filtered to what a specific connection has ingested.
+  connectionId: z.uuid().optional()
 });
 
 export const Route = createFileRoute('/inventory/acquisitions/')({

@@ -19,7 +19,8 @@ const listingsSearchSchema = z.object({
   page: z.number().optional().default(1),
   perPage: z.number().optional().default(10),
   sort: z.string().optional(),
-  status: z.string().optional()
+  status: z.string().optional(),
+  provider: z.string().optional()
 });
 
 export const Route = createFileRoute('/commerce/listings/')({

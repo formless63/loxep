@@ -24,8 +24,23 @@ export async function signInWithMagicLink(page: Page, email: string): Promise<vo
   await page.goto('/auth/sign-in');
   await page.getByLabel('Email *').fill(email);
   await page.getByRole('button', { name: 'Send sign-in link' }).click();
-  await expect(page.getByText('Check your email')).toBeVisible();
+  // Wait on the mail actually landing in Mailpit BEFORE asserting the
+  // "Check your email" UI copy (loxep-u6p). That copy only renders after the
+  // client's `authClient.signIn.magicLink()` call resolves, and the
+  // server-side `sendMagicLink` hook `await`s the SMTP send before it ever
+  // responds (`create-auth.ts`) — so by the time the message exists in
+  // Mailpit, the response (and the UI text) is already on its way, and by
+  // the time this poll returns the copy is reliably up already. Gating on
+  // the UI text FIRST, against Playwright's 10s default expect timeout, is
+  // what flaked once: it raced the request's full round trip (client call →
+  // server → SMTP handoff → response) inside a window shorter than
+  // `waitForMagicLink`'s own 15s poll allows for the same round trip. Mailpit
+  // is the ground truth that the link was actually sent, so wait on it
+  // first and let a genuine send failure (e.g. a rejected/rate-limited
+  // request) surface as `waitForMagicLink`'s own clear timeout message
+  // instead of a misleading "Check your email never appeared".
   const magicLink = await waitForMagicLink(email);
+  await expect(page.getByText('Check your email')).toBeVisible();
   await page.goto(magicLink);
   await page.waitForURL('**/dashboard/overview');
 }

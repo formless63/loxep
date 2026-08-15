@@ -16,7 +16,15 @@ import { SettingsPage } from '@/features/settings/components/settings-page';
 const connectionsSearchSchema = z.object({
   ebay: z.enum(['connected', 'declined', 'failed']).optional(),
   etsy: z.enum(['connected', 'declined', 'failed']).optional(),
-  connection: z.string().optional()
+  connection: z.string().optional(),
+  // The unified table's "Account" text filter (`ConnectionsTable`'s
+  // `CLIENT_COLUMNS`, column id `name`) reads this key straight off the URL
+  // via `useDataTable` — declared here so it survives `validateSearch`
+  // instead of being stripped, which is what `/inventory/acquisitions/$id`'s
+  // "Imported — needs review" badge needs to deep-link to the specific
+  // connection a lot was ingested from (loxep-1zg; there is no
+  // per-connection detail route to link to instead).
+  name: z.string().optional()
 });
 
 export const Route = createFileRoute('/settings/connections')({

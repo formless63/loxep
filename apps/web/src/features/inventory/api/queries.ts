@@ -47,6 +47,7 @@ export const inventoryMovementsQuery = (filter: MovementFilterParams) =>
 export interface AcquisitionFilterParams {
   status?: string;
   sourceKind?: string;
+  connectionId?: string;
 }
 
 export const acquisitionsQuery = (filter: AcquisitionFilterParams) =>

@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Field, FieldLabel } from '@/components/ui/field';
 import {
   Select,
@@ -120,14 +120,31 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
             <Badge variant={costAllocationStatusTone(data.costAllocationStatus)}>
               costs {costAllocationStatusLabel(data.costAllocationStatus)}
             </Badge>
-            {data.connectionId !== null && (
-              <Badge
-                variant='secondary'
-                title='Ingested from a connected account (e.g. eBay purchase history); review its costs before allocating'
-              >
-                Imported — needs review
-              </Badge>
-            )}
+            {data.connectionId !== null &&
+              (data.connectionName !== null ? (
+                // No per-connection detail route exists yet — this deep-links
+                // the unified table's own "Account" search filter instead of
+                // just naming the fact that a connection exists (loxep-1zg).
+                <Link
+                  to='/settings/connections'
+                  search={{ name: data.connectionName }}
+                  className='hover:opacity-80'
+                >
+                  <Badge
+                    variant='secondary'
+                    title='Ingested from a connected account (e.g. eBay purchase history); review its costs before allocating — click to view the connection'
+                  >
+                    Imported — needs review
+                  </Badge>
+                </Link>
+              ) : (
+                <Badge
+                  variant='secondary'
+                  title='Ingested from a connected account (e.g. eBay purchase history); review its costs before allocating'
+                >
+                  Imported — needs review
+                </Badge>
+              ))}
           </CardTitle>
           <p className='text-muted-foreground text-sm'>{data.title}</p>
         </CardHeader>
@@ -188,7 +205,7 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
                     params={{ itemId: link.marketplaceItemId }}
                     className='hover:underline'
                   >
-                    View the watched item
+                    {link.marketplaceItemTitle ?? link.marketplaceItemId}
                   </Link>
                 ) : (
                   <span className='text-muted-foreground'>—</span>
@@ -321,11 +338,25 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
       <Card>
         <CardHeader>
           <CardTitle className='text-base'>Items in this lot</CardTitle>
+          <CardAction>
+            {/*
+              `fetchInventoryMovements`'s `acquisitionId` filter had no
+              caller (loxep-1zg) — every movement sourced from this lot,
+              across every item it produced, previously had no per-lot view.
+            */}
+            <Link
+              to='/inventory/movements'
+              search={{ acquisitionId: data.id }}
+              className='text-muted-foreground text-sm hover:underline'
+            >
+              View movements
+            </Link>
+          </CardAction>
         </CardHeader>
         <CardContent>
           {data.items.length === 0 ? (
             <p className='text-muted-foreground text-sm'>
-              Nothing unpacked yet — add items to this lot from the intake review queue.
+              Nothing unpacked yet — use "Add item to this lot" above to record the first one.
             </p>
           ) : (
             <Table>

@@ -26,14 +26,22 @@ const DEFAULT_PAGE_SIZE = 10;
 /**
  * Listings list — status filter reads straight from the URL
  * (`DataTableToolbar`'s column filter popovers write there), same as
- * `ItemsTable`. `fetchChannelListings` filters server-side and returns the
- * bounded result unpaginated; the table sorts/pages it client-side.
+ * `ItemsTable`. `provider` has no toolbar chip of its own (no column filter
+ * on that column) but is still URL-driven — it's how `/commerce/overview`'s
+ * "Manual / offline" stat card links here filtered (loxep-1zg), rather than
+ * dead-ending on an unfiltered list. `fetchChannelListings` filters
+ * server-side and returns the bounded result unpaginated; the table
+ * sorts/pages it client-side.
  */
 export default function ListingsTable() {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const status = search.status as string | undefined;
+  const provider = search.provider as string | undefined;
 
-  const filter: ListingFilterParams = status ? { status } : {};
+  const filter: ListingFilterParams = {
+    ...(status ? { status } : {}),
+    ...(provider ? { provider } : {})
+  };
   const { data, isPending, isError, error, refetch } = useQuery(channelListingsQuery(filter));
 
   if (isPending) {

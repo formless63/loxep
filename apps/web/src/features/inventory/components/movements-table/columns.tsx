@@ -61,6 +61,60 @@ export const columns: ColumnDef<DataTableFeatures, InventoryMovementListItemDto>
     )
   },
   {
+    id: 'source',
+    enableSorting: false,
+    header: 'Source',
+    // Provenance the row actually carries (loxep-1zg): only `acquisitionId`
+    // links out (the other FKs — order line, allocation, shipment, reversed
+    // movement — have no independently browsable detail page yet), so those
+    // render as a labeled, titled identifier instead of a fabricated link.
+    cell: ({ row }) => {
+      const movement = row.original;
+      if (movement.acquisitionId) {
+        return (
+          <Link
+            to='/inventory/acquisitions/$id'
+            params={{ id: movement.acquisitionId }}
+            className='text-xs hover:underline'
+          >
+            lot
+          </Link>
+        );
+      }
+      if (movement.orderLineId) {
+        return (
+          <span
+            className='text-muted-foreground text-xs'
+            title={`order_line_id ${movement.orderLineId}`}
+          >
+            order line
+          </span>
+        );
+      }
+      if (movement.shipmentId) {
+        return (
+          <span
+            className='text-muted-foreground text-xs'
+            title={`shipment_id ${movement.shipmentId}`}
+          >
+            shipment
+          </span>
+        );
+      }
+      if (movement.reversesMovementId) {
+        return (
+          <span
+            className='text-muted-foreground text-xs'
+            title={`reverses movement ${movement.reversesMovementId}`}
+          >
+            reversal
+          </span>
+        );
+      }
+      return <span className='text-muted-foreground'>—</span>;
+    }
+  },
+  {
     id: 'reasonCode',
     accessorKey: 'reasonCode',
     enableSorting: false,

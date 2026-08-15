@@ -72,6 +72,28 @@ function tableRow(page: Page, text: string): Locator {
 }
 
 /**
+ * Filter the unified connections table down to rows matching `text` via the
+ * toolbar's "Account" search input, then return the (now guaranteed page-one)
+ * row locator (loxep-5is).
+ *
+ * The table pages at 10 rows and this spec's WooCommerce fixtures accumulate
+ * across every run against a reused scratch database — recreating the
+ * database between runs already avoids it, but a lookup that only searches
+ * whatever rows are CURRENTLY RENDERED (a plain `tableRow`) still falls off
+ * page one once enough prior runs' fixtures pile up, and fails with a
+ * confusing row-not-found that reads like a selector bug. Every fixture name
+ * this spec creates is unique (`createWooStore`'s `Date.now()` + random
+ * suffix), so filtering by that exact name is guaranteed to leave at most
+ * this run's own row(s) — an honest use of the toolbar, not a workaround.
+ */
+async function filteredRow(page: Page, text: string): Promise<Locator> {
+  await page.getByRole('textbox', { name: 'Account' }).fill(text);
+  const row = tableRow(page, text);
+  await expect(row).toBeVisible();
+  return row;
+}
+
+/**
  * The "Purchase sync" sub-cell inside the unified table's merged "Sync"
  * column, by `data-testid` (`columns.tsx`'s `SyncSummaryCell`) rather than
  * column position or text — with credential state, entity, and sync merged
@@ -120,8 +142,7 @@ test('admin toggles order sync on a WooCommerce connection, badge round-trips', 
   await page.goto('/settings/connections');
   const wooStoreName = await createWooStore(page);
 
-  const row = tableRow(page, wooStoreName);
-  await expect(row).toBeVisible();
+  const row = await filteredRow(page, wooStoreName);
   // Freshly created, active, no sync configured yet: order sync starts off,
   // and purchase sync is not a WooCommerce concept at all (see the module doc).
   await expect(row.getByText('Off', { exact: true })).toBeVisible();
@@ -156,8 +177,7 @@ test('a non-eBay connection never offers the purchase-sync action', async ({ pag
   // fixture URL, and "Enable order sync" is guaranteed to be the arm the
   // dropdown renders.
   const wooStoreName = await createWooStore(page);
-  const row = tableRow(page, wooStoreName);
-  await expect(row).toBeVisible();
+  const row = await filteredRow(page, wooStoreName);
 
   await row.getByRole('button', { name: 'Open menu' }).click();
   await expect(page.getByRole('menuitem', { name: 'Enable order sync' })).toBeVisible();

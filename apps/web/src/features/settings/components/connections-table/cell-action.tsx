@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -111,7 +112,15 @@ export function CellAction({ data }: { data: ConnectionDto }) {
         ? enablePurchaseSync({ data: { connectionId: data.id } })
         : disablePurchaseSync({ data: { connectionId: data.id } }),
     onSuccess: (result) => {
-      toast.success(result.enabled ? 'Purchase sync enabled' : 'Purchase sync disabled');
+      // Naming the destination here (loxep-1zg): enabling used to say nothing
+      // about where a synced purchase ends up, and there is no notification
+      // when the first one lands — "Purchase sync enabled" alone left an
+      // operator with no way to know where to look afterward.
+      toast.success(
+        result.enabled
+          ? 'Purchase sync enabled — synced purchases land in /inventory/acquisitions'
+          : 'Purchase sync disabled'
+      );
       invalidate();
     },
     onError: (error) => toastError(error, 'Failed to update purchase sync')
@@ -219,6 +228,18 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 )}
               </DropdownMenuItem>
             )}
+          {supportsPurchaseSync(data) && (
+            // The other half of naming where purchases land (loxep-1zg): the
+            // toast above says it once, at enable time; this stays reachable
+            // afterward regardless of whether purchase sync is on, since
+            // acquisitions already ingested from this account do not
+            // disappear when sync is later disabled.
+            <DropdownMenuItem asChild>
+              <Link to='/inventory/acquisitions' search={{ connectionId: data.id }}>
+                <Icons.billing className='mr-2 h-4 w-4' /> View acquisitions
+              </Link>
+            </DropdownMenuItem>
+          )}
           {tailscaleExpiryEditable(data) && (
             <DropdownMenuItem onClick={() => setEditingExpiry(true)}>
               <Icons.calendar className='mr-2 h-4 w-4' /> Record token expiry

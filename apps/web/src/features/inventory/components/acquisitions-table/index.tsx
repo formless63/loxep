@@ -26,10 +26,12 @@ export default function AcquisitionsTable() {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const status = search.status as string | undefined;
   const sourceKind = search.sourceKind as string | undefined;
+  const connectionId = search.connectionId as string | undefined;
 
   const filter: AcquisitionFilterParams = {
     ...(status ? { status } : {}),
-    ...(sourceKind ? { sourceKind } : {})
+    ...(sourceKind ? { sourceKind } : {}),
+    ...(connectionId ? { connectionId } : {})
   };
 
   const { data, isPending, isError, error, refetch } = useQuery(acquisitionsQuery(filter));
