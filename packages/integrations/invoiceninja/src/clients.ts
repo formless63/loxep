@@ -40,14 +40,23 @@
  * ```
  *
  * `settings.currency_id` exists on the wire but is Invoice Ninja's OWN
- * internal numeric currency-table id, not an ISO 4217 code, and was not
- * resolved for this package (no confirmed mapping table). `currencyId` is
- * carried through opaquely (as the raw wire value) rather than guessed at,
- * and Loxep does not currently set it on push — Invoice Ninja defaults a new
- * client to the company's own default currency.
+ * internal numeric currency-table id, not an ISO 4217 code. `currencyId` on
+ * the READ side ({@link InvoiceNinjaClientFact}) is still carried through
+ * opaquely (as the raw wire value) rather than guessed at, since resolving
+ * it back to an ISO code would need the inverse of `id-maps.ts`'s table and
+ * this package has no reader for it yet. The PUSH side (loxep-cd3.1) is
+ * different: `id-maps.ts` ships a source-verified ISO-4217 -> Ninja
+ * `currency_id` map (and the equivalent for `country_id`), and
+ * {@link buildInvoiceNinjaClientPayload} sets `settings.currency_id` /
+ * `country_id` when the caller supplies an ISO code this package can map —
+ * see that function's own doc.
  */
 import type { InvoiceNinjaAdapter, InvoiceNinjaQuery } from "./adapter.ts";
 import { InvoiceNinjaAdapterError } from "./errors.ts";
+import {
+  ninjaCountryIdForAlpha2,
+  ninjaCurrencyIdForIso4217,
+} from "./id-maps.ts";
 import { decimalFromUnknown } from "./money.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -172,16 +181,106 @@ export function redactInvoiceNinjaClientFact(
 
 /**
  * The push-side payload — the fields Loxep sets when creating/updating a
- * projection of one of its own `counterparties` rows. Deliberately minimal:
- * `name` is the only field this package currently pushes, matching the
- * design's "Loxep's counterparty is authoritative, the Ninja client is a
- * projection of it" rule without inventing a mapping for fields (address,
- * tax settings, currency) this package has not verified a use for yet.
+ * projection of one of its own `counterparties` rows.
+ *
+ * Widened (loxep-cd3.1) per `expense-entry-design.md` section 2's mapping
+ * table, from a `{name, id_number}`-only push to everything the counterparty
+ * already stores: `vat_number` <- `tax_identifier`, `address*` <-
+ * `counterparty_sites` (billing site), `country_id`/`settings.currency_id`
+ * <- the static maps in `id-maps.ts`, `phone`/`website` <- `contact_channels`,
+ * `settings.payment_terms` <- `payment_terms_days`, `contacts[]` <-
+ * `counterparty_contacts` + their channels via {@link mapCounterpartyContactForPush}.
+ * Every field is optional and omitted when the caller has nothing to send —
+ * this stays "Loxep's counterparty is authoritative, the Ninja client is a
+ * projection of it", just a fuller one.
+ *
+ * Field names SOURCE-VERIFIED against `app/Models/Client.php`'s `$fillable`
+ * and `app/Http/Requests/Client/StoreClientRequest.php` (`invoiceninja/
+ * invoiceninja`, `v5-stable`, commit `dcc27c94dc0c463341676a0c19b89d927c3d1287`,
+ * fetched 2026-08-15) — see `id-maps.ts`'s module doc for the fuller citation
+ * and the live-verification caveat.
  */
 export interface InvoiceNinjaCreateClientInput {
   name: string;
   /** Maps to Ninja's own free-text `id_number` — not a currency/VAT id. */
   idNumber?: string;
+  /** `counterparties.tax_identifier`. */
+  vatNumber?: string;
+  /** `contact_channels` where `channel_kind = 'website'`. */
+  website?: string;
+  /** `contact_channels` where `channel_kind in ('phone','mobile')`, `is_primary`. */
+  phone?: string;
+  /** `counterparty_sites` where `site_kind = 'billing'` (or the role's `billing_site_id`). */
+  address1?: string;
+  address2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  /** ISO-3166-1 alpha-2; mapped via {@link ninjaCountryIdForAlpha2}, omitted when unmapped. */
+  countryAlpha2?: string;
+  /** ISO-4217 alpha code; mapped via {@link ninjaCurrencyIdForIso4217}, omitted when unmapped. */
+  currencyCode?: string;
+  /** `counterparty_entity_roles.payment_terms_days`. Sent as Ninja's own `settings.payment_terms` string. */
+  paymentTermsDays?: number;
+  /**
+   * `counterparties.notes` — OPT-IN per push, per the design's own rule: an
+   * operator's private note is not synced to a third-party system by
+   * default. The CALLER decides whether to populate this field at all; this
+   * builder does not default it off on its own (there is nothing to default
+   * — omitting the field IS "off").
+   */
+  privateNotes?: string;
+  /** `counterparty_contacts` + their primary email channel. */
+  contacts?: InvoiceNinjaPushContactInput[];
+}
+
+/** One `contacts[]` entry of the push payload — see {@link mapCounterpartyContactForPush}. */
+export interface InvoiceNinjaPushContactInput {
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  isPrimary?: boolean;
+}
+
+/**
+ * The one genuine schema gap the mapping table found: `counterparty_contacts`
+ * carried only `display_name` before migration 0023.
+ *
+ * ADR-shape rule, stated in the design: *"the adapter sends the split names
+ * when present and falls back to putting `display_name` in `first_name` when
+ * absent, which is what every other integration does with a mononym."* A
+ * blank/whitespace-only `givenName`/`familyName` counts as absent.
+ */
+export interface CounterpartyContactForPush {
+  displayName: string;
+  givenName?: string | null;
+  familyName?: string | null;
+  email?: string | null;
+  isPrimary: boolean;
+}
+
+function nonBlank(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+export function mapCounterpartyContactForPush(
+  contact: CounterpartyContactForPush,
+): InvoiceNinjaPushContactInput {
+  const givenName = nonBlank(contact.givenName);
+  const familyName = nonBlank(contact.familyName);
+  const hasSplitName = givenName !== null || familyName !== null;
+  const result: InvoiceNinjaPushContactInput = { isPrimary: contact.isPrimary };
+  if (hasSplitName) {
+    if (givenName !== null) result.firstName = givenName;
+    if (familyName !== null) result.lastName = familyName;
+  } else {
+    result.firstName = contact.displayName;
+  }
+  const email = nonBlank(contact.email);
+  if (email !== null) result.email = email;
+  return result;
 }
 
 export function buildInvoiceNinjaClientPayload(
@@ -189,6 +288,42 @@ export function buildInvoiceNinjaClientPayload(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = { name: input.name };
   if (input.idNumber !== undefined) payload["id_number"] = input.idNumber;
+  if (input.vatNumber !== undefined) payload["vat_number"] = input.vatNumber;
+  if (input.website !== undefined) payload["website"] = input.website;
+  if (input.phone !== undefined) payload["phone"] = input.phone;
+  if (input.address1 !== undefined) payload["address1"] = input.address1;
+  if (input.address2 !== undefined) payload["address2"] = input.address2;
+  if (input.city !== undefined) payload["city"] = input.city;
+  if (input.state !== undefined) payload["state"] = input.state;
+  if (input.postalCode !== undefined) payload["postal_code"] = input.postalCode;
+  if (input.privateNotes !== undefined) {
+    payload["private_notes"] = input.privateNotes;
+  }
+
+  const countryId = ninjaCountryIdForAlpha2(input.countryAlpha2);
+  // Client.php casts `country_id` to `string` — matched here rather than
+  // sending a number, per the model's own $casts.
+  if (countryId !== null) payload["country_id"] = String(countryId);
+
+  const currencyId = ninjaCurrencyIdForIso4217(input.currencyCode);
+  const settings: Record<string, unknown> = {};
+  if (currencyId !== null) settings["currency_id"] = String(currencyId);
+  if (input.paymentTermsDays !== undefined) {
+    settings["payment_terms"] = String(input.paymentTermsDays);
+  }
+  if (Object.keys(settings).length > 0) payload["settings"] = settings;
+
+  if (input.contacts !== undefined && input.contacts.length > 0) {
+    payload["contacts"] = input.contacts.map((contact) => {
+      const wire: Record<string, unknown> = {};
+      if (contact.firstName !== undefined) wire["first_name"] = contact.firstName;
+      if (contact.lastName !== undefined) wire["last_name"] = contact.lastName;
+      if (contact.email !== undefined) wire["email"] = contact.email;
+      if (contact.isPrimary !== undefined) wire["is_primary"] = contact.isPrimary;
+      return wire;
+    });
+  }
+
   return payload;
 }
 

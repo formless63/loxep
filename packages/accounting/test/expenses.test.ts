@@ -10,6 +10,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  AccountingNotFoundError,
   ExpenseNotEditableError,
   ExpenseOverAllocatedError,
   AccountingValidationError,
@@ -24,6 +25,7 @@ import {
   auditEventsFor,
   createMigratedScratchDb,
   seedAcquisition,
+  seedCounterparty,
   seedEntity,
   seedUser,
 } from "./helpers.ts";
@@ -36,6 +38,7 @@ describe("expenses service", () => {
   let otherEntityId: string;
   let acquisitionId: string;
   let actorId: string;
+  let payeeCounterpartyId: string;
 
   beforeAll(async () => {
     scratch = await createMigratedScratchDb("loxep_test_acct_expenses");
@@ -45,6 +48,11 @@ describe("expenses service", () => {
     acquisitionId = (await seedAcquisition(scratch, "ACQ-2026-8001"))
       .acquisitionId;
     actorId = await seedUser(scratch, "acct_actor");
+    payeeCounterpartyId = await seedCounterparty(
+      scratch,
+      "Fixture Supply Co",
+      "CP-2026-8001",
+    );
   }, 120_000);
 
   afterAll(async () => {
@@ -475,6 +483,107 @@ describe("expenses service", () => {
       await expect(
         expenses.voidExpense({ expenseId: expense.id, reason: "   " }),
       ).rejects.toThrow(AccountingValidationError);
+    });
+  });
+
+  describe("the payee link (trading partners M1, loxep-cd3.1)", () => {
+    it("free text alone stays valid — the quick-entry fast path never requires a counterparty", async () => {
+      const { expense } = await expenses.create({ ...base, payeeName: "USPS" });
+      expect(expense.payeeName).toBe("USPS");
+      expect(expense.payeeCounterpartyId).toBeNull();
+    });
+
+    it("on create, snapshots the counterparty's display_name into payee_name, overriding any explicit payeeName", async () => {
+      const { expense } = await expenses.create({
+        ...base,
+        payeeName: "typed before picking",
+        payeeCounterpartyId,
+      });
+      expect(expense.payeeCounterpartyId).toBe(payeeCounterpartyId);
+      expect(expense.payeeName).toBe("Fixture Supply Co");
+    });
+
+    it("create rejects an unknown payeeCounterpartyId", async () => {
+      await expect(
+        expenses.create({
+          ...base,
+          payeeCounterpartyId: "00000000-0000-4000-8000-000000000000",
+        }),
+      ).rejects.toThrow(AccountingNotFoundError);
+    });
+
+    it("update resolves and snapshots the same way, and is draft-gated like every other field", async () => {
+      const { expense } = await expenses.create(base);
+      const updated = await expenses.update({
+        expenseId: expense.id,
+        payeeCounterpartyId,
+      });
+      expect(updated.payeeCounterpartyId).toBe(payeeCounterpartyId);
+      expect(updated.payeeName).toBe("Fixture Supply Co");
+
+      await expenses.submit({ expenseId: expense.id });
+      await expect(
+        expenses.update({ expenseId: expense.id, payeeCounterpartyId: null }),
+      ).rejects.toThrow(ExpenseNotEditableError);
+    });
+
+    it("linkPayee works on a RECORDED expense — the one field the draft lock does not gate", async () => {
+      const { expense } = await expenses.create({ ...base, payeeName: "USPS" });
+      await expenses.submit({ expenseId: expense.id });
+
+      const linked = await expenses.linkPayee({
+        expenseId: expense.id,
+        payeeCounterpartyId,
+        actorUserId: actorId,
+      });
+      expect(linked.status).toBe("recorded");
+      expect(linked.payeeCounterpartyId).toBe(payeeCounterpartyId);
+      expect(linked.payeeName).toBe("Fixture Supply Co");
+
+      const events = await auditEventsFor(
+        scratch,
+        "accounting.expense.payee_linked",
+      );
+      const event = events.find((row) => row.resourceId === expense.id);
+      expect(event?.after).toMatchObject({
+        payeeCounterpartyId,
+        payeeName: "Fixture Supply Co",
+      });
+    });
+
+    it("linkPayee with null unlinks WITHOUT touching the last-known payee_name", async () => {
+      const { expense } = await expenses.create({
+        ...base,
+        payeeCounterpartyId,
+      });
+      const unlinked = await expenses.linkPayee({
+        expenseId: expense.id,
+        payeeCounterpartyId: null,
+      });
+      expect(unlinked.payeeCounterpartyId).toBeNull();
+      expect(unlinked.payeeName).toBe("Fixture Supply Co");
+    });
+
+    it("linkPayee refuses a void expense — frozen evidence, correct by void-and-re-record instead", async () => {
+      const { expense } = await expenses.create(base);
+      await expenses.submit({ expenseId: expense.id });
+      await expenses.voidExpense({
+        expenseId: expense.id,
+        reason: "wrong payee typed",
+      });
+      await expect(
+        expenses.linkPayee({ expenseId: expense.id, payeeCounterpartyId }),
+      ).rejects.toThrow(ExpenseNotEditableError);
+    });
+
+    it("linkPayee rejects an unknown payeeCounterpartyId", async () => {
+      const { expense } = await expenses.create(base);
+      await expect(
+        expenses.linkPayee({
+          expenseId: expense.id,
+          payeeCounterpartyId: "00000000-0000-4000-8000-000000000000",
+        }),
+      ).rejects.toThrow(AccountingNotFoundError);
     });
   });
 

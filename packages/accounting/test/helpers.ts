@@ -20,6 +20,7 @@ import {
   acquisitions,
   catalogItems,
   connections,
+  counterparties,
   economicEntities,
   inventoryItems,
   inventoryMovements,
@@ -126,6 +127,31 @@ export async function seedChildEntity(
     .returning({ id: economicEntities.id });
   const id = rows[0]?.id;
   if (id === undefined) throw new Error("child entity insert returned no row");
+  return id;
+}
+
+/**
+ * A minimal `counterparties` row — this package has no counterparties
+ * service dependency (by design; see `expenses.ts`'s
+ * `resolvePayeeDisplayName`), so tests seed one directly against `@loxep/db`
+ * schema, mirroring `seedEntity`.
+ */
+export async function seedCounterparty(
+  scratch: ScratchDb,
+  displayName: string,
+  referenceCode: string,
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(counterparties)
+    .values({
+      referenceCode,
+      kind: "organization",
+      displayName,
+      normalizedName: displayName.toLowerCase(),
+    })
+    .returning({ id: counterparties.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("counterparty insert returned no row");
   return id;
 }
 

@@ -60,7 +60,14 @@ const pushDraftInvoiceInput = z.strictObject({
   counterpartyId: z.uuid(),
   projectId: z.uuid().nullish(),
   connectionId: z.uuid(),
-  lines: z.array(draftInvoiceLineInput).min(1)
+  lines: z.array(draftInvoiceLineInput).min(1),
+  /**
+   * `counterparties.notes` -> Ninja's `private_notes` (loxep-cd3.1, per the
+   * design's own rule: "an operator's private note is not synced to a
+   * third-party system by default"). `false` unless the caller explicitly
+   * asks — this flag IS the opt-in, not a default-off setting elsewhere.
+   */
+  includePrivateNotes: z.boolean().default(false)
 });
 
 // ---------------------------------------------------------------------------
@@ -306,6 +313,130 @@ export const listUnbilledWorkForBilling = createServerFn({ method: 'GET' })
   });
 
 // ---------------------------------------------------------------------------
+// Widened Invoice Ninja client push (loxep-cd3.1) — the mapping table in
+// `expense-entry-design.md` section 2. `buildInvoiceNinjaClientPayload`
+// (`@loxep/integration-invoiceninja`) already accepts every field below and
+// resolves `country_id`/`settings.currency_id` from the static maps that
+// package ships; this function's only job is gathering the Loxep-owned
+// facts the mapping table names. Lives here (not `finance-billing.ts`)
+// because that module's own doc states it deliberately imports neither
+// `@loxep/integration-invoiceninja` nor a DB handle — this file is where the
+// real wiring lives, per that same doc.
+// ---------------------------------------------------------------------------
+
+type InvoiceNinjaModule = typeof import('@loxep/integration-invoiceninja');
+
+/**
+ * Gathers everything the mapping table names off ONE counterparty and shapes
+ * it into `InvoiceNinjaCreateClientInput`. Reads only — never writes.
+ *
+ * Role/site/currency/terms are resolved off the counterparty's `customer`
+ * relationship row (an entity-specific one preferred over an
+ * installation-wide one, since this push is always billing a specific
+ * project/entity's customer) — `counterparty_entity_roles.billing_site_id`
+ * when set, else the first active `counterparty_sites` row with
+ * `site_kind = 'billing'`. `website`/`phone` come from the counterparty's
+ * OWN channels (never a contact's); `contacts[]` comes from
+ * `counterparty_contacts` (capped at 5) with each contact's own primary
+ * email channel, mapped via `mapCounterpartyContactForPush` so a contact
+ * with no `given_name`/`family_name` falls back to `display_name` exactly
+ * as the design specifies.
+ */
+async function buildTradingPartnerNinjaClientInput(
+  db: LoxepDb,
+  ninja: InvoiceNinjaModule,
+  counterparty: {
+    id: string;
+    displayName: string;
+    taxIdentifier: string | null;
+    notes: string | null;
+    defaultCurrency: string | null;
+  },
+  options: { includePrivateNotes: boolean }
+): Promise<Parameters<InvoiceNinjaModule['createClient']>[1]> {
+  const [role, ownChannels, contacts] = await Promise.all([
+    db.query.counterpartyEntityRoles.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.counterpartyId, counterparty.id), eq(table.role, 'customer')),
+      orderBy: (table, { desc }) => [desc(table.economicEntityId)]
+    }),
+    db.query.contactChannels.findMany({
+      where: (table, { and, eq, isNull }) =>
+        and(eq(table.counterpartyId, counterparty.id), isNull(table.counterpartyContactId))
+    }),
+    db.query.counterpartyContacts.findMany({
+      where: (table, { eq }) => eq(table.counterpartyId, counterparty.id),
+      orderBy: (table, { desc }) => [desc(table.isPrimary)],
+      limit: 5
+    })
+  ]);
+
+  const billingSite = role?.billingSiteId
+    ? await db.query.counterpartySites.findFirst({
+        where: (table, { eq }) => eq(table.id, role.billingSiteId as string)
+      })
+    : await db.query.counterpartySites.findFirst({
+        where: (table, { and, eq }) =>
+          and(
+            eq(table.counterpartyId, counterparty.id),
+            eq(table.siteKind, 'billing'),
+            eq(table.active, true)
+          )
+      });
+
+  // `.filter` already returns a fresh array; sorting it mutates nothing the
+  // caller holds. `toSorted` is unavailable under this project's `lib`
+  // target (see `expense-functions.ts`'s identical note).
+  const pickChannel = (kinds: string[]) =>
+    ownChannels
+      .filter((channel) => kinds.includes(channel.channelKind))
+      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))[0]?.value;
+
+  const contactsWithEmail = await Promise.all(
+    contacts.map(async (contact) => {
+      const email = await db.query.contactChannels.findFirst({
+        where: (table, { and, eq }) =>
+          and(eq(table.counterpartyContactId, contact.id), eq(table.channelKind, 'email')),
+        orderBy: (table, { desc }) => [desc(table.isPrimary)]
+      });
+      return ninja.mapCounterpartyContactForPush({
+        displayName: contact.displayName,
+        givenName: contact.givenName,
+        familyName: contact.familyName,
+        email: email?.value ?? null,
+        isPrimary: contact.isPrimary
+      });
+    })
+  );
+
+  const input: Parameters<InvoiceNinjaModule['createClient']>[1] = {
+    name: counterparty.displayName,
+    ...(counterparty.taxIdentifier !== null ? { vatNumber: counterparty.taxIdentifier } : {}),
+    ...(pickChannel(['website']) !== undefined ? { website: pickChannel(['website']) } : {}),
+    ...(pickChannel(['phone', 'mobile']) !== undefined
+      ? { phone: pickChannel(['phone', 'mobile']) }
+      : {}),
+    ...(billingSite?.addressLine1 ? { address1: billingSite.addressLine1 } : {}),
+    ...(billingSite?.addressLine2 ? { address2: billingSite.addressLine2 } : {}),
+    ...(billingSite?.locality ? { city: billingSite.locality } : {}),
+    ...(billingSite?.region ? { state: billingSite.region } : {}),
+    ...(billingSite?.postalCode ? { postalCode: billingSite.postalCode } : {}),
+    ...(billingSite?.country ? { countryAlpha2: billingSite.country } : {}),
+    ...((role?.defaultCurrency ?? counterparty.defaultCurrency)
+      ? { currencyCode: role?.defaultCurrency ?? counterparty.defaultCurrency ?? undefined }
+      : {}),
+    ...(role?.paymentTermsDays !== undefined && role?.paymentTermsDays !== null
+      ? { paymentTermsDays: role.paymentTermsDays }
+      : {}),
+    ...(options.includePrivateNotes && counterparty.notes !== null
+      ? { privateNotes: counterparty.notes }
+      : {}),
+    ...(contactsWithEmail.length > 0 ? { contacts: contactsWithEmail } : {})
+  };
+  return input;
+}
+
+// ---------------------------------------------------------------------------
 // The push itself
 // ---------------------------------------------------------------------------
 
@@ -396,7 +527,22 @@ export const pushDraftInvoice = createServerFn({ method: 'POST' })
           return { externalClientId: existingClient.externalId, url: existingClient.url };
         }
 
-        const created = await ninja.createClient(adapter, { name: displayName });
+        const widened = await buildTradingPartnerNinjaClientInput(
+          handle.db,
+          ninja,
+          {
+            id: counterparty.id,
+            displayName,
+            taxIdentifier: counterparty.taxIdentifier,
+            notes: counterparty.notes,
+            defaultCurrency: counterparty.defaultCurrency
+          },
+          { includePrivateNotes: data.includePrivateNotes }
+        );
+        const created = await ninja.createClient(adapter, {
+          ...widened,
+          idNumber: counterparty.referenceCode
+        });
         // Invoice Ninja's admin UI client route — a best-effort link for the
         // linkage row's `url`, not independently live-confirmed (no write
         // credential existed when the adapter was built; see its module doc).

@@ -95,6 +95,7 @@ import {
 } from "./accounting.ts";
 import { user } from "./auth.ts";
 import { catalogItems } from "./commerce.ts";
+import { counterparties } from "./counterparties.ts";
 import { economicEntities } from "./entities.ts";
 import { acquisitionCosts, acquisitions } from "./inventory.ts";
 
@@ -246,6 +247,27 @@ export const expenses = pgTable(
      */
     payeeName: text("payee_name"),
 
+    /**
+     * Added migration 0024 (`expense-entry-design.md` section 2, milestone
+     * M1). Nullable: the quick-entry fast path never requires a counterparty,
+     * and a thrift-store receipt from an unnamed shop is a real expense.
+     *
+     * `payeeName` is ALWAYS written alongside this column — the service
+     * snapshots the resolved `display_name` at write time, so a later rename
+     * of the party does not rewrite history. No backfill: matching
+     * `payeeName` to parties in bulk needs `counterparty_identifiers` (still
+     * design-only) and a mis-match would be silent.
+     *
+     * Any read that joins through this column MUST resolve the survivor
+     * pointer via `resolvedIdExpression` from `@loxep/counterparties/merge.ts`,
+     * so a merged party's expenses report under the survivor.
+     *
+     * No inline `.references()` here — the FK is declared explicitly below
+     * (`expenses_payee_counterparty_fk`) so drizzle-kit does not emit a
+     * second, auto-derived-name constraint alongside it.
+     */
+    payeeCounterpartyId: uuid("payee_counterparty_id"),
+
     /** Open set: TS union, no `CHECK`. See {@link EXPENSE_CATEGORIES}. */
     category: text("category").notNull(),
     description: text("description"),
@@ -317,6 +339,18 @@ export const expenses = pgTable(
     unique("expenses_reference_code_uq").on(table.referenceCode),
 
     /**
+     * Named explicitly per the migration plan's own instruction, even though
+     * the derived name (`expenses_payee_counterparty_id_counterparties_id_fk`,
+     * 51 bytes) is under the 63-byte limit here — stated explicitly so a
+     * later long rename cannot silently truncate it.
+     */
+    foreignKey({
+      name: "expenses_payee_counterparty_fk",
+      columns: [table.payeeCounterpartyId],
+      foreignColumns: [counterparties.id],
+    }),
+
+    /**
      * A zero-amount expense is not a fact, it is an empty form. Same reasoning
      * as `inventory_movements.quantity <> 0`. Negative IS permitted: a vendor
      * credit against a previously recorded cost is a real expense row.
@@ -350,6 +384,9 @@ export const expenses = pgTable(
     index("expenses_acquisition_cost_id_idx")
       .on(table.acquisitionCostId)
       .where(sql`${table.acquisitionCostId} is not null`),
+    index("expenses_payee_counterparty_id_idx")
+      .on(table.payeeCounterpartyId)
+      .where(sql`${table.payeeCounterpartyId} is not null`),
   ],
 );
 

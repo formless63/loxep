@@ -119,6 +119,7 @@ export type {
   ContactChannelRow,
   ContactsService,
   CounterpartyContactRow,
+  UpdateContactInput,
 } from "./contacts.ts";
 
 export { createRolesService } from "./roles.ts";

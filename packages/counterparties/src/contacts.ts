@@ -70,6 +70,14 @@ const CHANNEL_KINDS = [
 const addContactSchema = z.strictObject({
   counterpartyId: z.uuid(),
   displayName: z.string().trim().min(1),
+  /**
+   * Added migration 0023 for Invoice Ninja `contacts[].first_name` /
+   * `last_name` parity — see the schema module's own note. Both nullable and
+   * optional: `displayName` alone stays valid, because a contact may
+   * legitimately be "Accounts Payable" rather than a named person.
+   */
+  givenName: z.string().trim().min(1).nullish(),
+  familyName: z.string().trim().min(1).nullish(),
   roleTitle: z.string().trim().min(1).nullish(),
   isPrimary: z.boolean().default(false),
   status: z.enum(["active", "inactive"]).default("active"),
@@ -79,6 +87,19 @@ const addContactSchema = z.strictObject({
 });
 
 export type AddContactInput = z.input<typeof addContactSchema>;
+
+export interface UpdateContactInput {
+  contactId: string;
+  displayName?: string;
+  /** See {@link AddContactInput.givenName}; `null` clears an explicit value. */
+  givenName?: string | null;
+  familyName?: string | null;
+  roleTitle?: string | null;
+  status?: "active" | "inactive";
+  notes?: string | null;
+  actorUserId?: string | null;
+  requestId?: string | null;
+}
 
 const addChannelSchema = z
   .strictObject({
@@ -121,15 +142,7 @@ function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
 
 export interface ContactsService {
   addContact: (input: AddContactInput) => Promise<CounterpartyContactRow>;
-  updateContact: (input: {
-    contactId: string;
-    displayName?: string;
-    roleTitle?: string | null;
-    status?: "active" | "inactive";
-    notes?: string | null;
-    actorUserId?: string | null;
-    requestId?: string | null;
-  }) => Promise<CounterpartyContactRow>;
+  updateContact: (input: UpdateContactInput) => Promise<CounterpartyContactRow>;
   /**
    * Promote one contact to primary, demoting the incumbent in the same
    * transaction.
@@ -192,6 +205,8 @@ export function createContactsService(options: {
       id: row["id"] as string,
       counterpartyId: row["counterparty_id"] as string,
       displayName: row["display_name"] as string,
+      givenName: (row["given_name"] as string | null) ?? null,
+      familyName: (row["family_name"] as string | null) ?? null,
       roleTitle: (row["role_title"] as string | null) ?? null,
       isPrimary: row["is_primary"] as boolean,
       status: row["status"] as string,
@@ -260,6 +275,8 @@ export function createContactsService(options: {
           .values({
             counterpartyId: value.counterpartyId,
             displayName: value.displayName,
+            givenName: value.givenName ?? null,
+            familyName: value.familyName ?? null,
             roleTitle: value.roleTitle ?? null,
             isPrimary: value.isPrimary,
             status: value.status,
@@ -294,6 +311,16 @@ export function createContactsService(options: {
         const assignments = ["updated_at = now()"];
         if (input.displayName !== undefined) {
           assignments.push(`display_name = ${textLiteral(input.displayName)}`);
+        }
+        if (input.givenName !== undefined) {
+          assignments.push(
+            `given_name = ${input.givenName === null ? "null" : textLiteral(input.givenName)}`,
+          );
+        }
+        if (input.familyName !== undefined) {
+          assignments.push(
+            `family_name = ${input.familyName === null ? "null" : textLiteral(input.familyName)}`,
+          );
         }
         if (input.roleTitle !== undefined) {
           assignments.push(

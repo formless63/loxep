@@ -55,6 +55,7 @@
         "@loxep/accounting": "workspace:*",
         "@loxep/auth": "workspace:*",
         "@loxep/config": "workspace:*",
+        "@loxep/counterparties": "workspace:*",
         "@loxep/db": "workspace:*",
         "@loxep/domain": "workspace:*",
         "@loxep/infrastructure": "workspace:*",

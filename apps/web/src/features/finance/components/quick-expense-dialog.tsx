@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +19,10 @@ import { useAppForm } from '@/lib/form';
 import { createExpense } from '@/server/expense-functions';
 import type { EntityDto } from '@/server/admin-functions';
 import { uploadReceipt } from '@/features/finance/api/receipt-upload';
+import {
+  NO_TRADING_PARTNER_VALUE,
+  PayeeComboboxField
+} from '@/features/finance/components/payee-combobox-field';
 import {
   paymentMethodOptions,
   SUGGESTED_EXPENSE_CATEGORIES,
@@ -38,6 +43,8 @@ const quickExpenseSchema = z.object({
   expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date'),
   category: z.string().trim().min(1, 'Category is required'),
   payeeName: z.string(),
+  /** `NO_TRADING_PARTNER_VALUE` ('') means free-text-only, per the picker's own contract. */
+  payeeCounterpartyId: z.string(),
   paymentMethod: z.enum([
     'card',
     'cash',
@@ -97,6 +104,7 @@ export default function QuickExpenseDialog({
   prefill?: QuickExpensePrefill;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [file, setFile] = React.useState<File | null>(null);
 
@@ -113,6 +121,10 @@ export default function QuickExpenseDialog({
           expenseDate: values.expenseDate,
           category: values.category,
           payeeName: values.payeeName.trim() === '' ? null : values.payeeName.trim(),
+          payeeCounterpartyId:
+            values.payeeCounterpartyId === NO_TRADING_PARTNER_VALUE
+              ? null
+              : values.payeeCounterpartyId,
           paymentMethod: values.paymentMethod,
           currency: values.currency.toUpperCase(),
           economicEntityId:
@@ -147,6 +159,7 @@ export default function QuickExpenseDialog({
       expenseDate: todayIsoDate(),
       category: prefill?.category ?? '',
       payeeName: prefill?.payeeName ?? '',
+      payeeCounterpartyId: NO_TRADING_PARTNER_VALUE,
       paymentMethod: (prefill?.paymentMethod as QuickExpenseFormValues['paymentMethod']) ?? 'card',
       currency: prefill?.currency ?? DEFAULT_CURRENCY,
       economicEntityId: prefill?.economicEntityId ?? UNATTRIBUTED_ENTITY_VALUE,
@@ -161,6 +174,34 @@ export default function QuickExpenseDialog({
       }
     }
   });
+
+  /**
+   * The dialog's one growth point (`expense-entry-design.md` section 1):
+   * "The dialog is capture. The page is composition. They write the same
+   * records through the same service, and the dialog never grows a second
+   * column." Everything already typed here rides along as search params so
+   * an operator who starts fast and discovers the receipt has fourteen
+   * lines is not retyping — `/finance/expenses/new` reads these as its own
+   * form prefill.
+   */
+  function handleMoreOptions() {
+    const values = form.state.values;
+    onOpenChange(false);
+    void navigate({
+      to: '/finance/expenses/new',
+      search: {
+        amount: values.amount.trim() === '' ? undefined : values.amount,
+        category: values.category.trim() === '' ? undefined : values.category,
+        payeeName: values.payeeName.trim() === '' ? undefined : values.payeeName,
+        paymentMethod: values.paymentMethod,
+        currency: values.currency,
+        economicEntityId:
+          values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
+            ? undefined
+            : values.economicEntityId
+      }
+    });
+  }
 
   function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selected = event.target.files?.[0];
@@ -229,9 +270,40 @@ export default function QuickExpenseDialog({
                 </div>
               )}
             />
+            <form.Field name='payeeCounterpartyId'>
+              {(field) => (
+                <PayeeComboboxField
+                  label='Payee'
+                  name='payeeCounterpartyId'
+                  value={field.state.value}
+                  onChange={field.handleChange}
+                  onBlur={field.handleBlur}
+                  invalid={field.state.meta.isTouched && !field.state.meta.isValid}
+                  errors={field.state.meta.errors}
+                  economicEntityId={
+                    form.state.values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
+                      ? null
+                      : form.state.values.economicEntityId
+                  }
+                  onPayeeSelected={(payee) =>
+                    form.setFieldValue(
+                      'payeeName',
+                      payee?.displayName ?? form.state.values.payeeName
+                    )
+                  }
+                  description='Trading partners (vendor/payee roles) rank first. Empty selection writes the name below alone.'
+                />
+              )}
+            </form.Field>
             <form.AppField
               name='payeeName'
-              children={(field) => <field.TextField label='Payee' placeholder='e.g. USPS' />}
+              children={(field) => (
+                <field.TextField
+                  label='Payee (free text)'
+                  placeholder='e.g. USPS'
+                  description='Always saved — picking a trading partner above fills this in, but you can still edit or type it directly.'
+                />
+              )}
             />
             <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
               <form.AppField
@@ -290,13 +362,24 @@ export default function QuickExpenseDialog({
               )}
             </div>
           </FieldGroup>
-          <div className='flex justify-end gap-2'>
-            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              Cancel
+          <div className='flex items-center justify-between gap-2'>
+            <Button
+              type='button'
+              variant='link'
+              size='sm'
+              className='px-0'
+              onClick={handleMoreOptions}
+            >
+              More options
             </Button>
-            <form.AppForm>
-              <form.SubmitButton>Save</form.SubmitButton>
-            </form.AppForm>
+            <div className='flex gap-2'>
+              <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <form.AppForm>
+                <form.SubmitButton>Save</form.SubmitButton>
+              </form.AppForm>
+            </div>
           </div>
         </form>
       </DialogContent>

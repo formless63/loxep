@@ -54,6 +54,8 @@ export interface ExpenseListRow {
   economicEntityId: string | null;
   entityAttributionSource: string;
   payeeName: string | null;
+  /** Added migration 0024 (loxep-cd3.1) — the linked counterparty, unresolved (caller resolves the survivor pointer if it joins further). */
+  payeeCounterpartyId: string | null;
   category: string;
   currency: string;
   amount: string;
@@ -180,7 +182,9 @@ export function createExpenseReports(options: {
       const result = await db.execute(
         `select e.id::text as id, e.reference_code, e.expense_date::text as expense_date,
                 e.economic_entity_id::text as economic_entity_id,
-                e.entity_attribution_source, e.payee_name, e.category, e.currency,
+                e.entity_attribution_source, e.payee_name,
+                e.payee_counterparty_id::text as payee_counterparty_id,
+                e.category, e.currency,
                 e.amount::text as amount, e.tax_amount::text as tax_amount,
                 e.payment_method, e.status,
                 ${ALLOCATED_SUM}::numeric(20, 6)::text as allocated,
@@ -200,6 +204,8 @@ export function createExpenseReports(options: {
           economicEntityId: (row["economic_entity_id"] as string | null) ?? null,
           entityAttributionSource: row["entity_attribution_source"] as string,
           payeeName: (row["payee_name"] as string | null) ?? null,
+          payeeCounterpartyId:
+            (row["payee_counterparty_id"] as string | null) ?? null,
           category: row["category"] as string,
           currency: row["currency"] as string,
           amount,

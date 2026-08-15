@@ -68,8 +68,21 @@ import {
  *      @loxep/domain's new upsertExternalResource has an ON CONFLICT
  *      target; tier-1 links with a null external_id are unaffected. No
  *      column added, no other table touched.
+ * 0022 notification_events (weave audit 2026-08 finding 5, notification
+ *      half, loxep-oii; ADR-0023): the detection-side ledger of notifiable
+ *      facts, decoupling notification_deliveries from market_events so any
+ *      event class can be notified. notification_deliveries.market_event_id
+ *      relaxes to nullable behind a new event_id.
+ * 0023 counterparty contact names (Trading partners M1, loxep-cd3.1):
+ *      counterparty_contacts gains nullable given_name/family_name — the one
+ *      genuine schema gap the Invoice Ninja client-contact parity mapping
+ *      found. No backfill, no constraint; display_name stays authoritative.
+ * 0024 expense payee counterparty (Trading partners M1, loxep-cd3.1):
+ *      expenses gains nullable payee_counterparty_id (FK to counterparties,
+ *      explicitly named expenses_payee_counterparty_fk) plus a partial
+ *      index. No backfill; payee_name stays written on every expense.
  */
-const MIGRATION_FILE_COUNT = 23;
+const MIGRATION_FILE_COUNT = 25;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

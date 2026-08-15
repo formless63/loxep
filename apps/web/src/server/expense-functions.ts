@@ -23,6 +23,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
+import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -85,6 +86,7 @@ export interface ExpenseListItemDto {
   economicEntityId: string | null;
   entityAttributionSource: string;
   payeeName: string | null;
+  payeeCounterpartyId: string | null;
   category: string;
   currency: string;
   amount: string;
@@ -134,6 +136,7 @@ export const fetchExpenses = createServerFn({ method: 'GET' })
       economicEntityId: row.economicEntityId,
       entityAttributionSource: row.entityAttributionSource,
       payeeName: row.payeeName,
+      payeeCounterpartyId: row.payeeCounterpartyId,
       category: row.category,
       currency: row.currency,
       amount: row.amount,
@@ -159,8 +162,16 @@ export interface ReceiptDto {
   mimeType: string | null;
   sizeBytes: number;
   createdAt: string;
-  /** `GET`-able bytes behind the expense-scoped serving route (its OWN `metadata.purpose` gate). */
-  servingUrl: string;
+  /**
+   * `GET`-able bytes behind the media object's OWN `metadata.purpose`-gated
+   * serving route — derived via `@/server/media-serving-url.ts`'s
+   * `servingUrlFor`, never assumed to be `/api/media/receipt/*`. A receipt
+   * attached from `/finance/expenses/new`'s evidence pane arrives through
+   * `POST /api/documents/upload` and is stamped `metadata.purpose =
+   * 'document'`, so it 404s behind the receipt route — see that module's doc
+   * for the full trap. `null` when the object's purpose has no known route.
+   */
+  servingUrl: string | null;
 }
 
 export interface ExpenseDetailDto {
@@ -170,6 +181,19 @@ export interface ExpenseDetailDto {
   entityAttributionSource: string;
   expenseDate: string;
   payeeName: string | null;
+  payeeCounterpartyId: string | null;
+  /**
+   * The linked counterparty's CURRENT `display_name`, resolved through the
+   * survivor pointer (`coalesce(merged_into_counterparty_id, id)` —
+   * `@loxep/counterparties/merge.ts`'s `resolvedIdExpression`, reproduced
+   * here as a direct SQL join since that package is not an `apps/web`
+   * dependency — see `@/server/trading-partner-functions.ts`'s module doc
+   * for why). `null` when `payeeCounterpartyId` is `null`, OR when the
+   * linked row was somehow deleted (never happens today — nothing deletes a
+   * counterparty), so `payeeName`'s own snapshot is the fallback display
+   * text either way.
+   */
+  payeeCounterpartyDisplayName: string | null;
   category: string;
   description: string | null;
   currency: string;
@@ -177,6 +201,14 @@ export interface ExpenseDetailDto {
   taxAmount: string;
   paymentMethod: string;
   acquisitionCostId: string | null;
+  /**
+   * The lot this expense's `acquisitionCostId` (if any) belongs to — resolved
+   * server-side so the detail page can link straight to `/inventory/acquisitions/$id`
+   * instead of naming the cost row as inert prose (loxep-1zg). `null` whenever
+   * `acquisitionCostId` is `null`; the cost row is expected to still exist
+   * once it is set, since nothing deletes `acquisition_costs`.
+   */
+  acquisitionId: string | null;
   status: string;
   reimbursable: boolean;
   notes: string | null;
@@ -193,8 +225,13 @@ export interface ExpenseDetailDto {
 export const fetchExpense = createServerFn({ method: 'GET' })
   .inputValidator(z.strictObject({ id: z.uuid() }))
   .handler(async ({ data }): Promise<ExpenseDetailDto> => {
-    const { requireSession, getExpensesService, getReceiptsService, getMediaService } =
-      await import('@/server/admin');
+    const {
+      requireSession,
+      getAdminServices,
+      getExpensesService,
+      getReceiptsService,
+      getMediaService
+    } = await import('@/server/admin');
     await requireSession();
     const expensesService = getExpensesService();
     const [expense, summary, receiptsService, mediaService] = await Promise.all([
@@ -203,6 +240,29 @@ export const fetchExpense = createServerFn({ method: 'GET' })
       getReceiptsService(),
       getMediaService()
     ]);
+    const acquisitionCost = expense.acquisitionCostId
+      ? await getAdminServices().handle.db.query.acquisitionCosts.findFirst({
+          where: (table, { eq }) => eq(table.id, expense.acquisitionCostId as string),
+          columns: { acquisitionId: true }
+        })
+      : null;
+    const payeeCounterparty = expense.payeeCounterpartyId
+      ? await getAdminServices().handle.db.query.counterparties.findFirst({
+          where: (table, { eq }) => eq(table.id, expense.payeeCounterpartyId as string),
+          columns: { displayName: true, mergedIntoCounterpartyId: true }
+        })
+      : null;
+    // Follows the survivor pointer ONE hop — the documented resolution
+    // formula (`@loxep/counterparties/merge.ts`'s module doc: the pointer
+    // graph is kept exactly one level deep by refusal + compression).
+    const resolvedPayeeCounterparty =
+      payeeCounterparty?.mergedIntoCounterpartyId != null
+        ? await getAdminServices().handle.db.query.counterparties.findFirst({
+            where: (table, { eq }) =>
+              eq(table.id, payeeCounterparty.mergedIntoCounterpartyId as string),
+            columns: { displayName: true }
+          })
+        : payeeCounterparty;
     const links = await receiptsService.list(data.id);
     const receipts = await Promise.all(
       links.map(async (link): Promise<ReceiptDto> => {
@@ -215,7 +275,7 @@ export const fetchExpense = createServerFn({ method: 'GET' })
           mimeType: mediaObject.mimeType,
           sizeBytes: mediaObject.sizeBytes,
           createdAt: iso(link.createdAt),
-          servingUrl: `/api/media/receipt/${link.mediaObjectId}`
+          servingUrl: servingUrlFor(mediaObjectPurpose(mediaObject.metadata), link.mediaObjectId)
         };
       })
     );
@@ -226,6 +286,8 @@ export const fetchExpense = createServerFn({ method: 'GET' })
       entityAttributionSource: expense.entityAttributionSource,
       expenseDate: expense.expenseDate,
       payeeName: expense.payeeName,
+      payeeCounterpartyId: expense.payeeCounterpartyId,
+      payeeCounterpartyDisplayName: resolvedPayeeCounterparty?.displayName ?? null,
       category: expense.category,
       description: expense.description,
       currency: expense.currency,
@@ -233,6 +295,7 @@ export const fetchExpense = createServerFn({ method: 'GET' })
       taxAmount: expense.taxAmount,
       paymentMethod: expense.paymentMethod,
       acquisitionCostId: expense.acquisitionCostId,
+      acquisitionId: acquisitionCost?.acquisitionId ?? null,
       status: expense.status,
       reimbursable: expense.reimbursable,
       notes: expense.notes,
@@ -258,6 +321,13 @@ const createExpenseInput = z.strictObject({
   expenseDate: calendarDate,
   category: z.string().trim().min(1),
   payeeName: z.string().trim().min(1).nullable(),
+  /**
+   * The picker's resolved counterparty (loxep-cd3.1). When present,
+   * `@loxep/accounting` overrides `payeeName` with the counterparty's
+   * `display_name` in the same write — "both are written, always". `null`/
+   * omitted leaves the free-text-only fast path untouched.
+   */
+  payeeCounterpartyId: z.uuid().nullish(),
   paymentMethod: z.enum(EXPENSE_PAYMENT_METHOD_VALUES),
   currency: currencyCode,
   /**
@@ -283,6 +353,7 @@ export const createExpense = createServerFn({ method: 'POST' })
       economicEntityId: data.economicEntityId,
       expenseDate: data.expenseDate,
       payeeName: data.payeeName,
+      payeeCounterpartyId: data.payeeCounterpartyId ?? null,
       category: data.category,
       currency: data.currency,
       amount: data.amount,
@@ -293,6 +364,111 @@ export const createExpense = createServerFn({ method: 'POST' })
     });
     return { id: expense.id, referenceCode: expense.referenceCode };
   });
+
+// ---------------------------------------------------------------------------
+// Create (full entry, `/finance/expenses/new`, loxep-cd3.2 M2) — the
+// composition surface. Same expense fields as quick entry, plus `taxAmount`
+// and evidence already sitting in the documents pipeline.
+// ---------------------------------------------------------------------------
+
+/**
+ * The upload order of operations the design settled on
+ * (`expense-entry-design.md`, "Upload order of operations, which is the real
+ * design question here"): each file dropped in the evidence pane posts to
+ * the EXISTING `POST /api/documents/upload` immediately — no expense exists
+ * yet, so there is nothing to attach to — writing a `media_objects` row
+ * (`metadata.purpose = 'document'`) and a `documents` row
+ * (`source_kind = 'upload'`, `status = 'pending'`) exactly like
+ * `/finance/import`'s pipeline. This function is the "thin wrapper" the
+ * design calls for: it creates the expense via the SAME
+ * `ExpensesService.create` quick entry uses, then attaches every uploaded
+ * media object with the SAME `ReceiptsService.attach` `confirmLinesAsExpense`
+ * uses — never a forked write path — inside ONE transaction, so the expense
+ * and its evidence links commit or roll back together.
+ *
+ * `mediaObjectIds` are ids the evidence pane already uploaded (and therefore
+ * already verified to exist) in this same session — an attach failure here
+ * is a genuine anomaly, not a routine case, so it is allowed to abort the
+ * whole transaction rather than silently drop evidence the operator saw
+ * attached. `ReceiptsService.attach` itself already absorbs a duplicate
+ * (`23505`) attach, matching `confirmLinesAsExpense`'s reuse.
+ *
+ * Abandoning the page without saving leaves any already-uploaded documents
+ * `pending`, reachable through `/finance/import` exactly as the design
+ * requires — nothing here deletes an orphaned upload.
+ */
+const createExpenseWithEvidenceInput = z.strictObject({
+  amount: decimalString,
+  taxAmount: decimalString.nullish(),
+  expenseDate: calendarDate,
+  category: z.string().trim().min(1),
+  payeeName: z.string().trim().min(1).nullable(),
+  /** See `createExpenseInput.payeeCounterpartyId` above. */
+  payeeCounterpartyId: z.uuid().nullish(),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHOD_VALUES),
+  currency: currencyCode,
+  economicEntityId: z.uuid().nullable(),
+  status: z.enum(['draft', 'recorded']).default('recorded'),
+  notes: z.string().trim().min(1).nullish(),
+  /** Media object ids already uploaded through `POST /api/documents/upload` — attached as `purpose: 'receipt'` inside the same transaction. */
+  mediaObjectIds: z.array(z.uuid()).max(20).default([])
+});
+
+export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
+  .inputValidator(createExpenseWithEvidenceInput)
+  .handler(
+    async ({ data }): Promise<{ id: string; referenceCode: string; attachedCount: number }> => {
+      const { requireSession, getAdminServices, getStorageBackendsService } =
+        await import('@/server/admin');
+      const session = await requireSession();
+      const { createExpensesService, createReceiptsService } = await import('@loxep/accounting');
+      const { createMediaService } = await import('@loxep/storage');
+      const { handle } = getAdminServices();
+
+      return handle.db.transaction(async (tx) => {
+        // Re-instantiated against THIS transaction, exactly like
+        // `confirmLinesAsExpense` (`@/server/documents-functions.ts`) does —
+        // so the expense write and every evidence attachment commit or roll
+        // back together, not the module-level singletons from `admin.ts`.
+        const expensesService = createExpensesService({ db: tx });
+        const backends = await getStorageBackendsService();
+        const media = createMediaService({ db: tx, backends });
+        const receiptsService = createReceiptsService({ db: tx, media });
+
+        const { expense } = await expensesService.create({
+          economicEntityId: data.economicEntityId,
+          expenseDate: data.expenseDate,
+          payeeName: data.payeeName,
+          payeeCounterpartyId: data.payeeCounterpartyId ?? null,
+          category: data.category,
+          currency: data.currency,
+          amount: data.amount,
+          ...(data.taxAmount !== null && data.taxAmount !== undefined
+            ? { taxAmount: data.taxAmount }
+            : {}),
+          paymentMethod: data.paymentMethod,
+          status: data.status,
+          notes: data.notes ?? null,
+          createdByUserId: session.user.id
+        });
+
+        for (const mediaObjectId of data.mediaObjectIds) {
+          await receiptsService.attach({
+            expenseId: expense.id,
+            mediaObjectId,
+            purpose: 'receipt',
+            actorUserId: session.user.id
+          });
+        }
+
+        return {
+          id: expense.id,
+          referenceCode: expense.referenceCode,
+          attachedCount: data.mediaObjectIds.length
+        };
+      });
+    }
+  );
 
 /**
  * `draft` -> `recorded`. Draft stays reachable from quick entry ("save as

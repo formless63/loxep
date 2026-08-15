@@ -1,0 +1,33 @@
+-- Trading partners M1, migration B (loxep-cd3.1) — counterparties as expense
+-- payees. Physical realization of
+-- `apps/docs/src/content/docs/architecture/expense-entry-design.md` section
+-- 2's "the payee field".
+--
+-- `payee_counterparty_id` is nullable and gets NO backfill: matching the
+-- existing `payee_name` text to a counterparty in bulk is a matching design
+-- (needs `counterparty_identifiers`, still design-only) and a mis-match
+-- would be silent. `payee_name`'s own column comment has promised this
+-- column since migration 0006 and stays written on every expense — the
+-- service snapshots the resolved `display_name` into it at write time, so a
+-- later party rename does not rewrite history and an expense recorded
+-- before the party existed still reads correctly.
+--
+-- Named FK explicitly (`expenses_payee_counterparty_fk`): see the schema
+-- module comment for why, and note the auto-derived name
+-- (`expenses_payee_counterparty_id_counterparties_id_fk`, 51 bytes) is
+-- actually under the 63-byte limit here — named explicitly anyway per the
+-- migration plan's own instruction, and because `.references()` inline on
+-- the column would otherwise make drizzle-kit emit a SECOND, redundant,
+-- auto-named FK constraint alongside this one (reproduced and removed
+-- during generation).
+--
+-- Any read joining through this column MUST resolve the survivor pointer
+-- via `resolvedIdExpression` from `@loxep/counterparties/merge.ts`.
+--
+-- Drizzle-generated: `bun --cwd packages/db generate` emitted this from the
+-- nullable `uuid` column, explicit `foreignKey()`, and partial index added
+-- to `packages/db/src/schema/expenses.ts`'s `expenses` table — nothing
+-- hand-written.
+ALTER TABLE "expenses" ADD COLUMN "payee_counterparty_id" uuid;--> statement-breakpoint
+ALTER TABLE "expenses" ADD CONSTRAINT "expenses_payee_counterparty_fk" FOREIGN KEY ("payee_counterparty_id") REFERENCES "public"."counterparties"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "expenses_payee_counterparty_id_idx" ON "expenses" USING btree ("payee_counterparty_id") WHERE "expenses"."payee_counterparty_id" is not null;

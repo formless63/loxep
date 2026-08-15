@@ -114,18 +114,28 @@ export {
   fetchClient,
   fetchClientsPage,
   isoFromInvoiceNinjaTimestamp,
+  mapCounterpartyContactForPush,
   mapInvoiceNinjaClient,
   redactInvoiceNinjaClientFact,
   updateClient,
 } from "./clients.ts";
 export type {
+  CounterpartyContactForPush,
   FetchInvoiceNinjaClientsInput,
   InvoiceNinjaClientFact,
   InvoiceNinjaClientPage,
   InvoiceNinjaContactFact,
   InvoiceNinjaCreateClientInput,
+  InvoiceNinjaPushContactInput,
   InvoiceNinjaRawClientPayload,
 } from "./clients.ts";
+
+export {
+  NINJA_COUNTRY_ID_BY_ALPHA2,
+  NINJA_CURRENCY_ID_BY_ISO4217,
+  ninjaCountryIdForAlpha2,
+  ninjaCurrencyIdForIso4217,
+} from "./id-maps.ts";
 
 export {
   INVOICENINJA_INVOICE_STATUS_MAP,

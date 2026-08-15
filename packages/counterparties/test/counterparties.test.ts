@@ -364,6 +364,43 @@ describe("counterparties service", () => {
       expect(after.filter((row) => row.isPrimary).length).toBe(1);
     });
 
+    it("carries optional given/family name (migration 0023, loxep-cd3.1), independent of display_name", async () => {
+      const party = await parties.create({
+        kind: "organization",
+        displayName: "Split Name Owner",
+      });
+      const named = await contacts.addContact({
+        counterpartyId: party.id,
+        displayName: "Jane Doe",
+        givenName: "Jane",
+        familyName: "Doe",
+      });
+      expect(named.givenName).toBe("Jane");
+      expect(named.familyName).toBe("Doe");
+
+      // A contact may legitimately be "Accounts Payable" rather than a
+      // person — given/family name stay optional and null by default.
+      const roleTitleOnly = await contacts.addContact({
+        counterpartyId: party.id,
+        displayName: "Accounts Payable",
+      });
+      expect(roleTitleOnly.givenName).toBeNull();
+      expect(roleTitleOnly.familyName).toBeNull();
+
+      const updated = await contacts.updateContact({
+        contactId: roleTitleOnly.id,
+        givenName: "Pat",
+      });
+      expect(updated.givenName).toBe("Pat");
+      expect(updated.displayName).toBe("Accounts Payable");
+
+      const cleared = await contacts.updateContact({
+        contactId: roleTitleOnly.id,
+        givenName: null,
+      });
+      expect(cleared.givenName).toBeNull();
+    });
+
     it("normalizes a channel value on the way in", async () => {
       const party = await parties.create({
         kind: "organization",

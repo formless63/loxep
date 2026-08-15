@@ -7,6 +7,7 @@ import {
   fetchClient,
   fetchClientsPage,
   isoFromInvoiceNinjaTimestamp,
+  mapCounterpartyContactForPush,
   mapInvoiceNinjaClient,
   redactInvoiceNinjaClientFact,
   updateClient,
@@ -99,6 +100,120 @@ describe("buildInvoiceNinjaClientPayload", () => {
     expect(
       buildInvoiceNinjaClientPayload({ name: "Fixture Co", idNumber: "TAX-1" }),
     ).toEqual({ name: "Fixture Co", id_number: "TAX-1" });
+  });
+
+  it("maps the full mapping table when every field is supplied", () => {
+    const payload = buildInvoiceNinjaClientPayload({
+      name: "Fixture Co",
+      idNumber: "CP-2026-0001",
+      vatNumber: "GB123456789",
+      website: "fixture.example",
+      phone: "+1 555 0100",
+      address1: "1 Fixture Way",
+      address2: "Suite 2",
+      city: "Fixtureville",
+      state: "CA",
+      postalCode: "90210",
+      countryAlpha2: "US",
+      currencyCode: "usd",
+      paymentTermsDays: 30,
+      privateNotes: "chases invoices, call before shipping",
+      contacts: [
+        mapCounterpartyContactForPush({
+          displayName: "Accounts Payable",
+          givenName: "Jamie",
+          familyName: "Fixture",
+          email: "jamie@fixture.invalid",
+          isPrimary: true,
+        }),
+      ],
+    });
+    expect(payload).toEqual({
+      name: "Fixture Co",
+      id_number: "CP-2026-0001",
+      vat_number: "GB123456789",
+      website: "fixture.example",
+      phone: "+1 555 0100",
+      address1: "1 Fixture Way",
+      address2: "Suite 2",
+      city: "Fixtureville",
+      state: "CA",
+      postal_code: "90210",
+      // US -> 840 (ISO-3166-1 numeric), USD -> 1 (Ninja's own sequence).
+      country_id: "840",
+      private_notes: "chases invoices, call before shipping",
+      settings: { currency_id: "1", payment_terms: "30" },
+      contacts: [
+        { first_name: "Jamie", last_name: "Fixture", email: "jamie@fixture.invalid", is_primary: true },
+      ],
+    });
+  });
+
+  it("omits country_id/currency_id for a code with no map entry, without throwing", () => {
+    const payload = buildInvoiceNinjaClientPayload({
+      name: "Fixture Co",
+      countryAlpha2: "ZZ",
+      currencyCode: "ZZZ",
+    });
+    expect(payload).toEqual({ name: "Fixture Co" });
+  });
+
+  it("omits private_notes unless the caller explicitly supplies it (opt-in per push)", () => {
+    const payload = buildInvoiceNinjaClientPayload({ name: "Fixture Co" });
+    expect(payload).not.toHaveProperty("private_notes");
+  });
+});
+
+describe("mapCounterpartyContactForPush", () => {
+  it("sends the split names when present", () => {
+    expect(
+      mapCounterpartyContactForPush({
+        displayName: "Accounts Payable",
+        givenName: "Jamie",
+        familyName: "Fixture",
+        email: "jamie@fixture.invalid",
+        isPrimary: true,
+      }),
+    ).toEqual({
+      firstName: "Jamie",
+      lastName: "Fixture",
+      email: "jamie@fixture.invalid",
+      isPrimary: true,
+    });
+  });
+
+  it("falls back to display_name in first_name when given/family are absent", () => {
+    expect(
+      mapCounterpartyContactForPush({
+        displayName: "Accounts Payable",
+        givenName: null,
+        familyName: null,
+        email: null,
+        isPrimary: false,
+      }),
+    ).toEqual({ firstName: "Accounts Payable", isPrimary: false });
+  });
+
+  it("treats a whitespace-only given/family name as absent", () => {
+    expect(
+      mapCounterpartyContactForPush({
+        displayName: "Accounts Payable",
+        givenName: "   ",
+        familyName: undefined,
+        isPrimary: false,
+      }),
+    ).toEqual({ firstName: "Accounts Payable", isPrimary: false });
+  });
+
+  it("uses only the given name when family is absent, without a display_name fallback", () => {
+    expect(
+      mapCounterpartyContactForPush({
+        displayName: "Jamie",
+        givenName: "Jamie",
+        familyName: null,
+        isPrimary: false,
+      }),
+    ).toEqual({ firstName: "Jamie", isPrimary: false });
   });
 });
 

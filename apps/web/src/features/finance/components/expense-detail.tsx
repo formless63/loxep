@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -19,6 +20,7 @@ import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { formatDate, formatMoney } from '@/lib/format';
 import { submitExpense, voidExpense } from '@/server/expense-functions';
+import { linkExpensePayee } from '@/server/trading-partner-functions';
 import { expenseQuery } from '@/features/finance/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
@@ -26,6 +28,10 @@ import ReceiptGallery from '@/features/finance/components/receipt-gallery';
 import QuickExpenseDialog, {
   type QuickExpensePrefill
 } from '@/features/finance/components/quick-expense-dialog';
+import {
+  NO_TRADING_PARTNER_VALUE,
+  PayeeComboboxField
+} from '@/features/finance/components/payee-combobox-field';
 import {
   expenseStatusLabel,
   expenseStatusTone,
@@ -116,6 +122,89 @@ function VoidExpenseDialog({
   );
 }
 
+/**
+ * "Link this payee" (`expense-entry-design.md` section 2) — operator-driven
+ * only, and the ONE field `@loxep/accounting` will change on a `recorded`
+ * expense (`ExpensesService.linkPayee`, deliberately bypassing the draft-only
+ * lock `update` enforces, the same narrow-bypass posture `reattributeDefaults`
+ * already uses for entity attribution). Plain `useState`, not `useAppForm` —
+ * this is a single picker plus a submit action with no schema of its own to
+ * validate, matching `push-draft-invoice-dialog.tsx`'s own precedent for a
+ * one-field selection dialog in this same feature.
+ */
+function LinkPayeeDialog({
+  open,
+  onOpenChange,
+  expenseId,
+  economicEntityId,
+  currentPayeeCounterpartyId
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expenseId: string;
+  economicEntityId: string | null;
+  currentPayeeCounterpartyId: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [payeeCounterpartyId, setPayeeCounterpartyId] = React.useState(
+    currentPayeeCounterpartyId ?? NO_TRADING_PARTNER_VALUE
+  );
+
+  React.useEffect(() => {
+    if (open) setPayeeCounterpartyId(currentPayeeCounterpartyId ?? NO_TRADING_PARTNER_VALUE);
+  }, [open, currentPayeeCounterpartyId]);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      linkExpensePayee({
+        data: {
+          expenseId,
+          payeeCounterpartyId:
+            payeeCounterpartyId === NO_TRADING_PARTNER_VALUE ? null : payeeCounterpartyId
+        }
+      }),
+    onSuccess: () => {
+      toast.success(
+        payeeCounterpartyId === NO_TRADING_PARTNER_VALUE ? 'Payee unlinked' : 'Payee linked'
+      );
+      void queryClient.invalidateQueries({ queryKey: ['finance'] });
+      onOpenChange(false);
+    },
+    onError: (error) => toastError(error, 'Failed to link payee')
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='sm:max-w-[420px]'>
+        <DialogHeader>
+          <DialogTitle>Link this payee</DialogTitle>
+          <DialogDescription>
+            Attaches a trading partner to this expense without reopening it — works on a recorded
+            expense, not just a draft. Unlinking keeps the last-known payee name as evidence.
+          </DialogDescription>
+        </DialogHeader>
+        <div className='space-y-6'>
+          <PayeeComboboxField
+            label='Payee'
+            value={payeeCounterpartyId}
+            onChange={setPayeeCounterpartyId}
+            economicEntityId={economicEntityId}
+          />
+          <div className='flex justify-end gap-2'>
+            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type='button' disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+              {mutation.isPending && <Icons.spinner className='animate-spin' />}
+              Save
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className='flex flex-col gap-0.5'>
@@ -131,6 +220,7 @@ export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
   const queryClient = useQueryClient();
 
   const [voidOpen, setVoidOpen] = React.useState(false);
+  const [linkPayeeOpen, setLinkPayeeOpen] = React.useState(false);
   const [reRecordOpen, setReRecordOpen] = React.useState(false);
   const [reRecordPrefill, setReRecordPrefill] = React.useState<QuickExpensePrefill | undefined>(
     undefined
@@ -203,7 +293,23 @@ export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
           <DetailRow label='Category'>
             <Badge variant='outline'>{data.category}</Badge>
           </DetailRow>
-          <DetailRow label='Payee'>{data.payeeName ?? '—'}</DetailRow>
+          <DetailRow label='Payee'>
+            <span className='flex items-center gap-1.5'>
+              {data.payeeCounterpartyDisplayName ?? data.payeeName ?? '—'}
+              {data.status !== 'void' && (
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon'
+                  className='h-5 w-5'
+                  title={data.payeeCounterpartyId ? 'Change linked payee' : 'Link this payee'}
+                  onClick={() => setLinkPayeeOpen(true)}
+                >
+                  <Icons.edit className='h-3.5 w-3.5' />
+                </Button>
+              )}
+            </span>
+          </DetailRow>
           <DetailRow label='Payment'>{paymentMethodLabel(data.paymentMethod)}</DetailRow>
           <DetailRow label='Entity'>{entityName}</DetailRow>
           <DetailRow label='Tax amount'>{formatMoney(data.taxAmount, data.currency)}</DetailRow>
@@ -229,6 +335,18 @@ export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
             acquisition (goods bought for resale become cost basis, never an expense) is the
             acquisition seam — the /inventory workspace's intake flow, arriving in a later
             milestone.
+            {data.acquisitionId !== null && (
+              <>
+                {' '}
+                <Link
+                  to='/inventory/acquisitions/$id'
+                  params={{ id: data.acquisitionId }}
+                  className='text-primary hover:underline'
+                >
+                  View the lot
+                </Link>
+              </>
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -239,6 +357,13 @@ export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
         </CardContent>
       </Card>
 
+      <LinkPayeeDialog
+        open={linkPayeeOpen}
+        onOpenChange={setLinkPayeeOpen}
+        expenseId={expenseId}
+        economicEntityId={data.economicEntityId}
+        currentPayeeCounterpartyId={data.payeeCounterpartyId}
+      />
       <VoidExpenseDialog
         open={voidOpen}
         onOpenChange={setVoidOpen}

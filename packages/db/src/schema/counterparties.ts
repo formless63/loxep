@@ -372,6 +372,18 @@ export const counterpartyContacts = pgTable(
       .notNull()
       .references(() => counterparties.id, { onDelete: "cascade" }),
     displayName: text("display_name").notNull(),
+    /**
+     * Added migration 0023, for the Invoice Ninja `contacts[].first_name` /
+     * `last_name` parity gap — the ONE field the push adapter had no source
+     * for (see `expense-entry-design.md` section 2's mapping table). Both
+     * nullable, no backfill, no constraint: `displayName` stays `NOT NULL`
+     * and stays authoritative for every Loxep surface, because a contact may
+     * legitimately be "Accounts Payable" rather than a person. The adapter
+     * sends the split names when present and falls back to putting
+     * `displayName` in `first_name` when absent.
+     */
+    givenName: text("given_name"),
+    familyName: text("family_name"),
     roleTitle: text("role_title"),
     isPrimary: boolean("is_primary").notNull().default(false),
     status: text("status").notNull().default("active"),

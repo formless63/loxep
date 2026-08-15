@@ -12,6 +12,7 @@ import {
   createMigratedScratchDb,
   seedAcquisition,
   seedCatalogItem,
+  seedCounterparty,
   seedEntity,
 } from "./helpers.ts";
 import type { ScratchDb } from "./helpers.ts";
@@ -148,7 +149,6 @@ describe("expenses schema (migration 0006)", () => {
         "posted_at",
         // financial_accounts still does not exist, so neither does the column.
         "financial_account_id",
-        "payee_counterparty_id",
         "project_id",
       ]) {
         expect(columns).not.toContain(forbidden);
@@ -171,6 +171,45 @@ describe("expenses schema (migration 0006)", () => {
           acquisition_cost_id: `'00000000-0000-4000-8000-000000000000'`,
         }),
       ).rejects.toThrow(/foreign key|violates/i);
+    });
+
+    it("carries a REAL, explicitly-named foreign key to counterparties (migration 0024, loxep-cd3.1)", async () => {
+      const counterpartyId = await seedCounterparty(
+        scratch,
+        "Fixture Payee LLC",
+        "CP-2026-9001",
+      );
+      const id = await insertExpense({
+        payee_counterparty_id: `'${counterpartyId}'`,
+      });
+      expect(id).toEqual(expect.any(String));
+      await expect(
+        insertExpense({
+          payee_counterparty_id: `'00000000-0000-4000-8000-000000000000'`,
+        }),
+      ).rejects.toThrow(/expenses_payee_counterparty_fk|foreign key|violates/i);
+    });
+
+    it("leaves payee_counterparty_id null by default — free-text payee_name alone stays valid", async () => {
+      const id = await insertExpense({ payee_name: `'USPS'` });
+      const row = await scratch.handle.pool.query<{
+        payee_counterparty_id: string | null;
+        payee_name: string | null;
+      }>(
+        `select payee_counterparty_id, payee_name from expenses where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.payee_counterparty_id).toBeNull();
+      expect(row.rows[0]?.payee_name).toBe("USPS");
+    });
+
+    it("has a partial index on payee_counterparty_id where not null", async () => {
+      const result = await scratch.handle.pool.query<{ indexdef: string }>(
+        `select indexdef from pg_indexes
+          where tablename = 'expenses' and indexname = 'expenses_payee_counterparty_id_idx'`,
+      );
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]?.indexdef).toMatch(/where.*payee_counterparty_id.*is not null/i);
     });
 
     it("nulls the ADR-0020 user reference when the auth user is deleted", async () => {

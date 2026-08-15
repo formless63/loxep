@@ -178,6 +178,16 @@ const createExpenseSchema = z.strictObject({
   referenceCode: z.string().trim().min(1).optional(),
   expenseDate: calendarDate,
   payeeName: z.string().trim().min(1).nullish(),
+  /**
+   * Added migration 0024 (`expense-entry-design.md` section 2, milestone
+   * M1). When set, the service resolves the counterparty's `display_name`
+   * IN THE SAME WRITE and snapshots it into `payeeName`, overriding whatever
+   * `payeeName` the caller also passed — "both are written, always" is the
+   * design's own rule, and it is the service's job to keep that true rather
+   * than trust the picker's last-known label. Omitted/`null` leaves the
+   * quick-entry free-text fast path exactly as it was.
+   */
+  payeeCounterpartyId: z.uuid().nullish(),
   category: z.string().trim().min(1),
   description: z.string().trim().min(1).nullish(),
   currency: currencyCode,
@@ -207,6 +217,16 @@ const updateExpenseSchema = z.strictObject({
   expenseId: z.uuid(),
   expenseDate: calendarDate.optional(),
   payeeName: z.string().trim().min(1).nullish(),
+  /**
+   * `undefined` leaves the link untouched. `null` clears it — the "unlink"
+   * case — WITHOUT touching `payeeName`, because the last-known label stays
+   * valid evidence even once the party link is removed. A non-null uuid is
+   * the "link this payee" action (design section 2): the service resolves
+   * that counterparty's current `display_name` and snapshots it into
+   * `payeeName` in the same write, overriding any `payeeName` passed
+   * alongside it in the same call.
+   */
+  payeeCounterpartyId: z.uuid().nullish(),
   category: z.string().trim().min(1).optional(),
   description: z.string().trim().min(1).nullish(),
   currency: currencyCode.optional(),
@@ -300,6 +320,29 @@ export interface ExpensesService {
   getByReferenceCode: (referenceCode: string) => Promise<ExpenseRow>;
   /** Draft only. Refuses any edit that would leave the expense over-allocated. */
   update: (input: UpdateExpenseInput) => Promise<ExpenseRow>;
+  /**
+   * "Link this payee" (expense-entry-design.md section 2) — the ONE field
+   * this service will change on a `recorded` expense, deliberately bypassing
+   * the draft-only lock `update` enforces. The same narrow-bypass posture
+   * `reattributeDefaults` already uses for entity attribution: attaching
+   * provenance to an already-evidentiary row is not the same act as editing
+   * the fact itself (amount/date/category), and an operator who discovers
+   * days later which trading partner a receipt was from should not have to
+   * void-and-re-record just to record that.
+   *
+   * `payeeCounterpartyId: null` unlinks WITHOUT touching `payeeName` — the
+   * last-known text stays valid evidence. A non-null id resolves that
+   * counterparty's current `display_name` and snapshots it into `payeeName`
+   * in the same write. Refused on a `void` expense: a voided row is frozen
+   * evidence of a mistake and its correction path is void-and-re-record, not
+   * a follow-up edit.
+   */
+  linkPayee: (input: {
+    expenseId: string;
+    payeeCounterpartyId: string | null;
+    actorUserId?: string | null;
+    requestId?: string | null;
+  }) => Promise<ExpenseRow>;
   /** `draft` → `recorded`, audited. The only lock this slice has. */
   submit: (input: {
     expenseId: string;
@@ -383,6 +426,7 @@ export function createExpensesService(options: {
       referenceCode: row["reference_code"] as string,
       expenseDate: toCalendarDate(row["expense_date"]),
       payeeName: (row["payee_name"] as string | null) ?? null,
+      payeeCounterpartyId: (row["payee_counterparty_id"] as string | null) ?? null,
       category: row["category"] as string,
       description: (row["description"] as string | null) ?? null,
       currency: row["currency"] as string,
@@ -444,6 +488,34 @@ export function createExpensesService(options: {
         `(reference ${expense.referenceCode}). Under-allocation is a draft; ` +
         "over-allocation is arithmetic no later edit can make true.",
     );
+  }
+
+  /**
+   * The payee snapshot, done in ONE place so create/update cannot drift.
+   *
+   * Direct SQL against `counterparties` rather than a call into
+   * `@loxep/counterparties` — this package depends only on `@loxep/db`/
+   * `@loxep/domain`/`@loxep/storage` (see this module's own PROVISIONAL
+   * note's siblings), and reading one column off a table this package
+   * already has a foreign key into is not the layering violation that
+   * reimplementing `create`/`grant`/merge logic would be. Throws
+   * {@link AccountingNotFoundError} for an unknown id — the FK would refuse
+   * the write anyway, but resolving the name is needed BEFORE the insert.
+   */
+  async function resolvePayeeDisplayName(
+    executor: Executor,
+    payeeCounterpartyId: string,
+  ): Promise<string> {
+    const result = await executor.execute(
+      `select display_name from counterparties where id = ${uuidLiteral(payeeCounterpartyId)}`,
+    );
+    const displayName = result.rows[0]?.["display_name"] as string | undefined;
+    if (displayName === undefined) {
+      throw new AccountingNotFoundError(
+        `unknown payee counterparty "${payeeCounterpartyId}"`,
+      );
+    }
+    return displayName;
   }
 
   async function nextLineNumber(
@@ -550,6 +622,12 @@ export function createExpensesService(options: {
           db.transaction(async (tx) => {
             const referenceCode =
               value.referenceCode ?? (await generateReferenceCode(tx, year));
+            // "Both are written, always": a chosen payee's display_name
+            // overrides any free-text payeeName in the same write.
+            const payeeName =
+              value.payeeCounterpartyId != null
+                ? await resolvePayeeDisplayName(tx, value.payeeCounterpartyId)
+                : (value.payeeName ?? null);
             const inserted = await tx
               .insert(expenses)
               .values({
@@ -563,7 +641,8 @@ export function createExpensesService(options: {
                     : null,
                 referenceCode,
                 expenseDate: value.expenseDate,
-                payeeName: value.payeeName ?? null,
+                payeeName,
+                payeeCounterpartyId: value.payeeCounterpartyId ?? null,
                 category: value.category,
                 description: value.description ?? null,
                 currency,
@@ -606,6 +685,7 @@ export function createExpensesService(options: {
                 status: expense.status,
                 economicEntityId: expense.economicEntityId,
                 entityAttributionSource: expense.entityAttributionSource,
+                payeeCounterpartyId: expense.payeeCounterpartyId,
               },
               requestId: value.requestId ?? null,
               metadata: { allocationCount: allocations.length },
@@ -627,7 +707,24 @@ export function createExpensesService(options: {
         if (value.expenseDate !== undefined) {
           assignments.push(`expense_date = ${dateLiteral(value.expenseDate)}`);
         }
-        if (value.payeeName !== undefined) {
+        // Resolved BEFORE the payeeName assignment below so a chosen payee's
+        // display_name overrides any free-text payeeName in the same call —
+        // "both are written, always" (create's same rule).
+        let resolvedPayeeName: string | undefined;
+        if (value.payeeCounterpartyId !== undefined) {
+          assignments.push(
+            `payee_counterparty_id = ${value.payeeCounterpartyId === null ? "null" : uuidLiteral(value.payeeCounterpartyId)}`,
+          );
+          if (value.payeeCounterpartyId !== null) {
+            resolvedPayeeName = await resolvePayeeDisplayName(
+              tx,
+              value.payeeCounterpartyId,
+            );
+          }
+        }
+        if (resolvedPayeeName !== undefined) {
+          assignments.push(`payee_name = ${textLiteral(resolvedPayeeName)}`);
+        } else if (value.payeeName !== undefined) {
           assignments.push(
             `payee_name = ${value.payeeName === null ? "null" : textLiteral(value.payeeName)}`,
           );
@@ -734,6 +831,47 @@ export function createExpensesService(options: {
         return after;
       });
     },
+
+    linkPayee: async (input) =>
+      db.transaction(async (tx) => {
+        const before = await loadExpense(tx, input.expenseId);
+        if (before.status === "void") {
+          throw new ExpenseNotEditableError(
+            `expense "${before.referenceCode}" is void; a voided row is ` +
+              "frozen evidence of a mistake and its correction path is " +
+              "void-and-re-record, not a follow-up edit",
+          );
+        }
+        const payeeName =
+          input.payeeCounterpartyId !== null
+            ? await resolvePayeeDisplayName(tx, input.payeeCounterpartyId)
+            : before.payeeName;
+        await tx.execute(
+          `update expenses
+              set payee_counterparty_id = ${input.payeeCounterpartyId === null ? "null" : uuidLiteral(input.payeeCounterpartyId)},
+                  payee_name = ${payeeName === null ? "null" : textLiteral(payeeName)},
+                  updated_at = now()
+            where id = ${uuidLiteral(before.id)}`,
+        );
+        const after = await loadExpense(tx, before.id);
+        await createAuditService({ db: tx }).append({
+          actorUserId: input.actorUserId ?? null,
+          action: "accounting.expense.payee_linked",
+          resourceType: "expense",
+          resourceId: before.id,
+          before: {
+            payeeCounterpartyId: before.payeeCounterpartyId,
+            payeeName: before.payeeName,
+          },
+          after: {
+            payeeCounterpartyId: after.payeeCounterpartyId,
+            payeeName: after.payeeName,
+          },
+          requestId: input.requestId ?? null,
+          metadata: { referenceCode: before.referenceCode },
+        });
+        return after;
+      }),
 
     submit: async (input) =>
       db.transaction(async (tx) => {
