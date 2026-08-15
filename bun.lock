@@ -160,6 +160,7 @@
         "@loxep/integration-etsy": "workspace:*",
         "@loxep/integration-gatus": "workspace:*",
         "@loxep/integration-medusa": "workspace:*",
+        "@loxep/integration-pangolin": "workspace:*",
         "@loxep/integration-purelymail": "workspace:*",
         "@loxep/integration-reverb": "workspace:*",
         "@loxep/integration-tailscale": "workspace:*",

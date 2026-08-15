@@ -68,6 +68,7 @@ import {
   createHostingTargetsService,
   createMailDomainsService,
   createManagedDomainsService,
+  createProxyResourcesService,
   createTransactionalEnqueue,
   type ContainerHostsService,
   type DnsProviderTokensService,
@@ -76,6 +77,7 @@ import {
   type HostingTargetsService,
   type MailDomainsService,
   type ManagedDomainsService,
+  type ProxyResourcesService,
   type TransactionalEnqueue
 } from '@loxep/infrastructure';
 import type {
@@ -198,6 +200,17 @@ interface AdminRegistry {
   resourceLinks: ResourceLinksService;
   /** Encrypted provider-credential bundles (`connection_credentials`) — needed only by the fleet adapter factory below, so built eagerly alongside `connections`/`secrets` (same `db`+`keyring` dependency, same low cost). */
   connectionCredentials: ConnectionCredentialsService;
+  /**
+   * Proxy-resource intent + its CHECK-MODE-ONLY reconciler (Pangolin chain
+   * design milestone 2, loxep-acj.2): `listResourcesForDomain`/`listRuns` for
+   * the domain/fleet detail chain render. `reconcile`/`reconcileDomain` are
+   * NOT called from a request here — they need a live `ProxyProviderPort`,
+   * which only `@loxep/app`'s worker-side wiring can build (the same
+   * "reconciling needs a live adapter; a request only reads what the last
+   * run left behind" split `containerHosts` above documents). Depends only
+   * on `db`, so it is built eagerly.
+   */
+  proxyResources: ProxyResourcesService;
   /**
    * Dynamically-loaded `@loxep/app` module, cached on the registry. `@loxep/app`
    * depends on `@loxep/jobs`/`@loxep/market`/`@loxep/notifications` (its whole
@@ -345,7 +358,8 @@ function buildRegistry(): AdminRegistry {
     connectionCredentials: createConnectionCredentialsService({
       db: handle.db,
       keyring: config.keyring
-    })
+    }),
+    proxyResources: createProxyResourcesService({ db: handle.db })
   };
 }
 
@@ -458,6 +472,11 @@ export function getContainerHostsService(): ContainerHostsService {
 /** The generic external-resource companion-link service (loxep-v5r.3). */
 export function getResourceLinksService(): ResourceLinksService {
   return getAdminServices().resourceLinks;
+}
+
+/** Proxy-resource intent + read-only run history (Pangolin chain design M2, loxep-acj.2). */
+export function getProxyResourcesService(): ProxyResourcesService {
+  return getAdminServices().proxyResources;
 }
 
 /**

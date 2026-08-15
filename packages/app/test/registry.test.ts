@@ -26,6 +26,7 @@ import {
   POLL_MAIL_OWNERSHIP_TASK,
   RECONCILE_CONTAINER_HOST_TASK,
   SYNC_MAILBOXES_TASK,
+  SYNC_PROXY_RESOURCE_TASK,
   SYNC_TOKEN_POLICY_TASK,
 } from "@loxep/infrastructure";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
@@ -108,8 +109,7 @@ describe("buildWorkerRegistry", () => {
         SYNC_MAILBOXES_TASK,
         // Phase 7 milestone 3 (loxep-lmy.3): the on-demand DNS-token
         // zone-scope policy sync — enqueued by `tokens.ts`'s `setZones`/
-        // `mint`, never claimed by the dispatcher. `sync-proxy-resource` is
-        // deliberately NOT registered; see `registry.ts`'s module doc.
+        // `mint`, never claimed by the dispatcher.
         SYNC_TOKEN_POLICY_TASK,
         // loxep-hb7 Milestone C: the container-host reconciler — enqueued by
         // `declareIntent` (an intent change) and by the fleet-detail
@@ -118,6 +118,12 @@ describe("buildWorkerRegistry", () => {
         // `fleet-health.ts`'s Dockhand connection probe instead of through
         // this task, so it registers no cron item of its own.
         RECONCILE_CONTAINER_HOST_TASK,
+        // Pangolin chain design milestone 2 (loxep-acj.2): the proxy
+        // resource reconciler, CHECK MODE ONLY. Now registered for real —
+        // see `registry.ts`'s module doc for what changed and
+        // `infrastructure-proxy.ts`'s for why it registers no poll-executor
+        // route or cron item yet.
+        SYNC_PROXY_RESOURCE_TASK,
         "maintenance.heartbeat",
         // Phase 8 milestone 1 (loxep-ovj.1): the one recurring integration
         // health sweep, no monitor_targets row.

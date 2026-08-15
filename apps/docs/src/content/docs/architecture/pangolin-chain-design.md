@@ -8,10 +8,14 @@ This document designs the **last provider in the Phase 7 chain** and the **templ
 
 This is also the first integration in Loxep whose writes can **lock the owner out of their own services**. A wrong bypass rule, a deleted resource, or a rule update that replaces a working address with a wrong one removes the operator's own access to the estate — including, in this installation, access to Loxep itself. The [write-authorization model](#the-write-risk-model) is therefore the load-bearing part of this design, not the adapter surface, and it is flagged **OWNER-REVIEW-CRITICAL**. Nothing about milestone 1 touches this section: M1 has no write verb at all.
 
-**Implementation status, updated 2026-08-15 (`loxep-acj.1`, M1 shipped):** `@loxep/integration-pangolin` now exists — the read surface, the five-kind taxonomy, the rate budget, the credential bundle (`pangolin_credentials` in `@loxep/domain`), the redactors, a catalog entry + guided form + connecting guide, and a live reconnaissance run (see the closeout note below). `infrastructure.sync-proxy-resource` remains declared in `packages/infrastructure/src/tasks.ts` and deliberately **not** registered in `packages/app/src/registry.ts` — M1 is explicitly out of scope for the task, the intent tables, and the reconciler, all of which land in M2 (`loxep-acj.2`). `hosting_targets.proxy_connection_id` remains a nullable, unused column since migration `0012`. Children are filed under `loxep-acj`.
+**Implementation status, updated 2026-08-15 (`loxep-acj.2`, M2 shipped on top of M1):** `@loxep/integration-pangolin` (M1) ships the read surface, the five-kind taxonomy, the rate budget, the credential bundle (`pangolin_credentials` in `@loxep/domain`), the redactors, a catalog entry + guided form + connecting guide, and a live reconnaissance run (see the closeout note below). M2 lands the reserved contract into `packages/infrastructure/src/tasks.ts` for real: `proxy-port.ts` (the `ProxyProviderPort` + pure planner), `proxy.ts` (`infrastructure.sync-proxy-resource`'s service, CHECK MODE ONLY), migration `0027` (`proxy_resources`/`proxy_resource_rules`, and `reconcile_runs.subject_type` widened to include `proxy_resource`), and `packages/app`'s composition-root wiring (`pangolin.ts`'s per-connection adapter factory, `infrastructure-proxy.ts`'s `proxyProviderPortFromPangolinAdapter` + task registration in `registry.ts`). `hosting_targets.proxy_connection_id` (nullable since migration `0012`) now drives the provider resolution for real; `hosting_targets.external_site_id` is exposed on the same fleet-detail panel that links a connection. Fleet detail (`/infrastructure/fleet/$name`) and domain detail (`/infrastructure/domains/$name`) render the chain. Nothing writes to Pangolin: the M1 adapter has no write verb at all, and `proxy.ts`'s `reconcile()`/`reconcileDomain()` both throw `ProxyWritePolicyError` before any provider call if `mode: 'apply'` is ever requested — the write-authorization gate (M3, `loxep-acj.3`) has not shipped. Children are filed under `loxep-acj`.
 
 :::note[M1 closeout — read this before M2]
 Milestone 1's live reconnaissance (2026-08-15, against the owner's real instance, read-only) found the standalone Integration API server's port is **not reachable from the build/CI network on any path tried** — not the public origin, not any of five plausible dedicated-subdomain guesses, not a confirmed direct Tailscale connection to the actual Pangolin host. One genuine live confirmation did land: the dashboard's own sibling `/api/v1` route (session-cookie-gated, sharing the same response-wrapper code) answered `HTTP 401` with `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` — live proof of the envelope shape this design predicted from documentation, even though the bearer-authenticated Integration API surface itself remains unverified against a live read. `test/live-pangolin.test.ts` records this as a `not_found` classification (an HTTP 404 from the dashboard's own catch-all route) rather than crashing, and is written to start exercising real reads with no code change once the operator's instance has a working reverse-proxy route for the Integration API's port. Two source-verified corrections against this document's original endpoint table are folded in below: the canonical resource path is `/resource` (not `/public-resource`, which is a registered alias), and every list endpoint except DNS records nests its array under a named key plus a `pagination` object rather than answering a bare array. M2 should re-run the live suite as its own first step, once reachability is fixed, before building the reconciler on top of unverified read shapes.
+:::
+
+:::note[M2 closeout — read this before M3]
+The Integration API's reachability had not changed as of M2's implementation (2026-08-15): still unreachable from this build network, so M2's own live-verification attempt was not re-run — re-running `test/live-pangolin.test.ts` (`LOXEP_LIVE_TESTS=pangolin`) remains the correct first step once the operator adds the missing reverse-proxy route, and it needs no code change to start reporting real counts. Every M2 test (`packages/infrastructure/test/proxy-port.test.ts`, `proxy.test.ts`, `targets.test.ts`; `packages/app/test/infrastructure-proxy.test.ts`) drives a fake `ProxyProviderPort` or a stub `PangolinAdapter` — noted honestly rather than silently, per this design's own opening instruction. One structural choice worth recording for M3: `proxy_resources`/`proxy_resource_rules` carry no target-intent table (`ObservedProxyTarget`/`DesiredProxyTarget` exist in the port's type surface and are exhaustively planner-tested, but `proxy.ts`'s real `buildDesired()` always supplies an empty `targets: []` this milestone) — a resource's origin is expressed once, as `proxy_resources.hosting_target_id`, and Pangolin's own per-target `{siteId, ip, port}` shape has no Loxep-side intent column yet. M3 (or whichever milestone first needs to CREATE a target) is where that gap gets a real answer — a computed target from `hosting_targets`' own address plus a new port column, or a dedicated intent table — rather than this milestone guessing at one no write path exercises. `hosting_targets.proxy_connection_id`/`external_site_id` are now editable in-app (`/infrastructure/fleet/$name`'s new "Proxy connection" panel, `HostingTargetsService.updateProxyConnection`) — the one write this milestone ships anywhere, and it edits Loxep's own row, never Pangolin.
 :::
 
 ## What already exists, and what this design may not re-invent
@@ -690,15 +694,27 @@ M1  READ ONLY                              SHIPPED 2026-08-15, loxep-acj.1
     the reverse), and list responses nest under a named key + pagination.
     Nothing writes. Nothing can.
 
-M2  INTENT + CHECK-MODE RECONCILER                     no gate
+M2  INTENT + CHECK-MODE RECONCILER      SHIPPED 2026-08-15, loxep-acj.2
     proxy-port.ts (structural re-declaration + pure planner), the
-    proxy_resources / proxy_resource_rules intent tables, the
-    sync-proxy-resource SERVICE, and registry.ts finally registering the
-    reserved task — in CHECK MODE ONLY, enforced in the service.
-    hosting_targets.proxy_connection_id comes alive. Fleet detail and
-    domain detail render the chain: domain -> Cloudflare record ->
-    Pangolin resource -> hosting target.
-    Still nothing writes.
+    proxy_resources / proxy_resource_rules intent tables (migration 0027),
+    the sync-proxy-resource SERVICE, and registry.ts finally registering
+    the reserved task — in CHECK MODE ONLY, enforced in the service
+    (assertCheckModeOnly throws ProxyWritePolicyError before any provider
+    call). hosting_targets.proxy_connection_id comes alive: proxy.ts
+    resolves the provider PER RESOURCE from it (never an installation-wide
+    constructor option, per container-hosts.ts's own precedent). Fleet
+    detail and domain detail render the chain: domain -> Cloudflare
+    record -> Pangolin resource -> hosting target, plus unmatchedObserved
+    ("Pangolin knows about N resources Loxep does not") and a rules list
+    with a hide-disabled-by-default / only-disabled filter.
+    Still nothing writes — the M1 adapter has no write verb to call, and
+    the service refuses mode:'apply' unconditionally regardless. No
+    monitor_targets registration or poll-executor route yet (mirrors
+    RECONCILE_CONTAINER_HOST_TASK's own base-milestone shape — a periodic
+    cadence is a later milestone's addition, once intent-authoring exists).
+    No live leg: the Integration API remains unreachable from this build
+    network (M1's finding, unchanged), so every M2 test drives a fake
+    ProxyProviderPort — noted honestly rather than silently.
 
 M3  THE WRITE-AUTHORIZATION MODEL      *** OWNER RULING REQUIRED ***
     infrastructure.provider_write_policy (per connection, default

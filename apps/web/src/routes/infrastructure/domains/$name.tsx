@@ -14,6 +14,7 @@ import { formatDateTime } from '@/lib/format';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import DnsDriftPanel from '@/features/infrastructure/components/dns-drift-panel';
 import MailPanel from '@/features/infrastructure/components/mail-panel';
+import ProxyChainPanel from '@/features/infrastructure/components/proxy-chain-panel';
 import { managedDomainQuery } from '@/features/infrastructure/api/queries';
 import {
   MANAGED_DOMAIN_STATE_LABELS,
@@ -146,6 +147,10 @@ function DomainDetailData({ name }: { name: string }) {
           mailboxes={data.mailboxes}
         />
       </div>
+      {/* loxep-acj.2 (Pangolin chain design M2): the chain's third link —
+          domain -> Cloudflare record (above, in "Desired records") ->
+          Pangolin resource -> hosting target. Read-only; check-mode only. */}
+      <ProxyChainPanel resources={data.proxyResources} />
     </div>
   );
 }

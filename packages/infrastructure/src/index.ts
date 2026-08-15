@@ -93,6 +93,30 @@
  * for the two verified CIDR literals. Exported here so `apps/web`'s fleet
  * detail warning classifies the SAME stored address the SAME way, instead of
  * carrying a second copy of the prefixes that could drift from this one.
+ *
+ * ## What the Pangolin chain design's milestone 2 adds (loxep-acj.2)
+ *
+ * ```text
+ * proxy-port.ts   the proxy provider contract + desired-state planner —
+ *                 `container-host-port.ts`'s template, copied and hardened:
+ *                 the operation union's missing `delete` is now PERMANENT
+ *                 (Pangolin's `enabled` flag makes retirement reversible)
+ * proxy.ts        infrastructure.sync-proxy-resource's service — CHECK MODE
+ *                 ONLY, structurally refusing `mode: 'apply'` until the
+ *                 write-authorization gate (milestone 3, loxep-acj.3) ships
+ * ```
+ *
+ * Lands the reserved contract `tasks.ts` has carried since Phase 7 milestone
+ * 3: `SYNC_PROXY_RESOURCE_TASK` / `SyncProxyResourcePayload` finally have a
+ * service behind them, and `hosting_targets.proxy_connection_id` (nullable
+ * since migration `0012`, unused since) drives something real for the first
+ * time — resolving which Pangolin CONNECTION a given resource's reconcile
+ * runs against. Two new intent tables, `proxy_resources` and
+ * `proxy_resource_rules` (migration `0027`), following `dns_records.owner`'s
+ * per-row-ownership precedent for the rule set. No drift-findings table —
+ * the design's own resolution of its open question 8: the plan's
+ * `unmatchedObserved` carries the same information `ContainerHostPlan`'s does,
+ * and Pangolin's "unexpected" case is the NORM, not the exception.
  */
 export {
   InfrastructureError,
@@ -183,6 +207,7 @@ export type {
   CreateHostingTargetInput,
   HostingTargetRow,
   HostingTargetsService,
+  UpdateProxyConnectionInput,
 } from "./targets.ts";
 
 export {
@@ -360,3 +385,37 @@ export const INFRASTRUCTURE_DOMAIN_RECONCILE_TARGET_TYPE =
 
 /** The namespaced `config` key this domain owns on that row. */
 export const INFRA_SYNC_CONFIG_KEY = "infraSync";
+
+/* ------------------------------------ proxy (Pangolin chain, loxep-acj.2) --- */
+
+export { planProxyResourceOperations } from "./proxy-port.ts";
+export type {
+  DesiredProxyResource,
+  DesiredProxyRule,
+  DesiredProxyTarget,
+  ObservedProxyResource,
+  ObservedProxyRule,
+  ObservedProxyTarget,
+  ProxyApplyResult,
+  ProxyOperation,
+  ProxyProviderCapabilities,
+  ProxyProviderPort,
+  ProxyReadSubject,
+  ProxyResourcePayload,
+  ProxyResourcePlan,
+  ProxyRulePayload,
+  ProxyTargetPayload,
+} from "./proxy-port.ts";
+
+export {
+  PROXY_RESOURCE_SUBJECT_TYPE,
+  RECONCILE_PROXY_RESOURCE_RUN_KIND,
+  ProxyWritePolicyError,
+  createProxyResourcesService,
+} from "./proxy.ts";
+export type {
+  ProxyResourceRow,
+  ProxyResourceRuleRow,
+  ProxyResourcesService,
+  ReconcileProxyResourceResult,
+} from "./proxy.ts";

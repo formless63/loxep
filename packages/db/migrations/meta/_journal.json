@@ -190,6 +190,13 @@
       "when": 1786802269044,
       "tag": "0026_document_parsed_text_search",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786833756696,
+      "tag": "0027_proxy_resources",
+      "breakpoints": true
     }
   ]
 }

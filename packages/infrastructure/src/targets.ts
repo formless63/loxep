@@ -64,10 +64,33 @@ const createSchema = z
 
 export type CreateHostingTargetInput = z.input<typeof createSchema>;
 
+const updateProxyConnectionSchema = z.strictObject({
+  proxyConnectionId: z.string().uuid().nullish(),
+  externalSiteId: z.string().trim().min(1).nullish(),
+  actorUserId: z.string().min(1).nullish(),
+});
+
+export type UpdateProxyConnectionInput = z.input<
+  typeof updateProxyConnectionSchema
+>;
+
 export interface HostingTargetsService {
   create(input: CreateHostingTargetInput): Promise<HostingTargetRow>;
   get(id: string): Promise<HostingTargetRow>;
   list(): Promise<HostingTargetRow[]>;
+  /**
+   * Links (or clears) the target's `proxy_connection_id`/`external_site_id`
+   * — the Pangolin chain design's milestone 2 (loxep-acj.2), and the ONE
+   * write this milestone adds anywhere: it edits Loxep's OWN row, never a
+   * Pangolin call. `create()` already accepted both fields at creation time;
+   * this is the update path for a target that already exists — the design's
+   * own scope item, "linking a pangolin connection to a hosting target
+   * through the existing connection/link surfaces."
+   */
+  updateProxyConnection(
+    id: string,
+    input: UpdateProxyConnectionInput,
+  ): Promise<HostingTargetRow>;
   /** Retire without deleting: history is why the column exists at all. */
   decommission(
     id: string,
@@ -181,6 +204,43 @@ export function createHostingTargetsService(options: {
 
     async list() {
       return db.select().from(hostingTargets);
+    },
+
+    async updateProxyConnection(id, input) {
+      const parsed = updateProxyConnectionSchema.parse(input);
+      return db.transaction(async (tx) => {
+        const before = await requireTarget(tx, id);
+        const rows = await tx
+          .update(hostingTargets)
+          .set({
+            proxyConnectionId: parsed.proxyConnectionId ?? null,
+            externalSiteId: parsed.externalSiteId ?? null,
+            updatedAt: new Date(),
+          })
+          .where(eq(hostingTargets.id, id))
+          .returning();
+        const row = rows[0];
+        if (row === undefined) {
+          throw new Error("hosting target update returned no row");
+        }
+
+        await createAuditService({ db: tx }).append({
+          actorUserId: parsed.actorUserId ?? null,
+          action: "infrastructure.hosting_target.update_proxy_connection",
+          resourceType: HOSTING_TARGET_RESOURCE_TYPE,
+          resourceId: id,
+          before: {
+            proxyConnectionId: before.proxyConnectionId,
+            externalSiteId: before.externalSiteId,
+          },
+          after: {
+            proxyConnectionId: row.proxyConnectionId,
+            externalSiteId: row.externalSiteId,
+          },
+        });
+
+        return row;
+      });
     },
 
     async decommission(id, decommissionOptions) {

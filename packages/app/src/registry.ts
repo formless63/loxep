@@ -24,16 +24,19 @@
  * | `documents.extract-text` | @loxep/app (mechanics in @loxep/documents) | loxep-cd3.4 M4 OCR tier A text extraction, enqueued transactionally at upload (on-demand) |
  *
  * `infrastructure.sync-proxy-resource` (Phase 7 m3's OTHER reserved task
- * name, `@loxep/infrastructure`'s `tasks.ts`) is DELIBERATELY NOT registered
- * here. Nothing enqueues it — no service calls `SYNC_PROXY_RESOURCE_TASK`
- * anywhere in the graph — because it needs `@loxep/integration-pangolin`'s
- * org/site/resource model, which does not exist. Registering a handler with
- * no caller and no adapter to drive would be dead code masquerading as
- * readiness; the honest state is "enqueue this task name and Graphile Worker
- * fails the job as unrecognized," exactly the way an unrecognized task
- * already fails today. Wiring both the calling service and this route
- * together, when the Pangolin package lands, is the correct next step — see
- * `tasks.ts`'s own module doc.
+ * name, `@loxep/infrastructure`'s `tasks.ts`) is NOW REGISTERED — the
+ * Pangolin chain design's milestone 2 (`loxep-acj.2`). `@loxep/integration-
+ * pangolin` (milestone 1) supplies the read-only adapter;
+ * `infrastructure-proxy.ts` supplies `proxyProviderPortFromPangolinAdapter`
+ * and resolves, per `proxy_resources` row, WHICH Pangolin connection to
+ * reconcile against from `hosting_targets.proxy_connection_id` — the column
+ * this milestone finally drives, dormant since migration `0012`. The
+ * service behind it (`@loxep/infrastructure`'s `proxy.ts`) is CHECK MODE
+ * ONLY: it structurally refuses `mode: 'apply'` until the write-authorization
+ * gate (milestone 3, `loxep-acj.3`) ships. No poll-executor route or
+ * `monitor_targets` registration yet — see `infrastructure-proxy.ts`'s own
+ * module doc for why that mirrors `RECONCILE_CONTAINER_HOST_TASK`'s own
+ * base-milestone precedent rather than `infrastructure_domain_reconcile`'s.
  *
  * Cron: `maintenance.heartbeat` (@loxep/jobs' defaults),
  * `market.dispatch-due-monitors` (every minute), `ebay.refresh-tokens`
@@ -218,6 +221,7 @@ import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureContainerHostTasks } from "./infrastructure-container-host.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
+import { createInfrastructureProxyTasks } from "./infrastructure-proxy.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createInfrastructureTokenTasks } from "./infrastructure-token.ts";
 import {
@@ -540,6 +544,14 @@ export function buildWorkerRegistry(
     services,
   });
 
+  // --- infrastructure proxy resource reconciler (Pangolin chain design M2,
+  // loxep-acj.2) ---------------------------------------------------------
+  // One task, CHECK MODE ONLY. Lands the reserved `SYNC_PROXY_RESOURCE_TASK`
+  // contract `tasks.ts` has carried since Phase 7 milestone 3 — see this
+  // file's own module doc and `infrastructure-proxy.ts`'s for the full
+  // account of what is, and is not, wired yet.
+  const infrastructureProxy = createInfrastructureProxyTasks({ services });
+
   // --- fleet health (Phase 8 milestone 1, loxep-ovj.1) -----------------
   // One recurring sweep, no monitor_targets row — see health-sweep.ts's
   // module doc. `@loxep/domain` owns the registry/mechanics; this is only
@@ -592,6 +604,7 @@ export function buildWorkerRegistry(
     ...infrastructureMail.tasks,
     ...infrastructureTokens.tasks,
     ...infrastructureContainerHosts.tasks,
+    ...infrastructureProxy.tasks,
     health.healthSweepTask,
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,

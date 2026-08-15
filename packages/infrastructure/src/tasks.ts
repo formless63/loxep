@@ -18,15 +18,15 @@
  *
  * Deferred, listed so the gap is visible rather than forgotten:
  * `provision-domain`, `ensure-zone`, `poll-delegation` (need the zone-create
- * ledger path — milestone 1 territory, not reached yet), and
- * `infrastructure.sync-proxy-resource`. The last of these gets its task name
- * and payload SHAPE below (`SYNC_PROXY_RESOURCE_TASK`,
- * `SyncProxyResourcePayload`) so the design's job graph has a fixed contract
- * to land into, but no SERVICE calls it here: driving it needs a
- * `ProxyProviderPort` against `@loxep/integration-pangolin`'s org/site/resource
- * model, which is a concurrently-developed sibling package this milestone's
- * scope does not include. Wiring the executor is follow-up work once that
- * package lands.
+ * ledger path — milestone 1 territory, not reached yet).
+ *
+ * `infrastructure.sync-proxy-resource` — reserved by name and payload shape
+ * below since Phase 7 milestone 3 (loxep-lmy.3) — now HAS a service behind
+ * it: `proxy.ts`'s `createProxyResourcesService`, CHECK MODE ONLY (Pangolin
+ * chain design milestone 2, `loxep-acj.2`). The composition root
+ * (`@loxep/app`'s `infrastructure-proxy.ts`) is what finally registers the
+ * executor in `registry.ts` — this package still takes no dependency on
+ * `@loxep/integration-pangolin`, per `proxy-port.ts`'s own module doc.
  *
  * ## Minting a token is DELIBERATELY ABSENT from this file
  *
@@ -91,9 +91,15 @@ export {
 /**
  * The design's job graph names this task with key `domain:{id}:proxy` —
  * triggered by a HOSTING change (a domain's apex target, or a target's
- * `proxy_connection_id`/`external_site_id`), not a token scope change. Name
- * and payload shape only; see the module doc for why no service is wired to
- * it yet.
+ * `proxy_connection_id`/`external_site_id`), not a token scope change.
+ * `domainJobKey(SYNC_PROXY_RESOURCE_TASK, domainId)` produces it, exactly the
+ * way `MATERIALIZE_RECORDS_TASK`/`SYNC_RECORDS_TASK` reuse the same helper.
+ *
+ * `mode`/`trigger` follow `SyncRecordsPayload`'s two-field shape, but `mode`
+ * is enforced `'check'` by `proxy.ts`'s service regardless of what a caller
+ * passes — see that module's "CHECK MODE ONLY" section. The field stays on
+ * the payload (rather than being narrowed out of the type) so a later
+ * write milestone does not need to touch this shape again.
  */
 export const SYNC_PROXY_RESOURCE_TASK = "infrastructure.sync-proxy-resource";
 export interface SyncProxyResourcePayload {

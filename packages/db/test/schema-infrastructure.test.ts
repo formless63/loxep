@@ -1193,7 +1193,8 @@ describe("infrastructure control plane schema (migration 0012)", () => {
             'hosting_targets','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
             'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
-            'dns_provider_tokens','dns_provider_token_zones')
+            'dns_provider_tokens','dns_provider_token_zones',
+            'proxy_resources','proxy_resource_rules')
          union all
          select indexname as name, length(indexname) as len
            from pg_indexes
@@ -1201,7 +1202,8 @@ describe("infrastructure control plane schema (migration 0012)", () => {
             'hosting_targets','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
             'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
-            'dns_provider_tokens','dns_provider_token_zones')`,
+            'dns_provider_tokens','dns_provider_token_zones',
+            'proxy_resources','proxy_resource_rules')`,
       );
       expect(rows.rowCount).toBeGreaterThan(40);
       const overlong = rows.rows.filter((row) => row.len > 63);
@@ -1216,6 +1218,9 @@ describe("infrastructure control plane schema (migration 0012)", () => {
         "managed_domains_mailbox_template_id_mailbox_templates_id_fk",
       );
       expect(names).toContain("hosting_targets_fronted_by_target_fk");
+      // loxep-acj.2: 60 bytes, 3 bytes of headroom — the same margin
+      // `mailbox_template_entries_template_fk` shipped at.
+      expect(names).toContain("proxy_resource_rules_proxy_resource_fk");
     });
   });
 });

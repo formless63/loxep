@@ -40,6 +40,8 @@ import { createCloudflareAdapterFactory } from "./cloudflare.ts";
 import type { CloudflareAdapterFactory } from "./cloudflare.ts";
 import { createPurelymailAdapterFactory } from "./purelymail.ts";
 import type { PurelymailAdapterFactory } from "./purelymail.ts";
+import { createPangolinAdapterFactory } from "./pangolin.ts";
+import type { PangolinAdapterFactory } from "./pangolin.ts";
 import { createEbayAdapterFactory } from "./ebay.ts";
 import type { EbayAdapterFactory } from "./ebay.ts";
 import { createEtsyAdapterFactory } from "./etsy.ts";
@@ -121,6 +123,15 @@ export interface BuildAppServicesOptions {
    * eBay/Woo.
    */
   purelymailRateBudget?: { capacity: number; refillPerSecond: number };
+  /**
+   * Override the per-connection Pangolin token bucket (Pangolin chain design
+   * milestone 2 composition-root wiring, loxep-acj.2). Production uses
+   * `pangolin.ts`'s documented defaults (Purelymail's own suggested numbers —
+   * neither provider publishes a rate limit); an explicit value here WINS,
+   * which is how tests get a wide-open budget without spending wall-clock
+   * time waiting on refills.
+   */
+  pangolinRateBudget?: { capacity: number; refillPerSecond: number };
   /**
    * Override the per-connection Reverb token bucket (loxep-g4t.3). There is
    * no registered `integration.reverb.rate_budget` setting yet (matching
@@ -259,6 +270,19 @@ export interface AppServices {
   invalidatePurelymailAdapter: (connectionId: string) => void;
   /** The Purelymail interval floor implied by the DEFAULT/overridden budget. */
   purelymailIntervalFloorSeconds: number;
+  /**
+   * Connection-scoped Pangolin adapter — Pangolin chain design milestone 2's
+   * composition-root wiring (loxep-acj.2). Per-CONNECTION like
+   * Cloudflare/Purelymail: `hosting_targets.proxy_connection_id` resolves
+   * WHICH connection to reconcile a given proxy resource against, and a
+   * Pangolin resource can belong to any of several instances — see
+   * `pangolin.ts`'s and `proxy.ts`'s module docs.
+   */
+  getPangolinAdapterForConnection: PangolinAdapterFactory;
+  /** Drop a cached Pangolin adapter (after an `auth`-class provider failure). */
+  invalidatePangolinAdapter: (connectionId: string) => void;
+  /** The Pangolin interval floor implied by the DEFAULT/overridden budget. */
+  pangolinIntervalFloorSeconds: number;
   /**
    * Connection-scoped Reverb adapter (Personal Access Token + budget,
    * loxep-g4t.3). Per-CONNECTION like Cloudflare/Purelymail, not
@@ -433,6 +457,19 @@ export function buildAppServices(
       : {}),
   });
 
+  // PER-CONNECTION, and deliberately gentler than Cloudflare's, mirroring
+  // Purelymail exactly: Pangolin publishes no documented rate limit on its
+  // Integration API server either (verified absent in source). See
+  // pangolin.ts's module doc.
+  const pangolin = createPangolinAdapterFactory({
+    connections,
+    connectionCredentials,
+    ...(logger !== undefined ? { logger } : {}),
+    ...(options.pangolinRateBudget !== undefined
+      ? { rateBudget: options.pangolinRateBudget }
+      : {}),
+  });
+
   // PER-CONNECTION — see reverb.ts's module doc for why Reverb, unlike Etsy,
   // has no application-level credential to force pooling a shared budget.
   const reverb = createReverbAdapterFactory({
@@ -537,6 +574,9 @@ export function buildAppServices(
     getPurelymailAdapterForConnection: purelymail.getAdapterForConnection,
     invalidatePurelymailAdapter: purelymail.invalidate,
     purelymailIntervalFloorSeconds: purelymail.intervalFloorSeconds,
+    getPangolinAdapterForConnection: pangolin.getAdapterForConnection,
+    invalidatePangolinAdapter: pangolin.invalidate,
+    pangolinIntervalFloorSeconds: pangolin.intervalFloorSeconds,
     getReverbAdapterForConnection: reverb.getAdapterForConnection,
     invalidateReverbAdapter: reverb.invalidate,
     reverbIntervalFloorSeconds: reverb.intervalFloorSeconds,

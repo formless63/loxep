@@ -82,7 +82,7 @@ import {
  *      explicitly named expenses_payee_counterparty_fk) plus a partial
  *      index. No backfill; payee_name stays written on every expense.
  */
-const MIGRATION_FILE_COUNT = 27;
+const MIGRATION_FILE_COUNT = 28;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

@@ -12,6 +12,7 @@ import {
   fetchMailConnectionOptions,
   fetchManagedDomain,
   fetchManagedDomains,
+  fetchPangolinConnectionOptions,
   fetchReconcileRun,
   fetchReconcileRuns,
   fetchTermixHostSessions,
@@ -121,3 +122,9 @@ export const containerHostRegistrationQuery = (hostingTargetId: string) =>
     queryKey: ['infrastructure', 'fleet', hostingTargetId, 'container-host-registration'],
     queryFn: () => fetchContainerHostRegistration({ data: { hostingTargetId } })
   });
+
+/** Pangolin connections for the "link a proxy connection" control's picker (Pangolin chain design M2, loxep-acj.2). */
+export const pangolinConnectionOptionsQuery = queryOptions({
+  queryKey: ['infrastructure', 'connection-options', 'pangolin'],
+  queryFn: () => fetchPangolinConnectionOptions()
+});

@@ -26,6 +26,7 @@ import ContainerHostRegistrationPanel from '@/features/infrastructure/components
 import DockhandContainersPanel from '@/features/infrastructure/components/dockhand-containers-panel';
 import TermixSessionsPanel from '@/features/infrastructure/components/termix-sessions-panel';
 import HostingTargetTokensPanel from '@/features/infrastructure/components/hosting-target-tokens-panel';
+import ProxyConnectionPanel from '@/features/infrastructure/components/proxy-connection-panel';
 import { hostingTargetQuery, hostingTargetsQuery } from '@/features/infrastructure/api/queries';
 import { CONTROL_SURFACE_LABELS } from '@/features/infrastructure/constants';
 import { formatDateTime, formatRelativeTime } from '@/lib/format';
@@ -291,6 +292,20 @@ function FleetDetailData({ name }: { name: string }) {
           connection exists" instead (same rule the create dialog's own
           section uses, hb7 §2.1(a)) — see its own component doc. */}
       <ContainerHostRegistrationPanel hostingTargetId={data.id} hostingTargetName={data.name} />
+
+      {/* loxep-acj.2 (Pangolin chain design M2): drives
+          `hosting_targets.proxy_connection_id` for the first time since
+          migration 0012, and renders every declared `proxy_resources` row
+          fronted by this target. Same "durable home, not gated on an
+          existing link" rule as the panel above. */}
+      <ProxyConnectionPanel
+        hostingTargetId={data.id}
+        hostingTargetName={data.name}
+        proxyConnectionId={data.proxyConnectionId}
+        proxyConnectionName={data.proxyConnectionName}
+        externalSiteId={data.externalSiteId}
+        proxyResources={data.proxyResources}
+      />
     </div>
   );
 }

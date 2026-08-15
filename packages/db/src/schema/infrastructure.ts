@@ -1,10 +1,14 @@
 /**
  * Phase 7 Infrastructure control plane — milestones 1 (loxep-lmy.1), 2
- * (loxep-lmy.2), and 3 (loxep-lmy.3).
+ * (loxep-lmy.2), and 3 (loxep-lmy.3) — plus the Pangolin chain design's
+ * milestone 2 (loxep-acj.2).
  *
  * Physical realization of
- * `apps/docs/src/content/docs/architecture/infrastructure-control-design.md`.
- * That design lists twelve tables; this file now ships all **twelve**.
+ * `apps/docs/src/content/docs/architecture/infrastructure-control-design.md`
+ * (twelve tables, all shipped) and, for the two tables at the end of this
+ * file,
+ * `apps/docs/src/content/docs/architecture/pangolin-chain-design.md`'s
+ * milestone 2.
  *
  * Milestone 1 (`0012_infrastructure_control_plane`), ordering steps 1, 2, 4, 5,
  * 6, 7:
@@ -24,6 +28,15 @@
  *
  *   dns_provider_tokens, dns_provider_token_zones
  *
+ * Pangolin chain design, milestone 2 (`0027_proxy_resources`, loxep-acj.2):
+ *
+ *   proxy_resources, proxy_resource_rules
+ *
+ * plus the one constraint milestone 1 (loxep-lmy.1) reserved by name:
+ * `reconcile_runs.subject_type`'s `CHECK` widens to include `proxy_resource`,
+ * exactly as that table's own doc comment promised.
+ *
+
  * **No existing table gains a column** — the design's own rule. `connections`,
  * `application_secrets`, `monitor_targets`, `audit_events`, and every
  * commercial table are untouched; this domain extends them only through
@@ -250,11 +263,23 @@ export const RECONCILE_STATUSES = [
 ] as const;
 export type ReconcileStatus = (typeof RECONCILE_STATUSES)[number];
 
-/** `reconcile_runs.subject_type` — CLOSED and `CHECK`ed. */
+/**
+ * `reconcile_runs.subject_type` — CLOSED and `CHECK`ed.
+ *
+ * `proxy_resource` (loxep-acj.2, M2 of the Pangolin chain design) is the one
+ * new member: a proxy reconcile run's subject is a single `proxy_resources`
+ * row, not the domain it belongs to — a domain may own several resources
+ * (one per subdomain), each reconciled and evidenced independently, the same
+ * granularity `hosting_target` already uses for the container-host
+ * reconciler. Widening this `CHECK` is a one-word migration edit; discovering
+ * the overload later is a migration plus a data repair — the same reasoning
+ * that gave `dns_records.owner` its `caa` value.
+ */
 export const RECONCILE_SUBJECT_TYPES = [
   "domain",
   "hosting_target",
   "token",
+  "proxy_resource",
 ] as const;
 export type ReconcileSubjectType = (typeof RECONCILE_SUBJECT_TYPES)[number];
 
@@ -327,6 +352,77 @@ export type DnsProviderTokenScope = (typeof DNS_PROVIDER_TOKEN_SCOPES)[number];
 
 /** `audit_events.resource_type` values this domain writes (milestone 3). */
 export const DNS_PROVIDER_TOKEN_RESOURCE_TYPE = "dns_provider_token";
+
+/**
+ * `proxy_resources.mode` — Pangolin's own resource-create vocabulary,
+ * verbatim (the Pangolin chain design's "Object model" section: `mode:
+ * http|ssh|rdp|vnc|tcp|udp`). CLOSED and `CHECK`ed, unlike `dns_records.type`
+ * (an open IANA registry): a reverse-proxy resource's mode is a small,
+ * provider-PUBLISHED enum rather than an extensible external namespace, and
+ * Pangolin's own `http`/`protocol` fields are already deprecated in favor of
+ * it — mirroring it structurally rather than leaving it a free-form string
+ * catches a typo at the constraint instead of at a failed create.
+ */
+export const PROXY_RESOURCE_MODES = [
+  "http",
+  "ssh",
+  "rdp",
+  "vnc",
+  "tcp",
+  "udp",
+] as const;
+export type ProxyResourceMode = (typeof PROXY_RESOURCE_MODES)[number];
+
+/**
+ * `proxy_resource_rules.action` — Pangolin's rule vocabulary, verbatim
+ * (`action ACCEPT|DROP|PASS`). CLOSED and `CHECK`ed: the API defines exactly
+ * three values.
+ */
+export const PROXY_RULE_ACTIONS = ["ACCEPT", "DROP", "PASS"] as const;
+export type ProxyRuleAction = (typeof PROXY_RULE_ACTIONS)[number];
+
+/**
+ * `proxy_resource_rules.match` — Pangolin's rule vocabulary, verbatim
+ * (`match CIDR|IP|PATH|COUNTRY|COUNTRY_IS_NOT|ASN|REGION`). CLOSED and
+ * `CHECK`ed for the same reason {@link PROXY_RESOURCE_MODES} is.
+ */
+export const PROXY_RULE_MATCHES = [
+  "CIDR",
+  "IP",
+  "PATH",
+  "COUNTRY",
+  "COUNTRY_IS_NOT",
+  "ASN",
+  "REGION",
+] as const;
+export type ProxyRuleMatch = (typeof PROXY_RULE_MATCHES)[number];
+
+/**
+ * `proxy_resource_rules.owner` — CLOSED and `CHECK`ed: the `dns_records.owner`
+ * precedent applied to a rule SET rather than a single record. The Pangolin
+ * chain design's own resolution of open question 7 is why this is a column
+ * rather than a comment: *"a rule set is a multi-row set with per-row
+ * ownership… which rules may the reconciler rewrite must be a column."*
+ *
+ *   template     materialized from a provisioning template (a later
+ *                milestone; the value exists now so the column never needs
+ *                widening for it)
+ *   manual       authored by a human; the reconciler NEVER rewrites or
+ *                deletes it, in any mode — the exact rule `dns_records.owner`'s
+ *                `'manual'` carries
+ *   dynamic_ip   materialized from a named IP alias (a later milestone); the
+ *                fan-out target when an alias's address changes
+ */
+export const PROXY_RESOURCE_RULE_OWNERS = [
+  "template",
+  "manual",
+  "dynamic_ip",
+] as const;
+export type ProxyResourceRuleOwner =
+  (typeof PROXY_RESOURCE_RULE_OWNERS)[number];
+
+/** `audit_events.resource_type` value this domain writes (loxep-acj.2). */
+export const PROXY_RESOURCE_RESOURCE_TYPE = "proxy_resource";
 
 /**
  * `application_secrets.secret_key` for a minted per-host DNS token, following
@@ -732,7 +828,7 @@ export const reconcileRuns = pgTable(
     ),
     check(
       "reconcile_runs_subject_type_check",
-      sql`${table.subjectType} in ('domain', 'hosting_target', 'token')`,
+      sql`${table.subjectType} in ('domain', 'hosting_target', 'token', 'proxy_resource')`,
     ),
     check(
       "reconcile_runs_trigger_check",
@@ -1340,5 +1436,176 @@ export const dnsProviderTokenZones = pgTable(
 
     // The pair IS the primary key: one row per (token, zone) intent.
     primaryKey({ columns: [table.tokenId, table.domainId] }),
+  ],
+);
+
+/* -------------------------------------------------- proxy (loxep-acj.2) --- */
+
+/**
+ * One desired Pangolin PUBLIC resource — the chain's third link (`domain ->
+ * Cloudflare record -> Pangolin resource -> hosting target`,
+ * apps/docs/.../architecture/pangolin-chain-design.md). Milestone 2
+ * (`loxep-acj.2`) ships this table, its sibling {@link proxyResourceRules},
+ * and a CHECK-MODE-ONLY reconciler against both; nothing here is ever
+ * applied to Pangolin until a later milestone builds the write-authorization
+ * gate (`infrastructure.provider_write_policy`).
+ *
+ * `hosting_target_id` is the origin this resource fronts. The CONNECTION to
+ * reconcile against is resolved from THAT row's `hosting_targets
+ * .proxy_connection_id`, never duplicated onto this table — the same "the
+ * link is authoritative, not a second column" discipline
+ * `container-host-port.ts` documents for `externalHostId`.
+ *
+ * `domain_id` is the Loxep `managed_domains` row this resource's hostname
+ * belongs to, for attribution and for the fleet/domain-detail chain render.
+ * `subdomain` is `NULL` for an apex resource — `dns_records`' own
+ * apex-is-the-absence-of-a-label convention, read through this column rather
+ * than stored as a literal `'@'`.
+ *
+ * `external_resource_id` and `external_domain_id` are both nullable and both
+ * self-retiring, following `container-host-port.ts`'s `externalHostId`
+ * bootstrap: the first is Pangolin's own numeric resource id (written the
+ * first time a create succeeds or a check-mode plan matches by
+ * `(domain_id, subdomain)`); the second is Pangolin's own ORG-SCOPED domain
+ * id (`PangolinDomainFact.domainId`, resolved by `resolveDomain`). Neither is
+ * `NOT NULL`, because a check-mode-only milestone may declare intent before
+ * that resolution has ever run.
+ *
+ * No `economic_entity_id`, by rule (ADR-0017) — a reverse-proxy resource is
+ * not attributable activity.
+ */
+export const proxyResources = pgTable(
+  "proxy_resources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    domainId: uuid("domain_id")
+      .notNull()
+      .references(() => managedDomains.id, { onDelete: "cascade" }),
+    hostingTargetId: uuid("hosting_target_id")
+      .notNull()
+      .references(() => hostingTargets.id),
+    /** `NULL` = the domain's apex. Zone-relative, matching `dns_records.name`'s convention. */
+    subdomain: text("subdomain"),
+    /** Closed set: see {@link PROXY_RESOURCE_MODES}. */
+    mode: text("mode").notNull().default("http"),
+    /** Only meaningful for a raw `tcp`/`udp` resource. */
+    proxyPort: integer("proxy_port"),
+    ssl: boolean("ssl").notNull().default(true),
+    enabled: boolean("enabled").notNull().default(true),
+    /** Self-retiring bootstrap id — see the table doc. */
+    externalResourceId: text("external_resource_id"),
+    /** Pangolin's own org-scoped domain id — see the table doc. */
+    externalDomainId: text("external_domain_id"),
+    lastAppliedAt: timestamp("last_applied_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // One resource per (domain, subdomain) — the bootstrap join key
+    // `container-host-port.ts`'s doc calls "the NAME", composed here from a
+    // fact both sides can independently derive before a create ever happens
+    // (Pangolin returns the same value, joined with the domain, as
+    // `fullDomain`). `NULLS NOT DISTINCT` so two apex resources on the same
+    // domain collide instead of silently coexisting.
+    unique("proxy_resources_domain_id_subdomain_uq")
+      .on(table.domainId, table.subdomain)
+      .nullsNotDistinct(),
+
+    check(
+      "proxy_resources_mode_check",
+      sql`${table.mode} in ('http', 'ssh', 'rdp', 'vnc', 'tcp', 'udp')`,
+    ),
+
+    index("proxy_resources_hosting_target_id_idx").on(table.hostingTargetId),
+    index("proxy_resources_domain_id_idx").on(table.domainId),
+  ],
+);
+
+/**
+ * The rule-set INTENT for one {@link proxyResources} row — a multi-row set
+ * with PER-ROW ownership, which is precisely what `dns_records.owner`
+ * exists to express and what a jsonb array would turn into a code-only
+ * convention (the design's resolution of its own open question 7).
+ *
+ * `value` carries EXACTLY what the operator or a template wrote — a literal
+ * (`'203.0.113.7'`) or an alias REFERENCE (`'alias:home'`), resolved only at
+ * materialization time by a later milestone. This table never resolves it.
+ *
+ * `owner = 'manual'` rows are NEVER rewritten or deleted by the reconciler,
+ * in any mode — the same rule `dns_records.owner`'s `'manual'` carries.
+ *
+ * The natural-key unique excludes `priority` deliberately: Pangolin requires
+ * `priority` on every rule write and treats it as ordering metadata for an
+ * otherwise-identical rule, not part of the rule's identity — the same
+ * distinction `dns_records`' natural key draws by excluding `ttl_seconds`.
+ * `(proxy_resource_id, action, match, value)` is also what a stuck
+ * `provider_operations` row's read-back reconciliation matches on (the
+ * design's own read-back rule for a non-idempotent rule create).
+ */
+export const proxyResourceRules = pgTable(
+  "proxy_resource_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    proxyResourceId: uuid("proxy_resource_id").notNull(),
+    /** Closed set: see {@link PROXY_RULE_ACTIONS}. */
+    action: text("action").notNull(),
+    /** Closed set: see {@link PROXY_RULE_MATCHES}. */
+    match: text("match").notNull(),
+    /** A literal or an `alias:<name>` reference. See the table doc. */
+    value: text("value").notNull(),
+    priority: integer("priority").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    /** Closed set: see {@link PROXY_RESOURCE_RULE_OWNERS}. */
+    owner: text("owner").notNull().default("manual"),
+    externalRuleId: text("external_rule_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // 60 bytes — inside PostgreSQL's 63-byte identifier limit, but with only
+    // 3 bytes of headroom and silent truncation as the failure mode, so it
+    // is named explicitly, matching `mailbox_template_entries`' and
+    // `dns_provider_token_zones`' own precedent at the same margin.
+    foreignKey({
+      name: "proxy_resource_rules_proxy_resource_fk",
+      columns: [table.proxyResourceId],
+      foreignColumns: [proxyResources.id],
+    }).onDelete("cascade"),
+
+    unique("proxy_resource_rules_natural_key_uq").on(
+      table.proxyResourceId,
+      table.action,
+      table.match,
+      table.value,
+    ),
+
+    check(
+      "proxy_resource_rules_action_check",
+      sql`${table.action} in ('ACCEPT', 'DROP', 'PASS')`,
+    ),
+    check(
+      "proxy_resource_rules_match_check",
+      sql`${table.match} in ('CIDR', 'IP', 'PATH', 'COUNTRY', 'COUNTRY_IS_NOT', 'ASN', 'REGION')`,
+    ),
+    check(
+      "proxy_resource_rules_owner_check",
+      sql`${table.owner} in ('template', 'manual', 'dynamic_ip')`,
+    ),
+    check("proxy_resource_rules_priority_check", sql`${table.priority} >= 0`),
+
+    index("proxy_resource_rules_proxy_resource_id_idx").on(
+      table.proxyResourceId,
+    ),
   ],
 );

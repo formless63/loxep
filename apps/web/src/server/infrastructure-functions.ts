@@ -30,7 +30,11 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { JsonValue } from '@/server/admin-functions';
-import type { TailnetAddressKind } from '@loxep/infrastructure';
+import type {
+  ProxyResourceRow,
+  ProxyResourceRuleRow,
+  TailnetAddressKind
+} from '@loxep/infrastructure';
 import type {
   CompanionLink,
   HealthSource,
@@ -38,6 +42,7 @@ import type {
   HostDiagnosisInput,
   HostDiagnosisResult
 } from '@loxep/domain';
+import type { DbHandle } from '@loxep/db';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -698,20 +703,157 @@ export interface MailStateDto {
   lastVerifyAt: string | null;
 }
 
+/**
+ * One `proxy_resource_rules` row, rendered where DNS drift renders (the
+ * Pangolin chain design's own instruction — check-mode-only, so there is no
+ * "apply" action here, only visibility).
+ */
+export interface ProxyResourceRuleDto {
+  id: string;
+  action: string;
+  match: string;
+  value: string;
+  priority: number;
+  enabled: boolean;
+  /** Closed set: `template` | `manual` | `dynamic_ip`. See `dns_records.owner`'s precedent. */
+  owner: string;
+}
+
+/**
+ * One `proxy_resources` row — the chain's third link, rendered on both the
+ * domain detail page (grouped by domain) and the fleet detail page (grouped
+ * by hosting target). Milestone 2 (loxep-acj.2) is CHECK MODE ONLY, so
+ * `lastRun`/`unmatchedObservedCount` are the whole read model: there is no
+ * "apply" action anywhere on this DTO.
+ */
+export interface ProxyResourceChainDto {
+  id: string;
+  domainId: string;
+  domainName: string;
+  hostingTargetId: string;
+  hostingTargetName: string;
+  /** `null` for an apex resource. */
+  subdomain: string | null;
+  fullDomain: string;
+  mode: string;
+  ssl: boolean;
+  enabled: boolean;
+  /** `null` until a check-mode plan first matches this resource by full domain. */
+  externalResourceId: string | null;
+  rules: ProxyResourceRuleDto[];
+  lastRun: {
+    id: string;
+    status: string;
+    startedAt: string;
+    finishedAt: string | null;
+  } | null;
+  /**
+   * "Pangolin knows about N resources Loxep does not" — the design's own
+   * phrasing. `null` when no run has ever completed for this resource (never
+   * rendered as zero, which would read as "checked, and found nothing").
+   */
+  unmatchedObservedCount: number | null;
+}
+
 export interface ManagedDomainDetailDto extends ManagedDomainDto {
   records: DnsRecordDto[];
   unresolvedDrift: DnsDriftFindingDto[];
   mail: MailStateDto | null;
   mailboxes: MailboxDto[];
+  /** The chain's third link: domain -> Cloudflare record (above, in `records`) -> Pangolin resource -> hosting target. */
+  proxyResources: ProxyResourceChainDto[];
+}
+
+/**
+ * Shared by `fetchManagedDomain` (grouped by domain) and `fetchHostingTarget`
+ * (grouped by hosting target) — the ONE place `ProxyResourceChainDto` is
+ * assembled, so the two detail pages can never render the chain differently.
+ *
+ * `unmatchedObservedCount` is read from the most recent run's `'diff'` step
+ * summary rather than stored as its own column — `@loxep/infrastructure`'s
+ * `proxy.ts` writes it into `reconcile_run_steps.response_summary`, following
+ * `ContainerHostPlan.unmatchedObserved`'s own "ride the plan, no drift table"
+ * precedent (the Pangolin chain design's resolved open question 8).
+ */
+async function buildProxyResourceChainDtos(
+  handle: DbHandle,
+  entries: ReadonlyArray<{ resource: ProxyResourceRow; rules: ProxyResourceRuleRow[] }>,
+  names: { domainNameById: Map<string, string>; hostingTargetNameById: Map<string, string> }
+): Promise<ProxyResourceChainDto[]> {
+  const results: ProxyResourceChainDto[] = [];
+  for (const { resource, rules } of entries) {
+    const domainName = names.domainNameById.get(resource.domainId) ?? '';
+    const hostingTargetName = names.hostingTargetNameById.get(resource.hostingTargetId) ?? '';
+    const fullDomain =
+      resource.subdomain === null ? domainName : `${resource.subdomain}.${domainName}`;
+
+    const lastRunRow = await handle.db.query.reconcileRuns.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.subjectType, 'proxy_resource'), eq(table.subjectId, resource.id)),
+      orderBy: (table, { desc }) => [desc(table.startedAt)]
+    });
+
+    let unmatchedObservedCount: number | null = null;
+    if (lastRunRow !== undefined) {
+      const diffStep = await handle.db.query.reconcileRunSteps.findFirst({
+        where: (table, { and, eq }) => and(eq(table.runId, lastRunRow.id), eq(table.step, 'diff')),
+        orderBy: (table, { desc }) => [desc(table.sequence)]
+      });
+      const summary = diffStep?.responseSummary as Record<string, unknown> | null | undefined;
+      const count = summary?.['unmatchedObservedCount'];
+      unmatchedObservedCount = typeof count === 'number' ? count : null;
+    }
+
+    results.push({
+      id: resource.id,
+      domainId: resource.domainId,
+      domainName,
+      hostingTargetId: resource.hostingTargetId,
+      hostingTargetName,
+      subdomain: resource.subdomain,
+      fullDomain,
+      mode: resource.mode,
+      ssl: resource.ssl,
+      enabled: resource.enabled,
+      externalResourceId: resource.externalResourceId,
+      rules: rules
+        .map((rule) => ({
+          id: rule.id,
+          action: rule.action,
+          match: rule.match,
+          value: rule.value,
+          priority: rule.priority,
+          enabled: rule.enabled,
+          owner: rule.owner
+        }))
+        .sort((a, b) => a.priority - b.priority),
+      lastRun:
+        lastRunRow === undefined
+          ? null
+          : {
+              id: lastRunRow.id,
+              status: lastRunRow.status,
+              startedAt: iso(lastRunRow.startedAt),
+              finishedAt: iso(lastRunRow.finishedAt)
+            },
+      unmatchedObservedCount
+    });
+  }
+  return results;
 }
 
 export const fetchManagedDomain = createServerFn({ method: 'GET' })
   .inputValidator(z.strictObject({ name: z.string().trim().min(1) }))
   .handler(async ({ data }): Promise<ManagedDomainDetailDto> => {
-    const { requireSession, getAdminServices, getInfrastructureMailService, getDriftService } =
-      await import('@/server/admin');
+    const {
+      requireSession,
+      getAdminServices,
+      getInfrastructureMailService,
+      getDriftService,
+      getProxyResourcesService
+    } = await import('@/server/admin');
     await requireSession();
-    const { managedDomains, hostingTargets: targets } = getAdminServices();
+    const { managedDomains, hostingTargets: targets, handle } = getAdminServices();
     const domain = await managedDomains.findByName(data.name);
     if (domain === null) {
       throw new Error(`Managed domain "${data.name}" not found`);
@@ -719,13 +861,30 @@ export const fetchManagedDomain = createServerFn({ method: 'GET' })
 
     const mailService = getInfrastructureMailService();
     const drift = getDriftService();
-    const [records, unresolvedDrift, mail, mailboxes, apexTarget] = await Promise.all([
-      managedDomains.listRecords(domain.id),
-      drift.listUnresolved(domain.id),
-      mailService.find(domain.id),
-      mailService.listMailboxes(domain.id),
-      domain.apexTargetId ? targets.get(domain.apexTargetId).catch(() => null) : null
-    ]);
+    const [records, unresolvedDrift, mail, mailboxes, apexTarget, proxyResourceEntries] =
+      await Promise.all([
+        managedDomains.listRecords(domain.id),
+        drift.listUnresolved(domain.id),
+        mailService.find(domain.id),
+        mailService.listMailboxes(domain.id),
+        domain.apexTargetId ? targets.get(domain.apexTargetId).catch(() => null) : null,
+        getProxyResourcesService().listResourcesForDomain(domain.id)
+      ]);
+
+    const hostingTargetIds = [
+      ...new Set(proxyResourceEntries.map((entry) => entry.resource.hostingTargetId))
+    ];
+    const hostingTargetRows =
+      hostingTargetIds.length === 0
+        ? []
+        : await handle.db.query.hostingTargets.findMany({
+            where: (table, { inArray }) => inArray(table.id, hostingTargetIds),
+            columns: { id: true, name: true }
+          });
+    const proxyResources = await buildProxyResourceChainDtos(handle, proxyResourceEntries, {
+      domainNameById: new Map([[domain.id, domain.name]]),
+      hostingTargetNameById: new Map(hostingTargetRows.map((row) => [row.id, row.name]))
+    });
 
     return {
       id: domain.id,
@@ -787,7 +946,8 @@ export const fetchManagedDomain = createServerFn({ method: 'GET' })
         hasSecret: mailbox.secretId !== null,
         providerCreatedAt: iso(mailbox.providerCreatedAt),
         desiredDeletedAt: iso(mailbox.desiredDeletedAt)
-      }))
+      })),
+      proxyResources
     };
   });
 
@@ -1128,6 +1288,18 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
    * `computePrivateNetworkRow`.
    */
   privateNetwork: PrivateNetworkRowDto | null;
+  /**
+   * The Pangolin connection this target reconciles proxy resources against
+   * (Pangolin chain design milestone 2, loxep-acj.2) — `hosting_targets
+   * .proxy_connection_id`, dormant since migration `0012`, driven for the
+   * first time by this milestone. `null` until an operator links one.
+   */
+  proxyConnectionId: string | null;
+  proxyConnectionName: string | null;
+  /** Pangolin's own site id for the newt tunnel fronting this target, if known. */
+  externalSiteId: string | null;
+  /** Every declared `proxy_resources` row fronted by THIS target. */
+  proxyResources: ProxyResourceChainDto[];
 }
 
 /**
@@ -1377,7 +1549,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       requireSession,
       getAdminServices,
       getDnsProviderTokensService,
-      getResourceLinksService
+      getResourceLinksService,
+      getProxyResourcesService
     } = await import('@/server/admin');
     // Dynamic, not top-level: `@loxep/infrastructure` pulls in server-only
     // packages (drizzle-orm, pg, graphile-worker via other modules in its
@@ -1403,29 +1576,61 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       throw new Error(`Hosting target "${data.name}" not found`);
     }
 
-    const [frontedTargets, domains, tokens, tokenZoneRows, rawCompanionLinks, frontingNode] =
-      await Promise.all([
-        handle.db.query.hostingTargets.findMany({
-          where: (table, { eq }) => eq(table.frontedByTargetId, target.id),
-          columns: { id: true, name: true }
-        }),
-        handle.db.query.managedDomains.findMany({
-          where: (table, { eq }) => eq(table.apexTargetId, target.id),
-          columns: { id: true, name: true, state: true }
-        }),
-        getDnsProviderTokensService().listForTarget(target.id),
-        handle.db.query.dnsProviderTokenZones.findMany(),
-        // loxep-v5r.3's generic companion-link service — the SINGLE owner of
-        // `external_resources`/`resource_links` reads/writes; this handler
-        // no longer queries those two tables directly.
-        getResourceLinksService().listLinksFor('hosting_target', target.id),
-        target.frontedByTargetId
-          ? handle.db.query.hostingTargets.findFirst({
-              where: (table, { eq }) => eq(table.id, target.frontedByTargetId as string),
-              columns: { id: true, name: true }
-            })
-          : null
-      ]);
+    const [
+      frontedTargets,
+      domains,
+      tokens,
+      tokenZoneRows,
+      rawCompanionLinks,
+      frontingNode,
+      proxyConnection,
+      proxyResourceEntries
+    ] = await Promise.all([
+      handle.db.query.hostingTargets.findMany({
+        where: (table, { eq }) => eq(table.frontedByTargetId, target.id),
+        columns: { id: true, name: true }
+      }),
+      handle.db.query.managedDomains.findMany({
+        where: (table, { eq }) => eq(table.apexTargetId, target.id),
+        columns: { id: true, name: true, state: true }
+      }),
+      getDnsProviderTokensService().listForTarget(target.id),
+      handle.db.query.dnsProviderTokenZones.findMany(),
+      // loxep-v5r.3's generic companion-link service — the SINGLE owner of
+      // `external_resources`/`resource_links` reads/writes; this handler
+      // no longer queries those two tables directly.
+      getResourceLinksService().listLinksFor('hosting_target', target.id),
+      target.frontedByTargetId
+        ? handle.db.query.hostingTargets.findFirst({
+            where: (table, { eq }) => eq(table.id, target.frontedByTargetId as string),
+            columns: { id: true, name: true }
+          })
+        : null,
+      // Pangolin chain design milestone 2 (loxep-acj.2): the connection
+      // `proxy_connection_id` finally drives.
+      target.proxyConnectionId
+        ? handle.db.query.connections.findFirst({
+            where: (table, { eq }) => eq(table.id, target.proxyConnectionId as string),
+            columns: { id: true, name: true }
+          })
+        : null,
+      getProxyResourcesService().listResourcesForHostingTarget(target.id)
+    ]);
+
+    const domainIdsForProxy = [
+      ...new Set(proxyResourceEntries.map((entry) => entry.resource.domainId))
+    ];
+    const domainRowsForProxy =
+      domainIdsForProxy.length === 0
+        ? []
+        : await handle.db.query.managedDomains.findMany({
+            where: (table, { inArray }) => inArray(table.id, domainIdsForProxy),
+            columns: { id: true, name: true }
+          });
+    const proxyResources = await buildProxyResourceChainDtos(handle, proxyResourceEntries, {
+      domainNameById: new Map(domainRowsForProxy.map((row) => [row.id, row.name])),
+      hostingTargetNameById: new Map([[target.id, target.name]])
+    });
 
     // loxep-ovj.3: per-link `integration_health` projection
     // (`subject_type='external_resource'`, `subject_id=` the link's
@@ -1551,7 +1756,11 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       })),
       companionLinks,
       diagnosis,
-      privateNetwork
+      privateNetwork,
+      proxyConnectionId: target.proxyConnectionId,
+      proxyConnectionName: proxyConnection?.name ?? null,
+      externalSiteId: target.externalSiteId,
+      proxyResources
     };
   });
 
@@ -2189,6 +2398,21 @@ export const fetchDockhandConnectionOptions = createServerFn({ method: 'GET' }).
   }
 );
 
+/**
+ * Pangolin connections (`connections.provider = 'pangolin'`) for the fleet
+ * detail "link a proxy connection" control — the Pangolin chain design's
+ * milestone 2 (loxep-acj.2), driving `hosting_targets.proxy_connection_id`
+ * for the first time.
+ */
+export const fetchPangolinConnectionOptions = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<ConnectionOptionDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getAdminServices().connections.listConnections({ provider: 'pangolin' });
+    return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
+  }
+);
+
 export interface ContainerHostLastRunDto {
   id: string;
   status: string;
@@ -2425,6 +2649,32 @@ export const decommissionHostingTarget = createServerFn({ method: 'POST' })
     const { requireAdmin, getHostingTargetsService } = await import('@/server/admin');
     const session = await requireAdmin();
     const row = await getHostingTargetsService().decommission(data.id, {
+      actorUserId: session.user.id
+    });
+    return { id: row.id };
+  });
+
+/**
+ * Links (or clears) `hosting_targets.proxy_connection_id`/`external_site_id`
+ * — the Pangolin chain design's milestone 2 (loxep-acj.2), driving that
+ * column for the first time since migration `0012`. This writes ONLY
+ * Loxep's own row; it never calls Pangolin (the reconciler this connects to
+ * is CHECK MODE ONLY this milestone). `connectionId: null` clears the link.
+ */
+export const linkHostingTargetProxyConnection = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      hostingTargetId: z.uuid(),
+      connectionId: z.uuid().nullable(),
+      externalSiteId: z.string().trim().min(1).nullish()
+    })
+  )
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getHostingTargetsService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const row = await getHostingTargetsService().updateProxyConnection(data.hostingTargetId, {
+      proxyConnectionId: data.connectionId,
+      externalSiteId: data.externalSiteId,
       actorUserId: session.user.id
     });
     return { id: row.id };
@@ -2673,6 +2923,24 @@ export const fetchReconcileRun = createServerFn({ method: 'GET' })
         columns: { name: true }
       });
       subjectLabel = hostingTarget?.name ?? null;
+    } else if (run.subjectType === 'proxy_resource') {
+      // loxep-acj.2: the subject is a `proxy_resources` row, not a domain —
+      // see `@loxep/infrastructure`'s `proxy.ts` module doc.
+      const resource = await handle.db.query.proxyResources.findFirst({
+        where: (table, { eq }) => eq(table.id, run.subjectId)
+      });
+      if (resource !== undefined) {
+        const domain = await handle.db.query.managedDomains.findFirst({
+          where: (table, { eq }) => eq(table.id, resource.domainId),
+          columns: { name: true }
+        });
+        subjectLabel =
+          domain === undefined
+            ? null
+            : resource.subdomain === null
+              ? domain.name
+              : `${resource.subdomain}.${domain.name}`;
+      }
     }
 
     return {
