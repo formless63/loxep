@@ -13,7 +13,11 @@ import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { CandidateDto } from '@/server/documents-functions';
-import { dispositionLabel, dispositionOptions } from '@/features/documents/constants';
+import {
+  CONFIRMABLE_DISPOSITIONS,
+  dispositionLabel,
+  dispositionOptions
+} from '@/features/documents/constants';
 
 export function createColumns(
   onDispositionChange: (candidateId: string, disposition: string) => void
@@ -122,11 +126,34 @@ export function createColumns(
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {dispositionOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
+              {dispositionOptions.map((option) => {
+                // `acquisition_cost`/`inventory_intake` stage the intent
+                // correctly (the model supports them fully) but this
+                // milestone's confirm action only writes `expenses` — see
+                // `CONFIRMABLE_DISPOSITIONS`'s doc. Without this hint,
+                // picking one is a visible dead end: nothing explains why it
+                // never becomes confirmable (loxep-1zg, needs an
+                // acquisition-lot picker this milestone does not build).
+                // `pending` and the terminal non-confirm dispositions
+                // (personal/not_mine/duplicate/discarded) deliberately get no
+                // hint — selecting THEM is the complete action, there is no
+                // separate confirm step to await.
+                const needsLotPicker =
+                  option.value !== 'pending' &&
+                  option.value !== 'personal' &&
+                  option.value !== 'not_mine' &&
+                  option.value !== 'duplicate' &&
+                  option.value !== 'discarded' &&
+                  !CONFIRMABLE_DISPOSITIONS.has(option.value);
+                return (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                    {needsLotPicker && (
+                      <span className='text-muted-foreground'> — not yet confirmable here</span>
+                    )}
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         );

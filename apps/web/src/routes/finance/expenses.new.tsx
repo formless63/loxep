@@ -1,17 +1,72 @@
-import { createFileRoute, redirect } from '@tanstack/react-router';
+import * as React from 'react';
+import { createFileRoute, useRouter } from '@tanstack/react-router';
+import type { ErrorComponentProps } from '@tanstack/react-router';
+import { zodValidator } from '@tanstack/zod-adapter';
+import { z } from 'zod';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Icons } from '@/components/icons';
+import { Skeleton } from '@/components/ui/skeleton';
+import { FinancePage } from '@/features/finance/components/finance-page';
+import NewExpensePage from '@/features/finance/components/new-expense-page';
+import { entitiesQuery } from '@/features/settings/api/queries';
 
 /**
- * Redirect-only route so "New expense" can be a plain nav entry (and
- * therefore Cmd+K-reachable, per the shared command-palette mechanism —
- * `@/config/navigation/finance.ts`) while still landing on
- * `/finance/expenses` with a properly-typed `search.quickEntry`, which opens
- * the quick-entry dialog. TanStack Router's `Link`/`navigate` resolve a
- * plain `url: string` as a pathname and do not parse an embedded `?search`
- * out of it, so `redirect({ to, search })` — issued imperatively, not via a
- * string — is the reliable way to land with a search param set.
+ * `/finance/expenses/new` — the real two-pane entry page (loxep-cd3.2, M2 —
+ * `expense-entry-design.md` section 1). Search params carry whatever the
+ * quick-entry dialog's "More options" link had already typed, so starting
+ * fast and discovering the receipt has fourteen lines is not a re-type.
+ * Every field is optional and free-form here — the actual submission is
+ * still validated by `createExpenseWithEvidence`'s own schema.
  */
-export const Route = createFileRoute('/finance/expenses/new')({
-  beforeLoad: () => {
-    throw redirect({ to: '/finance/expenses', search: { quickEntry: true } });
-  }
+const newExpenseSearchSchema = z.object({
+  amount: z.string().optional(),
+  expenseDate: z.string().optional(),
+  category: z.string().optional(),
+  payeeName: z.string().optional(),
+  paymentMethod: z.string().optional(),
+  currency: z.string().optional(),
+  economicEntityId: z.string().optional()
 });
+
+function NewExpenseError({ error }: ErrorComponentProps) {
+  const router = useRouter();
+  return (
+    <FinancePage title='New expense' description='Compose one expense from evidence.'>
+      <Alert variant='destructive'>
+        <Icons.warning />
+        <AlertTitle>Could not load this page</AlertTitle>
+        <AlertDescription className='flex flex-col gap-2'>
+          <span>{error instanceof Error ? error.message : 'Unknown error'}</span>
+          <Button size='sm' variant='outline' onClick={() => router.invalidate()} className='w-fit'>
+            Retry
+          </Button>
+        </AlertDescription>
+      </Alert>
+    </FinancePage>
+  );
+}
+
+export const Route = createFileRoute('/finance/expenses/new')({
+  validateSearch: zodValidator(newExpenseSearchSchema),
+  loader: async ({ context: { queryClient } }) => {
+    await queryClient.ensureQueryData(entitiesQuery);
+  },
+  errorComponent: NewExpenseError,
+  component: FinanceExpensesNew
+});
+
+function FinanceExpensesNew() {
+  const search = Route.useSearch();
+
+  return (
+    <FinancePage
+      title='New expense'
+      description='Form on the left, evidence on the right — visible at once. The dialog is capture; this page is composition.'
+    >
+      <React.Suspense fallback={<Skeleton className='h-96 w-full' />}>
+        <NewExpensePage prefill={search} />
+      </React.Suspense>
+    </FinancePage>
+  );
+}

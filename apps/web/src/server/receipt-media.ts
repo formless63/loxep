@@ -24,17 +24,19 @@
  *    `@/server/expense-functions.ts`'s role choice for this whole surface)
  *    rather than an ACL — media ownership is a metadata fact, never a
  *    permission container.
+ *
+ * Size cap and MIME allowlist come from the registered
+ * `documentsMediaLimitsSetting` (`@loxep/domain`, loxep-cd3.2 M2) rather than
+ * the hardcoded constants this route shipped with — the design's own point:
+ * a page whose headline feature is dropping many files at once
+ * (`/finance/expenses/new`'s evidence pane, `@/server/documents-media.ts`)
+ * made "three upload routes, two different policies" a coin-flip for the
+ * fourth. Shared with `documents-media.ts` on purpose: both routes write the
+ * same media-object shape through the same `MediaService.upload`.
  */
 import { Readable } from 'node:stream';
+import { documentsMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
-
-const ALLOWED_RECEIPT_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'application/pdf'
-]);
-const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
 
 /**
  * The media OBJECT's own `metadata.purpose` — a single constant, used ONLY
@@ -58,7 +60,8 @@ function jsonResponse(status: number, body: unknown): Response {
 
 /** `POST /api/expenses/receipt` — multipart upload attached to one expense. */
 export async function handleReceiptUpload(request: Request): Promise<Response> {
-  const { requireSession, getMediaService, getReceiptsService } = await import('@/server/admin');
+  const { requireSession, getAdminServices, getMediaService, getReceiptsService } =
+    await import('@/server/admin');
 
   let session: Awaited<ReturnType<typeof requireSession>>;
   try {
@@ -98,16 +101,19 @@ export async function handleReceiptUpload(request: Request): Promise<Response> {
       ? purposeField
       : 'receipt';
 
-  if (!ALLOWED_RECEIPT_MIME_TYPES.has(file.type)) {
+  const { settings } = getAdminServices();
+  const limits = await settings.get(documentsMediaLimitsSetting);
+
+  if (!limits.allowedMimeTypes.includes(file.type)) {
     return jsonResponse(400, {
       error: 'invalid-content-type',
-      message: 'Receipts must be a PNG, JPEG, WEBP, or PDF file'
+      message: `Receipts must be one of: ${limits.allowedMimeTypes.join(', ')}`
     });
   }
-  if (file.size > MAX_RECEIPT_BYTES) {
+  if (file.size > limits.maxBytes) {
     return jsonResponse(400, {
       error: 'file-too-large',
-      message: 'Receipts must be 10MB or smaller'
+      message: `Receipts must be ${Math.floor(limits.maxBytes / (1024 * 1024))}MB or smaller`
     });
   }
 

@@ -10,6 +10,7 @@ import {
   listInvoiceNinjaConnections,
   searchCounterpartiesForBilling
 } from '@/server/finance-billing-functions';
+import { searchTradingPartners } from '@/server/trading-partner-functions';
 import type { ExpenseStatus } from '@/features/finance/constants';
 
 export interface ExpenseFilterParams {
@@ -55,6 +56,22 @@ export const counterpartyBillingSearchQuery = (query: string) =>
   queryOptions({
     queryKey: ['finance', 'counterparty-billing-search', query],
     queryFn: () => searchCounterpartiesForBilling({ data: { query } })
+  });
+
+// ---------------------------------------------------------------------------
+// Trading partners: counterparties as expense payees (loxep-cd3.1, M1)
+// ---------------------------------------------------------------------------
+
+export const tradingPartnersSearchQuery = (params: {
+  search: string;
+  economicEntityId: string | null;
+}) =>
+  queryOptions({
+    queryKey: ['finance', 'trading-partners', params.search, params.economicEntityId],
+    queryFn: () =>
+      searchTradingPartners({
+        data: { search: params.search, economicEntityId: params.economicEntityId }
+      })
   });
 
 export const draftInvoicePushStatusQuery = (params: {

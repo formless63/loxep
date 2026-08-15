@@ -6,6 +6,10 @@ This document designs the second generation of expense capture: a dedicated entr
 
 **Status: DRAFT. Design work only.** No migration, Drizzle schema, package, or service code is authorized by this page. Upstream OCR facts were verified against primary sources on **2026-08-15** and must be **re-verified immediately before implementation** per the [dependency policy](../../development/dependency-policy/) — this is the fastest-moving software category in any Loxep survey to date.
 
+**Status update: `M2` (the entry page) is IMPLEMENTED (loxep-cd3.2).** `/finance/expenses/new` is the real two-pane page, `/finance/expenses/quick` carries the redirect moved verbatim, `<DocumentPreview>` is shared by the evidence pane and `document-review-panel.tsx`, `documents.media_limits` is a registered setting consumed by both upload routes, and the serving-URL mapper (`servingUrlFor`, `@/server/media-serving-url.ts`) fixed the trap this page called out. See [its own milestone note](#milestones) below for what shipped and what did not (`expense_lines`/OCR/the acquisition confirm path stay M3 and later). This sentence and the "DRAFT" one above are left in place per this document's own convention of recording status updates next to the original text rather than rewriting it.
+
+**Status update: `M1` (trading partners as payees) is IMPLEMENTED (loxep-cd3.1).** Migrations 0023 (`counterparty_contacts.given_name`/`family_name`) and 0024 (`expenses.payee_counterparty_id`, FK `expenses_payee_counterparty_fk`, partial index) shipped. `@loxep/accounting`'s `ExpensesService.create`/`update` accept `payeeCounterpartyId` and always snapshot the resolved `display_name` into `payee_name` in the same write; a new `ExpensesService.linkPayee` deliberately bypasses the draft-only lock for the "link this payee" action, matching `reattributeDefaults`' own narrow-bypass precedent. The Invoice Ninja client push (`@loxep/integration-invoiceninja`) is widened to the full mapping table below, including two source-verified static id maps (`id-maps.ts`) and `mapCounterpartyContactForPush`'s given/family-name-with-fallback rule; `private_notes` stays opt-in per push (`pushDraftInvoice`'s `includePrivateNotes`, default `false`). The picker (`PayeeComboboxField`, `apps/web/src/features/finance/components/payee-combobox-field.tsx`) is mounted on the quick-entry dialog and wired to "link this payee" on expense detail — **not yet mounted on `/finance/expenses/new`**, which M2 shipped with the payee field "plain text pending M1's picker" per its own milestone note above; wiring the now-available picker into that page is the natural next step. One honest gap: `@loxep/counterparties` (the real domain service — `create`/`contacts.addContact`/`roles.grant`/`listByEntityRole`) is still not an `apps/web` dependency, so the picker's search and inline-create server functions (`@/server/trading-partner-functions.ts`) talk to `@loxep/db` directly with a small amount of intentionally-duplicated logic (reference-code generation, a lightweight name fold) — see that file's own module doc for the full account and why wiring the real dependency in is follow-up work, not this bead's.
+
 **This design is cross-cutting, not a phase.** Phase 9 is fully implemented; this is the pass that makes its expense surface usable by a human with four receipts and a phone, and it depends on no unshipped phase.
 
 ## What already exists, precisely
@@ -823,15 +827,21 @@ Migration numbers are **not assigned here** — take the next free numbers at im
 
 ```text
 A  counterparty contact names        counterparty_contacts
+   IMPLEMENTED as migration 0023 (loxep-cd3.1).
    ALTER TABLE ADD COLUMN given_name text null
    ALTER TABLE ADD COLUMN family_name text null
    Nothing else. Two nullable columns, no backfill, no constraint.
 
 B  expense payee link                expenses
+   IMPLEMENTED as migration 0024 (loxep-cd3.1).
    ALTER TABLE ADD COLUMN payee_counterparty_id uuid null
      references counterparties(id)
    + partial index where payee_counterparty_id is not null
-   Named FK explicitly: the derived name is over 63 bytes.
+   Named FK explicitly (expenses_payee_counterparty_fk) — the derived name
+   turned out to be 51 bytes, under the 63-byte limit, but named explicitly
+   anyway per this doc's own instruction AND because drizzle-kit emits a
+   second, redundant auto-named FK if the column also carries an inline
+   `.references()` alongside an explicit `foreignKey()`.
    No backfill. payee_name is untouched and stays written.
 
 C  expense lines                     expense_lines (new table)
@@ -952,18 +962,33 @@ Recorded for a human to resolve; this document does not fix them.
 Staged so each is independently shippable, and so the epic can stop after any of them with a coherent product.
 
 ```text
-M1  Trading partners as payees        migration A + B. Counterparty payee picker with
-                                      inline create on BOTH the dialog and the detail
-                                      page, the Invoice Ninja client push widened to
-                                      the full mapping table, "link this payee" on
-                                      expense detail. No new page yet.
+M1  Trading partners as payees        IMPLEMENTED (loxep-cd3.1). migrations 0023 + 0024.
+                                      Counterparty payee picker (PayeeComboboxField)
+                                      with inline create, mounted on the quick-entry
+                                      dialog; "link this payee" on the expense detail
+                                      page (bypasses the draft-only lock, like
+                                      reattributeDefaults). The Invoice Ninja client
+                                      push widened to the full mapping table below,
+                                      including the two static id maps and opt-in
+                                      private_notes. NOT yet mounted on M2's
+                                      /finance/expenses/new (still plain text there —
+                                      see that milestone's own note).
 
-M2  The entry page                    no migration. /finance/expenses/new becomes real:
-                                      two-pane layout, multi-file dropzone over the
-                                      existing FileUploader, DocumentPreview shared
-                                      with the review panel, documents.media_limits
-                                      setting, the serving-URL mapper. Quick entry
-                                      keeps its "More options" link.
+M2  The entry page                    IMPLEMENTED (loxep-cd3.2). no migration.
+                                      /finance/expenses/new is real: two-pane
+                                      layout, multi-file dropzone over the existing
+                                      FileUploader, DocumentPreview shared with the
+                                      review panel, documents.media_limits setting
+                                      (read by both /api/expenses/receipt and
+                                      /api/documents/upload), the serving-URL
+                                      mapper (servingUrlFor). Quick entry gained its
+                                      "More options" link, unchanged otherwise.
+                                      Evidence links via a thin
+                                      createExpenseWithEvidence wrapper around the
+                                      SAME ExpensesService.create / ReceiptsService
+                                      .attach quick entry and confirmLinesAsExpense
+                                      already use — no forked write path. The payee
+                                      field stays plain text pending M1's picker.
 
 M3  Expense lines                     migration C. Lines on the page and on detail,
                                       confirmCandidatesAsExpense moved into

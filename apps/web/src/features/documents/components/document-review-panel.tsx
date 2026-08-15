@@ -20,6 +20,7 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
+import { DocumentPreview } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toastError } from '@/lib/errors';
@@ -225,18 +226,12 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
 
         <div className='space-y-4'>
           {document.mediaServingUrl && (
-            <a
-              href={document.mediaServingUrl}
-              target='_blank'
-              rel='noreferrer'
-              className='block overflow-hidden rounded-md border'
-            >
-              <img
-                src={document.mediaServingUrl}
-                alt={document.originalFilename ?? 'Uploaded document'}
-                className='h-auto w-full object-contain'
-              />
-            </a>
+            <DocumentPreview
+              mimeType={document.mimeType}
+              servingUrl={document.mediaServingUrl}
+              alt={document.originalFilename ?? 'Uploaded document'}
+              className='max-h-96'
+            />
           )}
 
           <form

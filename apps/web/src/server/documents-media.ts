@@ -2,12 +2,7 @@
  * Document upload/serve handlers (loxep-dgf.4, M4): reached ONLY from the
  * two server-only API routes — `routes/api.documents.upload.ts` (POST) and
  * `routes/api.media.document.$mediaId.ts` (GET) — via a dynamic import
- * inside each route's handler, mirroring `@/server/receipt-media.ts`'s shape
- * (hardcoded size/MIME limits, not a registered setting — receipt-media.ts
- * predates the M3 "use a registered setting" pattern and this milestone
- * follows that same precedent rather than adding a NEW `application_settings`
- * key, which belongs in `@loxep/domain/settings-defaults.ts` — outside this
- * change's write fence; noted for the orchestrator).
+ * inside each route's handler, mirroring `@/server/receipt-media.ts`'s shape.
  *
  * Unlike the receipt/inventory-image paths, this upload creates the
  * `documents` ROW itself in the same request (`source_kind = 'upload'`,
@@ -16,17 +11,21 @@
  * `@loxep/documents/documents.ts`'s `attachMedia`, re-implemented here for
  * the same "no `@loxep/documents` dependency" reason
  * `documents-functions.ts` documents at its own top.
+ *
+ * Size cap and MIME allowlist come from the registered
+ * `documentsMediaLimitsSetting` (`@loxep/domain`, loxep-cd3.2 M2) rather than
+ * a hardcoded constant — this module's own doc used to note that it declined
+ * the M3 registered-setting pattern deliberately; a page whose headline
+ * feature is dropping many files at once (`/finance/expenses/new`'s evidence
+ * pane) is the moment that stops being acceptable. Shared with
+ * `receipt-media.ts` on purpose: both routes write the same media-object
+ * shape through the same `MediaService.upload`, and this route's pane and
+ * `/finance/import` are explicitly the same pipeline entered from two
+ * directions.
  */
 import { Readable } from 'node:stream';
+import { documentsMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
-
-const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'application/pdf'
-]);
-const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 
 /** Mirrors `DOCUMENT_KINDS` minus `csv_import` — a CSV never uploads through this route. */
 const UPLOADABLE_DOCUMENT_KINDS = new Set(['receipt', 'invoice', 'packing_slip', 'statement']);
@@ -80,16 +79,19 @@ export async function handleDocumentUpload(request: Request): Promise<Response> 
       ? documentKindField
       : 'receipt';
 
-  if (!ALLOWED_DOCUMENT_MIME_TYPES.has(file.type)) {
+  const { settings } = getAdminServices();
+  const limits = await settings.get(documentsMediaLimitsSetting);
+
+  if (!limits.allowedMimeTypes.includes(file.type)) {
     return jsonResponse(400, {
       error: 'invalid-content-type',
-      message: 'Documents must be a PNG, JPEG, WEBP, or PDF file'
+      message: `Documents must be one of: ${limits.allowedMimeTypes.join(', ')}`
     });
   }
-  if (file.size > MAX_DOCUMENT_BYTES) {
+  if (file.size > limits.maxBytes) {
     return jsonResponse(400, {
       error: 'file-too-large',
-      message: 'Documents must be 10MB or smaller'
+      message: `Documents must be ${Math.floor(limits.maxBytes / (1024 * 1024))}MB or smaller`
     });
   }
 

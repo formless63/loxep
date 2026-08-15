@@ -51,6 +51,7 @@ export {
   authProvisioningSetting,
   caaPolicySetting,
   cloudflareRateBudgetSetting,
+  documentsMediaLimitsSetting,
   ebayRateBudgetSetting,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,

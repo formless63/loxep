@@ -322,6 +322,46 @@ export const inventoryMediaLimitsSetting = defineSetting({
 });
 
 /**
+ * Documents-domain upload media limits (loxep-cd3.2, M2 —
+ * `expense-entry-design.md`, "Upload limits become a registered setting").
+ * Mirrors {@link inventoryMediaLimitsSetting} exactly (`{maxBytes,
+ * allowedMimeTypes}`, schemaVersion 1, same defaults) — the design's own
+ * observation that `@/server/receipt-media.ts` and
+ * `@/server/documents-media.ts` both hardcode `10 * 1024 * 1024` and a
+ * four-member MIME allowlist, and both note in their own comments that they
+ * decline the registered-setting pattern `inventory-media.ts` established in
+ * M3. A page whose headline feature is dropping many files at once
+ * (`/finance/expenses/new`'s evidence pane) is the moment that stops being
+ * acceptable: three upload routes with two different policies was already a
+ * coin-flip for the fourth.
+ *
+ * ONE setting for both routes rather than one per route: `receipt-media.ts`
+ * and `documents-media.ts` write the SAME media-object shape (a
+ * `media_objects` row with a `metadata.purpose` tag) through the same
+ * `MediaService.upload`, and the evidence pane and `/finance/import` are
+ * explicitly "the same pipeline entered from two directions" per the
+ * design — a split limit between them would contradict that.
+ */
+export const documentsMediaLimitsSetting = defineSetting({
+  key: "documents.media_limits",
+  schema: z.strictObject({
+    /** Per-file cap, in bytes, for a receipt/invoice/document upload through either upload route. */
+    maxBytes: z.number().int().min(1).max(200 * 1024 * 1024),
+    /** Accepted MIME types for a receipt/document upload. */
+    allowedMimeTypes: z.array(z.string().min(1)).min(1).max(32),
+  }),
+  description:
+    "Per-file size cap and MIME allowlist for expense-receipt and document " +
+    "uploads (M2) — shared by /api/expenses/receipt and " +
+    "/api/documents/upload, which write the same media-object shape",
+  schemaVersion: 1,
+  defaultValue: {
+    maxBytes: 10 * 1024 * 1024,
+    allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "application/pdf"],
+  },
+});
+
+/**
  * The `sale_mode` a newly intaken item gets when the operator does not
  * choose one — mirrors `monitorDefaultsSetting`'s "a starting point new rows
  * inherit" shape. `'unit'` is the dominant case per the design's own
@@ -679,6 +719,7 @@ export const registeredApplicationSettings = [
   orderPayloadRetentionSetting,
   cloudflareRateBudgetSetting,
   caaPolicySetting,
+  documentsMediaLimitsSetting,
   inventoryMediaLimitsSetting,
   inventoryDefaultSaleModeSetting,
   gatusPushSetting,

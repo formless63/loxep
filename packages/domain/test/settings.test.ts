@@ -15,6 +15,8 @@ import {
   findRegisteredSetting,
   caaPolicySetting,
   cloudflareRateBudgetSetting,
+  documentsMediaLimitsSetting,
+  inventoryMediaLimitsSetting,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
   gatusRateBudgetSetting,
@@ -447,6 +449,45 @@ describe("Phase 7 infrastructure settings", () => {
     expect(cloudflareRateBudgetSetting.defaultValue.refillPerSecond).toBeLessThan(
       1200 / 300,
     );
+  });
+});
+
+describe("documents.media_limits setting (loxep-cd3.2, M2)", () => {
+  it("mirrors inventoryMediaLimitsSetting's shape and default exactly", () => {
+    expect(documentsMediaLimitsSetting.key).toBe("documents.media_limits");
+    expect(documentsMediaLimitsSetting.schemaVersion).toBe(1);
+    expect(documentsMediaLimitsSetting.defaultValue).toEqual(
+      inventoryMediaLimitsSetting.defaultValue,
+    );
+    expect(documentsMediaLimitsSetting.defaultValue).toEqual({
+      maxBytes: 10 * 1024 * 1024,
+      allowedMimeTypes: ["image/png", "image/jpeg", "image/webp", "application/pdf"],
+    });
+  });
+
+  it("is registered", () => {
+    expect(registeredApplicationSettings).toContain(documentsMediaLimitsSetting);
+  });
+
+  it("rejects an oversized cap and an empty MIME allowlist", () => {
+    expect(
+      documentsMediaLimitsSetting.schema.safeParse({
+        maxBytes: 10 * 1024 * 1024,
+        allowedMimeTypes: ["image/png"],
+      }).success,
+    ).toBe(true);
+    expect(
+      documentsMediaLimitsSetting.schema.safeParse({
+        maxBytes: 300 * 1024 * 1024,
+        allowedMimeTypes: ["image/png"],
+      }).success,
+    ).toBe(false);
+    expect(
+      documentsMediaLimitsSetting.schema.safeParse({
+        maxBytes: 10 * 1024 * 1024,
+        allowedMimeTypes: [],
+      }).success,
+    ).toBe(false);
   });
 });
 

@@ -120,14 +120,20 @@ export default function ReceiptGallery({
               >
                 <Icon className='text-muted-foreground size-8 shrink-0' />
                 <div className='min-w-0 flex-1'>
-                  <a
-                    href={receipt.servingUrl}
-                    target='_blank'
-                    rel='noreferrer'
-                    className='block truncate text-sm font-medium hover:underline'
-                  >
-                    {receipt.originalFilename ?? receipt.mediaObjectId}
-                  </a>
+                  {receipt.servingUrl === null ? (
+                    <span className='block truncate text-sm font-medium'>
+                      {receipt.originalFilename ?? receipt.mediaObjectId}
+                    </span>
+                  ) : (
+                    <a
+                      href={receipt.servingUrl}
+                      target='_blank'
+                      rel='noreferrer'
+                      className='block truncate text-sm font-medium hover:underline'
+                    >
+                      {receipt.originalFilename ?? receipt.mediaObjectId}
+                    </a>
+                  )}
                   <div className='text-muted-foreground flex flex-wrap items-center gap-1 text-xs'>
                     <Badge variant='outline'>{receiptPurposeLabel(receipt.purpose)}</Badge>
                     <span>{formatBytes(receipt.sizeBytes)}</span>
