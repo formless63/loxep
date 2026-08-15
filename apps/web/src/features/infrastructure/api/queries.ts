@@ -1,7 +1,9 @@
 import { queryOptions } from '@tanstack/react-query';
 import {
+  fetchContainerHostRegistration,
   fetchDiscoveredFleetResources,
   fetchDnsConnectionOptions,
+  fetchDockhandConnectionOptions,
   fetchDockhandHostView,
   fetchHostingTarget,
   fetchHostingTargetOptions,
@@ -11,7 +13,8 @@ import {
   fetchManagedDomain,
   fetchManagedDomains,
   fetchReconcileRun,
-  fetchReconcileRuns
+  fetchReconcileRuns,
+  fetchUnmatchedTailscaleDevices
 } from '@/server/infrastructure-functions';
 
 export const infrastructureOverviewQuery = queryOptions({
@@ -67,6 +70,12 @@ export const hostingTargetOptionsQuery = queryOptions({
   queryFn: () => fetchHostingTargetOptions()
 });
 
+/** The fleet LIST page's opt-in unmatched-devices candidates panel (loxep-50t §4). */
+export const unmatchedTailscaleDevicesQuery = queryOptions({
+  queryKey: ['infrastructure', 'fleet', 'unmatched-tailscale-devices'],
+  queryFn: () => fetchUnmatchedTailscaleDevices()
+});
+
 /** The operator-confirmed attach picker's candidate list (loxep-y64 slice 3), scoped to one provider. */
 export const discoveredFleetResourcesQuery = (provider: string) =>
   queryOptions({
@@ -85,4 +94,17 @@ export const dockhandHostViewQuery = (hostingTargetId: string) =>
   queryOptions({
     queryKey: ['infrastructure', 'fleet', hostingTargetId, 'dockhand-host-view'],
     queryFn: () => fetchDockhandHostView({ data: { hostingTargetId } })
+  });
+
+/** Dockhand connections for the "register in Dockhand" section's connection picker (loxep-hb7 Milestone C). */
+export const dockhandConnectionOptionsQuery = queryOptions({
+  queryKey: ['infrastructure', 'connection-options', 'dockhand'],
+  queryFn: () => fetchDockhandConnectionOptions()
+});
+
+/** The fleet-detail "Container host registration" panel's read model (loxep-hb7 Milestone C). */
+export const containerHostRegistrationQuery = (hostingTargetId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'fleet', hostingTargetId, 'container-host-registration'],
+    queryFn: () => fetchContainerHostRegistration({ data: { hostingTargetId } })
   });

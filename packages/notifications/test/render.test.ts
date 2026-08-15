@@ -417,16 +417,81 @@ describe("renderNotificationEventMessage (classes beyond market)", () => {
     expect(recovered.priority).toBe("default");
   });
 
-  it("falls back readably for a class it does not know", () => {
+  it("renders a DNS drift finding", () => {
     const message = renderNotificationEventMessage({
       ...baseRow,
       eventClass: "infrastructure",
-      eventType: "dns_drift_found",
+      eventType: "drift_found",
+      subjectType: "managed_domain",
+      subjectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      payload: {
+        findingId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        kind: "unexpected",
+        recordType: "A",
+        recordName: "old.example.com",
+        desiredContent: null,
+        observedContent: "203.0.113.9",
+      },
+    } as never);
+    expect(message.title).toBe("DNS drift found: old.example.com");
+    expect(message.body).toContain("unexpected at the provider");
+    expect(message.body).toContain("observed 203.0.113.9");
+    expect(message.priority).toBe("high");
+  });
+
+  it("renders a DNS drift finding that resolved on its own", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "infrastructure",
+      eventType: "drift_disappeared",
+      subjectType: "managed_domain",
+      subjectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      payload: {
+        findingId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        kind: "modified",
+        recordType: "CNAME",
+        recordName: "www.example.com",
+        desiredContent: "example.com",
+        observedContent: "example.com",
+      },
+    } as never);
+    expect(message.title).toBe("DNS drift resolved: www.example.com");
+    expect(message.body).toContain("no longer drifts");
+  });
+
+  it("renders a reconcile run failure", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "infrastructure",
+      eventType: "reconcile_run_failed",
+      subjectType: "reconcile_run",
+      subjectId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      payload: {
+        domainId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        domainName: "example.com",
+        kind: "sync-records",
+        mode: "apply",
+        trigger: "sweep",
+        errorSummary: "provider read failed (rate_limited)",
+      },
+    } as never);
+    expect(message.title).toBe("Reconcile run failed: example.com");
+    expect(message.body).toBe(
+      "example.com (apply run): provider read failed (rate_limited)"
+    );
+    expect(message.priority).toBe("high");
+  });
+
+  it("falls back readably for a class it does not know", () => {
+    const message = renderNotificationEventMessage({
+      ...baseRow,
+      eventClass: "legacy",
+      eventType: "something_happened",
       subjectType: "managed_domain",
       subjectId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       payload: {},
     } as never);
-    expect(message.title).toBe("Loxep: dns drift found");
+    expect(message.title).toBe("Loxep: something happened");
     expect(message.body).toContain("managed_domain");
   });
 });

@@ -516,6 +516,160 @@ export const integrationsEnabledSetting = defineSetting({
   defaultValue: {},
 });
 
+/**
+ * Ignored tailnet devices for the fleet LIST page's unmatched-devices
+ * candidates panel (loxep-50t §4, item 3 — "so a phone does not reappear
+ * every sweep").
+ *
+ * **PROVISIONAL, and a deliberate deviation from the design's own FIRST
+ * choice.** loxep-50t §4 recommends homing "ignore" on
+ * `external_resources.metadata.ignoredAt` — a Loxep-owned annotation on the
+ * device's own row — and names this settings map only as an "acceptable
+ * alternative ... Recommend the first; record the second so the choice is
+ * visible." This setting IS that alternative, chosen instead of the
+ * recommendation because the first choice does not actually persist:
+ * `projectTailscaleDevices` (`packages/app/src/fleet-health.ts`, outside
+ * this change's scope) overwrites a tailscale device's `metadata` WHOLESALE
+ * on every connection probe/sweep (`{ observedAt, online, lastSeen,
+ * addresses, magicDnsName, os, authorized }`, no merge, by its own doc
+ * comment — "overwritten wholesale on every refresh"). An `ignoredAt` key
+ * stashed in that same object would be silently wiped by the very next
+ * sweep, which defeats the one property "ignore" exists to have. If
+ * `projectTailscaleDevices` ever starts merging `metadata` instead of
+ * replacing it, prefer the design's original recommendation and retire this
+ * setting.
+ *
+ * Keyed by the device's own tailnet node id (`TailscaleDeviceFact.
+ * externalDeviceId`, `external_resources.external_id` for a tailscale
+ * device) rather than Loxep's internal `external_resources.id` — the id
+ * survives the row being re-upserted and, per §1.1, survives a device
+ * rename on either side. Value is the ISO instant the operator ignored it,
+ * matching `dns_drift_findings`' un-optimistic-resolve posture: ignoring
+ * hides a row from the default view, it does not delete the candidate or
+ * touch anything at the provider.
+ */
+export const tailscaleIgnoredDevicesSetting = defineSetting({
+  key: "integration.tailscale.ignored_devices",
+  schema: z.record(z.string().min(1), z.string().min(1)),
+  description:
+    "Tailnet devices dismissed from the fleet list's unmatched-devices " +
+    "candidates panel, keyed by the device's own tailnet node id and " +
+    "mapped to the ISO instant it was ignored. PROVISIONAL fallback " +
+    "mechanism — see this setting's own doc comment for why " +
+    "external_resources.metadata.ignoredAt (the design's first choice) " +
+    "was not used",
+  schemaVersion: 1,
+  defaultValue: {},
+});
+
+/**
+ * Who may become a Loxep user, and what an OIDC claim may say about their
+ * role (ADR-0024, loxep-x2s).
+ *
+ * Before this setting existed, Loxep auto-provisioned: any address that could
+ * receive a magic-link email and any identity the OIDC issuer would
+ * authenticate became a `member` on first sign-in, with no policy in between.
+ * `member` is not a spectator role — it reads ordinary product data across the
+ * whole installation — so that stance only held while every deployment sat
+ * behind a network bypass.
+ *
+ * This setting governs **account creation only**. It never affects a user who
+ * already exists: an existing member always keeps their sign-in path, whatever
+ * the policy says and whatever their email domain is. That one rule is what
+ * makes the feature lockout-proof, and it is why the domain allowlist below is
+ * a provisioning control rather than a send filter.
+ *
+ * ## Enforcement lives in `@loxep/auth`, and reads this row directly
+ *
+ * `@loxep/auth` cannot import `@loxep/domain` (its dependencies are
+ * `@loxep/config`, `@loxep/db`, `better-auth`, `nodemailer` — and no Zod), so
+ * it reads `application_settings` itself through a hand-written TOTAL parser
+ * (`provisioning-policy.ts`) that substitutes the defaults below for anything
+ * it cannot make sense of. **The shape is therefore stated twice.** This
+ * definition is authoritative; that parser is a defensive mirror. Change one
+ * and change the other — the same trade `ebayRateBudgetSetting` and
+ * `cloudflareRateBudgetSetting` already make when they duplicate an adapter's
+ * literals rather than invert a package dependency. Because the parser is
+ * total and conservative, drift can only ever make the auth layer *more*
+ * restrictive than this value, never less.
+ *
+ * ## The default, and why a closed default does not brick a new install
+ *
+ * The shipped default is CLOSED for both methods. A brand-new installation has
+ * nobody to open it, so `@loxep/auth` force-opens provisioning while the
+ * installation has **no `admin` user at all**, and applies this stored policy
+ * from the moment one exists. Every path that produces a first administrator —
+ * `LOXEP_BOOTSTRAP_ADMIN_EMAIL`, `loxep admin promote`, or the claim mapping
+ * below — closes that window behind itself.
+ *
+ * DEFAULT (PROVISIONAL — owner-review, loxep-x2s): closed-after-bootstrap is
+ * the recommendation because the failure modes are asymmetric — an install
+ * that was open when it should have been closed has already handed out
+ * accounts, while an install that was closed when it should have been open
+ * costs its owner one switch. It is nonetheless a behavior change for an
+ * upgrade in place (a colleague added next week is declined until an admin
+ * opens the method or creates the account), and it runs against this module's
+ * own "an absent setting must not surprise an existing install" habit — see
+ * {@link integrationsEnabledSetting}. The open sub-question is whether `oidc`
+ * should default to `'open'` while `magicLink` stays `'closed'`, since with
+ * SSO the operator's identity provider is already the gate. Do not change this
+ * default silently; update this comment, ADR-0024, the bead, and the docs
+ * together.
+ *
+ * ## Claim mapping precedence (also PROVISIONAL)
+ *
+ * `applyOn: 'create'` — the default — runs the mapping once, when the OIDC
+ * account row is first written, and can only ever GRANT admin; every later
+ * sign-in leaves the role exactly as Loxep last set it, so a deliberate
+ * promotion or demotion inside Loxep is permanent. This mirrors the existing
+ * `overrideUserInfo: false` stance in `@loxep/auth`'s OIDC provider config:
+ * the provider seeds a user at creation and never re-syncs after.
+ * `applyOn: 'every_sign_in'` declares the IdP authoritative and both grants and
+ * revokes admin — guarded so it never demotes the only remaining administrator
+ * and never runs in the same session as a first-admin bootstrap grant.
+ */
+export const authProvisioningSetting = defineSetting({
+  key: "auth.provisioning",
+  schema: z.strictObject({
+    /** Whether each sign-in method may CREATE a new user. Per-method and nowhere else: "signups are closed" is the derived `magicLink === 'closed' && oidc === 'closed'`, not a third stored flag. */
+    newUsers: z.strictObject({
+      magicLink: z.enum(["open", "closed"]),
+      oidc: z.enum(["open", "closed"]),
+    }),
+    /**
+     * Bare domains (`example.com`) whose addresses may create an account
+     * through a magic link. EMPTY = no restriction. Matched case-insensitively
+     * against the part after the last `@`, EXACT match only — `example.com`
+     * does not cover `sub.example.com`, because a silent subdomain wildcard in
+     * a security allowlist is generosity nobody asked for.
+     */
+    magicLinkEmailDomains: z.array(z.string().min(1)).max(64),
+    /** Optional IdP-claim → `admin` mapping. Only `admin` is ever mapped: ADR-0017's two roles make this a predicate, not a role table. */
+    oidcAdminClaim: z.strictObject({
+      /** Dotted path into the id_token claims (`groups`, `realm_access.roles`). `null` disables the mapping. */
+      claim: z.string().min(1).nullable(),
+      /** Claim values that mean "administrator", matched case-insensitively. */
+      adminValues: z.array(z.string().min(1)).max(64),
+      /** `create`: grant once at account creation, never re-sync. `every_sign_in`: the IdP is authoritative, both directions. */
+      applyOn: z.enum(["create", "every_sign_in"]),
+    }),
+  }),
+  description:
+    "Who may become a Loxep user (ADR-0024): whether each sign-in method may " +
+    "create a new account, an optional magic-link email-domain allowlist, and " +
+    "an optional OIDC claim that maps to the admin role. Governs account " +
+    "CREATION only — an existing user always keeps their sign-in path, so " +
+    "nothing here can lock anybody out. While the installation has no admin " +
+    "user at all, provisioning is force-open so a new deployment can bootstrap " +
+    "itself. DEFAULT (PROVISIONAL, loxep-x2s): closed for both methods",
+  schemaVersion: 1,
+  defaultValue: {
+    newUsers: { magicLink: "closed", oidc: "closed" },
+    magicLinkEmailDomains: [],
+    oidcAdminClaim: { claim: null, adminValues: [], applyOn: "create" },
+  },
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -530,4 +684,6 @@ export const registeredApplicationSettings = [
   gatusPushSetting,
   gatusRateBudgetSetting,
   integrationsEnabledSetting,
+  tailscaleIgnoredDevicesSetting,
+  authProvisioningSetting,
 ] as const;

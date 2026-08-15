@@ -126,6 +126,46 @@ describe("notification events", () => {
         ),
       ).toBe("notification_events_subject_type_check");
     });
+
+    it("wires the infrastructure class (loxep-oii's own deferred item, closed by loxep-50t)", async () => {
+      const infrastructure = notificationEventClasses.infrastructure;
+      expect(infrastructure.wired).toBe(true);
+      expect(infrastructure.eventTypes).toEqual([
+        "drift_found",
+        "drift_disappeared",
+        "reconcile_run_failed",
+      ]);
+      expect(infrastructure.subjectTypes).toContain("managed_domain");
+      expect(infrastructure.subjectTypes).toContain("reconcile_run");
+
+      const { created } = await recordNotificationEvent(handle.db, {
+        eventClass: "infrastructure",
+        eventType: "drift_found",
+        subjectType: "managed_domain",
+        subjectId: SUBJECT_A,
+        occurredAt: new Date(),
+        payload: { kind: "unexpected", recordType: "A", recordName: "old.example.com" },
+        deduplicationKey: "infra-registry:drift_found",
+      });
+      expect(created).toBe(true);
+
+      await expect(
+        recordNotificationEvent(handle.db, {
+          eventClass: "infrastructure",
+          eventType: "reconcile_run_failed",
+          // A drift-shaped subject is not valid for the reconciler failure
+          // type's own natural subject — the registry does not care WHICH
+          // event type within a class asked, only that the subject type is
+          // one the whole class permits, so this actually succeeds; the
+          // real guard is exercised by the "refuses a subject type its
+          // class does not permit" case above with a genuinely foreign type.
+          subjectType: "reconcile_run",
+          subjectId: SUBJECT_B,
+          occurredAt: new Date(),
+          deduplicationKey: "infra-registry:reconcile_run_failed",
+        }),
+      ).resolves.toMatchObject({ created: true });
+    });
   });
 
   describe("at-least-once emission", () => {

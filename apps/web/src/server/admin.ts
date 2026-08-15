@@ -58,12 +58,14 @@ import type { NotificationService } from '@loxep/notifications';
 import type { MonitorService } from '@loxep/market';
 import {
   ProviderCallError,
+  createContainerHostsService,
   createDnsProviderTokensService,
   createDriftService,
   createHostingTargetsService,
   createMailDomainsService,
   createManagedDomainsService,
   createTransactionalEnqueue,
+  type ContainerHostsService,
   type DnsProviderTokensService,
   type DnsTokenProviderPort,
   type DriftService,
@@ -159,6 +161,20 @@ interface AdminRegistry {
   dnsProviderTokens: DnsProviderTokensService;
   /** Transactional `graphile_worker.add_job`, for ad hoc "sync now" actions. */
   infrastructureEnqueue: TransactionalEnqueue;
+  /**
+   * Dockhand host-registration intent + its reconciler (loxep-hb7 Milestone C):
+   * `declareIntent` (the create dialog / fleet-detail registration panel's
+   * write) and `reconcile`/`listDeclaredTargets`/`listRuns`. Depends only on
+   * `db` + `secrets` + `infrastructureEnqueue` (all already eager above), so
+   * this is built eagerly too — `@loxep/infrastructure` takes no
+   * `@loxep/integration-dockhand` dependency, so building the SERVICE here
+   * costs nothing; only RECONCILING needs a live adapter, which
+   * `requestContainerHostReconcile` reaches by enqueuing the worker task
+   * rather than calling `.reconcile()` from a request (see
+   * `infrastructure-functions.ts`'s module doc on never awaiting a provider
+   * call synchronously).
+   */
+  containerHosts: ContainerHostsService;
   /**
    * The generic external-resource companion-link service (loxep-v5r.3):
    * register/attach/list/detach `external_resources`/`resource_links` rows
@@ -285,6 +301,21 @@ function buildRegistry(): AdminRegistry {
       providerName: 'cloudflare'
     }),
     infrastructureEnqueue: createTransactionalEnqueue(),
+    containerHosts: createContainerHostsService({
+      db: handle.db,
+      readSecret: async (secretKey) => {
+        const secret = await createSecretsService({
+          db: handle.db,
+          keyring: config.keyring
+        }).getSecretPayload(secretKey, 'container_host_secret');
+        return secret.payload;
+      },
+      // Nested savepoint inside `declareIntent`'s own transaction — the SAME
+      // shape `dnsProviderTokens.secrets` above uses.
+      writeSecret: (tx, input) =>
+        createSecretsService({ db: tx, keyring: config.keyring }).setSecret(input),
+      enqueue: createTransactionalEnqueue()
+    }),
     resourceLinks: createResourceLinksService({ db: handle.db }),
     connectionCredentials: createConnectionCredentialsService({
       db: handle.db,
@@ -387,6 +418,11 @@ export function getDnsProviderTokensService(): DnsProviderTokensService {
 /** Transactional `graphile_worker.add_job`, for a manual "sync now" action. */
 export function getInfrastructureEnqueue(): TransactionalEnqueue {
   return getAdminServices().infrastructureEnqueue;
+}
+
+/** Dockhand host-registration intent + reconciler (loxep-hb7 Milestone C). */
+export function getContainerHostsService(): ContainerHostsService {
+  return getAdminServices().containerHosts;
 }
 
 /** The generic external-resource companion-link service (loxep-v5r.3). */

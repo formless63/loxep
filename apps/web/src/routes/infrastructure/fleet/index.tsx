@@ -3,6 +3,7 @@ import { zodValidator } from '@tanstack/zod-adapter';
 import { z } from 'zod';
 import FleetTable from '@/features/infrastructure/components/fleet-table';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
+import UnmatchedTailscaleDevicesPanel from '@/features/infrastructure/components/unmatched-devices-panel';
 
 const fleetSearchSchema = z.object({
   page: z.number().optional().default(1),
@@ -23,7 +24,10 @@ function InfrastructureFleet() {
       title='Fleet'
       description='Hosting targets a domain can point at — nodes, tunnel-connected hosts, and bare servers.'
     >
-      <FleetTable />
+      <div className='flex flex-col gap-4'>
+        <FleetTable />
+        <UnmatchedTailscaleDevicesPanel />
+      </div>
     </InfrastructurePage>
   );
 }

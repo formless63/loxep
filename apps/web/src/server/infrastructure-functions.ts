@@ -1791,6 +1791,191 @@ export const attachDiscoveredFleetResource = createServerFn({ method: 'POST' })
     };
   });
 
+const IPV4_SHAPE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+const adoptContainerHostAsHostingTargetInput = z.strictObject({
+  externalResourceId: z.uuid(),
+  /** Defaults to the discovered environment's own title/name. */
+  name: z.string().trim().min(1).optional()
+});
+
+/**
+ * hb7 §2.6/§3.2: "an explicit 'adopt as hosting target' action… must never
+ * be automatic." Turns one Dockhand environment `plan.unmatchedObserved`
+ * (surfaced installation-wide via `listUnattachedByProvider('dockhand')` —
+ * the same discovery set the attach picker already offers, see
+ * `fetchDiscoveredFleetResources`'s own doc) into a real `hosting_targets`
+ * row plus its `container_console` link — never a reconcile-intent
+ * declaration. The environment is already known to Dockhand (that is what
+ * "unmatched" means), so THIS call only records Loxep's own fleet fact;
+ * an operator who also wants Loxep to reconcile it opens the new target's
+ * registration panel and declares intent there, same as any other target.
+ *
+ * `control_surface`/`address_v4` are a best-effort guess from the
+ * discovery's own sync metadata (`host`, written by
+ * `projectDockhandResources`) — `direct_reverse_proxy` + the observed host
+ * when it looks like a bare IPv4 address, `none` (DNS-only, no address
+ * claim) otherwise. Either is editable nowhere in this codebase today (no
+ * hosting-target edit form outside this one field set), so a wrong guess
+ * costs a decommission-and-recreate, not silent data corruption — the same
+ * tradeoff every other adopt-shaped action in this file accepts.
+ */
+export const adoptContainerHostAsHostingTarget = createServerFn({ method: 'POST' })
+  .inputValidator(adoptContainerHostAsHostingTargetInput)
+  .handler(async ({ data }): Promise<{ hostingTargetId: string; name: string }> => {
+    const { requireAdmin, getResourceLinksService, getHostingTargetsService } =
+      await import('@/server/admin');
+    const session = await requireAdmin();
+    const resourceLinks = getResourceLinksService();
+    const resource = await resourceLinks.getExternalResource(data.externalResourceId);
+    if (
+      resource === null ||
+      resource.provider !== 'dockhand' ||
+      resource.externalType !== 'environment'
+    ) {
+      throw new Error(`"${data.externalResourceId}" is not a discovered Dockhand environment`);
+    }
+    const name = (data.name ?? resource.title ?? resource.externalId ?? 'dockhand-host').trim();
+    const host = metadataStringField(resource.metadata as Record<string, unknown>, 'host');
+    const looksLikeIPv4 = host !== null && IPV4_SHAPE.test(host);
+
+    const target = await getHostingTargetsService().create({
+      name,
+      controlSurface: looksLikeIPv4 ? 'direct_reverse_proxy' : 'none',
+      addressV4: looksLikeIPv4 ? host : undefined,
+      notes: `Adopted from a discovered Dockhand environment (${resource.externalId ?? 'no id'}).`,
+      createdByUserId: session.user.id
+    });
+
+    await resourceLinks.attachLink({
+      externalResourceId: resource.id,
+      resourceType: 'hosting_target',
+      resourceId: target.id,
+      purpose: 'container_console'
+    });
+
+    return { hostingTargetId: target.id, name: target.name };
+  });
+
+// ---------------------------------------------------------------------------
+// Unmatched tailnet devices (loxep-50t slice C) — the fleet LIST page's
+// opt-in candidates panel (§4). Every tailscale `external_resources` row
+// with no `resource_links` attachment IS the candidate set —
+// `listUnattachedByProvider` (the same call `fetchDiscoveredFleetResources`
+// makes for the Beszel attach picker) — so this reads exactly what
+// `projectTailscaleDevices`'s (`packages/app`'s) upsert-on-every-sweep
+// already writes; nothing here discovers or writes a device row.
+// ---------------------------------------------------------------------------
+
+/**
+ * One candidate row for the panel: a discovered tailscale device with no
+ * `private_network` link. Every field but `ignoredAt` is read straight out
+ * of the device's own sync `metadata` (§1.3's "overwritten wholesale on
+ * every refresh" payload — never a second live read).
+ *
+ * `hostname` is deliberately absent: `projectTailscaleDevices` stores
+ * `magicDnsName` (`TailscaleDeviceFact.name`) but not the adapter's separate
+ * `hostname` field, so it is not available here without a
+ * `packages/app`/`fleet-health.ts` change, which is outside this change's
+ * scope (the sibling fleet-detail work owns that file). `title` — the same
+ * `device.name ?? device.hostname ?? nodeId` fallback the admin-console link
+ * and the attach picker already use — is the best available stand-in.
+ */
+export interface UnmatchedTailscaleDeviceDto {
+  /** `external_resources.id` — the id `attachDiscoveredFleetResource` addresses. */
+  id: string;
+  /** The tailnet node id (`TailscaleDeviceFact.externalDeviceId`) — the ignore setting's own key. */
+  externalId: string | null;
+  title: string | null;
+  addresses: string[];
+  magicDnsName: string | null;
+  os: string | null;
+  authorized: boolean | null;
+  online: boolean | null;
+  lastSeen: string | null;
+  /** The discovery sweep's own read clock (`metadata.observedAt`) — Loxep's clock, never Tailscale's `lastSeen`. */
+  observedAt: string | null;
+  url: string;
+  /** Non-null when ignored — `tailscaleIgnoredDevicesSetting`'s own recorded instant. */
+  ignoredAt: string | null;
+}
+
+function metadataStringArray(metadata: Record<string, unknown>, key: string): string[] {
+  const value = metadata[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
+/**
+ * Every tailscale device Loxep has discovered but not linked to a hosting
+ * target, plus the operator's own ignore annotations (loxep-50t §4).
+ * `requireSession`, not `requireAdmin` — reading this candidate list is no
+ * more sensitive than `fetchDiscoveredFleetResources`, which this reuses the
+ * identical `listUnattachedByProvider` call from.
+ */
+export const fetchUnmatchedTailscaleDevices = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<UnmatchedTailscaleDeviceDto[]> => {
+    const [{ requireSession, getAdminServices, getResourceLinksService }, domain] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
+    await requireSession();
+    const [rows, ignored] = await Promise.all([
+      getResourceLinksService().listUnattachedByProvider('tailscale'),
+      getAdminServices().settings.get(domain.tailscaleIgnoredDevicesSetting)
+    ]);
+    return rows.map((row) => ({
+      id: row.id,
+      externalId: row.externalId,
+      title: row.title,
+      addresses: metadataStringArray(row.metadata, 'addresses'),
+      magicDnsName: metadataString(row.metadata, 'magicDnsName'),
+      os: metadataString(row.metadata, 'os'),
+      authorized: metadataBoolean(row.metadata, 'authorized'),
+      online: metadataBoolean(row.metadata, 'online'),
+      lastSeen: metadataString(row.metadata, 'lastSeen'),
+      observedAt: metadataString(row.metadata, 'observedAt'),
+      url: row.url,
+      ignoredAt: row.externalId !== null ? (ignored[row.externalId] ?? null) : null
+    }));
+  }
+);
+
+const setTailscaleDeviceIgnoredInput = z.strictObject({
+  externalId: z.string().trim().min(1),
+  ignored: z.boolean()
+});
+
+/**
+ * Persists (or clears) one device's "ignore" dismissal — see
+ * `tailscaleIgnoredDevicesSetting`'s doc comment for why this is a settings
+ * map rather than the design's first-choice `external_resources.metadata`
+ * field. Keyed by the device's own tailnet node id, so the dismissal
+ * survives `projectTailscaleDevices` re-upserting the row on every sweep.
+ */
+export const setTailscaleDeviceIgnored = createServerFn({ method: 'POST' })
+  .inputValidator(setTailscaleDeviceIgnoredInput)
+  .handler(async ({ data }): Promise<{ ignoredAt: string | null }> => {
+    const [{ requireAdmin, getAdminServices }, domain] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain')
+    ]);
+    const session = await requireAdmin();
+    const { settings } = getAdminServices();
+    const current = await settings.get(domain.tailscaleIgnoredDevicesSetting);
+    const next = { ...current };
+    let ignoredAt: string | null = null;
+    if (data.ignored) {
+      ignoredAt = new Date().toISOString();
+      next[data.externalId] = ignoredAt;
+    } else {
+      delete next[data.externalId];
+    }
+    await settings.set(domain.tailscaleIgnoredDevicesSetting, next, {
+      actorUserId: session.user.id
+    });
+    return { ignoredAt };
+  });
+
 // ---------------------------------------------------------------------------
 // Dockhand containers panel (loxep-hb7 Milestone B) — the ONE dedicated
 // tool-specific panel the anti-soup rule licenses (hb7 §3.2 rule 1: "a tool
@@ -1877,6 +2062,233 @@ export const fetchDockhandHostView = createServerFn({ method: 'GET' })
       })),
       readAt: iso(new Date())
     };
+  });
+
+// ---------------------------------------------------------------------------
+// Dockhand host-registration intent (loxep-hb7 Milestone C) — the create
+// dialog's "also register this host in Dockhand" section and the
+// fleet-detail registration panel both call these. Declaring intent NEVER
+// calls Dockhand synchronously: it writes `external_resources`/
+// `resource_links` (+ `application_secrets` for any TLS/Hawser material) and
+// enqueues `infrastructure.reconcile-container-host`, which the worker runs —
+// the same "write intent, enqueue, return" shape `createManagedDomain` uses.
+// ---------------------------------------------------------------------------
+
+/** Dockhand connections (`connections.provider = 'dockhand'`) for the registration form's connection picker. */
+export const fetchDockhandConnectionOptions = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<ConnectionOptionDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getAdminServices().connections.listConnections({ provider: 'dockhand' });
+    return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
+  }
+);
+
+export interface ContainerHostLastRunDto {
+  id: string;
+  status: string;
+  mode: string;
+  trigger: string;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/**
+ * The fleet-detail "Container host registration" panel's whole read model
+ * (hb7 §2.1(b)/§2.6): whether intent is declared at all, the declared
+ * (non-secret) fields, whether the identity has self-retired
+ * (`externalHostId !== null`), and the most recent reconcile run's outcome —
+ * matched/unmatched, applied, when it last ran. `null` when nothing has been
+ * declared yet — the panel then renders the "register" form instead of the
+ * status view, never a fabricated "not configured" status row.
+ */
+export interface ContainerHostRegistrationDto {
+  externalResourceId: string;
+  connectionId: string;
+  connectionType: string;
+  host: string | null;
+  port: number | null;
+  protocol: string | null;
+  socketPath: string | null;
+  tlsSkipVerify: boolean | null;
+  labels: string[];
+  publicIp: string | null;
+  /** Non-null once hb7 §3.1's identity has self-retired — the provider's own id for this host. */
+  externalHostId: string | null;
+  desiredAt: string;
+  lastAppliedAt: string | null;
+  lastRun: ContainerHostLastRunDto | null;
+}
+
+function metadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Reads the target's declared Dockhand registration, or `null` when nothing
+ * has been declared (no link at all, or a Milestone B discovery auto-attach
+ * with no operator intent behind it — `desiredAt` absent, mirroring
+ * `@loxep/infrastructure`'s own `isContainerHostIntent` narrowing).
+ */
+export const fetchContainerHostRegistration = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ hostingTargetId: z.uuid() }))
+  .handler(async ({ data }): Promise<ContainerHostRegistrationDto | null> => {
+    const { requireSession, getResourceLinksService, getContainerHostsService } =
+      await import('@/server/admin');
+    await requireSession();
+    const resourceLinks = getResourceLinksService();
+    const links = await resourceLinks.listLinksFor('hosting_target', data.hostingTargetId);
+    const link = links.find(
+      (candidate) =>
+        candidate.provider === 'dockhand' &&
+        candidate.externalType === 'environment' &&
+        candidate.purpose === 'container_console'
+    );
+    const desiredAt = link ? metadataString(link.metadata, 'desiredAt') : null;
+    if (link === undefined || link.connectionId === null || desiredAt === null) return null;
+
+    const runs = await getContainerHostsService().listRuns(data.hostingTargetId);
+    const lastRun = runs.slice().sort((a, b) => +b.startedAt - +a.startedAt)[0] ?? null;
+
+    return {
+      externalResourceId: link.externalResourceId,
+      connectionId: link.connectionId,
+      connectionType: metadataString(link.metadata, 'connectionType') ?? 'socket',
+      host: metadataString(link.metadata, 'host'),
+      port: metadataNumber(link.metadata, 'port'),
+      protocol: metadataString(link.metadata, 'protocol'),
+      socketPath: metadataString(link.metadata, 'socketPath'),
+      tlsSkipVerify: metadataBoolean(link.metadata, 'tlsSkipVerify'),
+      labels: metadataStringArray(link.metadata, 'labels'),
+      publicIp: metadataString(link.metadata, 'publicIp'),
+      externalHostId: link.externalId,
+      desiredAt,
+      lastAppliedAt: metadataString(link.metadata, 'lastAppliedAt'),
+      lastRun:
+        lastRun === null
+          ? null
+          : {
+              id: lastRun.id,
+              status: lastRun.status,
+              mode: lastRun.mode,
+              trigger: lastRun.trigger,
+              startedAt: iso(lastRun.startedAt),
+              finishedAt: iso(lastRun.finishedAt)
+            }
+    };
+  });
+
+const declareContainerHostIntentInput = z.strictObject({
+  hostingTargetId: z.uuid(),
+  connectionId: z.uuid(),
+  /** The Dockhand instance origin — resolved client-side is not an option (needs the connection's own config), so the handler resolves it from the connection. */
+  connectionType: z.enum(['socket', 'direct', 'hawser-standard', 'hawser-edge']),
+  socketPath: z.string().trim().min(1).nullish(),
+  host: z.string().trim().min(1).nullish(),
+  port: z.number().int().min(1).max(65535).nullish(),
+  protocol: z.enum(['http', 'https']).nullish(),
+  tlsSkipVerify: z.boolean().nullish(),
+  labels: z.array(z.string().trim().min(1)).max(10).optional(),
+  publicIp: z.string().trim().min(1).nullish(),
+  // Write-only. Blank/absent leaves any already-stored value untouched.
+  tlsCa: z.string().trim().min(1).optional(),
+  tlsCert: z.string().trim().min(1).optional(),
+  tlsKey: z.string().trim().min(1).optional(),
+  hawserToken: z.string().trim().min(1).optional()
+});
+
+/**
+ * The client-facing POST body shape — deliberately NOT `@loxep/infrastructure`'s
+ * own `DeclareContainerHostIntentInput` (which requires `url` and
+ * `actorUserId`, both resolved server-side; see the handler below). Exported
+ * so `dockhand-registration-fields.tsx` can type its shared form value
+ * against exactly what this endpoint accepts.
+ */
+export type DeclareContainerHostIntentInput = z.infer<typeof declareContainerHostIntentInput>;
+
+/**
+ * Declares (or edits) one hosting target's Dockhand host-registration
+ * intent — the create dialog's collapsed section AND the fleet-detail
+ * registration panel's save action, since there is no separate hosting-
+ * target edit form (hb7 §2.1(b)). Resolves the connection's own base URL for
+ * the stored `url` (the design's own rule: never a guessed per-environment
+ * path, always the instance origin — see `fleet-health.ts`'s
+ * `projectDockhandResources` for the identical resolution).
+ */
+export const declareContainerHostIntent = createServerFn({ method: 'POST' })
+  .inputValidator(declareContainerHostIntentInput)
+  .handler(async ({ data }): Promise<{ externalResourceId: string; jobKey: string }> => {
+    const { requireAdmin, getAdminServices, getContainerHostsService, getFleetModule } =
+      await import('@/server/admin');
+    const actor = await requireAdmin();
+    const { connections } = getAdminServices();
+    const connection = await connections.getConnection(data.connectionId);
+    if (connection.provider !== 'dockhand') {
+      throw new Error(`connection ${data.connectionId} is not a Dockhand connection`);
+    }
+    const fleet = await getFleetModule();
+    const rawBaseUrl = fleet.readDockhandBaseUrl(connection.config);
+    if (rawBaseUrl === null) {
+      throw new Error(`Dockhand connection ${data.connectionId} has no configured base URL`);
+    }
+    const url = fleet.normalizeDockhandBaseUrl(rawBaseUrl);
+
+    const result = await getContainerHostsService().declareIntent({
+      hostingTargetId: data.hostingTargetId,
+      connectionId: data.connectionId,
+      url,
+      connectionType: data.connectionType,
+      socketPath: data.socketPath ?? undefined,
+      host: data.host ?? undefined,
+      port: data.port ?? undefined,
+      protocol: data.protocol ?? undefined,
+      tlsSkipVerify: data.tlsSkipVerify ?? undefined,
+      labels: data.labels,
+      publicIp: data.publicIp ?? undefined,
+      tlsCa: data.tlsCa,
+      tlsCert: data.tlsCert,
+      tlsKey: data.tlsKey,
+      hawserToken: data.hawserToken,
+      actorUserId: actor.user.id
+    });
+    return { externalResourceId: result.externalResourceId, jobKey: result.jobKey };
+  });
+
+const requestContainerHostReconcileInput = z.strictObject({
+  hostingTargetId: z.uuid(),
+  mode: z.enum(['apply', 'check'])
+});
+
+/**
+ * A manual Reconcile ("apply") or Check now ("check") from the registration
+ * panel: re-enqueues `infrastructure.reconcile-container-host`. Enqueues
+ * rather than running inline — the same asynchronous shape
+ * `requestDomainResync` uses; the run's result shows up on
+ * `/infrastructure/runs` once the worker processes it.
+ */
+export const requestContainerHostReconcile = createServerFn({ method: 'POST' })
+  .inputValidator(requestContainerHostReconcileInput)
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const [{ requireAdmin, getAdminServices, getInfrastructureEnqueue }, infrastructure] =
+      await Promise.all([import('@/server/admin'), import('@loxep/infrastructure')]);
+    await requireAdmin();
+    const { handle } = getAdminServices();
+    const enqueue = getInfrastructureEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        infrastructure.RECONCILE_CONTAINER_HOST_TASK,
+        { hostingTargetId: data.hostingTargetId, mode: data.mode, trigger: 'manual' },
+        {
+          jobKey: infrastructure.containerHostJobKey(
+            infrastructure.RECONCILE_CONTAINER_HOST_TASK,
+            data.hostingTargetId
+          )
+        }
+      );
+    });
+    return { enqueued: true };
   });
 
 const createHostingTargetInput = z.strictObject({
@@ -2052,7 +2464,10 @@ export const fetchReconcileRuns = createServerFn({ method: 'GET' }).handler(
       .filter((run) => run.subjectType === 'domain')
       .map((run) => run.subjectId);
     const tokenIds = runs.filter((run) => run.subjectType === 'token').map((run) => run.subjectId);
-    const [domains, tokens] = await Promise.all([
+    const hostingTargetIds = runs
+      .filter((run) => run.subjectType === 'hosting_target')
+      .map((run) => run.subjectId);
+    const [domains, tokens, hostingTargetRows] = await Promise.all([
       domainIds.length > 0
         ? handle.db.query.managedDomains.findMany({
             where: (table, { inArray }) => inArray(table.id, domainIds),
@@ -2064,10 +2479,17 @@ export const fetchReconcileRuns = createServerFn({ method: 'GET' }).handler(
             where: (table, { inArray }) => inArray(table.id, tokenIds),
             columns: { id: true, name: true }
           })
+        : [],
+      hostingTargetIds.length > 0
+        ? handle.db.query.hostingTargets.findMany({
+            where: (table, { inArray }) => inArray(table.id, hostingTargetIds),
+            columns: { id: true, name: true }
+          })
         : []
     ]);
     const domainNameById = new Map(domains.map((row) => [row.id, row.name]));
     const tokenNameById = new Map(tokens.map((row) => [row.id, row.name]));
+    const hostingTargetNameById = new Map(hostingTargetRows.map((row) => [row.id, row.name]));
 
     return runs.map((run) => ({
       id: run.id,
@@ -2079,7 +2501,9 @@ export const fetchReconcileRuns = createServerFn({ method: 'GET' }).handler(
           ? (domainNameById.get(run.subjectId) ?? null)
           : run.subjectType === 'token'
             ? (tokenNameById.get(run.subjectId) ?? null)
-            : null,
+            : run.subjectType === 'hosting_target'
+              ? (hostingTargetNameById.get(run.subjectId) ?? null)
+              : null,
       mode: run.mode,
       status: run.status,
       trigger: run.trigger,
@@ -2138,6 +2562,12 @@ export const fetchReconcileRun = createServerFn({ method: 'GET' })
         columns: { name: true }
       });
       subjectLabel = token?.name ?? null;
+    } else if (run.subjectType === 'hosting_target') {
+      const hostingTarget = await handle.db.query.hostingTargets.findFirst({
+        where: (table, { eq }) => eq(table.id, run.subjectId),
+        columns: { name: true }
+      });
+      subjectLabel = hostingTarget?.name ?? null;
     }
 
     return {
@@ -2207,6 +2637,28 @@ export const retryReconcileRun = createServerFn({ method: 'POST' })
     }
     if (run.subjectType === 'token') {
       await getDnsProviderTokensService().syncPolicy(run.subjectId, { trigger: 'manual' });
+      return { retried: true };
+    }
+    if (run.subjectType === 'hosting_target') {
+      // Check mode, matching the `domain` branch above — a retry from the
+      // generic runs list is a diagnostic re-check, never an unattended
+      // apply; the panel's own "Reconcile" button is the explicit apply
+      // action (hb7 §2.6).
+      const infrastructure = await import('@loxep/infrastructure');
+      const enqueue = getInfrastructureEnqueue();
+      await handle.db.transaction(async (tx) => {
+        await enqueue(
+          tx,
+          infrastructure.RECONCILE_CONTAINER_HOST_TASK,
+          { hostingTargetId: run.subjectId, mode: 'check', trigger: 'manual' },
+          {
+            jobKey: infrastructure.containerHostJobKey(
+              infrastructure.RECONCILE_CONTAINER_HOST_TASK,
+              run.subjectId
+            )
+          }
+        );
+      });
       return { retried: true };
     }
     throw new Error(`No retry action exists yet for subject type "${run.subjectType}"`);

@@ -14,7 +14,12 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
-import { GATUS_PUSH_SECRET_KEY, gatusPushSetting, integrationsEnabledSetting } from '@loxep/domain';
+import {
+  authProvisioningSetting,
+  GATUS_PUSH_SECRET_KEY,
+  gatusPushSetting,
+  integrationsEnabledSetting
+} from '@loxep/domain';
 import type { ConnectionStatus } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { NotificationEventClass } from '@loxep/db/schema';
@@ -1204,6 +1209,125 @@ export const setUserRole = createServerFn({ method: 'POST' })
       headers: getRequestHeaders()
     });
     return { userId: data.userId };
+  });
+
+/**
+ * Account provisioning policy (ADR-0024). Non-secret by construction — this is
+ * the same registered setting `/settings/application` can already show as raw
+ * JSON; this DTO exists so the surface can offer switches and copy instead.
+ */
+export interface AuthProvisioningDto {
+  newUsers: { magicLink: 'open' | 'closed'; oidc: 'open' | 'closed' };
+  magicLinkEmailDomains: string[];
+  oidcAdminClaim: {
+    claim: string | null;
+    adminValues: string[];
+    applyOn: 'create' | 'every_sign_in';
+  };
+  /**
+   * False → the installation has no administrator yet, so `@loxep/auth`
+   * force-opens provisioning regardless of the stored policy until one exists.
+   * The surface must say so rather than showing a closed policy that is not in
+   * force.
+   */
+  installationHasAdmin: boolean;
+  /** The signed-in admin's own email domain, for the allowlist hint. */
+  currentUserEmailDomain: string | null;
+}
+
+export const fetchAuthProvisioning = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<AuthProvisioningDto> => {
+    const [{ requireAdmin, getAdminServices }, { installationHasAdmin, emailDomain }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/auth')]);
+    const session = await requireAdmin();
+    const { settings, handle } = getAdminServices();
+    const [value, hasAdmin] = await Promise.all([
+      settings.get(authProvisioningSetting),
+      installationHasAdmin(handle)
+    ]);
+    return {
+      ...value,
+      installationHasAdmin: hasAdmin,
+      currentUserEmailDomain: emailDomain(session.user.email)
+    };
+  }
+);
+
+const provisioningStance = z.enum(['open', 'closed']);
+
+/** Bare domain, as typed: `example.com`, never `@example.com` or a URL. */
+const emailDomainSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(253)
+  .regex(
+    /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i,
+    'Enter a bare domain such as example.com'
+  );
+
+const updateAuthProvisioningInput = z.strictObject({
+  newUsers: z.strictObject({ magicLink: provisioningStance, oidc: provisioningStance }),
+  magicLinkEmailDomains: z.array(emailDomainSchema).max(64),
+  oidcAdminClaim: z.strictObject({
+    claim: z.string().trim().min(1).max(200).nullable(),
+    adminValues: z.array(z.string().trim().min(1).max(200)).max(64),
+    applyOn: z.enum(['create', 'every_sign_in'])
+  })
+});
+
+/**
+ * Admin write for the provisioning policy. Goes through the ordinary
+ * registered-setting path, so `SettingsService.set` validates against the
+ * domain schema and appends the redacted `settings.update` audit event.
+ */
+export const updateAuthProvisioning = createServerFn({ method: 'POST' })
+  .inputValidator(updateAuthProvisioningInput)
+  .handler(async ({ data }): Promise<AuthProvisioningDto> => {
+    const [{ requireAdmin, getAdminServices }, { installationHasAdmin, emailDomain }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/auth')]);
+    const session = await requireAdmin();
+    const { settings, handle } = getAdminServices();
+    const value = await settings.set(authProvisioningSetting, data, {
+      actorUserId: session.user.id
+    });
+    return {
+      ...value,
+      installationHasAdmin: await installationHasAdmin(handle),
+      currentUserEmailDomain: emailDomain(session.user.email)
+    };
+  });
+
+/**
+ * Create a user directly — the escape hatch a closed installation uses to add
+ * people (ADR-0024 §4). There is deliberately no invite system: this writes an
+ * ordinary user row through Better Auth's admin plugin, and the person then
+ * signs in through whichever method they normally would. Because they now
+ * exist, both provisioning enforcement layers pass them through untouched.
+ *
+ * No password is sent: email+password is disabled (ADR-0007), and the admin
+ * plugin's `password` field is optional for exactly this case.
+ */
+export const createUserAsAdmin = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      email: z.email().max(320),
+      name: z.string().trim().min(1).max(200),
+      role: z.enum(['admin', 'member'])
+    })
+  )
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const [{ requireAdmin }, { getAuth }, { getRequestHeaders }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/auth'),
+      import('@tanstack/react-start/server')
+    ]);
+    await requireAdmin();
+    const result = await getAuth().api.createUser({
+      body: { email: data.email, name: data.name, role: data.role },
+      headers: getRequestHeaders()
+    });
+    return { id: result.user.id };
   });
 
 export interface FirstAdminBootstrapDto {

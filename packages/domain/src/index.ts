@@ -48,6 +48,7 @@ export type {
 // process that reaches the registry through `@loxep/domain` therefore sees
 // the same keys (see the module doc for why they live in this package).
 export {
+  authProvisioningSetting,
   caaPolicySetting,
   cloudflareRateBudgetSetting,
   ebayRateBudgetSetting,
@@ -61,6 +62,7 @@ export {
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   registeredApplicationSettings,
+  tailscaleIgnoredDevicesSetting,
   wooRateBudgetSetting,
 } from "./settings-defaults.ts";
 
@@ -182,6 +184,7 @@ export {
   createTransactionalNotificationEnqueue,
   DOCUMENT_EVENT_TYPES,
   HEALTH_EVENT_TYPES,
+  INFRASTRUCTURE_EVENT_TYPES,
   MARKET_EVENT_TYPES,
   NOTIFIABLE_HEALTH_SUBJECT_TYPES,
   NOTIFICATION_DELIVER_TASK,

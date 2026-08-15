@@ -9,6 +9,7 @@ import type { DbHandle } from "@loxep/db";
 import {
   SettingNotRegisteredError,
   SettingValidationError,
+  authProvisioningSetting,
   createSettingsService,
   defineSetting,
   findRegisteredSetting,
@@ -614,5 +615,82 @@ describe("integrations.enabled catalog-visibility setting (loxep-dgg)", () => {
     } finally {
       await dropScratchDb(dbName);
     }
+  });
+});
+
+describe("auth.provisioning account provisioning policy (ADR-0024, loxep-x2s)", () => {
+  it("is registered under the documented key", () => {
+    expect(authProvisioningSetting.key).toBe("auth.provisioning");
+    expect(registeredApplicationSettings).toContain(authProvisioningSetting);
+  });
+
+  // PROVISIONAL default (owner-review, loxep-x2s): closed for BOTH methods,
+  // with @loxep/auth force-opening provisioning while the installation has no
+  // admin user at all so a new deployment can still bootstrap itself. See this
+  // setting's own doc comment and ADR-0024 for the asymmetry argument and for
+  // the open sub-question of defaulting `oidc` to 'open'.
+  it("ships closed for both methods, with no allowlist and no claim mapping", () => {
+    expect(authProvisioningSetting.defaultValue).toEqual({
+      newUsers: { magicLink: "closed", oidc: "closed" },
+      magicLinkEmailDomains: [],
+      oidcAdminClaim: { claim: null, adminValues: [], applyOn: "create" },
+    });
+    // The default must itself validate — it is what an unset installation runs.
+    expect(
+      authProvisioningSetting.schema.safeParse(authProvisioningSetting.defaultValue)
+        .success,
+    ).toBe(true);
+  });
+
+  it("accepts a fully configured policy", () => {
+    expect(
+      authProvisioningSetting.schema.safeParse({
+        newUsers: { magicLink: "open", oidc: "closed" },
+        magicLinkEmailDomains: ["example.com"],
+        oidcAdminClaim: {
+          claim: "realm_access.roles",
+          adminValues: ["loxep-admins"],
+          applyOn: "every_sign_in",
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an unknown stance, an unknown apply moment, and extra keys", () => {
+    const valid = authProvisioningSetting.defaultValue;
+    expect(
+      authProvisioningSetting.schema.safeParse({
+        ...valid,
+        newUsers: { magicLink: "invite-only", oidc: "closed" },
+      }).success,
+    ).toBe(false);
+    expect(
+      authProvisioningSetting.schema.safeParse({
+        ...valid,
+        oidcAdminClaim: { claim: "groups", adminValues: [], applyOn: "hourly" },
+      }).success,
+    ).toBe(false);
+    // Deliberately no third "mode" flag: per-method stances are the only
+    // representation (ADR-0024 decision 1).
+    expect(
+      authProvisioningSetting.schema.safeParse({ ...valid, mode: "closed" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects blank domains and blank admin values", () => {
+    const valid = authProvisioningSetting.defaultValue;
+    expect(
+      authProvisioningSetting.schema.safeParse({
+        ...valid,
+        magicLinkEmailDomains: [""],
+      }).success,
+    ).toBe(false);
+    expect(
+      authProvisioningSetting.schema.safeParse({
+        ...valid,
+        oidcAdminClaim: { claim: "", adminValues: [], applyOn: "create" },
+      }).success,
+    ).toBe(false);
   });
 });

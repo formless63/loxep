@@ -339,6 +339,17 @@ const HEALTH_SUBJECT_LABELS: Record<string, string> = {
 };
 
 /**
+ * Mirrors `apps/web`'s `DRIFT_KIND_LABELS` (`dns-drift-panel.tsx`'s own copy)
+ * without importing it — this package cannot depend on `apps/web`, and the
+ * three values are `dns_drift_findings.kind`'s fixed union, unlikely to grow.
+ */
+const DRIFT_KIND_MESSAGE_LABELS: Record<string, string> = {
+  missing: "missing at the provider",
+  modified: "modified from what Loxep intends",
+  unexpected: "unexpected at the provider",
+};
+
+/**
  * Title/body/tags for any recorded notification event, market included.
  *
  * Pure over `(event_class, event_type, payload)` — no database, no I/O — so
@@ -423,6 +434,54 @@ export function renderNotificationEventMessage(
           `${previous} → ${status}`,
         tags: [event.eventType, recovered ? "white_check_mark" : "warning"],
         priority: recovered ? "default" : "high",
+      };
+    }
+    case "infrastructure": {
+      // Two payload shapes share this class (ADR-0023's `infrastructure`
+      // event types, wired by loxep-oii's own deferred item 1): DNS drift
+      // (`@loxep/infrastructure`'s `drift.ts`) and reconcile-run failures
+      // (`sync.ts`'s orchestrator). Discriminate on `event.eventType` rather
+      // than probing payload shape.
+      if (event.eventType === "reconcile_run_failed") {
+        const domainName = formatUnknown(payload["domainName"], "a managed domain");
+        const mode = formatUnknown(payload["mode"], "");
+        const modePart = mode.length > 0 ? ` (${mode} run)` : "";
+        const errorSummary = formatUnknown(payload["errorSummary"], "no error detail recorded");
+        return {
+          title: `Reconcile run failed: ${domainName}`,
+          body: `${domainName}${modePart}: ${errorSummary}`,
+          tags: ["reconcile_run_failed", "warning"],
+          priority: "high",
+        };
+      }
+
+      const recordName = formatUnknown(payload["recordName"], "a DNS record");
+      const recordType = formatUnknown(payload["recordType"], "");
+      const typePart = recordType.length > 0 ? `${recordType} ` : "";
+      const kind = formatUnknown(payload["kind"], "");
+      const kindLabel = DRIFT_KIND_MESSAGE_LABELS[kind] ?? (kind.length > 0 ? kind : "drifted");
+
+      if (event.eventType === "drift_disappeared") {
+        return {
+          title: `DNS drift resolved: ${recordName}`,
+          body: `${typePart}${recordName} no longer drifts (was ${kindLabel}).`,
+          tags: ["drift_disappeared", "white_check_mark"],
+        };
+      }
+
+      const desired = formatUnknown(payload["desiredContent"], "");
+      const observed = formatUnknown(payload["observedContent"], "");
+      const detailPart =
+        desired.length > 0 && observed.length > 0
+          ? ` (desired ${desired}, observed ${observed})`
+          : observed.length > 0
+            ? ` (observed ${observed})`
+            : "";
+      return {
+        title: `DNS drift found: ${recordName}`,
+        body: `${typePart}${recordName} is ${kindLabel}${detailPart}.`,
+        tags: ["drift_found", "warning"],
+        priority: "high",
       };
     }
     default: {

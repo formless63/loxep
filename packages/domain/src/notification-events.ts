@@ -121,6 +121,31 @@ export const PURCHASE_EVENT_TYPES = ["purchase_ingested"] as const;
 export const DOCUMENT_EVENT_TYPES = ["document_confirmed"] as const;
 export const SALE_EVENT_TYPES = ["manual_sale_recorded"] as const;
 
+/**
+ * The `infrastructure` class's event types (loxep-oii's own deferred item 1,
+ * loxep-50t's notes): DNS drift findings, and reconcile-run failures.
+ *
+ * `drift_found`/`drift_disappeared` mirror `@loxep/infrastructure`'s own
+ * `dns_drift_findings.resolution = 'disappeared'` vocabulary exactly (the
+ * bead's own notes name the pair "DNS drift found/disappeared") —
+ * `subject_type = 'managed_domain'` (the finding's own identity — kind,
+ * record type/name, desired/observed content — travels in `payload`, the
+ * same way a market event's delta lives in payload rather than in a new
+ * subject table). `reconcile_run_failed` is `subject_type = 'reconcile_run'`,
+ * the row that already IS the failure's own identity.
+ *
+ * Deliberately NOT emitted for a `resolution = 'applied'`/`'dismissed'`
+ * finding: both are the direct, already-visible result of an operator or
+ * reconciler ACTION (a click, an apply run's own step log) rather than a
+ * passively-DETECTED fact — the same distinction that keeps `dismiss`/
+ * `markApplied` outside this event's write site.
+ */
+export const INFRASTRUCTURE_EVENT_TYPES = [
+  "drift_found",
+  "drift_disappeared",
+  "reconcile_run_failed",
+] as const;
+
 /** One registered event class: what it is about, and what it may say. */
 export interface NotificationEventClassDefinition {
   readonly eventClass: NotificationEventClass;
@@ -196,10 +221,13 @@ export const notificationEventClasses: Record<
     eventClass: "infrastructure",
     label: "Infrastructure",
     description:
-      "DNS drift and reconciler outcomes. Seeded in the schema CHECK ahead of the phase that emits it; nothing writes this class yet.",
+      "DNS drift findings (found / disappeared) and reconcile-run " +
+      "failures. Emitted from @loxep/infrastructure's drift-detection " +
+      "write site (drift.ts's recordRun) and the reconcile orchestrator " +
+      "(sync.ts's run) respectively.",
     subjectTypes: ["managed_domain", "reconcile_run", "hosting_target"],
-    eventTypes: [],
-    wired: false,
+    eventTypes: INFRASTRUCTURE_EVENT_TYPES,
+    wired: true,
   },
 };
 

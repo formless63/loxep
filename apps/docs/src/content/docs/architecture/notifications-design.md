@@ -93,8 +93,9 @@ index (subject_type, subject_id, occurred_at desc)  -- "what happened to this th
 ### Closed sets, seeded ahead
 
 `event_class` (`CHECK`): `market`, `purchase`, `document`, `sale`, `health`,
-`infrastructure`. The first five are wired; `infrastructure` is seeded for DNS
-drift and reconciler failures so that phase needs no migration.
+`infrastructure`. All six are wired as of loxep-50t's closeout of loxep-oii's
+deferred item 1 — `infrastructure` was seeded ahead for exactly this so the
+phase needed no migration, and none was needed when it landed.
 
 `subject_type` (`CHECK`): `market_event`, `acquisition`, `document`, `order`,
 `connection`, `notification_endpoint`, `storage_backend`, `external_resource`,
@@ -112,12 +113,14 @@ on stay database-enforced.
 
 ```ts
 notificationEventClasses = {
-  market:   { subjectType: 'market_event', eventTypes: MARKET_EVENT_TYPES, ... },
-  purchase: { subjectType: 'acquisition',  eventTypes: ['purchase_ingested'], ... },
-  document: { subjectType: 'document',     eventTypes: ['document_confirmed'], ... },
-  sale:     { subjectType: 'order',        eventTypes: ['manual_sale_recorded'], ... },
-  health:   { subjectTypes: NOTIFIABLE_HEALTH_SUBJECT_TYPES,
-              eventTypes: ['health_degraded', 'health_recovered'], ... },
+  market:         { subjectType: 'market_event', eventTypes: MARKET_EVENT_TYPES, ... },
+  purchase:       { subjectType: 'acquisition',  eventTypes: ['purchase_ingested'], ... },
+  document:       { subjectType: 'document',     eventTypes: ['document_confirmed'], ... },
+  sale:           { subjectType: 'order',        eventTypes: ['manual_sale_recorded'], ... },
+  health:         { subjectTypes: NOTIFIABLE_HEALTH_SUBJECT_TYPES,
+                    eventTypes: ['health_degraded', 'health_recovered'], ... },
+  infrastructure: { subjectTypes: ['managed_domain', 'reconcile_run', 'hosting_target'],
+                    eventTypes: ['drift_found', 'drift_disappeared', 'reconcile_run_failed'], ... },
 }
 ```
 
@@ -229,6 +232,56 @@ does nothing else.
 | `purchase` | `ingestEbayPurchase` after a `created` draft acquisition (`@loxep/inventory`) | no — purchase sync has no transaction by design |
 | `sale` | `recordManualSale` inside its transaction (`@loxep/commerce`), and the `apps/web` re-declaration that is the live path today | yes (package); yes, via savepoint (web) |
 | `document` | `confirmLinesAsExpense` after the counter recompute flips a document to `confirmed` (`apps/web`) | yes, via savepoint |
+| `infrastructure` | `drift.ts`'s `recordRun` (DNS drift) and `sync.ts`'s `finish` (reconcile-run failures), both `@loxep/infrastructure` | yes, via savepoint (drift — inside `recordRun`'s own transaction); no (reconcile-run failure — `sync.ts`'s orchestrator has no ambient transaction to join, matching every other autocommit `step`/`finish` write there) |
+
+### Infrastructure: DNS drift and reconcile-run failures (loxep-50t closing loxep-oii's deferred item 1)
+
+Two event types, deliberately narrow, both emitted from `@loxep/infrastructure`
+(never from `@loxep/app`, which only composes the poll cadence around it):
+
+- **`drift_found`** — `drift.ts`'s `recordRun` emits one event per finding that
+  takes the INSERT branch (a genuinely new `dns_drift_findings` row), never for
+  the UPDATE branch (the same finding re-detected by a later sweep) — the
+  distinction an hourly sweep needs to stay silent on a repeat detection.
+  `subject_type = 'managed_domain'`, `subject_id = ` the domain: there is no
+  `dns_drift_finding` entry in the `subject_type` `CHECK` (finding rows are
+  numerous and short-lived; the domain is the stable, meaningful "what
+  happened to this" answer), so the finding's own specifics — `findingId`,
+  `kind`, `recordType`, `recordName`, `desiredContent`, `observedContent` —
+  travel in `payload` instead. `deduplicationKey: dns_drift:<findingId>:found`.
+  Because a genuinely new occurrence always gets a fresh `dns_drift_findings.id`
+  (the unresolved partial unique index routes a re-observation to the UPDATE
+  branch instead), the finding row's own id is already "per finding identity,
+  not per poll" with no extra bookkeeping.
+- **`drift_disappeared`** — one event per finding `recordRun` resolves as
+  `resolution = 'disappeared'` (the condition stopped holding on its own,
+  never a delete). Same subject/payload shape,
+  `deduplicationKey: dns_drift:<findingId>:disappeared`. Deliberately **not**
+  emitted for `resolution = 'applied'` (`markApplied`, called from `sync.ts`'s
+  apply-mode branch) or `'dismissed'` (`dismiss`, an operator action from
+  `apps/web`) — both are the direct, already-visible result of an action (an
+  apply run's own step log, a click that shows its own toast) rather than a
+  passively DETECTED fact, the same distinction that keeps them outside this
+  write site.
+- **`reconcile_run_failed`** — `sync.ts`'s `finish` helper emits one event
+  whenever a reconcile run's terminal status is `failed` (both the
+  provider-read failure branch and the generic catch-all funnel through this
+  one function). `subject_type = 'reconcile_run'`, `subject_id = ` the run row
+  — the row already is the failure's own identity, so the payload only adds
+  `domainId`, `domainName`, the run's own `kind`/`mode`/`trigger`, and
+  `errorSummary`. `deduplicationKey: reconcile_run:<runId>:failed`; a run row
+  is generated fresh per attempt and `finish` runs at most once per terminal
+  status, so this is naturally single-fire per failed run.
+
+Both write sites default their `notificationEnqueue` seam to
+`createTransactionalNotificationEnqueue()` rather than requiring every
+composition root to pass one explicitly — `createDriftService` and
+`createRecordSyncService` (which builds a `DriftService` internally) both take
+an optional override for tests, but every existing production call site
+(`@loxep/infrastructure`'s own `sync.ts`, `apps/web`'s `getDriftService`) gets
+real routing+delivery for free with no change needed at either composition
+root, which is what let this ship without touching `@loxep/app`'s poll
+executor.
 
 Emission inside a caller's transaction goes through a **savepoint**
 (`tx.transaction(...)`) with its own try/catch, because PostgreSQL aborts the

@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -9,16 +10,24 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog';
+import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
 import { FieldGroup } from '@/components/ui/field';
+import { Switch } from '@/components/ui/switch';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { submitFormEvent } from '@/features/settings/lib/dialog-form';
 import { CONTROL_SURFACE_OPTIONS } from '@/features/infrastructure/constants';
 import {
+  dockhandConnectionOptionsQuery,
   hostingTargetOptionsQuery,
   hostingTargetsQuery
 } from '@/features/infrastructure/api/queries';
-import { createHostingTarget } from '@/server/infrastructure-functions';
+import { createHostingTarget, declareContainerHostIntent } from '@/server/infrastructure-functions';
+import DockhandRegistrationFields, {
+  type DockhandRegistrationValue,
+  emptyDockhandRegistrationValue,
+  dockhandRegistrationToIntentInput
+} from '@/features/infrastructure/components/dockhand-registration-fields';
 
 const NO_FRONTING_NODE = '__none__';
 
@@ -62,13 +71,48 @@ function validateFrontingShape(values: z.infer<typeof targetFormSchema>): string
 
 export default function NewHostingTargetDialog({
   open,
-  onOpenChange
+  onOpenChange,
+  initialName,
+  onCreated
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Prefills the `name` field only (loxep-50t §4 item 2 — "declare as
+   * hosting target"). Never prefill `addressV4`/`addressV6` from a
+   * discovered candidate: those feed the DNS materializer, and a tailnet
+   * (CGNAT) address published as an A/AAAA record is an outage that
+   * presents as a propagation problem (§3.2). This dialog's address fields
+   * stay operator-typed-only regardless of what opened it.
+   */
+  initialName?: string;
+  /**
+   * Called after a successful create, before the dialog closes — the
+   * fleet candidates panel's "declare" action uses this to attach the
+   * originating device in the same operator-facing action (not the same
+   * database transaction: `hostingTargets.create` and
+   * `resourceLinks.attachLink` each own their own, and composing a shared
+   * one is out of this change's scope). If this rejects, the target still
+   * exists and the device remains linkable via the panel's "Link" action —
+   * a recoverable failure, not a duplicate or a lost write, because
+   * `attachLink` is idempotent.
+   */
+  onCreated?: (target: { id: string; name: string }) => void | Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const { data: targets } = useQuery(hostingTargetOptionsQuery);
+  const { data: dockhandConnections } = useQuery(dockhandConnectionOptionsQuery);
+
+  // loxep-hb7 Milestone C: the create dialog's "also register this host in
+  // Dockhand" section. Collapsed and OFF by default, and rendered only when
+  // at least one Dockhand connection exists — never a disabled control (hb7
+  // §2.1(a)). Plain state, not a form field: this is a genuinely separate
+  // write (`declareContainerHostIntent`, its own transaction) fired from
+  // `onSuccess` below, never part of `createHostingTarget`'s own payload.
+  const [registerInDockhand, setRegisterInDockhand] = React.useState(false);
+  const [dockhandValue, setDockhandValue] = React.useState<DockhandRegistrationValue>(
+    emptyDockhandRegistrationValue
+  );
 
   const mutation = useMutation({
     mutationFn: (values: z.infer<typeof targetFormSchema>) =>
@@ -84,9 +128,23 @@ export default function NewHostingTargetDialog({
             values.frontedByTargetId === NO_FRONTING_NODE ? undefined : values.frontedByTargetId
         }
       }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       toast.success('Hosting target created');
+      if (registerInDockhand && dockhandValue.connectionId !== '') {
+        try {
+          await declareContainerHostIntent({
+            data: dockhandRegistrationToIntentInput(result.id, dockhandValue)
+          });
+          toast.success('Dockhand registration queued');
+        } catch (error) {
+          // The target still exists — the fleet-detail registration panel
+          // is the recoverable retry path (hb7 §2.1(b)), so this is reported
+          // rather than rolled back.
+          toastError(error, 'Hosting target created, but Dockhand registration failed');
+        }
+      }
       await queryClient.invalidateQueries({ queryKey: hostingTargetsQuery.queryKey });
+      await onCreated?.(result);
       onOpenChange(false);
     },
     onError: (error) => toastError(error, 'Failed to create hosting target')
@@ -94,7 +152,7 @@ export default function NewHostingTargetDialog({
 
   const form = useAppForm({
     defaultValues: {
-      name: '',
+      name: initialName ?? '',
       controlSurface: 'direct_reverse_proxy',
       provider: '',
       region: '',
@@ -183,6 +241,39 @@ export default function NewHostingTargetDialog({
               )}
             />
           </FieldGroup>
+
+          {(dockhandConnections ?? []).length > 0 && (
+            <Collapsible open={registerInDockhand} onOpenChange={setRegisterInDockhand}>
+              <div className='flex items-center justify-between gap-2 rounded-md border px-3 py-2'>
+                <div>
+                  <p className='text-sm font-medium'>Also register this host in Dockhand</p>
+                  <p className='text-muted-foreground text-sm'>
+                    Writes the desired host record; a worker applies it after creation.
+                  </p>
+                </div>
+                <Switch
+                  checked={registerInDockhand}
+                  onCheckedChange={(next) => {
+                    setRegisterInDockhand(next);
+                    if (
+                      next &&
+                      dockhandValue.connectionId === '' &&
+                      dockhandConnections?.length === 1
+                    ) {
+                      setDockhandValue((current) => ({
+                        ...current,
+                        connectionId: dockhandConnections[0]?.id ?? ''
+                      }));
+                    }
+                  }}
+                />
+              </div>
+              <CollapsibleContent className='pt-3'>
+                <DockhandRegistrationFields value={dockhandValue} onChange={setDockhandValue} />
+              </CollapsibleContent>
+            </Collapsible>
+          )}
+
           <div className='flex justify-end gap-2'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
