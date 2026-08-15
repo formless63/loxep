@@ -123,3 +123,32 @@ const RECEIPT_PURPOSE_LABELS = {
 export function receiptPurposeLabel(purpose: string): string {
   return RECEIPT_PURPOSE_LABELS[purpose as ExpenseMediaPurpose] ?? purpose;
 }
+
+/**
+ * Mirrors `EXPENSE_LINE_KINDS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`)
+ * — closed, CHECKed. `expense_lines`, not `expense_allocations`: what was
+ * bought, not where the money is charged (loxep-cd3.3, M3).
+ */
+export type ExpenseLineKind = 'item' | 'shipping' | 'tax' | 'fee' | 'discount' | 'other';
+
+const EXPENSE_LINE_KIND_LABELS = {
+  item: 'Item',
+  shipping: 'Shipping',
+  tax: 'Tax',
+  fee: 'Fee',
+  discount: 'Discount',
+  other: 'Other'
+} satisfies Record<ExpenseLineKind, string>;
+
+export const EXPENSE_LINE_KIND_VALUES = Object.keys(
+  EXPENSE_LINE_KIND_LABELS
+) as readonly ExpenseLineKind[];
+
+export function expenseLineKindLabel(kind: string): string {
+  return EXPENSE_LINE_KIND_LABELS[kind as ExpenseLineKind] ?? kind;
+}
+
+export const expenseLineKindOptions = EXPENSE_LINE_KIND_VALUES.map((value) => ({
+  value,
+  label: expenseLineKindLabel(value)
+}));

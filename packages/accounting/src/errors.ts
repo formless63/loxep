@@ -47,6 +47,18 @@ export class ExpenseNotEditableError extends AccountingError {}
  */
 export class ExpenseOverAllocatedError extends AccountingError {}
 
+/**
+ * A set of `expense_lines` whose absolute values sum to MORE than the
+ * expense's own amount.
+ *
+ * `sum(|line_amount|) <= |expenses.amount|` (expense-entry-design.md
+ * section 4) is a SERVICE rule, never a `CHECK` — a draft expense is
+ * legitimately half-transcribed, so under-transcription is allowed and only
+ * exceeding the total is refused. The mirror of {@link ExpenseOverAllocatedError}
+ * for lines instead of allocations.
+ */
+export class ExpenseLinesOverTranscribedError extends AccountingError {}
+
 /* ------------------------------------------------------------ the ledger */
 
 /**

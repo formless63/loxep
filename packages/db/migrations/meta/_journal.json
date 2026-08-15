@@ -176,6 +176,13 @@
       "when": 1786792520134,
       "tag": "0024_expense_payee_counterparty",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786796478301,
+      "tag": "0025_expense_lines",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,9 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { FieldGroup } from '@/components/ui/field';
+import { Field, FieldError, FieldGroup } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { createExpenseWithEvidence } from '@/server/expense-functions';
@@ -26,6 +28,26 @@ const DEFAULT_CURRENCY = 'USD';
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/**
+ * One row of the optional line-items editor (loxep-cd3.3, M3 —
+ * `expense-entry-design.md` section 4). `lineAmount` is the only required
+ * field, matching `expense_lines`' own schema — `quantity`/`unitAmount` are
+ * informational and never derive it. Composed here, in the SAME form as the
+ * expense itself, because the expense does not exist yet at compose time —
+ * the part-out dialog's `children` array (`@/features/inventory/components/
+ * part-out-dialog.tsx`) is the precedent for an in-form array of objects
+ * over a parallel `useState` list.
+ */
+const lineItemSchema = z.object({
+  description: z.string().trim(),
+  quantity: z.string().trim(),
+  unitAmount: z.string().trim(),
+  lineAmount: z
+    .string()
+    .trim()
+    .regex(/^-?\d+(\.\d{1,6})?$/, 'Enter an amount, e.g. 12.50')
+});
 
 const newExpenseSchema = z.object({
   payeeName: z.string(),
@@ -50,7 +72,8 @@ const newExpenseSchema = z.object({
     .trim()
     .regex(/^[A-Za-z]{3}$/, 'A 3-letter currency code, e.g. USD'),
   economicEntityId: z.string(),
-  notes: z.string()
+  notes: z.string(),
+  lines: z.array(lineItemSchema)
 });
 
 type NewExpenseFormValues = z.infer<typeof newExpenseSchema>;
@@ -129,14 +152,24 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
             values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE ? null : values.economicEntityId,
           status: input.status,
           notes: values.notes.trim() === '' ? null : values.notes.trim(),
-          mediaObjectIds
+          mediaObjectIds,
+          lines: values.lines.map((line) => ({
+            description: line.description.trim() === '' ? null : line.description.trim(),
+            quantity: line.quantity.trim() === '' ? null : line.quantity.trim(),
+            unitAmount: line.unitAmount.trim() === '' ? null : line.unitAmount.trim(),
+            lineAmount: line.lineAmount.trim()
+          }))
         }
       });
     },
     onSuccess: (result) => {
+      const suffixes = [
+        result.attachedCount > 0 ? `${result.attachedCount} attachment(s)` : null,
+        result.lineCount > 0 ? `${result.lineCount} line(s)` : null
+      ].filter((suffix): suffix is string => suffix !== null);
       toast.success(
-        result.attachedCount > 0
-          ? `Expense ${result.referenceCode} recorded with ${result.attachedCount} attachment(s)`
+        suffixes.length > 0
+          ? `Expense ${result.referenceCode} recorded with ${suffixes.join(' and ')}`
           : `Expense ${result.referenceCode} recorded`
       );
       // Prefix-matches every finance query key (list, detail, reports) — same
@@ -164,7 +197,8 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
       paymentMethod: (prefill?.paymentMethod as NewExpenseFormValues['paymentMethod']) ?? 'card',
       currency: prefill?.currency ?? DEFAULT_CURRENCY,
       economicEntityId: prefill?.economicEntityId ?? UNATTRIBUTED_ENTITY_VALUE,
-      notes: ''
+      notes: '',
+      lines: []
     } as NewExpenseFormValues,
     onSubmitMeta: { status: 'recorded' as 'draft' | 'recorded' },
     validators: { onSubmit: newExpenseSchema },
@@ -298,6 +332,121 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
                 name='notes'
                 children={(field) => <field.TextareaField label='Notes' />}
               />
+              <div className='flex flex-col gap-3 rounded-md border p-4'>
+                <div>
+                  <p className='text-sm font-medium'>Line items</p>
+                  <p className='text-muted-foreground text-xs'>
+                    Optional — what was on the receipt, not where the money is charged. A
+                    headline-only expense (no lines) stays valid.
+                  </p>
+                </div>
+                <form.Field
+                  name='lines'
+                  mode='array'
+                  children={(field) => (
+                    <div className='flex flex-col gap-3'>
+                      {field.state.value.map((_, index) => (
+                        <div
+                          key={index}
+                          className='grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_5rem_6rem_6rem_auto]'
+                        >
+                          <form.Field
+                            name={`lines[${index}].description`}
+                            children={(subField) => (
+                              <Field>
+                                <Input
+                                  placeholder='e.g. Shelving unit'
+                                  value={subField.state.value}
+                                  onChange={(event) => subField.handleChange(event.target.value)}
+                                  onBlur={subField.handleBlur}
+                                  aria-label={`Line ${index + 1} description`}
+                                />
+                              </Field>
+                            )}
+                          />
+                          <form.Field
+                            name={`lines[${index}].quantity`}
+                            children={(subField) => (
+                              <Field>
+                                <Input
+                                  inputMode='decimal'
+                                  placeholder='qty'
+                                  value={subField.state.value}
+                                  onChange={(event) => subField.handleChange(event.target.value)}
+                                  onBlur={subField.handleBlur}
+                                  aria-label={`Line ${index + 1} quantity`}
+                                />
+                              </Field>
+                            )}
+                          />
+                          <form.Field
+                            name={`lines[${index}].unitAmount`}
+                            children={(subField) => (
+                              <Field>
+                                <Input
+                                  inputMode='decimal'
+                                  placeholder='unit'
+                                  value={subField.state.value}
+                                  onChange={(event) => subField.handleChange(event.target.value)}
+                                  onBlur={subField.handleBlur}
+                                  aria-label={`Line ${index + 1} unit amount`}
+                                />
+                              </Field>
+                            )}
+                          />
+                          <form.Field
+                            name={`lines[${index}].lineAmount`}
+                            children={(subField) => {
+                              const invalid =
+                                subField.state.meta.isTouched && !subField.state.meta.isValid;
+                              return (
+                                <Field data-invalid={invalid}>
+                                  <Input
+                                    inputMode='decimal'
+                                    placeholder='0.00'
+                                    value={subField.state.value}
+                                    onChange={(event) => subField.handleChange(event.target.value)}
+                                    onBlur={subField.handleBlur}
+                                    aria-label={`Line ${index + 1} amount`}
+                                    aria-invalid={invalid}
+                                  />
+                                  {invalid && <FieldError errors={subField.state.meta.errors} />}
+                                </Field>
+                              );
+                            }}
+                          />
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon'
+                            aria-label={`Remove line ${index + 1}`}
+                            onClick={() => field.removeValue(index)}
+                          >
+                            <Icons.close />
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        className='self-start'
+                        onClick={() =>
+                          field.pushValue({
+                            description: '',
+                            quantity: '',
+                            unitAmount: '',
+                            lineAmount: ''
+                          })
+                        }
+                      >
+                        <Icons.add />
+                        Add line
+                      </Button>
+                    </div>
+                  )}
+                />
+              </div>
             </FieldGroup>
             <div className='flex justify-end gap-2'>
               <Button

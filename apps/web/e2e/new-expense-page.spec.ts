@@ -114,3 +114,56 @@ test('drop one file, preview it, and record the expense with evidence attached',
   await expect(page.getByText('No receipts attached')).toHaveCount(0);
   await expect(page.getByText('Receipt', { exact: true })).toBeVisible();
 });
+
+test('a two-line entry records BOTH expense_lines and renders them, with their total, on the detail page', async ({
+  page
+}) => {
+  // loxep-cd3.3, M3 — the optional line-items editor
+  // (`expense-entry-design.md` section 4): "1 candidate row -> 1 expense
+  // line" for the documents-review flow has its mirror here — every row the
+  // operator types in the compose-time array becomes its own `expense_lines`
+  // row in the SAME transaction as the expense (`createExpenseWithEvidence`,
+  // `@/server/expense-functions.ts`). Lines are optional and never merged
+  // with allocations, which this page does not surface at all.
+  const lineCategory = `e2e-new-expense-lines-${runId}`;
+  const firstLineDescription = `Shelving unit ${runId}`;
+  const secondLineDescription = `Packing tape ${runId}`;
+
+  await page.goto('/finance/expenses/new');
+  await expect(page.getByRole('heading', { name: 'New expense' })).toBeVisible();
+
+  // Scoped to `main` throughout — the sidebar/palette carry a "New expense"
+  // link with an overlapping accessible name elsewhere on this page.
+  const main = page.getByRole('main');
+
+  // The lines sum to the expense's own amount EXACTLY (30.00) — the
+  // over-transcription guard (`sum(|line_amount|) <= |expenses.amount|`)
+  // refuses exceeding it, and equality is the fully-transcribed case.
+  await main.getByLabel('Amount *').fill('30.00');
+  await main.getByLabel('Category *').fill(lineCategory);
+
+  const addLineButton = main.getByRole('button', { name: 'Add line' });
+  await addLineButton.click();
+  await main.getByRole('textbox', { name: 'Line 1 description' }).fill(firstLineDescription);
+  await main.getByRole('textbox', { name: 'Line 1 amount' }).fill('20.00');
+
+  await addLineButton.click();
+  await main.getByRole('textbox', { name: 'Line 2 description' }).fill(secondLineDescription);
+  await main.getByRole('textbox', { name: 'Line 2 amount' }).fill('10.00');
+
+  await main.getByRole('button', { name: 'Record expense' }).click();
+
+  // One save creates the expense AND both lines in the same transaction —
+  // lands on the detail page with the recorded amount visible.
+  await page.waitForURL('**/finance/expenses/*');
+  await expect(page.getByText(lineCategory)).toBeVisible();
+  await expect(page.getByText('$30.00').first()).toBeVisible();
+
+  // Both lines render, and the lines summary shows the absolute TOTAL —
+  // matched as a regex (not the exact "$30.00" substring alone) so this
+  // assertion is unambiguous against the expense header's OWN "$30.00"
+  // amount asserted above.
+  await expect(page.getByText(firstLineDescription)).toBeVisible();
+  await expect(page.getByText(secondLineDescription)).toBeVisible();
+  await expect(page.getByText(/2 line\(s\).*\$30\.00.*total/)).toBeVisible();
+});

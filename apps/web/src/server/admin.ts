@@ -18,12 +18,16 @@
  */
 import {
   createBooksService,
+  createExpenseConfirmService,
+  createExpenseLinesService,
   createExpenseReports,
   createExpensesService,
   createFiscalPeriodsService,
   createLedgerReports,
   createReceiptsService,
   type BooksService,
+  type ExpenseConfirmService,
+  type ExpenseLinesService,
   type ExpenseReports,
   type ExpensesService,
   type FiscalPeriodsService,
@@ -111,10 +115,14 @@ interface AdminRegistry {
   books: BooksService;
   fiscalPeriods: FiscalPeriodsService;
   ledgerReports: LedgerReports;
+  /** `expense_lines` CRUD (loxep-cd3.3, M3) — depends only on `db`, built eagerly like `expenses` above. */
+  expenseLines: ExpenseLinesService;
   storageBackendsPromise?: Promise<StorageBackendsService>;
   mediaServicePromise?: Promise<MediaService>;
   /** Receipt attach/list/detach (loxep-dgf.1) — depends on `getMediaService()`, so it is built lazily like it. */
   receiptsServicePromise?: Promise<ReceiptsService>;
+  /** `confirmCandidatesAsExpense` (loxep-cd3.3, M3) — depends on `getMediaService()` (needs a `ReceiptsService` internally), so it is built lazily the same way. */
+  expenseConfirmServicePromise?: Promise<ExpenseConfirmService>;
   notificationsModulePromise?: Promise<typeof import('@loxep/notifications')>;
   notificationsServicePromise?: Promise<NotificationService>;
   marketModulePromise?: Promise<typeof import('@loxep/market')>;
@@ -277,6 +285,7 @@ function buildRegistry(): AdminRegistry {
     secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
     expenses: createExpensesService({ db: handle.db }),
     expenseReports: createExpenseReports({ db: handle.db }),
+    expenseLines: createExpenseLinesService({ db: handle.db }),
     books: createBooksService({ db: handle.db }),
     fiscalPeriods: createFiscalPeriodsService({ db: handle.db }),
     ledgerReports: createLedgerReports({ db: handle.db }),
@@ -373,6 +382,11 @@ export function getExpensesService(): ExpensesService {
 /** The four expense read models (`listExpenses`, `unallocatedExpenses`, …), loxep-dgf.1. */
 export function getExpenseReports(): ExpenseReports {
   return getAdminServices().expenseReports;
+}
+
+/** `expense_lines` CRUD (`/finance/expenses/$id`, `/finance/expenses/new`), loxep-cd3.3. */
+export function getExpenseLinesService(): ExpenseLinesService {
+  return getAdminServices().expenseLines;
 }
 
 /** Books, entity links, and posting-book routing (`/finance/books`), loxep-cmo. */
@@ -496,6 +510,23 @@ export function getReceiptsService(): Promise<ReceiptsService> {
     return createReceiptsService({ db: registry.handle.db, media });
   })();
   return registry.receiptsServicePromise;
+}
+
+/**
+ * `confirmCandidatesAsExpense` (loxep-cd3.3, M3) — the ONE confirm function
+ * both `/finance/import`'s document review AND `/finance/expenses/new`'s
+ * dragged-candidate stamping call. Depends on {@link getMediaService}
+ * (needs a `ReceiptsService` internally to attach a confirmed document's
+ * receipt image), so it is built lazily the same way
+ * {@link getReceiptsService} is.
+ */
+export function getExpenseConfirmService(): Promise<ExpenseConfirmService> {
+  const registry = getAdminServices();
+  registry.expenseConfirmServicePromise ??= (async () => {
+    const media = await getMediaService();
+    return createExpenseConfirmService({ db: registry.handle.db, media });
+  })();
+  return registry.expenseConfirmServicePromise;
 }
 
 /**

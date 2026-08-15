@@ -103,11 +103,17 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
         }
       }),
     onSuccess: (result) => {
-      // The created expense ids themselves are surfaced non-transiently, not
-      // just in this toast: `invalidate()` refetches the document, and each
+      // Every confirmed candidate becomes ONE line on the SAME expense
+      // (loxep-cd3.3, M3) — no longer one expense per candidate. The
+      // created expense id itself is surfaced non-transiently, not just in
+      // this toast: `invalidate()` refetches the document, and each
       // now-confirmed row in `CandidatesTable` renders its `targetKind`/
       // `targetId` as a link to `/finance/expenses/$id` (loxep-0l5).
-      toast.success(`Confirmed ${result.expenseIds.length} expense(s)`);
+      if (result.expenseId === null) {
+        toast.error('Nothing confirmable — every selected line was already resolved');
+      } else {
+        toast.success(`Confirmed ${result.lineCount} line(s) onto one expense`);
+      }
       invalidate();
     },
     onError: (error) => toastError(error, 'Could not confirm the selected lines')

@@ -58,6 +58,9 @@ const EXPENSE_PAYMENT_METHOD_VALUES = [
   'other'
 ] as const;
 
+/** Mirrors `EXPENSE_LINE_KINDS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`) — duplicated as a literal list per this file's own precedent above. */
+const EXPENSE_LINE_KIND_VALUES = ['item', 'shipping', 'tax', 'fee', 'discount', 'other'] as const;
+
 /**
  * Excludes `posted` — still unreachable, but not because the engine is
  * missing. `@loxep/accounting`'s posting engine (`createPostingEngine` /
@@ -174,6 +177,30 @@ export interface ReceiptDto {
   servingUrl: string | null;
 }
 
+/**
+ * One `expense_lines` row (loxep-cd3.3, M3) — WHAT WAS BOUGHT, never an
+ * allocation. See `packages/db/src/schema/expenses.ts`'s `expenseLines`
+ * table doc for the full case against a `tax_amount`/currency/date column
+ * here: those are the expense's own fields, not the line's.
+ */
+export interface ExpenseLineDto {
+  id: string;
+  lineNumber: number;
+  description: string | null;
+  quantity: string | null;
+  unitAmount: string | null;
+  lineAmount: string;
+  lineKind: string;
+  documentLineCandidateId: string | null;
+  note: string | null;
+}
+
+export interface ExpenseLinesSummaryDto {
+  absoluteLineTotal: string;
+  lineCount: number;
+  fitsWithinExpense: boolean;
+}
+
 export interface ExpenseDetailDto {
   id: string;
   referenceCode: string;
@@ -220,6 +247,8 @@ export interface ExpenseDetailDto {
   allocationCount: number;
   fullyAllocated: boolean;
   receipts: ReceiptDto[];
+  lines: ExpenseLineDto[];
+  lineSummary: ExpenseLinesSummaryDto;
 }
 
 export const fetchExpense = createServerFn({ method: 'GET' })
@@ -229,17 +258,23 @@ export const fetchExpense = createServerFn({ method: 'GET' })
       requireSession,
       getAdminServices,
       getExpensesService,
+      getExpenseLinesService,
       getReceiptsService,
       getMediaService
     } = await import('@/server/admin');
     await requireSession();
     const expensesService = getExpensesService();
-    const [expense, summary, receiptsService, mediaService] = await Promise.all([
-      expensesService.get(data.id),
-      expensesService.allocationSummary(data.id),
-      getReceiptsService(),
-      getMediaService()
-    ]);
+    const expenseLinesService = getExpenseLinesService();
+    const [expense, summary, lines, lineSummary, receiptsService, mediaService] = await Promise.all(
+      [
+        expensesService.get(data.id),
+        expensesService.allocationSummary(data.id),
+        expenseLinesService.listLines(data.id),
+        expenseLinesService.lineSummary(data.id),
+        getReceiptsService(),
+        getMediaService()
+      ]
+    );
     const acquisitionCost = expense.acquisitionCostId
       ? await getAdminServices().handle.db.query.acquisitionCosts.findFirst({
           where: (table, { eq }) => eq(table.id, expense.acquisitionCostId as string),
@@ -307,7 +342,23 @@ export const fetchExpense = createServerFn({ method: 'GET' })
       allocationCount: summary.allocationCount,
       fullyAllocated: summary.fullyAllocated,
       // eslint-disable-next-line unicorn/no-array-sort -- `[...receipts]` copies first; `toSorted` needs a newer `lib` than this project targets.
-      receipts: [...receipts].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      receipts: [...receipts].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+      lines: lines.map((line): ExpenseLineDto => ({
+        id: line.id,
+        lineNumber: line.lineNumber,
+        description: line.description,
+        quantity: line.quantity,
+        unitAmount: line.unitAmount,
+        lineAmount: line.lineAmount,
+        lineKind: line.lineKind,
+        documentLineCandidateId: line.documentLineCandidateId,
+        note: line.note
+      })),
+      lineSummary: {
+        absoluteLineTotal: lineSummary.absoluteLineTotal,
+        lineCount: lineSummary.lineCount,
+        fitsWithinExpense: lineSummary.fitsWithinExpense
+      }
     };
   });
 
@@ -397,6 +448,20 @@ export const createExpense = createServerFn({ method: 'POST' })
  * `pending`, reachable through `/finance/import` exactly as the design
  * requires — nothing here deletes an orphaned upload.
  */
+/**
+ * `expense_lines` (loxep-cd3.3, M3) — optional, headline-only stays valid.
+ * `lineAmount` is the only required field per row, matching the schema
+ * (`packages/db/src/schema/expenses.ts`'s `expenseLines`); `quantity`/
+ * `unitAmount` are informational and never derive it.
+ */
+const expenseLineInput = z.strictObject({
+  description: z.string().trim().min(1).nullish(),
+  quantity: decimalString.nullish(),
+  unitAmount: decimalString.nullish(),
+  lineAmount: decimalString,
+  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item')
+});
+
 const createExpenseWithEvidenceInput = z.strictObject({
   amount: decimalString,
   taxAmount: decimalString.nullish(),
@@ -411,17 +476,33 @@ const createExpenseWithEvidenceInput = z.strictObject({
   status: z.enum(['draft', 'recorded']).default('recorded'),
   notes: z.string().trim().min(1).nullish(),
   /** Media object ids already uploaded through `POST /api/documents/upload` — attached as `purpose: 'receipt'` inside the same transaction. */
-  mediaObjectIds: z.array(z.uuid()).max(20).default([])
+  mediaObjectIds: z.array(z.uuid()).max(20).default([]),
+  /** The optional line-items editor's rows — inserted in the SAME transaction as the expense, UNGATED (the draft-only lock guards a LATER edit, not an expense's own initial lines; see `@loxep/accounting/lines.ts`'s module doc). */
+  lines: z.array(expenseLineInput).max(100).default([])
 });
 
 export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
   .inputValidator(createExpenseWithEvidenceInput)
   .handler(
-    async ({ data }): Promise<{ id: string; referenceCode: string; attachedCount: number }> => {
+    async ({
+      data
+    }): Promise<{
+      id: string;
+      referenceCode: string;
+      attachedCount: number;
+      lineCount: number;
+    }> => {
       const { requireSession, getAdminServices, getStorageBackendsService } =
         await import('@/server/admin');
       const session = await requireSession();
-      const { createExpensesService, createReceiptsService } = await import('@loxep/accounting');
+      const {
+        absoluteLineTotal,
+        createExpensesService,
+        createReceiptsService,
+        insertExpenseLinesRaw,
+        linesFit,
+        ExpenseLinesOverTranscribedError
+      } = await import('@loxep/accounting');
       const { createMediaService } = await import('@loxep/storage');
       const { handle } = getAdminServices();
 
@@ -452,6 +533,28 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
           createdByUserId: session.user.id
         });
 
+        if (data.lines.length > 0) {
+          const absoluteTotal = absoluteLineTotal(data.lines.map((line) => line.lineAmount));
+          if (!linesFit(expense.amount, absoluteTotal)) {
+            throw new ExpenseLinesOverTranscribedError(
+              `the ${data.lines.length} line(s) entered total ${absoluteTotal} (absolute), which ` +
+                `exceeds this expense's amount of ${expense.amount} — remove or reduce a line`
+            );
+          }
+          await insertExpenseLinesRaw(
+            tx,
+            expense.id,
+            data.lines.map((line) => ({
+              description: line.description ?? null,
+              quantity: line.quantity ?? null,
+              unitAmount: line.unitAmount ?? null,
+              lineAmount: line.lineAmount,
+              lineKind: line.lineKind
+            })),
+            1
+          );
+        }
+
         for (const mediaObjectId of data.mediaObjectIds) {
           await receiptsService.attach({
             expenseId: expense.id,
@@ -464,7 +567,8 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
         return {
           id: expense.id,
           referenceCode: expense.referenceCode,
-          attachedCount: data.mediaObjectIds.length
+          attachedCount: data.mediaObjectIds.length,
+          lineCount: data.lines.length
         };
       });
     }
@@ -526,6 +630,63 @@ export const detachReceipt = createServerFn({ method: 'POST' })
       expenseId: data.expenseId,
       mediaObjectId: data.mediaObjectId,
       purpose: data.purpose,
+      actorUserId: session.user.id
+    });
+    return { ok: true };
+  });
+
+// ---------------------------------------------------------------------------
+// Lines (`/finance/expenses/$id`, loxep-cd3.3 M3) — draft only, the same
+// lock `@loxep/accounting`'s allocation methods already carry. The entry
+// page's OWN lines (composed before the expense exists) go through
+// `createExpenseWithEvidence` above, never through these — see
+// `ExpenseLinesService`'s module doc for why that write is exempt from the
+// gate these two enforce.
+// ---------------------------------------------------------------------------
+
+const addExpenseLineInput = z.strictObject({
+  expenseId: z.uuid(),
+  description: z.string().trim().min(1).nullish(),
+  quantity: decimalString.nullish(),
+  unitAmount: decimalString.nullish(),
+  lineAmount: decimalString,
+  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item')
+});
+
+export const addExpenseLine = createServerFn({ method: 'POST' })
+  .inputValidator(addExpenseLineInput)
+  .handler(async ({ data }): Promise<ExpenseLineDto> => {
+    const { requireSession, getExpenseLinesService } = await import('@/server/admin');
+    const session = await requireSession();
+    const line = await getExpenseLinesService().addLine({
+      expenseId: data.expenseId,
+      description: data.description ?? null,
+      quantity: data.quantity ?? null,
+      unitAmount: data.unitAmount ?? null,
+      lineAmount: data.lineAmount,
+      lineKind: data.lineKind,
+      actorUserId: session.user.id
+    });
+    return {
+      id: line.id,
+      lineNumber: line.lineNumber,
+      description: line.description,
+      quantity: line.quantity,
+      unitAmount: line.unitAmount,
+      lineAmount: line.lineAmount,
+      lineKind: line.lineKind,
+      documentLineCandidateId: line.documentLineCandidateId,
+      note: line.note
+    };
+  });
+
+export const removeExpenseLine = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ lineId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireSession, getExpenseLinesService } = await import('@/server/admin');
+    const session = await requireSession();
+    await getExpenseLinesService().removeLine({
+      lineId: data.lineId,
       actorUserId: session.user.id
     });
     return { ok: true };

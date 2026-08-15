@@ -8,6 +8,8 @@ This document designs the second generation of expense capture: a dedicated entr
 
 **Status update: `M2` (the entry page) is IMPLEMENTED (loxep-cd3.2).** `/finance/expenses/new` is the real two-pane page, `/finance/expenses/quick` carries the redirect moved verbatim, `<DocumentPreview>` is shared by the evidence pane and `document-review-panel.tsx`, `documents.media_limits` is a registered setting consumed by both upload routes, and the serving-URL mapper (`servingUrlFor`, `@/server/media-serving-url.ts`) fixed the trap this page called out. See [its own milestone note](#milestones) below for what shipped and what did not (`expense_lines`/OCR/the acquisition confirm path stay M3 and later). This sentence and the "DRAFT" one above are left in place per this document's own convention of recording status updates next to the original text rather than rewriting it.
 
+**Status update: `M3` (expense lines + one confirm function) is IMPLEMENTED (loxep-cd3.3).** Migration 0025 shipped `expense_lines` exactly as section 4 specifies, including the partial unique index on `document_line_candidate_id`. `apps/web/src/server/documents-functions.ts`'s `confirmLinesAsExpense` moved DOWN into `@loxep/accounting` as `confirmCandidatesAsExpense` (`packages/accounting/src/confirm.ts`), taught to accept an existing `expenseId` as well as creating one — `/finance/import`'s document review and `/finance/expenses/new`'s save action call the SAME function, and the documents-review confirm now writes ONE expense with N `expense_lines` rows (one per confirmed candidate) instead of N separate expenses, closing the duplicated write path this section's "reconciling the two flows" subsection describes. A new `@loxep/accounting/lines.ts` (`ExpenseLinesService`) owns `setLines`/`addLine`/`removeLine`/`listLines`/`lineSummary`, enforcing the over-transcription guard (`sum(|line_amount|) <= |expenses.amount|`) as a service rule exactly as specified. `/finance/expenses/new` gained an optional in-form line-items array (`form.Field mode='array'`, the part-out-dialog precedent) and expense detail renders lines with their own add/remove (the specifics-editor precedent, since the expense already exists there). **One deliberate deviation from the package-ownership table below:** `packages/accounting/package.json` still does NOT depend on `@loxep/documents` (out of this pass's write fence, same as `apps/web/package.json`'s own still-open gap) — `confirm.ts` reads/writes `documents`/`document_line_candidates` directly through `@loxep/db`'s schema (a dependency this package already has), reproducing `stampConfirmed`/`recomputeDocumentCounters`/the `document_confirmed` notification inline rather than calling `@loxep/documents`'s services; its module doc names the exact functions to replace once that edge is authorized. The drag-to-field UI that would populate flow 2's `candidateIds` does not exist yet (M5), so `createExpenseWithEvidence` does not currently call `confirmCandidatesAsExpense` — the function is built and tested (`packages/accounting/test/confirm.test.ts`) for M5 to wire up.
+
 **Status update: `M1` (trading partners as payees) is IMPLEMENTED (loxep-cd3.1).** Migrations 0023 (`counterparty_contacts.given_name`/`family_name`) and 0024 (`expenses.payee_counterparty_id`, FK `expenses_payee_counterparty_fk`, partial index) shipped. `@loxep/accounting`'s `ExpensesService.create`/`update` accept `payeeCounterpartyId` and always snapshot the resolved `display_name` into `payee_name` in the same write; a new `ExpensesService.linkPayee` deliberately bypasses the draft-only lock for the "link this payee" action, matching `reattributeDefaults`' own narrow-bypass precedent. The Invoice Ninja client push (`@loxep/integration-invoiceninja`) is widened to the full mapping table below, including two source-verified static id maps (`id-maps.ts`) and `mapCounterpartyContactForPush`'s given/family-name-with-fallback rule; `private_notes` stays opt-in per push (`pushDraftInvoice`'s `includePrivateNotes`, default `false`). The picker (`PayeeComboboxField`, `apps/web/src/features/finance/components/payee-combobox-field.tsx`) is mounted on the quick-entry dialog and wired to "link this payee" on expense detail — **not yet mounted on `/finance/expenses/new`**, which M2 shipped with the payee field "plain text pending M1's picker" per its own milestone note above; wiring the now-available picker into that page is the natural next step. One honest gap: `@loxep/counterparties` (the real domain service — `create`/`contacts.addContact`/`roles.grant`/`listByEntityRole`) is still not an `apps/web` dependency, so the picker's search and inline-create server functions (`@/server/trading-partner-functions.ts`) talk to `@loxep/db` directly with a small amount of intentionally-duplicated logic (reference-code generation, a lightweight name fold) — see that file's own module doc for the full account and why wiring the real dependency in is follow-up work, not this bead's.
 
 **This design is cross-cutting, not a phase.** Phase 9 is fully implemented; this is the pass that makes its expense surface usable by a human with four receipts and a phone, and it depends on no unshipped phase.
@@ -845,6 +847,7 @@ B  expense payee link                expenses
    No backfill. payee_name is untouched and stays written.
 
 C  expense lines                     expense_lines (new table)
+   IMPLEMENTED as migration 0025 (loxep-cd3.3).
    As specified in section 4, including the partial unique on
    document_line_candidate_id.
 
@@ -990,10 +993,14 @@ M2  The entry page                    IMPLEMENTED (loxep-cd3.2). no migration.
                                       already use — no forked write path. The payee
                                       field stays plain text pending M1's picker.
 
-M3  Expense lines                     migration C. Lines on the page and on detail,
-                                      confirmCandidatesAsExpense moved into
-                                      @loxep/accounting and taught to accept an
-                                      existing expense id, flow-2 stamping at save.
+M3  Expense lines                     IMPLEMENTED (loxep-cd3.3). migration 0025.
+                                      Lines on the page (in-form array) and on
+                                      detail (its own add/remove), confirmCandidatesAsExpense
+                                      moved into @loxep/accounting (confirm.ts) and
+                                      taught to accept an existing expense id.
+                                      Flow-2 stamping of DRAGGED candidates is wired
+                                      and tested but has no caller yet — M5 builds
+                                      the drag UI that supplies candidateIds.
 
 M4  OCR tier A — searchable text      migration D. NO new container: tesseract.js v7
                                       registered as a ReceiptParser with vendored

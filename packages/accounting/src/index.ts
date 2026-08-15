@@ -92,6 +92,7 @@ export {
   AccountingConflictError,
   ExpenseNotEditableError,
   ExpenseOverAllocatedError,
+  ExpenseLinesOverTranscribedError,
 } from "./errors.ts";
 
 export {
@@ -153,6 +154,31 @@ export type {
 
 export { createReceiptsService } from "./receipts.ts";
 export type { AttachReceiptInput, ReceiptsService } from "./receipts.ts";
+
+export {
+  EXPENSE_LINE_KINDS,
+  absoluteLineTotal,
+  createExpenseLinesService,
+  insertExpenseLinesRaw,
+  linesFit,
+} from "./lines.ts";
+export type {
+  AddExpenseLineInput,
+  ExpenseLineInput,
+  ExpenseLineKind,
+  ExpenseLineRow,
+  ExpenseLineSummary,
+  ExpenseLinesService,
+  RawExpenseLineValues,
+  SetExpenseLinesInput,
+} from "./lines.ts";
+
+export { createExpenseConfirmService } from "./confirm.ts";
+export type {
+  ConfirmCandidatesAsExpenseInput,
+  ConfirmCandidatesAsExpenseResult,
+  ExpenseConfirmService,
+} from "./confirm.ts";
 
 export { createExpenseReports } from "./reports.ts";
 export type {

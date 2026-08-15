@@ -25,6 +25,7 @@ import { expenseQuery } from '@/features/finance/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ReceiptGallery from '@/features/finance/components/receipt-gallery';
+import ExpenseLinesCard from '@/features/finance/components/expense-lines-card';
 import QuickExpenseDialog, {
   type QuickExpensePrefill
 } from '@/features/finance/components/quick-expense-dialog';
@@ -350,6 +351,18 @@ export default function ExpenseDetail({ expenseId }: { expenseId: string }) {
           </AlertDescription>
         </Alert>
       )}
+
+      <Card>
+        <CardContent className='pt-6'>
+          <ExpenseLinesCard
+            expenseId={expenseId}
+            currency={data.currency}
+            status={data.status}
+            lines={data.lines}
+            summary={data.lineSummary}
+          />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className='pt-6'>

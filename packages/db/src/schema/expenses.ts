@@ -86,6 +86,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import {
@@ -98,6 +99,7 @@ import { catalogItems } from "./commerce.ts";
 import { counterparties } from "./counterparties.ts";
 import { economicEntities } from "./entities.ts";
 import { acquisitionCosts, acquisitions } from "./inventory.ts";
+import { documentLineCandidates } from "./documents.ts";
 
 /* ------------------------------------------------------------------ unions */
 
@@ -495,5 +497,135 @@ export const expenseAllocations = pgTable(
     index("expense_allocations_acquisition_id_idx")
       .on(table.acquisitionId)
       .where(sql`${table.acquisitionId} is not null`),
+  ],
+);
+
+/**
+ * `expense_lines.line_kind` — closed, `CHECK`ed. Every receipt line the
+ * design's connective field table anticipates: the purchased item itself,
+ * the three things that ride alongside it on real paper (shipping, tax,
+ * fee), a coupon or discount (negative `line_amount`), and an open bucket
+ * for anything else transcribed.
+ */
+export const EXPENSE_LINE_KINDS = [
+  "item",
+  "shipping",
+  "tax",
+  "fee",
+  "discount",
+  "other",
+] as const;
+export type ExpenseLineKind = (typeof EXPENSE_LINE_KINDS)[number];
+
+/**
+ * A receipt line — WHAT WAS BOUGHT, not WHERE THE MONEY IS CHARGED.
+ * `expense-entry-design.md` section 4 draws the distinction this table
+ * exists to keep separate from `expense_allocations`: a line comes off the
+ * receipt (may have quantity and unit price, may name no target at all,
+ * count is fixed by the document); an allocation comes out of the
+ * operator's head (has an amount and one or more targets, must name at
+ * least one, count is chosen by the operator). Widening
+ * `expense_allocations` to carry `description`/`quantity`/`unit_amount` was
+ * REJECTED — it would require loosening `expense_allocations_target_check`
+ * (`>= 1`, three phases converged on independently) so a bare transcribed
+ * line could be stored, and dropping `expense_allocations_amount_check`
+ * (`<> 0`), because a zero-priced "free with purchase" line is a real
+ * receipt line and a zero-amount ALLOCATION attributes nothing.
+ *
+ * Deliberate absences, each an answer, not an oversight:
+ *
+ * ```text
+ * no currency        one expense, one currency — expenses.currency is authoritative
+ * no date            expenses.expense_date is the date
+ * no tax_amount      a receipt's tax IS a line (line_kind = 'tax'); a per-line
+ *                    tax column would create a second place tax lives
+ * no acquisition_id / catalog_item_id / ledger_account_id
+ *                    those are ALLOCATION targets and live on expense_allocations;
+ *                    a line that wants an account is telling you the expense
+ *                    needs a split, not that the line needs a target column
+ * ```
+ *
+ * `line_amount` MAY be zero and MAY be negative — a coupon line is
+ * negative, a free line is zero. `expenses.amount` keeps its own `<> 0`
+ * check because a zero-total expense is not a fact; a zero-amount LINE is
+ * ordinary evidence.
+ *
+ * `sum(|line_amount|) <= |expenses.amount|` is a SERVICE RULE and a report,
+ * never a `CHECK` — the fourth time this documentation reaches that
+ * conclusion, for the same reason each prior time did: a draft expense is
+ * legitimately half-transcribed. `@loxep/accounting` refuses lines whose
+ * absolute sum EXCEEDS the expense; under-transcription is a draft.
+ */
+export const expenseLines = pgTable(
+  "expense_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    expenseId: uuid("expense_id")
+      .notNull()
+      .references(() => expenses.id, { onDelete: "cascade" }),
+    lineNumber: integer("line_number").notNull(),
+
+    description: text("description"),
+    quantity: numeric("quantity", { precision: 20, scale: 6 }),
+    unitAmount: numeric("unit_amount", { precision: 20, scale: 6 }),
+    lineAmount: numeric("line_amount", { precision: 20, scale: 6 }).notNull(),
+    lineKind: text("line_kind").notNull().default("item"),
+
+    /**
+     * A REAL foreign key with a partial unique index below — unlike
+     * `document_line_candidates.target_kind`/`target_id`, which is a stamp
+     * across four tables and cannot be one. The candidate still stamps
+     * `target_kind = 'expense'`, `target_id = <this row's expense_id>`; the
+     * LINE-level provenance hangs off this column, where a real constraint
+     * is possible, which is what lets `CANDIDATE_TARGET_KINDS` stay
+     * unwidened. `SET NULL` (not `CASCADE`): a candidate row surviving past
+     * a line's own provenance link is a bookkeeping detail, never a reason
+     * to delete evidence of the purchase.
+     *
+     * No inline `.references()` — the FK is declared explicitly below
+     * (`expense_lines_document_line_candidate_fk`) because the derived name
+     * (`expense_lines_document_line_candidate_id_document_line_candidates_id_fk`,
+     * 74 bytes) exceeds PostgreSQL's 63-byte identifier limit.
+     */
+    documentLineCandidateId: uuid("document_line_candidate_id"),
+    note: text("note"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("expense_lines_expense_line_uq").on(
+      table.expenseId,
+      table.lineNumber,
+    ),
+    // Partial, not a plain `unique()`: most lines carry no candidate at
+    // all (a manually typed row), and a bare unique constraint would treat
+    // every `null` as a duplicate of every other, refusing the second
+    // manual line on ANY expense. `document_line_candidates` already uses
+    // the identical `where ... is not null` shape for the analogous case.
+    uniqueIndex("expense_lines_document_line_candidate_uq")
+      .on(table.documentLineCandidateId)
+      .where(sql`${table.documentLineCandidateId} is not null`),
+
+    check("expense_lines_line_number_check", sql`${table.lineNumber} > 0`),
+    check(
+      "expense_lines_line_kind_check",
+      sql`${table.lineKind} in ('item', 'shipping', 'tax', 'fee', 'discount', 'other')`,
+    ),
+
+    foreignKey({
+      name: "expense_lines_document_line_candidate_fk",
+      columns: [table.documentLineCandidateId],
+      foreignColumns: [documentLineCandidates.id],
+    }).onDelete("set null"),
+
+    index("expense_lines_expense_id_idx").on(table.expenseId),
+    index("expense_lines_document_line_candidate_id_idx")
+      .on(table.documentLineCandidateId)
+      .where(sql`${table.documentLineCandidateId} is not null`),
   ],
 );

@@ -21,6 +21,8 @@ import {
   catalogItems,
   connections,
   counterparties,
+  documentLineCandidates,
+  documents,
   economicEntities,
   inventoryItems,
   inventoryMovements,
@@ -488,6 +490,71 @@ export async function seedMedia(
     }),
     mediaObjectId,
   };
+}
+
+/**
+ * A `documents` row, seeded directly against `@loxep/db` schema — this
+ * package deliberately does not depend on `@loxep/documents` (see
+ * `src/confirm.ts`'s module doc), so `confirm.test.ts` needs its own way to
+ * stand up the document/candidate rows `confirmCandidatesAsExpense` reads.
+ * `sourceKind` derives from whether a media object is given, matching
+ * `documents_source_kind_media_object_check`.
+ */
+export async function seedDocument(
+  scratch: ScratchDb,
+  input: {
+    documentKind?: string;
+    mediaObjectId?: string | null;
+    currency?: string | null;
+    documentDate?: string | null;
+  } = {},
+): Promise<string> {
+  const mediaObjectId = input.mediaObjectId ?? null;
+  const rows = await scratch.handle.db
+    .insert(documents)
+    .values({
+      documentKind: input.documentKind ?? "receipt",
+      sourceKind: mediaObjectId === null ? "csv" : "upload",
+      mediaObjectId,
+      currency: input.currency ?? null,
+      documentDate: input.documentDate ?? null,
+    })
+    .returning({ id: documents.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("document insert returned no row");
+  return id;
+}
+
+/** A `document_line_candidates` row, staged the way a CSV/manual entry would leave it — `disposition: 'expense'`, unconfirmed. */
+export async function seedCandidate(
+  scratch: ScratchDb,
+  input: {
+    documentId: string;
+    lineNumber?: number;
+    description?: string | null;
+    quantity?: string | null;
+    unitAmount?: string | null;
+    lineAmount?: string | null;
+    lineDate?: string | null;
+    disposition?: string;
+  },
+): Promise<string> {
+  const rows = await scratch.handle.db
+    .insert(documentLineCandidates)
+    .values({
+      documentId: input.documentId,
+      lineNumber: input.lineNumber ?? 1,
+      description: input.description ?? null,
+      quantity: input.quantity ?? null,
+      unitAmount: input.unitAmount ?? null,
+      lineAmount: input.lineAmount ?? null,
+      lineDate: input.lineDate ?? null,
+      disposition: input.disposition ?? "expense",
+    })
+    .returning({ id: documentLineCandidates.id });
+  const id = rows[0]?.id;
+  if (id === undefined) throw new Error("document line candidate insert returned no row");
+  return id;
 }
 
 /** Every `audit_events` row for one action, newest first. */
