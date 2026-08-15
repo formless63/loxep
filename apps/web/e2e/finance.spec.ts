@@ -43,7 +43,7 @@ test('quick-entry records an expense that appears in the expenses table', async 
   await expect(dialog.getByText('New expense')).toBeVisible();
   await dialog.getByLabel('Amount *').fill('42.50');
   await dialog.getByLabel('Category *').fill(category);
-  await dialog.getByLabel('Payee').fill(payeeName);
+  await dialog.getByLabel('Payee (free text)').fill(payeeName);
   // Payment (card), currency (USD), and entity (Unattributed) all keep
   // their sensible quick-entry defaults — see `QuickExpenseDialog`.
   await dialog.getByRole('button', { name: 'Save' }).click();
