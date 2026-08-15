@@ -582,6 +582,44 @@ export const secretBundleSchemas = {
   fleet_ingest_token: z.strictObject({
     token: z.string().min(1),
   }),
+  /**
+   * Pangolin API key pair (ADR-0009, `loxep-acj.1`, milestone 1 of
+   * `apps/docs/.../architecture/pangolin-chain-design.md`): the credential
+   * `@loxep/integration-pangolin` sends as
+   * `Authorization: Bearer <apiKeyId>.<apiKeySecret>`. Verified against
+   * `fosrl/pangolin@main`'s own
+   * `server/middlewares/integration/verifyApiKey.ts`, which splits the
+   * bearer token on the first `.` into these exact two parts and looks the
+   * first up as a stored key id.
+   *
+   * NAMING NOTE, recorded rather than drifted: Phase 7's original sketch
+   * called this purpose `proxy_admin_credentials` — a role name shared
+   * across any future reverse-proxy provider. This registry follows the
+   * convention every other control-plane provider already established
+   * (`cloudflare_credentials`, `purelymail_credentials`, `woo_credentials`,
+   * `medusa_credentials`) instead: PROVIDER-named, not role-named, for the
+   * reason `cloudflare_credentials`'s own doc comment gives — a second
+   * reverse-proxy provider will not necessarily authenticate with the same
+   * key-pair shape, and a role-named bundle would then either fork or
+   * become a loose union, which is exactly the half-configuration hazard
+   * ADR-0019 bundles exist to prevent.
+   *
+   * **The base URL and org id are deliberately NOT in this bundle**, for
+   * the same reasoning every self-hosted sibling excludes its base URL:
+   * `connections.config` carries them, so they stay readable without a
+   * decryption round-trip (to render the connection, run a health check,
+   * and compute `pangolinSourceAccountKey`) — and, unlike a single-secret
+   * bundle, an org id is not secret at all. An organization API key is
+   * scoped to exactly one org (design document, "Auth"), so pointing a
+   * stored key at the wrong `orgId` fails as a clean, provider-classified
+   * error rather than as apparent credential corruption — the same
+   * argument that keeps a WooCommerce store URL and a Medusa backend URL
+   * out of their bundles.
+   */
+  pangolin_credentials: z.strictObject({
+    apiKeyId: z.string().min(1),
+    apiKeySecret: z.string().min(1),
+  }),
 } as const;
 
 export type SecretPurpose = keyof typeof secretBundleSchemas;

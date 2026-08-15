@@ -104,8 +104,10 @@ export default function ConnectionAddDialog({
           <GatusAccountForm entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'beszel-login' ? (
           <BeszelAccountForm entities={entities} onDone={onOpenChange} />
-        ) : (
+        ) : accounts.form === 'dockhand-login' ? (
           <DockhandAccountForm entities={entities} onDone={onOpenChange} />
+        ) : (
+          <PangolinAccountForm entities={entities} onDone={onOpenChange} />
         )}
       </DialogContent>
     </Dialog>
@@ -2398,6 +2400,215 @@ function DockhandAccountForm({
               type='password'
               autoComplete='new-password'
               description='Write-only: stored encrypted, never displayed again.'
+            />
+          )}
+        />
+        <form.AppField
+          name='economicEntityId'
+          children={(field) => (
+            <field.SelectField
+              label='Economic entity'
+              options={entityOptionsFrom(entities)}
+              placeholder='No attribution'
+              description={ENTITY_FIELD_DESCRIPTION}
+            />
+          )}
+        />
+      </FieldGroup>
+      <div className='flex justify-end gap-2'>
+        <Button type='button' variant='outline' onClick={() => onDone(false)}>
+          Cancel
+        </Button>
+        <form.AppForm>
+          <form.SubmitButton>Connect instance</form.SubmitButton>
+        </form.AppForm>
+      </div>
+    </form>
+  );
+}
+
+const pangolinAccountSchema = z.object({
+  name: z.string().trim().min(1, 'Name is required'),
+  baseUrl: z.url(),
+  orgId: z.string().trim().min(1, 'Organization id is required'),
+  apiKeyId: z.string().trim().min(1, 'API key id is required'),
+  apiKeySecret: z.string().trim().min(1, 'API key secret is required'),
+  economicEntityId: z.string()
+});
+
+/**
+ * Pangolin (loxep-acj.1, milestone 1 — read only): the ONE fact that blocks
+ * the first attempt, every time, is that the URL this form needs is NOT the
+ * Pangolin dashboard URL. Pangolin's Integration API is a SEPARATE server on
+ * its own port (conventionally 3003, prefix `/v1`), gated by its own
+ * `flags.enable_integration_api` setting, and self-hosted operators must add
+ * their own reverse-proxy route to reach it at all — Pangolin's own
+ * documentation recommends a dedicated subdomain. This guidance leads with
+ * that trap rather than burying it, and a milestone-1 live reconnaissance
+ * against a real instance confirmed it is exactly the failure an operator
+ * hits pasting the dashboard URL here.
+ */
+function PangolinSetupGuidance() {
+  return (
+    <SetupGuidance title='Before you paste anything here'>
+      <GuidanceCallout>
+        <p>
+          <strong>This is not the URL you sign in to.</strong> Pangolin runs its Integration API as
+          a completely separate server, on its own port (conventionally{' '}
+          <code className='font-mono'>3003</code>), under the path prefix{' '}
+          <code className='font-mono'>/v1</code> — never the same origin as the dashboard by
+          default. A self-hosted instance needs its own reverse-proxy route added for this API
+          before Loxep can reach it at all (Pangolin&apos;s own documentation recommends a dedicated
+          subdomain, e.g. <code className='font-mono'>https://api.your-domain.com</code>, forwarding
+          to the container&apos;s <code className='font-mono'>integration_port</code>). Pasting the
+          dashboard&apos;s own URL here saves successfully and then fails on first use.
+        </p>
+      </GuidanceCallout>
+      <GuidanceSteps>
+        <GuidanceStep>
+          Confirm (or set up) the reverse-proxy route for the Integration API, then verify{' '}
+          <code className='font-mono'>&lt;that URL&gt;/v1/openapi.json</code> answers JSON, not an
+          HTML page, from a machine on the same network Loxep runs on.
+        </GuidanceStep>
+        <GuidanceStep>
+          In the Pangolin dashboard, open the organization you want Loxep to read, then{' '}
+          <strong>API Keys</strong> and create a new key. Note the organization&apos;s id — it is
+          the slug visible in the dashboard URL.
+          <GuidanceNote>
+            An organization-scoped key can only ever read that one org. A root key can read every
+            org on the instance, but self-hosted only.
+          </GuidanceNote>
+        </GuidanceStep>
+        <GuidanceStep>
+          Pick permissions narrowly: this milestone only ever reads (
+          <code className='font-mono'>listOrgs</code>, <code className='font-mono'>listSites</code>,{' '}
+          <code className='font-mono'>listResources</code>,{' '}
+          <code className='font-mono'>listTargets</code>,{' '}
+          <code className='font-mono'>listResourceRules</code>,{' '}
+          <code className='font-mono'>listOrgDomains</code>, and their single-item equivalents) —
+          granting only those actions costs nothing today and means a future write milestone still
+          needs a deliberate re-consent.
+        </GuidanceStep>
+        <GuidanceStep>
+          Pangolin shows the key once, as an id and a secret. Copy both — Loxep sends them as one
+          value, <code className='font-mono'>&lt;id&gt;.&lt;secret&gt;</code>, but stores them
+          separately below.
+        </GuidanceStep>
+      </GuidanceSteps>
+      <GuidanceNote>
+        Read-only is structural here, not a setting: this milestone&apos;s adapter has no member
+        that could issue a write, regardless of what the key is scoped to.
+      </GuidanceNote>
+    </SetupGuidance>
+  );
+}
+
+function PangolinAccountForm({
+  entities,
+  onDone
+}: {
+  entities: EntityDto[];
+  onDone: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: z.infer<typeof pangolinAccountSchema>) =>
+      createStoreConnection({
+        data: {
+          service: 'pangolin',
+          name: values.name,
+          baseUrl: values.baseUrl,
+          orgId: values.orgId,
+          apiKeyId: values.apiKeyId,
+          apiKeySecret: values.apiKeySecret,
+          economicEntityId: entityIdFrom(values.economicEntityId)
+        }
+      }),
+    onSuccess: () => {
+      toast.success('Pangolin instance connected');
+      queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      onDone(false);
+    },
+    onError: (error) => toastError(error, 'Failed to connect the instance')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      name: '',
+      baseUrl: '',
+      orgId: '',
+      apiKeyId: '',
+      apiKeySecret: '',
+      economicEntityId: NO_ENTITY_VALUE
+    },
+    validators: { onSubmit: pangolinAccountSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      <PangolinSetupGuidance />
+      <FieldGroup>
+        <form.AppField
+          name='name'
+          children={(field) => (
+            <field.TextField
+              label='Instance name'
+              required
+              placeholder='Home lab Pangolin'
+              description='How this instance is labelled inside Loxep.'
+            />
+          )}
+        />
+        <form.AppField
+          name='baseUrl'
+          children={(field) => (
+            <field.TextField
+              label='Integration API URL'
+              required
+              placeholder='https://api.your-domain.com'
+              description='The Integration API’s own origin — NOT the dashboard URL. See the guidance above.'
+            />
+          )}
+        />
+        <form.AppField
+          name='orgId'
+          children={(field) => (
+            <field.TextField
+              label='Organization id'
+              required
+              placeholder='home-lab'
+              description='The org slug visible in the Pangolin dashboard URL. This connection reads only this org.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiKeyId'
+          children={(field) => (
+            <field.TextField
+              label='API key id'
+              required
+              autoComplete='off'
+              description='The first part of the key Pangolin showed you, before the dot.'
+            />
+          )}
+        />
+        <form.AppField
+          name='apiKeySecret'
+          children={(field) => (
+            <field.TextField
+              label='API key secret'
+              required
+              type='password'
+              autoComplete='new-password'
+              description='The second part, after the dot. Write-only: stored encrypted, never displayed again.'
             />
           )}
         />

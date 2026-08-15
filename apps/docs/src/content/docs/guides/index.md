@@ -18,6 +18,7 @@ Loxep mostly observes and reads from external services. Invoice Ninja is the one
 - [Connecting Purelymail](./connecting-purelymail/) — an API token for the Infrastructure control plane's mail-hosting milestone.
 - [Connecting Beszel](./connecting-beszel/) — a read-only hub user for server monitoring.
 - [Connecting Dockhand](./connecting-dockhand/) — a scoped session login for container host inventory.
+- [Connecting Pangolin](./connecting-pangolin/) — an organization API key for reading a reverse-proxy/tunnel instance's orgs, sites, resources, and access rules — read-only, milestone 1 of a longer chain.
 - [Connecting Tailscale](./connecting-tailscale/) — an API access token for tailnet device inventory.
 - [Connecting Termix](./connecting-termix/) — a Termix user login for SSH-host inventory and session evidence.
 - [Connecting Gatus](./connecting-gatus/) — an optional Basic-auth pair for endpoint status reads, with an automatic fallback when an instance uses OIDC or no security at all.

@@ -30,6 +30,7 @@ describe("secret bundle registry", () => {
       "mailbox_password",
       "medusa_credentials",
       "oauth_tokens",
+      "pangolin_credentials",
       "purelymail_credentials",
       "reverb_credentials",
       "s3_credentials",
@@ -342,6 +343,51 @@ describe("cloudflare_credentials bundle (the Cloudflare API token)", () => {
       const message = (error as Error).message;
       expect(message).toContain("apiToken");
       expect(message).not.toContain(FAKE_CF_TOKEN);
+    }
+  });
+});
+
+describe("pangolin_credentials bundle (the API key id/secret pair)", () => {
+  const pair = {
+    apiKeyId: "fakekeyidfakekeyid",
+    apiKeySecret: "fakekeysecretfakekeysecretfakekeysecret",
+  };
+
+  it("accepts the key id/secret pair atomically", () => {
+    expect(validateBundle("pangolin_credentials", pair)).toEqual(pair);
+  });
+
+  it("rejects a half-configured pair", () => {
+    const { apiKeySecret: _dropped, ...idOnly } = pair;
+    expect(() => validateBundle("pangolin_credentials", idOnly)).toThrowError(
+      BundleValidationError,
+    );
+    expect(() =>
+      validateBundle("pangolin_credentials", { ...pair, apiKeySecret: "" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("rejects the base URL and org id — both are non-secret connection config", () => {
+    expect(() =>
+      validateBundle("pangolin_credentials", {
+        ...pair,
+        baseUrl: "https://pangolin.example.invalid",
+      }),
+    ).toThrowError(BundleValidationError);
+    expect(() =>
+      validateBundle("pangolin_credentials", { ...pair, orgId: "home-lab" }),
+    ).toThrowError(BundleValidationError);
+  });
+
+  it("reports issue paths and codes, never the secret itself", () => {
+    try {
+      validateBundle("pangolin_credentials", { ...pair, apiKeySecret: 42 });
+      throw new Error("expected a BundleValidationError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BundleValidationError);
+      const message = (error as Error).message;
+      expect(message).toContain("apiKeySecret");
+      expect(message).not.toContain(pair.apiKeyId);
     }
   });
 });

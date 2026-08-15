@@ -46,6 +46,7 @@ export default defineConfig({
             { label: 'Connecting Purelymail', slug: 'guides/connecting-purelymail' },
             { label: 'Connecting Beszel', slug: 'guides/connecting-beszel' },
             { label: 'Connecting Dockhand', slug: 'guides/connecting-dockhand' },
+            { label: 'Connecting Pangolin', slug: 'guides/connecting-pangolin' },
             { label: 'Connecting Tailscale', slug: 'guides/connecting-tailscale' },
             { label: 'Connecting Termix', slug: 'guides/connecting-termix' },
             { label: 'Connecting Gatus', slug: 'guides/connecting-gatus' },

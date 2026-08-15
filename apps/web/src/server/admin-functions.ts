@@ -788,6 +788,24 @@ const createStoreConnectionInput = z.discriminatedUnion('service', [
     economicEntityId: z.uuid().nullable(),
     username: z.string().trim().min(1),
     password: z.string().trim().min(1)
+  }),
+  /**
+   * Pangolin (loxep-acj.1, milestone 1 — read only): `baseUrl` is the
+   * Integration API's own origin (NOT the dashboard URL — the guided form
+   * carries the full warning), and `orgId` is the organization slug this
+   * connection reads, both non-secret `connections.config`. `apiKeyId` /
+   * `apiKeySecret` are the two halves of the bearer credential
+   * (`Authorization: Bearer <apiKeyId>.<apiKeySecret>`), stored atomically
+   * in the `pangolin_credentials` bundle (`@loxep/domain`).
+   */
+  z.strictObject({
+    service: z.literal('pangolin'),
+    name: z.string().trim().min(1),
+    baseUrl: z.url(),
+    orgId: z.string().trim().min(1),
+    economicEntityId: z.uuid().nullable(),
+    apiKeyId: z.string().trim().min(1),
+    apiKeySecret: z.string().trim().min(1)
   })
 ]);
 
@@ -900,11 +918,17 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
       // Beszel/Dockhand doc comment.
       kind = 'fleet_observability';
       config = { beszel: { baseUrl: normalizeFleetBaseUrl(data.baseUrl) } };
-    } else {
+    } else if (data.service === 'dockhand') {
       // Dockhand (loxep-hb7 §1.7): origin-normalized so a pasted `.../api`
       // URL never doubles once the adapter appends its own API path.
       kind = 'fleet_observability';
       config = { dockhand: { baseUrl: normalizeFleetBaseUrl(data.baseUrl) } };
+    } else {
+      // Pangolin (loxep-acj.1): baseUrl is the Integration API's own origin,
+      // trimmed of a trailing slash like every self-hosted sibling; orgId is
+      // the organization this connection reads, both non-secret config.
+      kind = 'proxy';
+      config = { pangolin: { baseUrl: data.baseUrl.replace(/\/+$/, ''), orgId: data.orgId } };
     }
 
     const created = await connections.createConnection(
@@ -1020,13 +1044,23 @@ export const createStoreConnection = createServerFn({ method: 'POST' })
         { email: data.email, password: data.password },
         { actorUserId: session.user.id }
       );
-    } else {
+    } else if (data.service === 'dockhand') {
       // Dockhand (loxep-hb7 §1.7) — an ordinary session login, not an API
       // token; Dockhand publishes none.
       await connections.setConnectionCredential(
         created.id,
         'dockhand_credentials',
         { username: data.username, password: data.password },
+        { actorUserId: session.user.id }
+      );
+    } else {
+      // Pangolin (loxep-acj.1) — the bearer key id/secret pair, atomic in
+      // the pangolin_credentials bundle. baseUrl/orgId already landed in
+      // config above.
+      await connections.setConnectionCredential(
+        created.id,
+        'pangolin_credentials',
+        { apiKeyId: data.apiKeyId, apiKeySecret: data.apiKeySecret },
         { actorUserId: session.user.id }
       );
     }

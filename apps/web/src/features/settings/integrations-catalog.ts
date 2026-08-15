@@ -36,6 +36,7 @@ export type IntegrationServiceId =
   | 'gatus'
   | 'beszel'
   | 'dockhand'
+  | 'pangolin'
   | 'ntfy';
 
 /** Catalog grouping — purely presentational ordering for the catalog page. */
@@ -95,7 +96,8 @@ export type IntegrationAccountForm =
   | 'termix-api'
   | 'gatus-api'
   | 'beszel-login'
-  | 'dockhand-login';
+  | 'dockhand-login'
+  | 'pangolin-api';
 
 export interface IntegrationAccountSetup {
   /** `connections.provider` written for accounts of this service. */
@@ -592,6 +594,29 @@ export const integrationServices: IntegrationService[] = [
     },
     status: ({ connections }) => {
       const count = accountsFor(connections, 'dockhand').length;
+      return count > 0
+        ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
+        : { tone: 'unconfigured', label: 'No instances connected', details: [] };
+    }
+  },
+  {
+    id: 'pangolin',
+    name: 'Pangolin',
+    category: 'Infrastructure',
+    description:
+      'Read a self-hosted Pangolin instance’s orgs, sites, resources, targets, and access rules for the reverse-proxy/tunnel chain (milestone 1, read-only). Pangolin is the identity proxy in front of the estate, so Loxep never writes to it yet — this connection only reads what is already there. Each Pangolin instance is one connection, scoped to one organization.',
+    manage: { kind: 'route', to: '/settings/connections', label: 'Manage instances' },
+    accounts: {
+      provider: 'pangolin',
+      kind: 'proxy',
+      form: 'pangolin-api',
+      addLabel: 'Add Pangolin instance',
+      formHint:
+        'The Integration API key id and secret are stored encrypted and never shown again. This is a SEPARATE credential and a SEPARATE URL from the Pangolin dashboard you sign in to — see the guidance below before saving.',
+      blockedReason: () => null
+    },
+    status: ({ connections }) => {
+      const count = accountsFor(connections, 'pangolin').length;
       return count > 0
         ? { tone: 'ready', label: 'Connected', details: [accountCountDetail(count)] }
         : { tone: 'unconfigured', label: 'No instances connected', details: [] };

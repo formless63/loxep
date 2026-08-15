@@ -405,6 +405,18 @@
         "vitest": "4.1.10",
       },
     },
+    "packages/integrations/pangolin": {
+      "name": "@loxep/integration-pangolin",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/node": "24.13.3",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+      },
+    },
     "packages/integrations/purelymail": {
       "name": "@loxep/integration-purelymail",
       "version": "0.0.0",
@@ -1009,6 +1021,8 @@
     "@loxep/integration-invoiceninja": ["@loxep/integration-invoiceninja@workspace:packages/integrations/invoiceninja"],
 
     "@loxep/integration-medusa": ["@loxep/integration-medusa@workspace:packages/integrations/medusa"],
+
+    "@loxep/integration-pangolin": ["@loxep/integration-pangolin@workspace:packages/integrations/pangolin"],
 
     "@loxep/integration-purelymail": ["@loxep/integration-purelymail@workspace:packages/integrations/purelymail"],
 

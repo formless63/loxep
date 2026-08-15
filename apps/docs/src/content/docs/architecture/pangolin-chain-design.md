@@ -4,11 +4,15 @@ title: Pangolin Integration & Chain-Provisioning Templates
 
 This document designs the **last provider in the Phase 7 chain** and the **template engine that drives the whole chain from one form**. [Infrastructure Control Plane Design (Phase 7)](../infrastructure-control-design/) named the reverse-proxy/tunnel provider, reserved its task name and its column, and shipped without it. Everything here lands into those reservations rather than beside them.
 
-**Design work only.** No migration, Drizzle schema, integration package, service, or route is authorized by this page. Every upstream fact below carries the URL and the date it was fetched, and must be **re-verified immediately before implementation** per the [dependency policy](../../development/dependency-policy/).
+**Design work, with milestone 1 now shipped on top of it.** No migration, Drizzle schema, service, or route beyond milestone 1's own scope is authorized by this page. Every upstream fact below carries the URL and the date it was fetched; milestone 1's implementation additionally verified the adapter surface against `fosrl/pangolin@main`'s own source (stronger grounding than documentation prose) and ran one live reconnaissance pass — see the **M1 CLOSEOUT** note immediately below and the corrections folded into [the adapter surface](#the-adapter-surface) and [endpoints section](#endpoints-and-the-verb-convention-that-will-bite).
 
-This is also the first integration in Loxep whose writes can **lock the owner out of their own services**. A wrong bypass rule, a deleted resource, or a rule update that replaces a working address with a wrong one removes the operator's own access to the estate — including, in this installation, access to Loxep itself. The [write-authorization model](#the-write-risk-model) is therefore the load-bearing part of this design, not the adapter surface, and it is flagged **OWNER-REVIEW-CRITICAL**.
+This is also the first integration in Loxep whose writes can **lock the owner out of their own services**. A wrong bypass rule, a deleted resource, or a rule update that replaces a working address with a wrong one removes the operator's own access to the estate — including, in this installation, access to Loxep itself. The [write-authorization model](#the-write-risk-model) is therefore the load-bearing part of this design, not the adapter surface, and it is flagged **OWNER-REVIEW-CRITICAL**. Nothing about milestone 1 touches this section: M1 has no write verb at all.
 
-**Implementation status: DESIGN ONLY. Nothing here is built.** `@loxep/integration-pangolin` does not exist; `infrastructure.sync-proxy-resource` is declared in `packages/infrastructure/src/tasks.ts` and deliberately **not** registered in `packages/app/src/registry.ts`, so an accidental enqueue fails loudly as an unrecognized task; `hosting_targets.proxy_connection_id` has been a nullable, unused column since migration `0012`. Children are filed under `loxep-acj`.
+**Implementation status, updated 2026-08-15 (`loxep-acj.1`, M1 shipped):** `@loxep/integration-pangolin` now exists — the read surface, the five-kind taxonomy, the rate budget, the credential bundle (`pangolin_credentials` in `@loxep/domain`), the redactors, a catalog entry + guided form + connecting guide, and a live reconnaissance run (see the closeout note below). `infrastructure.sync-proxy-resource` remains declared in `packages/infrastructure/src/tasks.ts` and deliberately **not** registered in `packages/app/src/registry.ts` — M1 is explicitly out of scope for the task, the intent tables, and the reconciler, all of which land in M2 (`loxep-acj.2`). `hosting_targets.proxy_connection_id` remains a nullable, unused column since migration `0012`. Children are filed under `loxep-acj`.
+
+:::note[M1 closeout — read this before M2]
+Milestone 1's live reconnaissance (2026-08-15, against the owner's real instance, read-only) found the standalone Integration API server's port is **not reachable from the build/CI network on any path tried** — not the public origin, not any of five plausible dedicated-subdomain guesses, not a confirmed direct Tailscale connection to the actual Pangolin host. One genuine live confirmation did land: the dashboard's own sibling `/api/v1` route (session-cookie-gated, sharing the same response-wrapper code) answered `HTTP 401` with `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` — live proof of the envelope shape this design predicted from documentation, even though the bearer-authenticated Integration API surface itself remains unverified against a live read. `test/live-pangolin.test.ts` records this as a `not_found` classification (an HTTP 404 from the dashboard's own catch-all route) rather than crashing, and is written to start exercising real reads with no code change once the operator's instance has a working reverse-proxy route for the Integration API's port. Two source-verified corrections against this document's original endpoint table are folded in below: the canonical resource path is `/resource` (not `/public-resource`, which is a registered alias), and every list endpoint except DNS records nests its array under a named key plus a `pagination` object rather than answering a bare array. M2 should re-run the live suite as its own first step, once reachability is fixed, before building the reconciler on top of unverified read shapes.
+:::
 
 ## What already exists, and what this design may not re-invent
 
@@ -110,7 +114,13 @@ Sources: [Integration API](https://docs.pangolin.net/manage/integration-api.md);
 ```text
 Org        orgId is a STRING SLUG (e.g. 'home-lab'), immutable, visible in the
            dashboard URL. One instance hosts MANY orgs.
-Site       type: 'newt' | 'wireguard' | 'local'
+Site       type: 'newt' | 'wireguard' | 'local'.
+           M1 CORRECTION, source-verified 2026-08-15: the pg schema's own
+           inline comment (`server/db/pg/schema/schema.ts`) documents only
+           `"newt" or "wireguard"` for this column; `'local'` does not
+           appear there. `@loxep/integration-pangolin`'s `PangolinSiteFact`
+           therefore types `type` as a plain string rather than this union
+           until a live read confirms which values actually occur.
 Resource   PUBLIC resources (proxied hostnames) and PRIVATE resources (ZTNA).
            Public create is an anyOf: an HTTP-ish shape {name, domainId,
            subdomain, mode: http|ssh|rdp|vnc|tcp|udp} or a raw shape
@@ -135,22 +145,22 @@ Sources: [Organizations / org id](https://docs.pangolin.net/manage/organizations
 
 ```text
 sites       PUT  /org/{orgId}/site               create (returns newt credentials)
-            GET  /org/{orgId}/sites | /site/{niceId}
+            GET  /org/{orgId}/sites | /org/{orgId}/site/{niceId} | /site/{siteId}
             GET|POST|DELETE /site/{siteId}
             GET  /org/{orgId}/pick-site-defaults  pre-generate newt id/secret
 
-resources   PUT  /org/{orgId}/public-resource     create
-            GET  /org/{orgId}/public-resources
-            GET|POST|DELETE /public-resource/{resourceId}
+resources   PUT  /org/{orgId}/resource            create   (alias: /org/{orgId}/public-resource)
+            GET  /org/{orgId}/resources                    (alias: /org/{orgId}/public-resources)
+            GET|POST|DELETE /resource/{resourceId}         (alias: /public-resource/{resourceId})
 
-targets     PUT  /public-resource/{resourceId}/target
-            GET  /public-resource/{resourceId}/targets
+targets     PUT  /resource/{resourceId}/target             (alias: /public-resource/{resourceId}/target)
+            GET  /resource/{resourceId}/targets            (alias: .../public-resource/{resourceId}/targets)
             GET|POST|DELETE /target/{targetId}
 
-RULES       PUT    /public-resource/{resourceId}/rule           create
-            POST   /public-resource/{resourceId}/rule/{ruleId}  update
-            DELETE /public-resource/{resourceId}/rule/{ruleId}
-            GET    /public-resource/{resourceId}/rules
+RULES       PUT    /resource/{resourceId}/rule           create   (alias: /public-resource/{resourceId}/rule)
+            POST   /resource/{resourceId}/rule/{ruleId}  update
+            DELETE /resource/{resourceId}/rule/{ruleId}
+            GET    /resource/{resourceId}/rules
 
 domains     GET  /org/{orgId}/domains
             GET  /org/{orgId}/domain/{domainId}
@@ -158,7 +168,11 @@ domains     GET  /org/{orgId}/domains
             GET  /org/{orgId}/domain/{domainId}/dns-records
 ```
 
-Every response is wrapped in `{data, success, error, message, status}`. Phase 7's warning applies literally: **an RPC-style envelope means HTTP 200 does not imply success**, and the adapter must branch on the envelope first and the status second — the identical shape `@loxep/integration-purelymail` already handles, where a live-verified auth failure arrives as HTTP 200 with `{"type":"error","code":"invalidToken"}`.
+:::note[M1 correction, source-verified 2026-08-15]
+`fosrl/pangolin@main`'s `server/routers/integration.ts` registers `/resource`/`/resources` as the CANONICAL path for every resource/target/rule route above, with `/public-resource`/`/public-resources` as a registered alias — the reverse of how this table originally presented them (design-authoring time relied on documentation prose; this correction reads the Express route registrations directly). `@loxep/integration-pangolin` uses `/resource` as primary. Separately: **every list endpoint above except `.../dns-records` nests its array under a named key plus a `pagination` object** — `GET /org/{orgId}/sites` answers `data: {sites: [...], pagination: {...}}`, and the same shape holds for `orgs`/`resources`/`targets`/`rules`/`domains`. `GET .../dns-records` is the one exception, answering a bare array. Neither correction changes any verb, tier, or risk conclusion below — both are adapter-shape details, source-verified against the same commit the auth/envelope facts below already cite.
+:::
+
+Every response is wrapped in `{data, success, error, message, status}` — **confirmed twice**: in source, every router this adapter reads registers this exact OpenAPI response schema (`error` is a boolean flag, not a code string — Pangolin publishes no per-domain error-code table the way Purelymail does); live, 2026-08-15 against the owner's instance, an unauthenticated request answered `HTTP 401` with `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` (see the M1 closeout note above for what that probe did and did not reach). Phase 7's warning applies literally: **an RPC-style envelope means HTTP 200 does not imply success**, and the adapter must branch on the envelope first and the status second — the identical shape `@loxep/integration-purelymail` already handles, where a live-verified auth failure arrives as HTTP 200 with `{"type":"error","code":"invalidToken"}`.
 
 **Rule vocabulary, exactly as the spec has it** (the UI labels differ, and the design must speak API):
 
@@ -663,12 +677,17 @@ Each of these is a thing a reasonable reader would expect this design to include
 The ordering rule is explicit: **every milestone that writes is gated on the milestone that made writing safe, and the two gates that need an owner ruling are named as gates, not as risks.**
 
 ```text
-M1  READ ONLY                                          no gate
+M1  READ ONLY                              SHIPPED 2026-08-15, loxep-acj.1
     @loxep/integration-pangolin: the read surface, the five-kind taxonomy,
-    the rate budget, the credential bundle, the redactors. Catalog entry,
-    guided form, connecting-pangolin guide. A live reconnaissance run
-    against the owner's instance that VERIFIES every fact in this document
-    and corrects the ones that are wrong.
+    the rate budget, the credential bundle (pangolin_credentials), the
+    redactors. Catalog entry, guided form, connecting-pangolin guide. A
+    live reconnaissance run against the owner's instance VERIFIED the
+    envelope shape live (via the dashboard's own sibling /api/v1 route)
+    but found the standalone Integration API server itself UNREACHABLE
+    from the build network on every path tried — see the M1 closeout
+    note near the top of this document. Two source-verified corrections
+    landed: /resource is canonical (/public-resource is the alias, not
+    the reverse), and list responses nest under a named key + pagination.
     Nothing writes. Nothing can.
 
 M2  INTENT + CHECK-MODE RECONCILER                     no gate
