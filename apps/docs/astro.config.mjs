@@ -35,6 +35,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Overview', slug: 'guides' },
+            { label: 'Managing access', slug: 'guides/managing-access' },
             { label: 'Connecting eBay', slug: 'guides/connecting-ebay' },
             { label: 'Connecting Etsy', slug: 'guides/connecting-etsy' },
             { label: 'Connecting Reverb', slug: 'guides/connecting-reverb' },
@@ -84,6 +85,7 @@ export default defineConfig({
             { label: 'Fleet Observability Design (Phase 8)', slug: 'architecture/fleet-observability-design' },
             { label: 'Flipping Lifecycle Design (Phase 9)', slug: 'architecture/flipping-lifecycle-design' },
             { label: 'Knowledge & Task Companion Integration Design', slug: 'architecture/knowledge-tasks-integration-design' },
+            { label: 'Expense Entry & Document Intelligence Design', slug: 'architecture/expense-entry-design' },
           ],
         },
         {

@@ -409,6 +409,8 @@ Three properties are non-negotiable and every one of them is checkable:
 
 #### Backends: the options, and the recommendation
 
+**Superseded in scope, not in principle, on 2026-08-15.** The three-row table below was a sketch, not a survey — it never verified a licence, a model size, or a CPU benchmark. [Expense Entry and Document Intelligence Design](../expense-entry-design/#3-ocr-the-survey) performs that survey against primary sources and proposes a concrete backend under an opt-in Compose profile. **Every rule this section states still binds** — candidates never records, confidence always present, source regions optional, a backend is a configured provider with its credential (if any) in the credential service — and [OQ3](#open-questions) remains the owner's to answer.
+
 ```text
 backend         accuracy   deps added            egress   cost      ships when
 --------------  ---------  --------------------  -------  --------  --------------
@@ -1113,6 +1115,8 @@ Each is a genuinely unresolved decision with a recommendation, not a placeholder
 9. **Where does an ingested purchase's shipping cost go when the operator marks the line `supplies`?** The acquisition holds `inbound_freight` for the whole order; if two of five lines become stock and three become supplies, the freight belongs partly to each. *Recommendation: leave the freight on the acquisition and allocate it only across the lines that became stock, with the remainder recorded as `capitalize = false` on the same acquisition.* It keeps the evidence together, it uses a mechanism that already exists, and it refuses to invent a freight-splitting policy nobody asked for. Flagged because it is the kind of thing that silently overstates basis if done the naive way.
 
 10. **Does `documents` need a `parsed_text` column before a backend exists?** *Recommendation: no.* Adding it now ships an always-null column and an implicit claim that Loxep extracts text. It is additive when a backend that produces text arrives.
+
+    **Revisited 2026-08-15 by [Expense Entry and Document Intelligence Design](../expense-entry-design/#5-search-where-extracted-text-lives):** that design surveys the self-hostable OCR field this question deferred, proposes a backend, and therefore answers this question *yes* — `documents.parsed_text` plus a stored generated `tsvector` — **conditional on its own tier A being accepted by the owner**. The recommendation above remains correct for as long as no backend ships; it does not need editing, and this note records where the condition is now tracked.
 
 ---
 
