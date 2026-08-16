@@ -67,11 +67,21 @@ import type { JobsLogger } from "@loxep/jobs";
 import {
   createPurelymailAdapter,
   createRateBudget,
+  PURELYMAIL_LIST_USER_LIMIT,
 } from "@loxep/integration-purelymail";
 import type {
   PurelymailAdapter,
   RateBudget,
 } from "@loxep/integration-purelymail";
+
+/**
+ * The provider's own hard cap on `listUsers()` — re-exported (never
+ * redefined) so a caller states the SAME number the adapter enforces,
+ * without importing `@loxep/integration-purelymail` directly (provider SDK
+ * shapes stop at the integration boundary — the estate browser's Mailboxes
+ * section, loxep-47o.3, is this constant's first `apps/web` consumer).
+ */
+export { PURELYMAIL_LIST_USER_LIMIT };
 import { AppConfigurationError } from "./errors.ts";
 
 /** `connections.provider` value the Purelymail/mail pipeline accepts. */

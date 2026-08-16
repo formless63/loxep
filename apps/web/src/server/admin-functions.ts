@@ -19,6 +19,7 @@ import {
   authOnboardingOidcPromptDismissedSetting,
   authProvisioningSetting,
   EVIDENCE_INGEST_CONNECTION_KIND,
+  findRegisteredSetting,
   FLEET_EVIDENCE_PROVIDERS,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
@@ -1595,6 +1596,16 @@ export interface RegisteredSettingDto {
   isSet: boolean;
   value: JsonValue;
   updatedAt: string | null;
+  /**
+   * `z.toJSONSchema(definition.schema)` (settings-ux-design.md §2.1) — plain,
+   * serializable JSON Schema data the generic renderer (loxep-8ja.2) maps to
+   * fields. The browser never runs a setting's live Zod schema: the registry
+   * lives in `@loxep/domain`, server-side, and this is how its shape ships as
+   * data instead. Validation authority does not move — `settings.set()`'s own
+   * `schema.safeParse()` remains the sole source of truth; this field is for
+   * widget selection and UX-level constraints only.
+   */
+  jsonSchema: JsonValue;
 }
 
 /** Raw `application_settings` row — key/version/provenance, no value. */
@@ -1608,6 +1619,23 @@ export interface RawSettingDto {
 export interface ApplicationSettingsDto {
   registered: RegisteredSettingDto[];
   raw: RawSettingDto[];
+}
+
+/**
+ * A registered setting's shape as plain JSON Schema data, for
+ * `RegisteredSettingDto.jsonSchema` (loxep-8ja.1, settings-ux-design.md
+ * §2.1). Every entry a caller reaches this through comes from
+ * `settings.list()`/`settings.setByKey()`, which only ever produce keys
+ * `defineSetting()` registered — so a missing definition here means the
+ * registry and the settings service have drifted, and this fails loudly
+ * rather than silently shipping a fake/empty schema to the client.
+ */
+export function settingJsonSchema(key: string): JsonValue {
+  const definition = findRegisteredSetting(key);
+  if (definition === undefined) {
+    throw new Error(`no registered setting definition found for "${key}"`);
+  }
+  return z.toJSONSchema(definition.schema) as unknown as JsonValue;
 }
 
 export const fetchApplicationSettings = createServerFn({ method: 'GET' }).handler(
@@ -1629,7 +1657,8 @@ export const fetchApplicationSettings = createServerFn({ method: 'GET' }).handle
         schemaVersion: entry.schemaVersion,
         isSet: entry.isSet,
         value: entry.value as JsonValue,
-        updatedAt: iso(entry.updatedAt)
+        updatedAt: iso(entry.updatedAt),
+        jsonSchema: settingJsonSchema(entry.key)
       })),
       raw: rawRows.map((row) => ({
         key: row.key,
@@ -1687,7 +1716,8 @@ export const updateApplicationSetting = createServerFn({ method: 'POST' })
       schemaVersion: entry.schemaVersion,
       isSet: entry.isSet,
       value: entry.value as JsonValue,
-      updatedAt: iso(entry.updatedAt)
+      updatedAt: iso(entry.updatedAt),
+      jsonSchema: settingJsonSchema(entry.key)
     };
   });
 

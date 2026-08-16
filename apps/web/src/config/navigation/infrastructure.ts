@@ -20,6 +20,19 @@ export const infrastructureNavGroups: NavGroup[] = [
     ]
   },
   {
+    label: 'Estates',
+    items: [
+      {
+        title: 'Estates',
+        url: '/infrastructure/estate',
+        icon: 'integrations',
+        isActive: false,
+        shortcut: ['g', 'e'],
+        items: []
+      }
+    ]
+  },
+  {
     label: 'Domains',
     items: [
       {

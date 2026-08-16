@@ -18,6 +18,8 @@ import {
   cloudflareRateBudgetSetting,
   documentsMediaLimitsSetting,
   documentsParserIdSetting,
+  ebayRateBudgetSetting,
+  inventoryDefaultSaleModeSetting,
   inventoryMediaLimitsSetting,
   deriveGatusPushFactKey,
   GATUS_PUSH_FACT_SLUGS,
@@ -26,10 +28,12 @@ import {
   gatusPushSetting,
   gatusRateBudgetSetting,
   integrationsEnabledSetting,
+  monitorDefaultsSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
   providerWritePolicySetting,
   registeredApplicationSettings,
+  wooRateBudgetSetting,
 } from "../src/index.ts";
 import type { SettingsService } from "../src/index.ts";
 import {
@@ -942,5 +946,90 @@ describe("infrastructure.provider_write_policy setting (Pangolin chain design M3
     } finally {
       await dropScratchDb(dbName);
     }
+  });
+});
+
+// -----------------------------------------------------------------------------
+// z.toJSONSchema conversion (loxep-8ja.1, settings-ux-design.md §2.1/§2.4) —
+// no DB required: this is purely about the registry's Zod schemas converting
+// to the plain JSON Schema data RegisteredSettingDto.jsonSchema ships to the
+// browser, and every class (a) setting carrying a per-field .describe().
+// -----------------------------------------------------------------------------
+
+describe("z.toJSONSchema conversion (loxep-8ja.1)", () => {
+  it("converts every registered setting's schema without throwing", () => {
+    for (const definition of registeredApplicationSettings) {
+      expect(() => z.toJSONSchema(definition.schema)).not.toThrow();
+      const jsonSchema = z.toJSONSchema(definition.schema);
+      // Must be plain, JSON-serializable data — no functions/classes leak
+      // into the DTO the browser receives.
+      expect(() => JSON.stringify(jsonSchema)).not.toThrow();
+    }
+  });
+
+  it("produces a jsonSchema object keyed by every registered setting's key", () => {
+    const byKey = new Map(
+      registeredApplicationSettings.map((definition) => [
+        definition.key,
+        z.toJSONSchema(definition.schema),
+      ]),
+    );
+    expect(byKey.size).toBe(registeredApplicationSettings.length);
+    for (const definition of registeredApplicationSettings) {
+      expect(byKey.get(definition.key)).toBeDefined();
+    }
+  });
+
+  /**
+   * The 13 class (a) settings (settings-ux-design.md §1) — the ones the
+   * generic renderer (loxep-8ja.2) actually maps to fields. Every OBJECT
+   * field across these 12 object-shaped definitions carries a `.describe()`,
+   * lifted from that field's existing JSDoc per §2.4; the 13th
+   * (`auth.onboarding_oidc_prompt_dismissed`) is a bare, non-object boolean
+   * schema — there is no "field" inside it to describe separately from the
+   * setting's own top-level `description`, which already travels end to end.
+   */
+  const classAObjectSettings = [
+    monitorDefaultsSetting,
+    monitorObservationCapsSetting,
+    ebayRateBudgetSetting,
+    wooRateBudgetSetting,
+    cloudflareRateBudgetSetting,
+    gatusRateBudgetSetting,
+    orderPayloadRetentionSetting,
+    caaPolicySetting,
+    documentsMediaLimitsSetting,
+    inventoryMediaLimitsSetting,
+    inventoryDefaultSaleModeSetting,
+    documentsParserIdSetting,
+  ] as const;
+
+  it("gives every class (a) object-shaped setting a top-level description", () => {
+    for (const definition of classAObjectSettings) {
+      const jsonSchema = z.toJSONSchema(definition.schema) as {
+        properties?: Record<string, { description?: string }>;
+      };
+      expect(jsonSchema.properties).toBeDefined();
+      const properties = jsonSchema.properties ?? {};
+      expect(Object.keys(properties).length).toBeGreaterThan(0);
+      for (const [field, propertySchema] of Object.entries(properties)) {
+        expect(
+          propertySchema.description,
+          `${definition.key}.${field} is missing a .describe()`,
+        ).toBeTypeOf("string");
+        expect(propertySchema.description?.length ?? 0).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("leaves the bare-boolean class (a) setting's own top-level description as the label source", () => {
+    // #13 in the design's inventory: a lone Switch, no FieldGroup wrapper —
+    // the setting's own RegisteredSettingDto.description is what the
+    // renderer shows, so there is nothing per-field to assert here beyond
+    // "the schema still converts and the setting-level description exists".
+    expect(authOnboardingOidcPromptDismissedSetting.description.length).toBeGreaterThan(0);
+    expect(() =>
+      z.toJSONSchema(authOnboardingOidcPromptDismissedSetting.schema),
+    ).not.toThrow();
   });
 });

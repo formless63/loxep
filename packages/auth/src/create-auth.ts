@@ -90,7 +90,7 @@ export function resolveOidcEmailClaim(
  *   - `nickname` — OIDC Core's "casual name of the End-User"; the closest
  *     standard claim to a chosen display name;
  *   - `preferred_username` — the fallback Pocket ID and most IdPs populate;
- *   - `given_name` — last resort, so "Alex Rivera" still gets "William"
+ *   - `given_name` — last resort, so "Alex Rivera" still gets "Alex"
  *     rather than nothing.
  *
  * `emailClaim` defaults to `"email"` — OIDC's own standard claim, which

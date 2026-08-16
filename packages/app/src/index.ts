@@ -168,6 +168,18 @@ export type {
   CloudflareRateBudgetConfig,
   CreateCloudflareAdapterFactoryOptions,
 } from "./cloudflare.ts";
+// Re-exported so the Cloudflare estate browser (loxep-47o.2) can read the
+// adapter's own pagination ceilings and name-mapping helper without
+// `apps/web` taking a direct dependency on `@loxep/integration-cloudflare` —
+// provider SDK shapes stop at the integration boundary; `@loxep/app` is
+// already that boundary's composition root for Cloudflare (`cloudflare.ts`
+// above depends on the package directly), the same role it plays for every
+// other fleet-adapter re-export in this file.
+export {
+  CLOUDFLARE_RECORDS_DEFAULT_PER_PAGE,
+  CLOUDFLARE_ZONES_DEFAULT_PER_PAGE,
+  toProviderName as cloudflareToProviderName,
+} from "@loxep/integration-cloudflare";
 
 export {
   INFRASTRUCTURE_RECONCILE_POLL_MODE,
@@ -230,6 +242,33 @@ export { normalizeDockhandBaseUrl } from "@loxep/integration-dockhand";
 // `enableProxyResourceRule` job-enqueueing server functions, never directly.
 export { createPangolinAdapterFactory } from "./pangolin.ts";
 export type { PangolinAdapterFactory, PangolinConnectionAdapter } from "./pangolin.ts";
+
+// loxep-47o.3 (Purelymail estate browser): the same re-export shape as
+// Pangolin's above — `apps/web/src/server/admin.ts` needs a live READ
+// adapter for the per-connection estate page, loaded through this package
+// the same way. `purelymail.ts` was previously reached only by this
+// package's own worker-side `infrastructure-mail.ts`. `mailProviderPortFromPurelymailAdapter`
+// and `purelymailResultRedactor` are re-exported too so `apps/web` can mount
+// the ALREADY-GATED `runMailDomainSync`/`runMailboxSync` service calls
+// (`@loxep/infrastructure`'s `mail-sync.ts`) as manual-trigger admin
+// actions — the estate page's write affordances (design §3.2, owner ruling
+// 2026-08-16 #3: mount existing service-layer paths, policy-blocked, rather
+// than a per-verb whitelist). No new adapter verb, no new payload shape —
+// P10.
+export {
+  createPurelymailAdapterFactory,
+  PURELYMAIL_CONNECTION_PROVIDER,
+  PURELYMAIL_LIST_USER_LIMIT,
+} from "./purelymail.ts";
+export type {
+  PurelymailAdapterFactory,
+  PurelymailConnectionAdapter,
+} from "./purelymail.ts";
+export {
+  createMailSyncForDomain,
+  mailProviderPortFromPurelymailAdapter,
+  purelymailResultRedactor,
+} from "./infrastructure-mail.ts";
 
 export {
   REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,

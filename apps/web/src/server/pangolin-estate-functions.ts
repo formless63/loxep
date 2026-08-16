@@ -1,10 +1,13 @@
 /**
  * Server functions for the Pangolin estate browser (loxep-pq2): "the org as
  * it actually is, with control in context." A per-connection page under
- * `/infrastructure/proxy/$connectionId` renders a LIVE READ of everything
- * one Pangolin instance actually has — sites, resources, org domains — which
- * no surface in Loxep showed before this (M2/M4/M5/M7 built the intent/
- * reconcile side; the browse-the-real-estate side never existed).
+ * `/infrastructure/estate/$connectionId` (converged onto the estate-shell's
+ * URL convention by loxep-47o.1 — this route lived at
+ * `/infrastructure/proxy/$connectionId` before the shell existed) renders a
+ * LIVE READ of everything one Pangolin instance actually has — sites,
+ * resources, org domains — which no surface in Loxep showed before this
+ * (M2/M4/M5/M7 built the intent/reconcile side; the browse-the-real-estate
+ * side never existed).
  *
  * ## Live-read discipline — the Dockhand containers panel precedent, applied here
  *

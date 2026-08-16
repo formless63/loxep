@@ -48,7 +48,12 @@ export const monitorDefaultsSetting = defineSetting({
   key: "monitors.defaults",
   schema: z.strictObject({
     /** Baseline cadence, in seconds, for newly created monitor targets. */
-    intervalSeconds: z.number().int().min(5).max(86_400),
+    intervalSeconds: z
+      .number()
+      .int()
+      .min(5)
+      .max(86_400)
+      .describe("Baseline cadence, in seconds, for newly created monitor targets"),
   }),
   description:
     "Default polling cadence new monitor targets inherit, in seconds " +
@@ -76,9 +81,19 @@ export const monitorObservationCapsSetting = defineSetting({
   key: "monitors.observation_caps",
   schema: z.strictObject({
     /** Watchlist member snapshots per poll — one provider call each. */
-    watchlistItemsPerPoll: z.number().int().min(1).max(200),
+    watchlistItemsPerPoll: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .describe("Watchlist member snapshots per poll — one provider call each"),
     /** Search/seller summaries observed per poll — no extra provider call. */
-    searchItemsPerPoll: z.number().int().min(1).max(1000),
+    searchItemsPerPoll: z
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .describe("Search/seller summaries observed per poll — no extra provider call"),
   }),
   description:
     "Per-poll observation caps: watchlist member snapshots (one provider " +
@@ -101,9 +116,13 @@ export const ebayRateBudgetSetting = defineSetting({
   key: "integration.ebay.rate_budget",
   schema: z.strictObject({
     /** Burst size, in provider calls. */
-    capacity: z.number().int().min(1).max(1000),
+    capacity: z.number().int().min(1).max(1000).describe("Burst size, in provider calls"),
     /** Sustained provider calls per second. */
-    refillPerSecond: z.number().positive().max(100),
+    refillPerSecond: z
+      .number()
+      .positive()
+      .max(100)
+      .describe("Sustained provider calls per second"),
   }),
   description:
     "Per-connection eBay rate budget (token-bucket capacity and refill per " +
@@ -131,9 +150,13 @@ export const wooRateBudgetSetting = defineSetting({
   key: "integration.woo.rate_budget",
   schema: z.strictObject({
     /** Burst size, in provider calls. */
-    capacity: z.number().int().min(1).max(1000),
+    capacity: z.number().int().min(1).max(1000).describe("Burst size, in provider calls"),
     /** Sustained provider calls per second. */
-    refillPerSecond: z.number().positive().max(100),
+    refillPerSecond: z
+      .number()
+      .positive()
+      .max(100)
+      .describe("Sustained provider calls per second"),
   }),
   description:
     "Per-connection WooCommerce rate budget (token-bucket capacity and " +
@@ -178,9 +201,16 @@ export const orderPayloadRetentionSetting = defineSetting({
   key: "commerce.order_payload_retention",
   schema: z.strictObject({
     /** `redact` runs the sweep; `keep` makes it a no-op. Never deletes. */
-    mode: z.enum(["redact", "keep"]),
+    mode: z
+      .enum(["redact", "keep"])
+      .describe("redact runs the sweep and replaces the payload with its redacted form; keep makes the sweep a no-op — there is no hard-delete mode"),
     /** Age, in days, at which a stored order payload becomes eligible. */
-    afterDays: z.number().int().min(1).max(3650),
+    afterDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(3650)
+      .describe("Age, in days, at which a stored order payload becomes eligible for the sweep"),
   }),
   description:
     "Order-payload retention (ADR-0021): after how many days a retained " +
@@ -213,9 +243,13 @@ export const cloudflareRateBudgetSetting = defineSetting({
   key: "integration.cloudflare.rate_budget",
   schema: z.strictObject({
     /** Burst size, in provider calls. */
-    capacity: z.number().int().min(1).max(1000),
+    capacity: z.number().int().min(1).max(1000).describe("Burst size, in provider calls"),
     /** Sustained provider calls per second. */
-    refillPerSecond: z.number().positive().max(100),
+    refillPerSecond: z
+      .number()
+      .positive()
+      .max(100)
+      .describe("Sustained provider calls per second"),
   }),
   description:
     "Per-connection Cloudflare rate budget (token-bucket capacity and refill " +
@@ -264,13 +298,27 @@ export const caaPolicySetting = defineSetting({
      * deliberate stance, and it must be distinguishable from "nobody has
      * looked at this yet".
      */
-    reviewed: z.boolean(),
+    reviewed: z
+      .boolean()
+      .describe(
+        "Must be explicitly set to true by the owner before any CAA record is materialized — distinguishes \"nobody has reviewed this yet\" from a deliberate empty policy",
+      ),
     /** CA domains for `issue`, e.g. `letsencrypt.org`. */
-    issuers: z.array(z.string().min(1)).max(32),
+    issuers: z
+      .array(z.string().min(1))
+      .max(32)
+      .describe("CA domains authorized to issue certificates, e.g. letsencrypt.org"),
     /** CA domains for `issuewild`. */
-    wildcardIssuers: z.array(z.string().min(1)).max(32),
+    wildcardIssuers: z
+      .array(z.string().min(1))
+      .max(32)
+      .describe("CA domains authorized to issue wildcard certificates"),
     /** `mailto:` or `https:` violation-report target, or null. */
-    iodef: z.string().min(1).nullable(),
+    iodef: z
+      .string()
+      .min(1)
+      .nullable()
+      .describe("Optional mailto: or https: violation-report target"),
   }),
   description:
     "CAA issuance policy materialized into every managed domain. Ships " +
@@ -308,9 +356,20 @@ export const inventoryMediaLimitsSetting = defineSetting({
   key: "inventory.media_limits",
   schema: z.strictObject({
     /** Per-file cap, in bytes, for an item image/condition-evidence/supporting-document upload. */
-    maxBytes: z.number().int().min(1).max(200 * 1024 * 1024),
+    maxBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(200 * 1024 * 1024)
+      .describe(
+        "Per-file cap, in bytes, for an item image/condition-evidence/supporting-document upload",
+      ),
     /** Accepted MIME types for an item media upload. */
-    allowedMimeTypes: z.array(z.string().min(1)).min(1).max(32),
+    allowedMimeTypes: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(32)
+      .describe("Accepted MIME types for an item media upload"),
   }),
   description:
     "Per-file size cap and MIME allowlist for inventory item image/" +
@@ -348,9 +407,20 @@ export const documentsMediaLimitsSetting = defineSetting({
   key: "documents.media_limits",
   schema: z.strictObject({
     /** Per-file cap, in bytes, for a receipt/invoice/document upload through either upload route. */
-    maxBytes: z.number().int().min(1).max(200 * 1024 * 1024),
+    maxBytes: z
+      .number()
+      .int()
+      .min(1)
+      .max(200 * 1024 * 1024)
+      .describe(
+        "Per-file cap, in bytes, for a receipt/invoice/document upload through either upload route",
+      ),
     /** Accepted MIME types for a receipt/document upload. */
-    allowedMimeTypes: z.array(z.string().min(1)).min(1).max(32),
+    allowedMimeTypes: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(32)
+      .describe("Accepted MIME types for a receipt/document upload"),
   }),
   description:
     "Per-file size cap and MIME allowlist for expense-receipt and document " +
@@ -389,7 +459,12 @@ export const documentsParserIdSetting = defineSetting({
   key: "documents.parser_id",
   schema: z.strictObject({
     /** A `ReceiptParser.id` from `@loxep/documents`' registry — `'manual'` or `'ocr_tesseract'` as of this milestone. */
-    parserId: z.string().min(1),
+    parserId: z
+      .string()
+      .min(1)
+      .describe(
+        "A registered @loxep/documents ReceiptParser backend id — 'manual' or 'ocr_tesseract' as of this milestone",
+      ),
   }),
   description:
     "Which registered @loxep/documents ReceiptParser backend extracts text " +
@@ -414,7 +489,12 @@ export const documentsParserIdSetting = defineSetting({
 export const inventoryDefaultSaleModeSetting = defineSetting({
   key: "inventory.default_sale_mode",
   schema: z.strictObject({
-    saleMode: z.enum(["unit", "lot", "set", "parts_donor", "bundle_component"]),
+    /** The sale_mode a newly intaken item gets when the operator does not choose one explicitly. */
+    saleMode: z
+      .enum(["unit", "lot", "set", "parts_donor", "bundle_component"])
+      .describe(
+        "The sale_mode a newly intaken item gets when the operator does not choose one explicitly",
+      ),
   }),
   description:
     "The sale_mode a newly intaken inventory item gets when the operator " +
@@ -576,9 +656,13 @@ export const gatusRateBudgetSetting = defineSetting({
   key: "integration.gatus.rate_budget",
   schema: z.strictObject({
     /** Burst size, in provider calls. */
-    capacity: z.number().int().min(1).max(1000),
+    capacity: z.number().int().min(1).max(1000).describe("Burst size, in provider calls"),
     /** Sustained provider calls per second. */
-    refillPerSecond: z.number().positive().max(100),
+    refillPerSecond: z
+      .number()
+      .positive()
+      .max(100)
+      .describe("Sustained provider calls per second"),
   }),
   description:
     "Per-connection Gatus rate budget (token-bucket capacity and refill " +
@@ -890,9 +974,10 @@ export const providerWritePolicySetting = defineSetting({
     "'additive', 'access_affecting', or 'lockout_class' — keyed by " +
     "connection id. A connection absent from this map is read_only. " +
     "Applies to every write-capable provider connection this policy is " +
-    "wired to check (Pangolin, Cloudflare, Purelymail as of milestone 3) — " +
-    "see infrastructure.provider_write_policy's own design section for the " +
-    "tier meanings",
+    "wired to check (Pangolin, Cloudflare, Purelymail, and Dockhand as of " +
+    "the estate-browser program, loxep-47o.10 — Invoice Ninja stays " +
+    "deliberately ungated for now) — see infrastructure.provider_write_policy's " +
+    "own design section for the tier meanings",
   schemaVersion: 1,
   defaultValue: {},
 });

@@ -36,6 +36,14 @@ Fill in:
 
 Save. The account id (if given) is kept as ordinary connection configuration and stays visible; the token is stored application-encrypted and is never displayed again.
 
+## The estate browser: every zone this account has, not only what Loxep declared
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of the WHOLE account: every zone (status, name servers, paused state), whether or not Loxep has a managed domain for it. Nothing here is stored; the section is stamped with the moment it was read, on every open, and "Load more" fetches one further page only when you ask for it.
+
+Expand a zone's **View records** action to drill into its DNS records — type, name, content, TTL (`automatic` when Cloudflare has no explicit value), and proxied state — cross-referenced against what Loxep has declared for that zone: **Declared** (matches a `dns_records` row), **Drift finding open** (matches, but the periodic drift sweep found a difference), or **Unexpected** (nothing in Loxep describes it). An unexpected record in a zone Loxep already manages offers **Adopt**, which records the record's current value as a manually-owned `dns_records` row — the exact write the drift panel's own **Adopt** button makes, entered from the zone instead of from a drift finding. Adopting never contacts Cloudflare and never applies anything on its own.
+
+**This page never edits or deletes a record, and never creates a zone.** A declared record is edited on `/infrastructure/domains/$name` and applied through the reconciler, which already owns the gate, the ledger, and the drift model — the estate browser only ever adds to what Loxep already knows, never changes what a provider actually has.
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -63,4 +71,5 @@ Archiving is reversible: **Unarchive** returns the account to **Disabled** rathe
 
 - [Connecting Purelymail](../connecting-purelymail/) — the mail-hosting half of the Infrastructure control plane.
 - [Infrastructure Control Plane Design (Phase 7)](../../architecture/infrastructure-control-design/) — the reconciler, drift detection, and the record-materialization rules this connection feeds.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above, and why it never becomes a DNS editor.
 - [Configuration & Secrets](../../architecture/configuration-and-secrets/) — why provider credentials live in the database rather than in environment variables.

@@ -75,6 +75,10 @@ Declare the intent either from the **New hosting target** dialog's collapsed "Al
 
 This is the one place Loxep writes to Dockhand, and it is worth being precise about why it is allowed when starting a container is not: registering a host writes a row in Dockhand's own database describing how to reach a machine. **Nothing executes on that machine.** Starting a container runs code on it. That is the line.
 
+:::note[Write policy — a behavior change]
+As of the estate-browser program (`loxep-47o.10`), registering or updating a host at Dockhand goes through the same **per-connection write-policy tier** that already gates Cloudflare and Purelymail writes, set on **Settings → Connections**. A Dockhand connection defaults to `read_only` like every other provider, so **Reconcile now blocks until you raise the connection's tier to at least Additive** — Check now is never gated, since it makes no write. A blocked apply is recorded as a `blocked` step on **Infrastructure → Runs**, never a silent no-op and never a failure, naming the exact setting to flip. If your Dockhand connection was applying registrations before this change, raise its tier once to keep that working.
+:::
+
 Four connection types are available, matching Dockhand's own:
 
 | Type | What it needs |

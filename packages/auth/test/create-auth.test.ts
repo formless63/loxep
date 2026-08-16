@@ -148,8 +148,8 @@ describe("createAuth", () => {
     expect(provider.overrideUserInfo).toBeUndefined();
     // `emailClaim: "email"` is the standard claim, so the wrapper behaves
     // identically to calling `mapOidcProfileToUser` with no override.
-    expect(provider.mapProfileToUser?.({ given_name: "William" })).toEqual(
-      mapOidcProfileToUser({ given_name: "William" }),
+    expect(provider.mapProfileToUser?.({ given_name: "Alex" })).toEqual(
+      mapOidcProfileToUser({ given_name: "Alex" }),
     );
 
     // `name`/`picture` are mapped by the plugin itself, so the hook adds only
@@ -160,14 +160,14 @@ describe("createAuth", () => {
         picture: "https://pocket-id.example.com/avatar.png",
         nickname: "Will",
         preferred_username: "arivera",
-        given_name: "William",
+        given_name: "Alex",
       }),
     ).toEqual({ displayName: "Will" });
     expect(
-      mapOidcProfileToUser({ preferred_username: "arivera", given_name: "William" }),
+      mapOidcProfileToUser({ preferred_username: "arivera", given_name: "Alex" }),
     ).toEqual({ displayName: "arivera" });
-    expect(mapOidcProfileToUser({ given_name: " William " })).toEqual({
-      displayName: "William",
+    expect(mapOidcProfileToUser({ given_name: " Alex " })).toEqual({
+      displayName: "Alex",
     });
     expect(mapOidcProfileToUser({ nickname: "   ", name: "Alex Rivera" })).toEqual(
       {},

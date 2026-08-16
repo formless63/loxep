@@ -73,8 +73,25 @@ export const PROVIDER_WRITE_POLICY_TIER_VALUES = Object.keys(
   PROVIDER_WRITE_POLICY_TIER_LABELS
 ) as readonly ProviderWritePolicyTier[];
 
-/** Providers this policy is wired to actually check (Pangolin chain design M3's cross-provider rule). Every other row shows "not applicable". */
-export const WRITE_POLICY_ENFORCED_PROVIDERS = new Set(['cloudflare', 'purelymail', 'pangolin']);
+/**
+ * Providers this policy is wired to actually check (Pangolin chain design
+ * M3's cross-provider rule). Every other row shows "not applicable".
+ * Dockhand joined per loxep-47o.10 (owner ruling 2026-08-16 #2) —
+ * `container-hosts.ts`'s `reconcile()` now gates `applyHost` the same way
+ * `sync.ts`/`mail-sync.ts` gate their own writes. Invoice Ninja is
+ * DELIBERATELY excluded: the owner's ruling keeps its push flow ungated for
+ * now (working flow, revisit later — recorded, not forgotten). This set and
+ * `providerWritePolicySetting`'s own description
+ * (`packages/domain/src/settings-defaults.ts`) are the only two places the
+ * enforced-provider set is written down, and they are hand-synchronized —
+ * design doc §1.2/§8.7.
+ */
+export const WRITE_POLICY_ENFORCED_PROVIDERS = new Set([
+  'cloudflare',
+  'purelymail',
+  'pangolin',
+  'dockhand'
+]);
 
 export const STORAGE_DRIVER_LABELS = {
   local: 'Local filesystem',

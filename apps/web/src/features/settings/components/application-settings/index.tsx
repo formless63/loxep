@@ -24,6 +24,7 @@ import type { RawSettingDto, RegisteredSettingDto } from '@/server/admin-functio
 import { getRegisteredColumns, registeredColumns } from './registered-columns';
 import { rawColumns } from './raw-columns';
 import SettingEditDialog from './edit-dialog';
+import SchemaSettingDialog from './schema-setting-dialog';
 import GatusPushCard from './gatus-push-card';
 
 const REGISTERED_CLIENT_COLUMNS: ClientColumnSpec<RegisteredSettingDto>[] = [
@@ -32,6 +33,19 @@ const REGISTERED_CLIENT_COLUMNS: ClientColumnSpec<RegisteredSettingDto>[] = [
 const RAW_CLIENT_COLUMNS: ClientColumnSpec<RawSettingDto>[] = [
   { id: 'key', accessor: (row) => row.key, filterVariant: 'text' }
 ];
+
+/**
+ * loxep-8ja.2 proof-of-concept: the one class (a) setting mounted on the
+ * generic schema-driven form (`SchemaSettingDialog`) instead of the raw-JSON
+ * dialog, proving the `jsonSchema` DTO wire end-to-end — `documents.parser_id`
+ * is the smallest class (a) shape (settings-ux-design.md §1, row 12: one bare
+ * string field). A literal, not an import of `documentsParserIdSetting.key`
+ * from `@loxep/domain`: that package's VALUES stay server-side only (§2.1) —
+ * this key is a plain string, the same shape every `RegisteredSettingDto.key`
+ * already is. Every other registered setting keeps `SettingEditDialog` until
+ * the grouped-Cards rebuild (loxep-8ja.3).
+ */
+const SCHEMA_FORM_POC_SETTING_KEY = 'documents.parser_id';
 
 /**
  * Application settings (ADR-0016): the typed registry (`defineSetting`) plus
@@ -132,18 +146,28 @@ export default function ApplicationSettings({ isAdmin }: { isAdmin: boolean }) {
         </CardContent>
       </Card>
 
-      {editing !== null && (
-        // Keyed by setting: opening a different row remounts the form so its
-        // textarea starts from that setting's own stored value.
-        <SettingEditDialog
-          key={editing.key}
-          open
-          onOpenChange={(open) => {
-            if (!open) setEditing(null);
-          }}
-          setting={editing}
-        />
-      )}
+      {editing !== null &&
+        (editing.key === SCHEMA_FORM_POC_SETTING_KEY ? (
+          <SchemaSettingDialog
+            key={editing.key}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditing(null);
+            }}
+            setting={editing}
+          />
+        ) : (
+          // Keyed by setting: opening a different row remounts the form so
+          // its textarea starts from that setting's own stored value.
+          <SettingEditDialog
+            key={editing.key}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditing(null);
+            }}
+            setting={editing}
+          />
+        ))}
     </div>
   );
 }

@@ -113,6 +113,7 @@ bd close <id>         # Complete work
 
 ### Rules
 
+- `.beads/` is gitignored: issue data stays in the local Dolt store and never ships in this public repository. Never commit exports of it.
 - Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files

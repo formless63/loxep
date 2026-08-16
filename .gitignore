@@ -37,3 +37,4 @@ compose.override.yml
 # Medusa live-verification harness TLS material (generated locally; a private
 # key never belongs in the repo — see packages/integrations/medusa/test/harness.md)
 packages/integrations/medusa/test/harness/tls/
+.beads/

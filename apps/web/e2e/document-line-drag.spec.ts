@@ -15,11 +15,13 @@ import { syntheticReceiptPng } from '../../../packages/documents/test/fixtures/s
  * tesseract.js, run by the harness's own `node bin/loxep.ts start
  * --mode=all` worker process, per `harness.md`):
  *
- * 1. Enabling `ocr_tesseract` (`documents.parser_id`, via the generic
- *    application-settings admin surface `settings.spec.ts` already
- *    exercises) makes an uploaded receipt's `document_line_candidates`
- *    actually carry a `source_region`, and `<DocumentPreview>`'s overlay
- *    renders a "Detected lines" list from them.
+ * 1. Enabling `ocr_tesseract` (`documents.parser_id`, via the
+ *    schema-driven generic settings form — loxep-8ja.2's proof-of-concept
+ *    swap, the one class (a) setting mounted on `SchemaSettingDialog`
+ *    instead of the raw-JSON dialog `settings.spec.ts` still exercises for
+ *    every other registered setting) makes an uploaded receipt's
+ *    `document_line_candidates` actually carry a `source_region`, and
+ *    `<DocumentPreview>`'s overlay renders a "Detected lines" list from them.
  * 2. Dragging a detected line (`@dnd-kit/core`'s `useDraggable`, the
  *    sanctioned drag library — never a hand-rolled `DragEvent`/`dataTransfer`
  *    handler) onto a form field fills it — PURE UI, per the design's
@@ -52,14 +54,15 @@ async function ensureStorageBackend(page: Page): Promise<void> {
 
 /**
  * Opts the installation into `ocr_tesseract` via `/settings/application` —
- * the SAME generic registered-setting edit flow `settings.spec.ts`'s "admin
- * edits a registered application setting" test already proves works
- * end-to-end (row filter by key text, "Edit", `Value (JSON) *` textarea,
- * "Save setting"). There is no dedicated Documents settings page yet (M5's
- * own scope does not build one — see the design doc's status note), so this
- * generic surface is the only in-app path to the setting; idempotent
- * (setting it twice is harmless), so this is safe to call from
- * `beforeAll` even if the harness DB is reused across runs.
+ * `documents.parser_id`'s row now opens `SchemaSettingDialog`
+ * (loxep-8ja.2's proof-of-concept swap for this one class (a) setting: its
+ * schema is a single bare string field, mapped to one `TextField` labeled
+ * "Parser id" per the field-mapping table), not the raw-JSON dialog every
+ * other registered setting still uses. There is no dedicated Documents
+ * settings page yet (M5's own scope does not build one — see the design
+ * doc's status note), so this generic surface is the only in-app path to
+ * the setting; idempotent (setting it twice is harmless), so this is safe
+ * to call from `beforeAll` even if the harness DB is reused across runs.
  */
 async function enableTesseractOcr(page: Page): Promise<void> {
   await page.goto('/settings/application');
@@ -70,8 +73,8 @@ async function enableTesseractOcr(page: Page): Promise<void> {
 
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText(settingKey)).toBeVisible();
-  await dialog.getByLabel('Value (JSON) *').fill('{"parserId":"ocr_tesseract"}');
-  await dialog.getByRole('button', { name: 'Save setting' }).click();
+  await dialog.getByLabel('Parser id').fill('ocr_tesseract');
+  await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toBeHidden();
 }
 
