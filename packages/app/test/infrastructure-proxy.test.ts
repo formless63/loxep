@@ -43,6 +43,9 @@ import { SYNC_PROXY_RESOURCE_TASK, createHostingTargetsService } from "@loxep/in
 import type { ProxyProviderPort } from "@loxep/infrastructure";
 import { createPangolinAdapter } from "@loxep/integration-pangolin";
 import {
+  ENABLE_PROXY_RESOURCE_RULE_TASK,
+  RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+  RETIRE_PROXY_RESOURCE_RULE_TASK,
   createInfrastructureProxyTasks,
   proxyProviderPortFromPangolinAdapter,
   resolveProxyProviderForHostingTarget,
@@ -103,6 +106,9 @@ beforeAll(async () => {
         },
         async createRule() {
           return { ruleId: 1 } as never;
+        },
+        async updateRuleEnabled(_resourceId: string, ruleId: string, payload: { enabled: boolean }) {
+          return { ruleId: Number(ruleId), enabled: payload.enabled } as never;
         },
         capabilities: () => ({
           provider: "pangolin" as const,
@@ -267,7 +273,7 @@ describe("the structural port re-declaration", () => {
     ).rejects.toThrow(/orgId/);
   });
 
-  it("apply() refuses a tier-2 update-* operation — not implemented in this milestone", async () => {
+  it("apply() refuses a tier-2 update-resource/update-target operation — no adapter verb any milestone calls", async () => {
     const adapter = createPangolinAdapter({
       config: { baseUrl: "https://pangolin.test", orgId: "home-lab" },
       credentials: { apiKeyId: "fake-id", apiKeySecret: "fake-secret" },
@@ -278,6 +284,35 @@ describe("the structural port re-declaration", () => {
       port.apply({ kind: "update-resource", externalResourceId: "1", resource: { enabled: false } }),
     ).rejects.toThrow(/tier 2/);
   });
+
+  it("apply() dispatches update-rule to the REAL adapter's updateRuleEnabled — M7 (loxep-acj.7), the one tier-2 verb that IS wired", async () => {
+    const adapter = createPangolinAdapter({
+      config: { baseUrl: "https://pangolin.test", orgId: "home-lab" },
+      credentials: { apiKeyId: "fake-id", apiKeySecret: "fake-secret" },
+      fetchImpl: async (_url, init) => {
+        // The verb convention that will bite: POST updates, not PUT.
+        expect(init.method).toBe("POST");
+        return new Response(
+          JSON.stringify({
+            data: { ruleId: 7, action: "ACCEPT", match: "CIDR", value: "1.2.3.4/32", priority: 10, enabled: false },
+            success: true,
+            error: false,
+            message: "",
+            status: 200,
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    const port = proxyProviderPortFromPangolinAdapter(adapter, "home-lab");
+    const result = await port.apply({
+      kind: "update-rule",
+      externalResourceId: "1",
+      externalRuleId: "7",
+      rule: { action: "ACCEPT", match: "CIDR", value: "1.2.3.4/32", priority: 10, enabled: false },
+    });
+    expect(result).toEqual({ kind: "update-rule", status: "applied", externalRuleId: "7" });
+  });
 });
 
 describe("task registration", () => {
@@ -285,6 +320,69 @@ describe("task registration", () => {
     // Milestone 1 deliberately left this unregistered so an accidental
     // enqueue would fail loudly. This is the assertion that it is real now.
     expect(composition.registry.has(SYNC_PROXY_RESOURCE_TASK)).toBe(true);
+  });
+
+  it("registers all three M7 (loxep-acj.7) retirement tasks", () => {
+    expect(composition.registry.has(RETIRE_PROXY_RESOURCE_RULE_TASK)).toBe(true);
+    expect(composition.registry.has(ENABLE_PROXY_RESOURCE_RULE_TASK)).toBe(true);
+    expect(composition.registry.has(RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK)).toBe(true);
+  });
+});
+
+describe("M7 (loxep-acj.7) retirement tasks, end to end", () => {
+  it("infrastructure.retire-proxy-resource-rule reaches proxy.ts's retireRule, ledgering a retire-kind run attributed to the enqueuing actor", async () => {
+    // This file's shared stub adapter's `listResources()` always answers `[]`
+    // (several OTHER tests in this file depend on that, to exercise the
+    // create-resource path) — so this job's own retire necessarily fails at
+    // "resource not found at provider", exactly like a real
+    // `retireProxyResourceRuleTask` would against a resource that has not
+    // been created yet. That failure is still the proof this test needs:
+    // the task reached `resolveProxyProviderForHostingTarget` and
+    // `proxyResources.retireRule` for real, and the resulting
+    // `reconcile_runs` row is correctly kinded and actor-attributed.
+    // `proxy-retire.test.ts` (`packages/infrastructure`) already exhaustively
+    // covers a SUCCESSFUL retire against a matching observed resource; this
+    // test's own job is proving the JOB wiring, not re-proving that logic.
+    const domain = await insertDomain();
+    const target = await insertHostingTarget(pangolinConnectionId);
+    const resource = await insertProxyResource(domain.id, target.id);
+    const ruleRow = await handle.pool.query<{ id: string }>(
+      `insert into proxy_resource_rules (proxy_resource_id, action, match, value, priority, owner, enabled, external_rule_id)
+       values ($1, 'ACCEPT', 'CIDR', '203.0.113.7/32', 100, 'template', true, '77')
+       returning id`,
+      [resource.id],
+    );
+    const ruleId = ruleRow.rows[0]?.id;
+    if (ruleId === undefined) throw new Error("proxy_resource_rules insert returned no row");
+
+    await addJob(handle.pool, tasks.retireProxyResourceRuleTask, {
+      proxyResourceRuleId: ruleId,
+      hostingTargetId: target.id,
+      actorUserId: "test-user",
+    });
+
+    const runRow = await waitFor(
+      async () => {
+        const row = await handle.pool.query<{ actor_user_id: string | null; kind: string; status: string }>(
+          `select actor_user_id, kind, status from reconcile_runs
+             where subject_type = 'proxy_resource' and subject_id = $1
+             order by started_at desc limit 1`,
+          [resource.id],
+        );
+        return row.rows[0]?.status === "failed" ? row.rows[0] : undefined;
+      },
+      { timeoutMs: 30_000, label: `retire run for proxy resource ${resource.id}` },
+    );
+    expect(runRow?.kind).toBe("reconcile-proxy-resource-retire");
+    expect(runRow?.actor_user_id).toBe("test-user");
+
+    // The rule itself is untouched — a failed run never writes Loxep's own
+    // intent row.
+    const row = await handle.pool.query<{ enabled: boolean }>(
+      `select enabled from proxy_resource_rules where id = $1`,
+      [ruleId],
+    );
+    expect(row.rows[0]?.enabled).toBe(true);
   });
 });
 

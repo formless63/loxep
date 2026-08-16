@@ -25,6 +25,7 @@ import {
   ENSURE_MAIL_DOMAIN_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
   RECONCILE_CONTAINER_HOST_TASK,
+  RUN_PROVISIONING_TEMPLATE_TASK,
   SYNC_MAILBOXES_TASK,
   SYNC_PROXY_RESOURCE_TASK,
   SYNC_TOKEN_POLICY_TASK,
@@ -36,11 +37,14 @@ import {
   ACCOUNTING_POST_FACTS_TASK_NAME,
   DOCUMENTS_EXTRACT_TEXT_TASK_NAME,
   EBAY_ABSOLUTE_MIN_INTERVAL_SECONDS,
+  ENABLE_PROXY_RESOURCE_RULE_TASK,
   FLEET_EVIDENCE_INGEST_TASK,
   GATUS_PUSH_TASK_NAME,
   HEALTH_SWEEP_TASK_NAME,
   IP_ALIAS_DETECTION_TASK_NAME,
   REFRESH_TOKENS_TASK_NAME,
+  RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+  RETIRE_PROXY_RESOURCE_RULE_TASK,
   SYNC_EBAY_PURCHASES_TASK_NAME,
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
   WOO_PAGES_PER_SYNC,
@@ -125,6 +129,21 @@ describe("buildWorkerRegistry", () => {
         // `infrastructure-proxy.ts`'s for why it registers no poll-executor
         // route or cron item yet.
         SYNC_PROXY_RESOURCE_TASK,
+        // Pangolin chain design milestone 7 (loxep-acj.7): the three
+        // retirement/re-enable tasks — on-demand, never claimed by the
+        // dispatcher, no cron item. Job-based (not a synchronous
+        // `apps/web` call) because only `@loxep/app`'s composition root can
+        // build a real Pangolin adapter — see `infrastructure-proxy.ts`'s
+        // own module doc.
+        RETIRE_PROXY_RESOURCE_RULE_TASK,
+        ENABLE_PROXY_RESOURCE_RULE_TASK,
+        RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+        // Pangolin chain design milestone 6 (loxep-acj.6): the
+        // provisioning-template engine's ONE driver task — on-demand,
+        // enqueued transactionally by `ProvisioningTemplatesService.startRun`
+        // and re-enqueued (same job key) on an operator's "Resume run"; no
+        // cron item, never claimed by the dispatcher.
+        RUN_PROVISIONING_TEMPLATE_TASK,
         // Pangolin chain design milestone 5 (loxep-acj.5): the dynamic-IP
         // named-alias detection sweep — one recurring cron, no
         // monitor_targets row, riding the shared scheduling foundation the

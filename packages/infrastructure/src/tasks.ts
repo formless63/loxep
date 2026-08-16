@@ -107,6 +107,43 @@ export interface SyncProxyResourcePayload {
 }
 
 /**
+ * The template engine's ONE driver task (Pangolin chain design milestone 6,
+ * `loxep-acj.6`) — `provisioning.ts`'s `runProvisioningTemplate`'s worker
+ * wrapper. Payload is `{ runId }` and NOTHING else — rule 1 above applies
+ * here exactly as everywhere else: no connection id, no credential, ever.
+ * Every credential this run needs is resolved INSIDE the task from the
+ * frozen `compiled_plan`'s own step params (a `dnsConnectionId`, a
+ * `mailConnectionId`, a `hostingTargetId`) plus the connections those
+ * reference.
+ *
+ * `job_key_mode: 'preserve_run_at'` is load-bearing, not a default left in
+ * place: a template run legitimately waits DAYS for DNS delegation (the same
+ * wait `POLL_MAIL_OWNERSHIP_TASK` already has to survive), and re-enqueueing
+ * it — at run start, and again on every operator "Resume run" click — must
+ * neither reset its backoff nor stack a second pending job behind the first.
+ * `provisioningTemplateRunJobKey(runId)` is the one job key a run ever uses,
+ * for its entire lifetime.
+ *
+ * The body is `mail-sync.ts`'s shape, generalized to seven step kinds and
+ * three providers: advance as far as the run currently can, record exactly
+ * where it stopped, return. Running it again — a resume — picks up from
+ * wherever reality now is; a step already `'succeeded'` is skipped by its own
+ * `template_run_steps` row, and any step that made a non-idempotent provider
+ * create is protected a second time by `provider_operations`, exactly as
+ * every other reconciler in this file already is.
+ */
+export const RUN_PROVISIONING_TEMPLATE_TASK =
+  "infrastructure.run-provisioning-template";
+export interface RunProvisioningTemplatePayload {
+  runId: string;
+}
+
+/** The one job key a template run ever uses — `template_run:{id}`, for its whole lifetime, across every resume. */
+export function provisioningTemplateRunJobKey(runId: string): string {
+  return `template_run:${runId}`;
+}
+
+/**
  * loxep-hb7 Milestone C: the container-host reconciler. UNLIKE
  * `SYNC_PROXY_RESOURCE_TASK` above, this one IS registered — the service it
  * belongs to (`container-hosts.ts`) exists, and so does the port

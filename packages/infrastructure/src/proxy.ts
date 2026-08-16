@@ -116,10 +116,86 @@
  * `update-rule`'s `enabled` flip (the retirement half of add-then-retire,
  * M7) is convergent and would NOT be ledgered even once it exists, matching
  * `container-hosts.ts`'s own update/create split.
+ *
+ * ## M7 (`loxep-acj.7`) retirement orchestration — additive on top of everything above
+ *
+ * Owner ruling (`pangolin-credential-constraints` memory, 2026-08-15):
+ * retirement = disable-never-delete CONFIRMED, gated behind the typed
+ * confirmation and the self-lockout preflight, never from a sweep. Two new
+ * `ProxyResourcesService` members land alongside `reconcile()`, both purely
+ * ADDITIVE — nothing above this section changes shape:
+ *
+ * ```text
+ * retireRule            disable ONE proxy_resource_rules row's CURRENT
+ *                        provider-side rule — the ordinary "a template or
+ *                        manual edit superseded this rule" case. Tier 2
+ *                        (access_affecting) for the write-policy GATE; the
+ *                        self-lockout PREFLIGHT (wouldLockOut, all four
+ *                        clauses, not only the two self-managed ones tier-1
+ *                        apply checks) decides per-call whether THIS retire
+ *                        is actually lockout-class. Convergent, matching the
+ *                        design's own "update-rule... would NOT be ledgered"
+ *                        sentence above — no provider_operations row, and an
+ *                        already-disabled-at-the-provider target is a safe
+ *                        no-op, not an error.
+ *
+ * retireAliasFanOutRule  disable the PREVIOUSLY-observed provider rule for
+ *                        one dynamic-IP alias's OLD address on one resource
+ *                        — the M5 add-then-retire fan-out's retire half,
+ *                        finally completing for real. NOT `retireRule` on
+ *                        the alias's own intent row: that row's `value`
+ *                        stays `alias:<name>` forever (ip-aliases.ts's
+ *                        module doc), and by the time an operator retires it
+ *                        already materializes to the NEW address — retiring
+ *                        "whatever this row currently matches" would target
+ *                        the wrong provider object. The OLD rule is
+ *                        provider-side-only from Loxep's perspective (no
+ *                        intent row ever pointed at it specifically), so
+ *                        this method re-derives it from `planIpAliasFanOut`'s
+ *                        own matching against a FRESH provider read, exactly
+ *                        as `ip-alias-detection.ts`'s sweep already does for
+ *                        the check-only preview it fires a notification for.
+ * ```
+ *
+ * Both apply `mode: 'apply'` ALWAYS — there is no "retire in check mode",
+ * because the typed-confirmation dialog IS the preview (the design's tier-2
+ * "explicit apply from a shown plan" rule, discharged by a dialog naming
+ * exactly what changes before the operator can even submit). Both restrict
+ * `trigger` to `'manual' | 'intent_change'` at the TYPE level (no `'sweep'`
+ * or `'poll'` member exists to construct) AND re-check it at runtime — rule
+ * 3's "no sweep, poll, or scheduled run may perform a tier ≥ 2 write" is
+ * unconditional, and `assertWritePolicy` already enforces it structurally
+ * for any trigger that reaches it, but the runtime guard removes any
+ * dependence on the caller's own type-checking having run.
+ *
+ * ### `wouldLockOut`'s `operatorContext`, and why it is NOT omniscient
+ *
+ * Nothing in Loxep tracks "the operator's current browser address" as a
+ * fact. `wouldLockOut`'s `no_operator_access` clause needs SOME honest
+ * source for `currentAddresses`/`heldAuthMethods` rather than an empty list
+ * (which would refuse every retire unconditionally — useless) or a
+ * fabricated one (unsafe). Both retirement paths source `currentAddresses`
+ * from `infrastructure.ip_aliases`'s own registered addresses — every alias
+ * IS an address the operator has told Loxep they hold, which is exactly what
+ * this predicate asks for — and `heldAuthMethods` from the resource's own
+ * OBSERVED `ssoEnabled` presence bit (a resource with SSO configured has a
+ * non-address way in). This is a best-effort, honestly-documented heuristic,
+ * not a claim of completeness: an operator whose current address has no
+ * registered alias, and whose resource has no SSO, will see every retire
+ * refused by this clause — exactly the caution "before implementing any of
+ * this" item 3 names ("confirm the self-lockout predicate against the
+ * owner's actual rule set... a predicate that refuses a legitimate change is
+ * its own kind of outage"). The predicate itself is pure and unit-tested
+ * regardless of source; this module only supplies its inputs honestly.
  */
 import type { LoxepDb } from "@loxep/db";
 import type { IpAliasMap, ProviderWritePolicyTier, SettingsService } from "@loxep/domain";
-import { ipAliasesSetting } from "@loxep/domain";
+import {
+  formatIpAliasReference,
+  ipAliasCidrValue,
+  ipAliasesSetting,
+  parseIpAliasReference,
+} from "@loxep/domain";
 import {
   managedDomains,
   proxyResourceRules,
@@ -140,9 +216,11 @@ import {
   type DesiredProxyResource,
   type DesiredProxyRule,
   type ObservedProxyResource,
+  type ObservedProxyRule,
   type ProxyApplyResult,
   type ProxyOperation,
   type ProxyProviderPort,
+  type ProxyRulePayload,
 } from "./proxy-port.ts";
 import { materializeProxyRuleValue } from "./ip-aliases.ts";
 import {
@@ -153,8 +231,11 @@ import {
 import {
   WritePolicyError,
   assertWritePolicy,
+  lockoutBlockedStep,
   wouldLockOut,
   writePolicyBlockedStep,
+  type LockoutCheckOperatorContext,
+  type LockoutCheckRule,
 } from "./write-policy.ts";
 
 export type ProxyResourceRow = typeof proxyResources.$inferSelect;
@@ -163,6 +244,12 @@ export type ReconcileRunRow = typeof reconcileRuns.$inferSelect;
 
 /** `reconcile_runs.kind` for this task. */
 export const RECONCILE_PROXY_RESOURCE_RUN_KIND = "reconcile-proxy-resource";
+
+/** `reconcile_runs.kind` for M7's (`loxep-acj.7`) `retireRule`/`retireAliasFanOutRule` — kept distinct from {@link RECONCILE_PROXY_RESOURCE_RUN_KIND} so a run history can tell "Loxep checked/created" apart from "Loxep retired" at a glance, without inspecting steps. */
+export const RECONCILE_PROXY_RESOURCE_RETIRE_RUN_KIND = "reconcile-proxy-resource-retire";
+
+/** `reconcile_runs.kind` for M7's `enableRule` — the owner's filtering-UX ruling's "plus re-enable" half. Distinct from the retire kind for the identical "tell it apart at a glance" reason. */
+export const RECONCILE_PROXY_RESOURCE_ENABLE_RUN_KIND = "reconcile-proxy-resource-enable";
 
 /** `reconcile_runs.subject_type` for this reconciler — see the module doc. */
 export const PROXY_RESOURCE_SUBJECT_TYPE = "proxy_resource";
@@ -241,6 +328,115 @@ function ruleNaturalKey(rule: { action: string; match: string; value: string; pr
   return `${rule.action} ${rule.match} ${rule.value} ${rule.priority}`;
 }
 
+/**
+ * M7 (`loxep-acj.7`)'s "drift-aware" retirement check: a `desired` rule
+ * Loxep intends DISABLED (`enabled: false` — because `retireRule()` set the
+ * intent row that way, or it was authored disabled from the start) whose
+ * matching OBSERVED rule (by `action`/`match`/`value`, ignoring `priority`
+ * so a priority-only reorder never masks this) is still `enabled: true` at
+ * the provider — "a rule Loxep disabled that reality re-enabled". Pure, no
+ * I/O — `reconcile()`'s own diff step calls this with facts it has already
+ * fetched. This rides the plan exactly as `unmatchedObserved` does (the
+ * design's own resolution of open question 8: no separate findings table),
+ * never auto-corrected — the operator sees it and decides, matching
+ * `unmatchedObserved`'s own "information, never drift to correct" rule.
+ */
+function findReEnabledRetiredRules(
+  desiredRules: readonly DesiredProxyRule[],
+  observedResource: ObservedProxyResource | undefined,
+): Array<{ action: string; match: string; value: string }> {
+  if (observedResource === undefined) return [];
+  const found: Array<{ action: string; match: string; value: string }> = [];
+  for (const desiredRule of desiredRules) {
+    if (desiredRule.enabled) continue;
+    const stillEnabled = observedResource.rules.find(
+      (observedRule) =>
+        observedRule.enabled &&
+        observedRule.action === desiredRule.action &&
+        observedRule.match === desiredRule.match &&
+        observedRule.value === desiredRule.value,
+    );
+    if (stillEnabled !== undefined) {
+      found.push({ action: desiredRule.action, match: desiredRule.match, value: desiredRule.value });
+    }
+  }
+  return found;
+}
+
+/**
+ * The `LockoutCheckRule` shape for one OBSERVED rule, resolving its
+ * `aliasName` from the matching intent row (if any) — `retireRule` and
+ * `retireAliasFanOutRule` share this so `wouldLockOut`'s
+ * `retiresAliasRuleNamed` clause sees the same provenance `reconcile()`'s own
+ * diff already threads through `DesiredProxyRule.aliasName`.
+ */
+function toLockoutCheckRules(
+  observedRules: readonly ObservedProxyRule[],
+  aliasNameByExternalRuleId: ReadonlyMap<string, string | null>,
+  overrideDisabledExternalRuleId: string | null,
+): LockoutCheckRule[] {
+  return observedRules.map((rule) => ({
+    action: rule.action,
+    match: rule.match,
+    value: rule.value,
+    enabled: rule.externalRuleId === overrideDisabledExternalRuleId ? false : rule.enabled,
+    aliasName: aliasNameByExternalRuleId.get(rule.externalRuleId) ?? null,
+  }));
+}
+
+/**
+ * Maps each OBSERVED rule's `externalRuleId` to the `dynamic_ip` alias name
+ * it currently materializes, for `wouldLockOut`'s `retiresAliasRuleNamed`
+ * clause. Matches by the row's CURRENT materialized value
+ * (action/match/value — never `dr.externalRuleId`, which M4 never persisted
+ * and M7 only starts persisting going forward), so a `dynamic_ip` row whose
+ * alias just changed address still correctly labels its NEW (currently-live)
+ * observed rule, even though nothing yet identifies that observed rule by id
+ * — this is exactly `retireAliasFanOutRule`'s own case: the intent row's
+ * CURRENT materialization (the just-added new rule) must be recognized as
+ * "the same alias" as the STALE observed rule being retired, or the preflight
+ * would wrongly conclude the alias has no other live rule.
+ */
+function buildAliasNameByExternalRuleId(
+  rules: readonly ProxyResourceRuleRow[],
+  desiredRules: readonly DesiredProxyRule[],
+  observedRules: readonly ObservedProxyRule[],
+): Map<string, string | null> {
+  const aliasNameByExternalRuleId = new Map<string, string | null>();
+  for (let i = 0; i < rules.length; i++) {
+    const row = rules[i];
+    const dr = desiredRules[i];
+    if (row === undefined || dr === undefined || row.owner !== "dynamic_ip") continue;
+    const aliasName = parseIpAliasReference(row.value);
+    const matchingObserved = observedRules.find(
+      (r) => r.action === dr.action && r.match === dr.match && r.value === dr.value,
+    );
+    if (matchingObserved !== undefined) {
+      aliasNameByExternalRuleId.set(matchingObserved.externalRuleId, aliasName);
+    }
+  }
+  return aliasNameByExternalRuleId;
+}
+
+/**
+ * The self-lockout preflight's `operatorContext` — see the module doc's own
+ * section on why this is a best-effort heuristic, not an omniscient fact.
+ * `currentAddresses` comes from every registered `infrastructure.ip_aliases`
+ * address (an address the operator has told Loxep they hold);
+ * `heldAuthMethods` comes from the target resource's own observed
+ * `ssoEnabled` PRESENCE bit — never its whitelist contents, matching
+ * `ObservedProxyResource`'s own "presence only" rule.
+ */
+function resolveLockoutOperatorContext(
+  aliases: IpAliasMap,
+  resource: ObservedProxyResource,
+): LockoutCheckOperatorContext {
+  return {
+    currentAddresses: Object.values(aliases).map((entry) => entry.address),
+    heldAuthMethods: resource.ssoEnabled === true ? ["sso"] : [],
+  };
+}
+
 /** The design's stated target read-back key: `(siteId, ip, port)`. */
 function targetNaturalKey(target: { siteId: string; ip: string; port: number }): string {
   return `${target.siteId} ${target.ip} ${target.port}`;
@@ -288,6 +484,58 @@ export interface ReconcileProxyResourceResult {
   /** Tier-1 operations actually applied this run. Always 0 in check mode. */
   appliedCount: number;
   unmatchedObservedCount: number;
+}
+
+/**
+ * `retireRule()`'s outcome. M7 (`loxep-acj.7`) — see the module doc's own
+ * section for why this is convergent (never ledgered) and why `blocked` is a
+ * distinct, first-class outcome rather than an error.
+ */
+export interface RetireProxyRuleResult {
+  proxyResourceRuleId: string;
+  proxyResourceId: string;
+  runId: string;
+  /**
+   * `'blocked'` covers BOTH refusal sources — the write-policy gate
+   * (`assertWritePolicy`) and the self-lockout preflight (`wouldLockOut`) —
+   * distinguished by the run step's own `errorCode`, never by this field.
+   */
+  status: "succeeded" | "blocked" | "failed";
+  /** `true` when the provider already had this rule disabled — a safe, convergent no-op, never an error. */
+  alreadyDisabled: boolean;
+}
+
+/**
+ * `enableRule()`'s outcome — the owner's filtering-UX ruling's "plus
+ * re-enable" half (`bd remember` for `loxep-acj.7`). Same shape as
+ * {@link RetireProxyRuleResult}, mirrored.
+ */
+export interface EnableProxyRuleResult {
+  proxyResourceRuleId: string;
+  proxyResourceId: string;
+  runId: string;
+  status: "succeeded" | "blocked" | "failed";
+  /** `true` when the provider already had this rule enabled — a safe, convergent no-op, never an error. */
+  alreadyEnabled: boolean;
+}
+
+/** `retireAliasFanOutRule()`'s outcome — one run may retire several previously-live rules across one resource. */
+export interface RetireAliasFanOutResult {
+  proxyResourceId: string;
+  aliasName: string;
+  /** `null` only for a `'skipped'` result that never reached a database write — no candidate rule existed to evaluate. */
+  runId: string | null;
+  /**
+   * `'skipped'`: nothing to retire this call — the alias has no
+   * `previousAddress` yet (nothing has ever changed), or every previously-live
+   * rule for the old address is already gone/disabled at the provider. Never
+   * an error: "nothing to retire yet" is a legitimate state (`ip-aliases.ts`'s
+   * own doc for `IpAliasFanOutRuleAction.retire`).
+   */
+  status: "succeeded" | "partial" | "failed" | "skipped";
+  retiredCount: number;
+  blockedCount: number;
+  failedCount: number;
 }
 
 /** What `reconcile()`/`reconcileDomain()` need to evaluate the write-authorization gate for one resolved connection — see `write-policy.ts`. */
@@ -369,6 +617,75 @@ export interface ProxyResourcesService {
   listRulesReferencingAlias(
     aliasReference: string,
   ): Promise<Array<{ resource: ProxyResourceRow; rule: ProxyResourceRuleRow }>>;
+  /**
+   * M7 (`loxep-acj.7`): disable ONE `proxy_resource_rules` row's CURRENT
+   * provider-side rule — `enabled: false`, the reversible retirement form.
+   * Tier 2 (access_affecting) for the write-policy gate; the full
+   * self-lockout preflight (all four `wouldLockOut` clauses) decides whether
+   * THIS retire is actually lockout-class. Always `mode: 'apply'` — see the
+   * module doc for why there is no "retire in check mode". Refuses a
+   * `'manual'`-owned rule outright (never rewrites a human's record) and a
+   * rule the provider does not have (nothing to retire). Convergent: an
+   * already-disabled provider rule is a safe no-op, and no
+   * `provider_operations` row is ever written for this call.
+   */
+  retireRule(
+    proxyResourceRuleId: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<RetireProxyRuleResult>;
+  /**
+   * M7 (`loxep-acj.7`): the owner's filtering-UX ruling's "plus re-enable"
+   * half — `enabled: true` on ONE `proxy_resource_rules` row's CURRENT
+   * provider-side rule. Same tier-2 write-policy gate as `retireRule`; the
+   * self-lockout preflight still runs (the resource's own self-managed
+   * clauses always apply), but `retiresAliasRuleNamed` is always `null` here
+   * — re-enabling never retires anything, so that clause can never fire.
+   * Convergent, same as `retireRule`: an already-enabled provider rule is a
+   * safe no-op, never ledgered.
+   */
+  enableRule(
+    proxyResourceRuleId: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<EnableProxyRuleResult>;
+  /**
+   * M7 (`loxep-acj.7`), completing the M5 add-then-retire fan-out's retire
+   * half for real: disable every currently-live provider rule matching
+   * `aliasName`'s PREVIOUS address on ONE resource. Re-derives the target
+   * rule(s) from a fresh provider read plus `planIpAliasFanOut`'s own
+   * matching — never from a caller-supplied identity — because the alias's
+   * own intent row(s) already materialize to the NEW address by the time an
+   * operator retires (see the module doc). One run may retire several rules
+   * (a resource can carry more than one `dynamic_ip` rule bound to the same
+   * alias); each rule's write-policy/lockout outcome is independent, so one
+   * refusal never blocks another rule's retirement — partial failure
+   * resolves forward, matching the design's own rule for a template run.
+   */
+  retireAliasFanOutRule(
+    proxyResourceId: string,
+    aliasName: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<RetireAliasFanOutResult>;
 }
 
 /**
@@ -474,6 +791,24 @@ export function createProxyResourcesService(options: {
       .where(eq(proxyResourceRules.proxyResourceId, proxyResourceId));
   }
 
+  /** M7 (`loxep-acj.7`): the one `proxy_resource_rules` row `retireRule` targets. */
+  async function requireRuleRow(
+    executor: Pick<LoxepDb, "select">,
+    id: string,
+  ): Promise<ProxyResourceRuleRow> {
+    const rows = await executor
+      .select()
+      .from(proxyResourceRules)
+      .where(eq(proxyResourceRules.id, id));
+    const row = rows[0];
+    if (row === undefined) {
+      throw new InfrastructureNotFoundError(`proxy resource rule ${id} not found`, {
+        id,
+      });
+    }
+    return row;
+  }
+
   async function requireDomainName(
     executor: Pick<LoxepDb, "select">,
     domainId: string,
@@ -508,6 +843,30 @@ export function createProxyResourcesService(options: {
         .update(proxyResources)
         .set({ externalResourceId, updatedAt: new Date() })
         .where(eq(proxyResources.id, proxyResourceId));
+    } catch {
+      // See doc above — swallowed on purpose.
+    }
+  }
+
+  /**
+   * The rule sibling of {@link selfRetireIdentity} — closes the M4 gap the
+   * module doc's "no milestone has ever persisted `proxy_resource_rules
+   * .externalRuleId` back after a create" note flagged honestly. M7
+   * (`loxep-acj.7`) needs it: `retireRule()` resolves its target FASTER (and
+   * more robustly) once a row already carries its provider id, rather than
+   * always falling back to a natural-key read-back. Best-effort, matching
+   * `selfRetireIdentity`'s own "a failure here does not fail the run" rule —
+   * this is Loxep's own row, never Pangolin.
+   */
+  async function selfRetireRuleIdentity(
+    ruleRowId: string,
+    externalRuleId: string,
+  ): Promise<void> {
+    try {
+      await db
+        .update(proxyResourceRules)
+        .set({ externalRuleId, updatedAt: new Date() })
+        .where(eq(proxyResourceRules.id, ruleRowId));
     } catch {
       // See doc above — swallowed on purpose.
     }
@@ -741,6 +1100,9 @@ export function createProxyResourcesService(options: {
         status: "succeeded",
         responseSummary: { present: true, resolvedTo: "succeeded" },
       });
+      if (sourceRow !== undefined && found.externalRuleId !== undefined) {
+        await selfRetireRuleIdentity(sourceRow.id, found.externalRuleId);
+      }
       return { kind: "create-rule", status: "applied", externalRuleId: found.externalRuleId };
     }
     try {
@@ -754,6 +1116,9 @@ export function createProxyResourcesService(options: {
         requestSummary: redact(operation.rule),
         responseSummary: redact(result),
       });
+      if (sourceRow !== undefined && result.externalRuleId !== undefined) {
+        await selfRetireRuleIdentity(sourceRow.id, result.externalRuleId);
+      }
       return result;
     } catch (error) {
       const kind = errorKind(error);
@@ -900,6 +1265,15 @@ export function createProxyResourcesService(options: {
     });
 
     const plan = planProxyResourceOperations({ desired: [desired], observed });
+
+    // M7 (`loxep-acj.7`)'s drift-aware check — see `findReEnabledRetiredRules`'s
+    // doc. Computed against the SAME `observed` this diff already fetched;
+    // never a second provider read.
+    const observedForDesired =
+      observed.find((r) => r.externalResourceId === desired.externalResourceId) ??
+      observed.find((r) => r.fullDomain === desired.fullDomain);
+    const reEnabledRetiredRules = findReEnabledRetiredRules(desired.rules, observedForDesired);
+
     await step({
       step: "diff",
       status: "succeeded",
@@ -915,8 +1289,23 @@ export function createProxyResourcesService(options: {
         unmatchedObservedSample: plan.unmatchedObserved
           .slice(0, 10)
           .map((r) => redact(r)),
+        // M7: "a rule Loxep disabled that reality re-enabled" — a count on
+        // every diff step (0 when there is none) so a caller can render it
+        // without a schema change, matching `unmatchedObservedCount`'s own
+        // precedent.
+        reEnabledRetiredRuleCount: reEnabledRetiredRules.length,
       },
     });
+    if (reEnabledRetiredRules.length > 0) {
+      await step({
+        step: "diff.retired-rule-reenabled",
+        status: "succeeded",
+        responseSummary: {
+          count: reEnabledRetiredRules.length,
+          sample: reEnabledRetiredRules.slice(0, 10),
+        },
+      });
+    }
 
     // Self-retire the bootstrap id the moment a check matches by
     // `fullDomain` — see `selfRetireIdentity`'s doc.
@@ -1195,6 +1584,911 @@ export function createProxyResourcesService(options: {
       .orderBy(asc(proxyResources.createdAt));
   }
 
+  /** Throws when `trigger` is anything but `'manual'`/`'intent_change'` — see the module doc's "sweep can never trigger" note. Shared by both M7 retirement methods. */
+  function assertRetireTriggerAllowed(trigger: "intent_change" | "manual"): void {
+    if (trigger !== "manual" && trigger !== "intent_change") {
+      throw new ProxyWritePolicyError(
+        `a '${String(trigger)}' trigger may never retire a rule — only 'manual' or 'intent_change' may (the write-authorization model's rule 3: no sweep, poll, or scheduled run may perform a tier ≥ 2 write)`,
+        { trigger },
+      );
+    }
+  }
+
+  async function retireRule(
+    proxyResourceRuleId: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<RetireProxyRuleResult> {
+    assertRetireTriggerAllowed(options.trigger);
+    const redact = options.redact ?? defaultProxyRedactor;
+
+    const ruleRow = await requireRuleRow(db, proxyResourceRuleId);
+    if (ruleRow.owner === "manual") {
+      throw new InfrastructureValidationError(
+        `rule ${proxyResourceRuleId} is manually owned — Loxep's reconciler never rewrites or retires a human's record`,
+        { proxyResourceRuleId },
+      );
+    }
+
+    const resource = await requireResource(db, ruleRow.proxyResourceId);
+    const rules = await loadRules(db, resource.id);
+    const domainName = await requireDomainName(db, resource.domainId);
+    const aliases = await settings.get(ipAliasesSetting);
+
+    const runRows = await db
+      .insert(reconcileRuns)
+      .values({
+        kind: RECONCILE_PROXY_RESOURCE_RETIRE_RUN_KIND,
+        subjectType: PROXY_RESOURCE_SUBJECT_TYPE,
+        subjectId: resource.id,
+        mode: "apply",
+        trigger: options.trigger,
+        actorUserId: options.actorUserId ?? null,
+      })
+      .returning();
+    const run = runRows[0];
+    if (run === undefined) throw new Error("reconcile run insert returned no row");
+
+    let sequence = 0;
+    const step = async (entry: {
+      step: string;
+      status: "succeeded" | "failed" | "skipped" | "blocked";
+      requestSummary?: Record<string, unknown> | null;
+      responseSummary?: Record<string, unknown> | null;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+    }): Promise<void> => {
+      await db.insert(reconcileRunSteps).values({
+        runId: run.id,
+        sequence: sequence++,
+        step: entry.step,
+        status: entry.status,
+        provider: "pangolin",
+        requestSummary: entry.requestSummary ?? null,
+        responseSummary: entry.responseSummary ?? null,
+        errorCode: entry.errorCode ?? null,
+        errorDetail: entry.errorDetail ?? null,
+      });
+    };
+    const finish = async (
+      status: "succeeded" | "failed" | "partial",
+      errorSummary: string | null,
+    ): Promise<void> => {
+      await db
+        .update(reconcileRuns)
+        .set({ status, finishedAt: new Date(), stepCount: sequence, errorSummary })
+        .where(eq(reconcileRuns.id, run.id));
+    };
+
+    let desired: DesiredProxyResource;
+    try {
+      desired = buildDesired(resource, domainName, rules, aliases);
+    } catch (error) {
+      if (!(error instanceof MaterializationError)) throw error;
+      await step({
+        step: "materialize-aliases",
+        status: "failed",
+        errorCode: "alias_unresolvable",
+        errorDetail: error.message,
+      });
+      await finish("failed", `alias materialization failed: ${error.message}`);
+      throw error;
+    }
+
+    let observed: ObservedProxyResource[];
+    try {
+      observed = await options.provider.read({ orgId: options.orgId });
+    } catch (error) {
+      const kind = errorKind(error);
+      await step({
+        step: "read-provider",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin resource read failed",
+      });
+      await finish("failed", `provider read failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin resource read failed", {
+        proxyResourceRuleId,
+        runId: run.id,
+      });
+    }
+
+    const matchedResource =
+      observed.find((r) => r.externalResourceId === desired.externalResourceId) ??
+      observed.find((r) => r.fullDomain === desired.fullDomain);
+    if (matchedResource === undefined) {
+      await step({
+        step: "retire.resource-not-found",
+        status: "failed",
+        errorCode: "not_found",
+        errorDetail: "this resource has no matching Pangolin object yet — nothing to retire",
+      });
+      await finish("failed", "resource not present at provider");
+      throw new InfrastructureNotFoundError(
+        `proxy resource ${resource.id} has no matching Pangolin resource yet`,
+        { proxyResourceId: resource.id },
+      );
+    }
+
+    // desired.rules[i] corresponds 1:1 with rules[i] by construction
+    // (buildDesired's own doc) — find the target row's materialized value by
+    // the same index correspondence `reconcile()` relies on.
+    const ruleIndex = rules.findIndex((r) => r.id === ruleRow.id);
+    const targetDesiredRule = ruleIndex === -1 ? undefined : desired.rules[ruleIndex];
+    if (targetDesiredRule === undefined) {
+      // Cannot happen from a real call — ruleRow.proxyResourceId === resource.id
+      // guarantees ruleRow is one of `rules`. Defensive, not reachable in tests.
+      throw new Error(`rule ${proxyResourceRuleId} not found among its own resource's rules`);
+    }
+
+    const targetObservedRule =
+      (ruleRow.externalRuleId !== null
+        ? matchedResource.rules.find((r) => r.externalRuleId === ruleRow.externalRuleId)
+        : undefined) ??
+      matchedResource.rules.find((r) => ruleNaturalKey(r) === ruleNaturalKey(targetDesiredRule));
+
+    if (targetObservedRule === undefined) {
+      await step({
+        step: "retire.rule-not-found",
+        status: "failed",
+        errorCode: "not_found",
+        errorDetail: "Pangolin has no rule matching this intent row — nothing to retire",
+      });
+      await finish("failed", "rule not present at provider");
+      throw new InfrastructureNotFoundError(
+        `rule ${proxyResourceRuleId} has no matching Pangolin rule`,
+        { proxyResourceRuleId },
+      );
+    }
+
+    if (!targetObservedRule.enabled) {
+      // Convergent no-op — see the module doc.
+      await step({
+        step: "retire.already-disabled",
+        status: "succeeded",
+        responseSummary: { externalRuleId: targetObservedRule.externalRuleId },
+      });
+      if (ruleRow.enabled || ruleRow.externalRuleId !== targetObservedRule.externalRuleId) {
+        await db
+          .update(proxyResourceRules)
+          .set({
+            enabled: false,
+            externalRuleId: targetObservedRule.externalRuleId,
+            updatedAt: new Date(),
+          })
+          .where(eq(proxyResourceRules.id, ruleRow.id));
+      }
+      await finish("succeeded", null);
+      return {
+        proxyResourceRuleId,
+        proxyResourceId: resource.id,
+        runId: run.id,
+        status: "succeeded",
+        alreadyDisabled: true,
+      };
+    }
+
+    let blockedStep: { status: "blocked"; errorCode: string; errorDetail: string } | null = null;
+    try {
+      assertWritePolicy({
+        mode: "apply",
+        trigger: options.trigger,
+        policyTier: options.writeAuthorization.policyTier,
+        operationTier: 2,
+        actorIsAdmin: options.writeAuthorization.actorIsAdmin,
+        unblockHint:
+          `allow tier-2 (access_affecting) writes for connection ${options.writeAuthorization.connectionId} — ` +
+          "flip infrastructure.provider_write_policy to at least 'access_affecting' for this connection " +
+          "to retire a Pangolin rule",
+      });
+    } catch (error) {
+      if (error instanceof WritePolicyError) blockedStep = writePolicyBlockedStep(error);
+      else throw error;
+    }
+
+    if (blockedStep === null) {
+      const aliasNameByExternalRuleId = buildAliasNameByExternalRuleId(
+        rules,
+        desired.rules,
+        matchedResource.rules,
+      );
+      const retiresAliasRuleNamed =
+        ruleRow.owner === "dynamic_ip" ? parseIpAliasReference(ruleRow.value) : null;
+      // The row being retired might not yet be recognized by the natural-key
+      // match above (its CURRENT materialized value IS the observed rule
+      // being disabled, so ordinarily it would be) — set it explicitly
+      // regardless, so this never depends on that match succeeding.
+      aliasNameByExternalRuleId.set(targetObservedRule.externalRuleId, retiresAliasRuleNamed);
+
+      const resultingRules = toLockoutCheckRules(
+        matchedResource.rules,
+        aliasNameByExternalRuleId,
+        targetObservedRule.externalRuleId,
+      );
+
+      const lockoutReason = wouldLockOut({
+        resource: {
+          fullDomain: desired.fullDomain,
+          isPangolinDashboard: (options.writeAuthorization.pangolinDashboardHosts ?? []).some((h) =>
+            hostMatches(desired.fullDomain, h),
+          ),
+          isLoxepSelf: (options.writeAuthorization.loxepSelfHosts ?? []).some((h) =>
+            hostMatches(desired.fullDomain, h),
+          ),
+        },
+        resultingRules,
+        operatorContext: resolveLockoutOperatorContext(aliases, matchedResource),
+        retiresAliasRuleNamed,
+      });
+      if (lockoutReason !== null) blockedStep = lockoutBlockedStep(lockoutReason);
+    }
+
+    if (blockedStep !== null) {
+      await step({ step: "retire.blocked", ...blockedStep });
+      await finish("partial", blockedStep.errorDetail);
+      return {
+        proxyResourceRuleId,
+        proxyResourceId: resource.id,
+        runId: run.id,
+        status: "blocked",
+        alreadyDisabled: false,
+      };
+    }
+
+    const retirePayload: ProxyRulePayload = {
+      action: targetObservedRule.action,
+      match: targetObservedRule.match,
+      value: targetObservedRule.value,
+      priority: targetObservedRule.priority,
+      enabled: false,
+    };
+    try {
+      const applyResult = await options.provider.apply({
+        kind: "update-rule",
+        externalResourceId: matchedResource.externalResourceId,
+        externalRuleId: targetObservedRule.externalRuleId,
+        rule: retirePayload,
+      });
+      await step({
+        step: "retire.rule",
+        status: "succeeded",
+        requestSummary: redact({ externalRuleId: targetObservedRule.externalRuleId, ...retirePayload }),
+        responseSummary: redact(applyResult),
+      });
+    } catch (error) {
+      const kind = errorKind(error);
+      await step({
+        step: "retire.rule",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin rule update failed",
+      });
+      await finish("failed", `rule retire failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin rule retire failed", {
+        proxyResourceRuleId,
+        runId: run.id,
+      });
+    }
+
+    await db
+      .update(proxyResourceRules)
+      .set({
+        enabled: false,
+        externalRuleId: targetObservedRule.externalRuleId,
+        updatedAt: new Date(),
+      })
+      .where(eq(proxyResourceRules.id, ruleRow.id));
+
+    await finish("succeeded", null);
+    return {
+      proxyResourceRuleId,
+      proxyResourceId: resource.id,
+      runId: run.id,
+      status: "succeeded",
+      alreadyDisabled: false,
+    };
+  }
+
+  /** {@link enableRule} — mirrors `retireRule` exactly, with the outcome direction reversed. See its own interface doc for what differs (the preflight's `retiresAliasRuleNamed` is always `null` here). */
+  async function enableRule(
+    proxyResourceRuleId: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<EnableProxyRuleResult> {
+    assertRetireTriggerAllowed(options.trigger);
+    const redact = options.redact ?? defaultProxyRedactor;
+
+    const ruleRow = await requireRuleRow(db, proxyResourceRuleId);
+    if (ruleRow.owner === "manual") {
+      throw new InfrastructureValidationError(
+        `rule ${proxyResourceRuleId} is manually owned — Loxep's reconciler never rewrites or re-enables a human's record`,
+        { proxyResourceRuleId },
+      );
+    }
+
+    const resource = await requireResource(db, ruleRow.proxyResourceId);
+    const rules = await loadRules(db, resource.id);
+    const domainName = await requireDomainName(db, resource.domainId);
+    const aliases = await settings.get(ipAliasesSetting);
+
+    const runRows = await db
+      .insert(reconcileRuns)
+      .values({
+        kind: RECONCILE_PROXY_RESOURCE_ENABLE_RUN_KIND,
+        subjectType: PROXY_RESOURCE_SUBJECT_TYPE,
+        subjectId: resource.id,
+        mode: "apply",
+        trigger: options.trigger,
+        actorUserId: options.actorUserId ?? null,
+      })
+      .returning();
+    const run = runRows[0];
+    if (run === undefined) throw new Error("reconcile run insert returned no row");
+
+    let sequence = 0;
+    const step = async (entry: {
+      step: string;
+      status: "succeeded" | "failed" | "skipped" | "blocked";
+      requestSummary?: Record<string, unknown> | null;
+      responseSummary?: Record<string, unknown> | null;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+    }): Promise<void> => {
+      await db.insert(reconcileRunSteps).values({
+        runId: run.id,
+        sequence: sequence++,
+        step: entry.step,
+        status: entry.status,
+        provider: "pangolin",
+        requestSummary: entry.requestSummary ?? null,
+        responseSummary: entry.responseSummary ?? null,
+        errorCode: entry.errorCode ?? null,
+        errorDetail: entry.errorDetail ?? null,
+      });
+    };
+    const finish = async (
+      status: "succeeded" | "failed" | "partial",
+      errorSummary: string | null,
+    ): Promise<void> => {
+      await db
+        .update(reconcileRuns)
+        .set({ status, finishedAt: new Date(), stepCount: sequence, errorSummary })
+        .where(eq(reconcileRuns.id, run.id));
+    };
+
+    let desired: DesiredProxyResource;
+    try {
+      desired = buildDesired(resource, domainName, rules, aliases);
+    } catch (error) {
+      if (!(error instanceof MaterializationError)) throw error;
+      await step({
+        step: "materialize-aliases",
+        status: "failed",
+        errorCode: "alias_unresolvable",
+        errorDetail: error.message,
+      });
+      await finish("failed", `alias materialization failed: ${error.message}`);
+      throw error;
+    }
+
+    let observed: ObservedProxyResource[];
+    try {
+      observed = await options.provider.read({ orgId: options.orgId });
+    } catch (error) {
+      const kind = errorKind(error);
+      await step({
+        step: "read-provider",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin resource read failed",
+      });
+      await finish("failed", `provider read failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin resource read failed", {
+        proxyResourceRuleId,
+        runId: run.id,
+      });
+    }
+
+    const matchedResource =
+      observed.find((r) => r.externalResourceId === desired.externalResourceId) ??
+      observed.find((r) => r.fullDomain === desired.fullDomain);
+    if (matchedResource === undefined) {
+      await step({
+        step: "enable.resource-not-found",
+        status: "failed",
+        errorCode: "not_found",
+        errorDetail: "this resource has no matching Pangolin object yet — nothing to re-enable",
+      });
+      await finish("failed", "resource not present at provider");
+      throw new InfrastructureNotFoundError(
+        `proxy resource ${resource.id} has no matching Pangolin resource yet`,
+        { proxyResourceId: resource.id },
+      );
+    }
+
+    const ruleIndex = rules.findIndex((r) => r.id === ruleRow.id);
+    const targetDesiredRule = ruleIndex === -1 ? undefined : desired.rules[ruleIndex];
+    if (targetDesiredRule === undefined) {
+      throw new Error(`rule ${proxyResourceRuleId} not found among its own resource's rules`);
+    }
+
+    const targetObservedRule =
+      (ruleRow.externalRuleId !== null
+        ? matchedResource.rules.find((r) => r.externalRuleId === ruleRow.externalRuleId)
+        : undefined) ??
+      matchedResource.rules.find((r) => ruleNaturalKey(r) === ruleNaturalKey(targetDesiredRule));
+
+    if (targetObservedRule === undefined) {
+      await step({
+        step: "enable.rule-not-found",
+        status: "failed",
+        errorCode: "not_found",
+        errorDetail: "Pangolin has no rule matching this intent row — nothing to re-enable",
+      });
+      await finish("failed", "rule not present at provider");
+      throw new InfrastructureNotFoundError(
+        `rule ${proxyResourceRuleId} has no matching Pangolin rule`,
+        { proxyResourceRuleId },
+      );
+    }
+
+    if (targetObservedRule.enabled) {
+      // Convergent no-op — see the module doc.
+      await step({
+        step: "enable.already-enabled",
+        status: "succeeded",
+        responseSummary: { externalRuleId: targetObservedRule.externalRuleId },
+      });
+      if (!ruleRow.enabled || ruleRow.externalRuleId !== targetObservedRule.externalRuleId) {
+        await db
+          .update(proxyResourceRules)
+          .set({
+            enabled: true,
+            externalRuleId: targetObservedRule.externalRuleId,
+            updatedAt: new Date(),
+          })
+          .where(eq(proxyResourceRules.id, ruleRow.id));
+      }
+      await finish("succeeded", null);
+      return {
+        proxyResourceRuleId,
+        proxyResourceId: resource.id,
+        runId: run.id,
+        status: "succeeded",
+        alreadyEnabled: true,
+      };
+    }
+
+    let blockedStep: { status: "blocked"; errorCode: string; errorDetail: string } | null = null;
+    try {
+      assertWritePolicy({
+        mode: "apply",
+        trigger: options.trigger,
+        policyTier: options.writeAuthorization.policyTier,
+        operationTier: 2,
+        actorIsAdmin: options.writeAuthorization.actorIsAdmin,
+        unblockHint:
+          `allow tier-2 (access_affecting) writes for connection ${options.writeAuthorization.connectionId} — ` +
+          "flip infrastructure.provider_write_policy to at least 'access_affecting' for this connection " +
+          "to re-enable a Pangolin rule",
+      });
+    } catch (error) {
+      if (error instanceof WritePolicyError) blockedStep = writePolicyBlockedStep(error);
+      else throw error;
+    }
+
+    if (blockedStep === null) {
+      const aliasNameByExternalRuleId = buildAliasNameByExternalRuleId(
+        rules,
+        desired.rules,
+        matchedResource.rules,
+      );
+
+      // `enableRule` flips the target rule to ENABLED in `resultingRules` —
+      // the inverse of `retireRule`'s override — and `retiresAliasRuleNamed`
+      // stays `null`: re-enabling never retires anything, so that clause
+      // structurally cannot fire.
+      const resultingRules: LockoutCheckRule[] = matchedResource.rules.map((rule) => ({
+        action: rule.action,
+        match: rule.match,
+        value: rule.value,
+        enabled: rule.externalRuleId === targetObservedRule.externalRuleId ? true : rule.enabled,
+        aliasName: aliasNameByExternalRuleId.get(rule.externalRuleId) ?? null,
+      }));
+
+      const lockoutReason = wouldLockOut({
+        resource: {
+          fullDomain: desired.fullDomain,
+          isPangolinDashboard: (options.writeAuthorization.pangolinDashboardHosts ?? []).some((h) =>
+            hostMatches(desired.fullDomain, h),
+          ),
+          isLoxepSelf: (options.writeAuthorization.loxepSelfHosts ?? []).some((h) =>
+            hostMatches(desired.fullDomain, h),
+          ),
+        },
+        resultingRules,
+        operatorContext: resolveLockoutOperatorContext(aliases, matchedResource),
+        retiresAliasRuleNamed: null,
+      });
+      if (lockoutReason !== null) blockedStep = lockoutBlockedStep(lockoutReason);
+    }
+
+    if (blockedStep !== null) {
+      await step({ step: "enable.blocked", ...blockedStep });
+      await finish("partial", blockedStep.errorDetail);
+      return {
+        proxyResourceRuleId,
+        proxyResourceId: resource.id,
+        runId: run.id,
+        status: "blocked",
+        alreadyEnabled: false,
+      };
+    }
+
+    const enablePayload: ProxyRulePayload = {
+      action: targetObservedRule.action,
+      match: targetObservedRule.match,
+      value: targetObservedRule.value,
+      priority: targetObservedRule.priority,
+      enabled: true,
+    };
+    try {
+      const applyResult = await options.provider.apply({
+        kind: "update-rule",
+        externalResourceId: matchedResource.externalResourceId,
+        externalRuleId: targetObservedRule.externalRuleId,
+        rule: enablePayload,
+      });
+      await step({
+        step: "enable.rule",
+        status: "succeeded",
+        requestSummary: redact({ externalRuleId: targetObservedRule.externalRuleId, ...enablePayload }),
+        responseSummary: redact(applyResult),
+      });
+    } catch (error) {
+      const kind = errorKind(error);
+      await step({
+        step: "enable.rule",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin rule update failed",
+      });
+      await finish("failed", `rule re-enable failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin rule re-enable failed", {
+        proxyResourceRuleId,
+        runId: run.id,
+      });
+    }
+
+    await db
+      .update(proxyResourceRules)
+      .set({
+        enabled: true,
+        externalRuleId: targetObservedRule.externalRuleId,
+        updatedAt: new Date(),
+      })
+      .where(eq(proxyResourceRules.id, ruleRow.id));
+
+    await finish("succeeded", null);
+    return {
+      proxyResourceRuleId,
+      proxyResourceId: resource.id,
+      runId: run.id,
+      status: "succeeded",
+      alreadyEnabled: false,
+    };
+  }
+
+  async function retireAliasFanOutRule(
+    proxyResourceId: string,
+    aliasName: string,
+    options: {
+      trigger: "intent_change" | "manual";
+      provider: ProxyProviderPort;
+      orgId: string;
+      actorUserId?: string | null;
+      redact?: ResponseRedactor;
+      writeAuthorization: ProxyWriteAuthorizationContext;
+    },
+  ): Promise<RetireAliasFanOutResult> {
+    assertRetireTriggerAllowed(options.trigger);
+    const redact = options.redact ?? defaultProxyRedactor;
+
+    const resource = await requireResource(db, proxyResourceId);
+    const rules = await loadRules(db, resource.id);
+    const domainName = await requireDomainName(db, resource.domainId);
+    const aliases = await settings.get(ipAliasesSetting);
+    const entry = aliases[aliasName];
+    if (entry === undefined) {
+      throw new InfrastructureNotFoundError(`ip alias "${aliasName}" not found`, { aliasName });
+    }
+    if (entry.previousAddress === null) {
+      // Nothing has ever changed for this alias — a legitimate no-op
+      // (ip-aliases.ts's own "a null retire is not an error" rule). No DB
+      // write needed, so no run row either.
+      return {
+        proxyResourceId,
+        aliasName,
+        runId: null,
+        status: "skipped",
+        retiredCount: 0,
+        blockedCount: 0,
+        failedCount: 0,
+      };
+    }
+
+    const aliasReference = formatIpAliasReference(aliasName);
+    const targetRuleRows = rules.filter(
+      (r) => r.owner === "dynamic_ip" && r.value === aliasReference,
+    );
+    if (targetRuleRows.length === 0) {
+      return {
+        proxyResourceId,
+        aliasName,
+        runId: null,
+        status: "skipped",
+        retiredCount: 0,
+        blockedCount: 0,
+        failedCount: 0,
+      };
+    }
+
+    const previousValue = ipAliasCidrValue(entry.previousAddress);
+
+    const runRows = await db
+      .insert(reconcileRuns)
+      .values({
+        kind: RECONCILE_PROXY_RESOURCE_RETIRE_RUN_KIND,
+        subjectType: PROXY_RESOURCE_SUBJECT_TYPE,
+        subjectId: resource.id,
+        mode: "apply",
+        trigger: options.trigger,
+        actorUserId: options.actorUserId ?? null,
+      })
+      .returning();
+    const run = runRows[0];
+    if (run === undefined) throw new Error("reconcile run insert returned no row");
+
+    let sequence = 0;
+    const step = async (entry2: {
+      step: string;
+      status: "succeeded" | "failed" | "skipped" | "blocked";
+      requestSummary?: Record<string, unknown> | null;
+      responseSummary?: Record<string, unknown> | null;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+    }): Promise<void> => {
+      await db.insert(reconcileRunSteps).values({
+        runId: run.id,
+        sequence: sequence++,
+        step: entry2.step,
+        status: entry2.status,
+        provider: "pangolin",
+        requestSummary: entry2.requestSummary ?? null,
+        responseSummary: entry2.responseSummary ?? null,
+        errorCode: entry2.errorCode ?? null,
+        errorDetail: entry2.errorDetail ?? null,
+      });
+    };
+    const finish = async (
+      status: "succeeded" | "failed" | "partial",
+      errorSummary: string | null,
+    ): Promise<void> => {
+      await db
+        .update(reconcileRuns)
+        .set({ status, finishedAt: new Date(), stepCount: sequence, errorSummary })
+        .where(eq(reconcileRuns.id, run.id));
+    };
+
+    let desired: DesiredProxyResource;
+    try {
+      desired = buildDesired(resource, domainName, rules, aliases);
+    } catch (error) {
+      if (!(error instanceof MaterializationError)) throw error;
+      await step({
+        step: "materialize-aliases",
+        status: "failed",
+        errorCode: "alias_unresolvable",
+        errorDetail: error.message,
+      });
+      await finish("failed", `alias materialization failed: ${error.message}`);
+      throw error;
+    }
+
+    let observed: ObservedProxyResource[];
+    try {
+      observed = await options.provider.read({ orgId: options.orgId });
+    } catch (error) {
+      const kind = errorKind(error);
+      await step({
+        step: "read-provider",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin resource read failed",
+      });
+      await finish("failed", `provider read failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin resource read failed", {
+        proxyResourceId,
+        runId: run.id,
+      });
+    }
+
+    const matchedResource =
+      observed.find((r) => r.externalResourceId === desired.externalResourceId) ??
+      observed.find((r) => r.fullDomain === desired.fullDomain);
+    if (matchedResource === undefined) {
+      await step({
+        step: "retire.resource-not-found",
+        status: "failed",
+        errorCode: "not_found",
+        errorDetail: "this resource has no matching Pangolin object yet — nothing to retire",
+      });
+      await finish("failed", "resource not present at provider");
+      throw new InfrastructureNotFoundError(
+        `proxy resource ${resource.id} has no matching Pangolin resource yet`,
+        { proxyResourceId: resource.id },
+      );
+    }
+
+    let retiredCount = 0;
+    let blockedCount = 0;
+    let failedCount = 0;
+
+    // Write-policy gate: checked ONCE — every candidate rule in this run
+    // shares the same resolved connection and policy tier.
+    let policyBlocked: { status: "blocked"; errorCode: string; errorDetail: string } | null = null;
+    try {
+      assertWritePolicy({
+        mode: "apply",
+        trigger: options.trigger,
+        policyTier: options.writeAuthorization.policyTier,
+        operationTier: 2,
+        actorIsAdmin: options.writeAuthorization.actorIsAdmin,
+        unblockHint:
+          `allow tier-2 (access_affecting) writes for connection ${options.writeAuthorization.connectionId} — ` +
+          "flip infrastructure.provider_write_policy to at least 'access_affecting' for this connection " +
+          "to retire a superseded Pangolin rule",
+      });
+    } catch (error) {
+      if (error instanceof WritePolicyError) policyBlocked = writePolicyBlockedStep(error);
+      else throw error;
+    }
+
+    if (policyBlocked !== null) {
+      await step({ step: "retire.blocked", ...policyBlocked });
+      blockedCount = targetRuleRows.length;
+    } else {
+      const aliasNameByExternalRuleId = buildAliasNameByExternalRuleId(
+        rules,
+        desired.rules,
+        matchedResource.rules,
+      );
+
+      for (const ruleRow of targetRuleRows) {
+        const targetObservedRule = matchedResource.rules.find(
+          (r) =>
+            r.enabled &&
+            r.action === ruleRow.action &&
+            r.match === ruleRow.match &&
+            r.value === previousValue,
+        );
+        if (targetObservedRule === undefined) {
+          // Nothing live for the OLD address — already retired, never
+          // created, or gone by some other means. Legitimate, not an error.
+          await step({
+            step: "retire.nothing-to-do",
+            status: "succeeded",
+            responseSummary: { proxyResourceRuleId: ruleRow.id, previousValue },
+          });
+          continue;
+        }
+
+        aliasNameByExternalRuleId.set(targetObservedRule.externalRuleId, aliasName);
+        const resultingRules = toLockoutCheckRules(
+          matchedResource.rules,
+          aliasNameByExternalRuleId,
+          targetObservedRule.externalRuleId,
+        );
+
+        const lockoutReason = wouldLockOut({
+          resource: {
+            fullDomain: desired.fullDomain,
+            isPangolinDashboard: (options.writeAuthorization.pangolinDashboardHosts ?? []).some((h) =>
+              hostMatches(desired.fullDomain, h),
+            ),
+            isLoxepSelf: (options.writeAuthorization.loxepSelfHosts ?? []).some((h) =>
+              hostMatches(desired.fullDomain, h),
+            ),
+          },
+          resultingRules,
+          operatorContext: resolveLockoutOperatorContext(aliases, matchedResource),
+          retiresAliasRuleNamed: aliasName,
+        });
+        if (lockoutReason !== null) {
+          const blocked = lockoutBlockedStep(lockoutReason);
+          await step({
+            step: "retire.blocked",
+            status: blocked.status,
+            errorCode: blocked.errorCode,
+            errorDetail: blocked.errorDetail,
+            responseSummary: { proxyResourceRuleId: ruleRow.id },
+          });
+          blockedCount += 1;
+          continue;
+        }
+
+        const retirePayload: ProxyRulePayload = {
+          action: targetObservedRule.action,
+          match: targetObservedRule.match,
+          value: targetObservedRule.value,
+          priority: targetObservedRule.priority,
+          enabled: false,
+        };
+        try {
+          const applyResult = await options.provider.apply({
+            kind: "update-rule",
+            externalResourceId: matchedResource.externalResourceId,
+            externalRuleId: targetObservedRule.externalRuleId,
+            rule: retirePayload,
+          });
+          await step({
+            step: "retire.rule",
+            status: "succeeded",
+            requestSummary: redact({
+              externalRuleId: targetObservedRule.externalRuleId,
+              ...retirePayload,
+            }),
+            responseSummary: redact(applyResult),
+          });
+          retiredCount += 1;
+        } catch (error) {
+          const kind = errorKind(error);
+          await step({
+            step: "retire.rule",
+            status: "failed",
+            errorCode: kind,
+            errorDetail: "pangolin rule update failed",
+          });
+          failedCount += 1;
+        }
+      }
+    }
+
+    const runFinishStatus: "succeeded" | "partial" =
+      blockedCount > 0 || failedCount > 0 ? "partial" : "succeeded";
+    await finish(runFinishStatus, null);
+
+    const status: RetireAliasFanOutResult["status"] =
+      blockedCount > 0 || failedCount > 0 ? "partial" : retiredCount > 0 ? "succeeded" : "skipped";
+
+    return {
+      proxyResourceId,
+      aliasName,
+      runId: run.id,
+      status,
+      retiredCount,
+      blockedCount,
+      failedCount,
+    };
+  }
+
   return {
     reconcile,
     reconcileDomain,
@@ -1202,5 +2496,8 @@ export function createProxyResourcesService(options: {
     listResourcesForHostingTarget,
     listRuns,
     listRulesReferencingAlias,
+    retireRule,
+    enableRule,
+    retireAliasFanOutRule,
   };
 }

@@ -55,13 +55,14 @@
  * milestone adds the intent-authoring surface.
  */
 import { defineTask } from "@loxep/jobs";
-import type { LoxepTask } from "@loxep/jobs";
+import type { AnyLoxepTask, LoxepTask } from "@loxep/jobs";
 import {
   SYNC_PROXY_RESOURCE_TASK,
   createHostingTargetsService,
   createProxyResourcesService,
 } from "@loxep/infrastructure";
 import type {
+  EnableProxyRuleResult,
   ObservedProxyResource,
   ProxyApplyResult,
   ProxyOperation,
@@ -70,6 +71,8 @@ import type {
   ProxyWriteAuthorizationContext,
   ReconcileProxyResourceResult,
   ResponseRedactor,
+  RetireAliasFanOutResult,
+  RetireProxyRuleResult,
 } from "@loxep/infrastructure";
 import { providerWritePolicySetting, resolveProviderWritePolicy } from "@loxep/domain";
 import type { PangolinAdapter } from "@loxep/integration-pangolin";
@@ -92,6 +95,9 @@ export type ProxyPangolinAdapterLike = Pick<
   | "createResource"
   | "addTarget"
   | "createRule"
+  // M7 (`loxep-acj.7`): the retirement/re-enable verb — see `apply()`'s own
+  // `update-rule` case below.
+  | "updateRuleEnabled"
 >;
 
 function toExternalId(value: number | string | null): string | null {
@@ -111,11 +117,17 @@ function toExternalId(value: number | string | null): string | null {
  * Pangolin's own `domainId` but no `orgId`, because `read(subject)` is the
  * only member with a subject to take one from. `createResource` needs it
  * anyway (`PUT /org/{orgId}/resource`), so this wrapper is where that gap
- * closes. `update-resource`/`update-target`/`update-rule` throw a clear
- * "not implemented this milestone" error: `proxy.ts`'s own service never
- * applies a tier-2 operation in M4 (`loxep-acj.4` — bd's own NOT IN SCOPE
- * list), so these branches exist only to satisfy the port's closed union,
- * exactly the way `container-hosts.ts`'s own unreachable branches do.
+ * closes. `update-resource`/`update-target` still throw a clear "not
+ * implemented this milestone" error: `proxy.ts`'s own service never applies
+ * either operation kind — no milestone ships those adapter verbs — so these
+ * branches exist only to satisfy the port's closed union, exactly the way
+ * `container-hosts.ts`'s own unreachable branches do. `update-rule` is
+ * different as of M7 (`loxep-acj.7`): it dispatches for real to
+ * `adapter.updateRuleEnabled`, the verb `proxy.ts`'s `retireRule`/
+ * `enableRule`/`retireAliasFanOutRule` call through `provider.apply()` —
+ * never anything else in the port's closed union reaches this branch, since
+ * `reconcile()` itself still never applies a tier-2 operation from a PLAN
+ * (M4's own structural limit, unchanged).
  *
  * ## `read()` fans out per resource, exactly as the port's module doc predicts
  *
@@ -222,14 +234,30 @@ export function proxyProviderPortFromPangolinAdapter(
             externalRuleId: fact.ruleId === null ? undefined : String(fact.ruleId),
           };
         }
+        case "update-rule": {
+          // M7 (`loxep-acj.7`): the one tier-2 verb that IS wired — see this
+          // function's own doc. `retireRule`/`enableRule`/
+          // `retireAliasFanOutRule` always send the full comparable payload
+          // (never a partial `enabled`-only body), matching the design's own
+          // "priority is required on every rule write" rule.
+          const fact = await adapter.updateRuleEnabled(
+            operation.externalResourceId,
+            operation.externalRuleId,
+            operation.rule,
+          );
+          return {
+            kind: "update-rule",
+            status: "applied",
+            externalRuleId: fact.ruleId === null ? undefined : String(fact.ruleId),
+          };
+        }
         case "update-resource":
         case "update-target":
-        case "update-rule":
-          // Tier 2 — no adapter verb this milestone calls; `proxy.ts` never
-          // reaches this branch (it skips tier-2 operations structurally).
-          // See this function's own doc.
+          // Tier 2 — no adapter verb any milestone calls; `proxy.ts`'s own
+          // `reconcile()` never applies either operation kind from a PLAN
+          // (still M4's structural limit). See this function's own doc.
           throw new Error(
-            `pangolin: ${operation.kind} is tier 2 and not implemented in loxep-acj.4 (M4 ships tier-1 writes only) — proxy.ts's service should never reach this call`,
+            `pangolin: ${operation.kind} is tier 2 and not implemented by any milestone — proxy.ts's service should never reach this call`,
           );
       }
     },
@@ -370,9 +398,54 @@ const syncProxyResourcePayloadSchema = z.object({
   trigger: z.enum(["intent_change", "manual", "poll"]).optional(),
 });
 
+/**
+ * M7 (`loxep-acj.7`) retirement/re-enable tasks. Job-based, NOT a
+ * request-scoped synchronous call, because a real `PangolinAdapter` can only
+ * be built where `services.getPangolinAdapterForConnection` lives —
+ * `@loxep/app`'s worker composition root — and `apps/web` has no Pangolin
+ * adapter factory of its own (unlike Dockhand/Termix, which `apps/web`
+ * builds directly for the fleet-detail live views). Each task's own payload
+ * carries `hostingTargetId` (resolved by the enqueuing server function,
+ * which already looked it up to verify the typed confirmation) so the
+ * handler never needs its own extra lookup, and `actorUserId` (a deliberate
+ * addition over `syncProxyResourceTask`'s own precedent, which threads no
+ * actor at all) so the resulting `reconcile_runs.actor_user_id` gives the
+ * owner's filtering-UX ruling its "who" — the ledger is genuinely the only
+ * place that fact can live, since no `proxy_resource_rules` column tracks
+ * it.
+ */
+const retireProxyResourceRulePayloadSchema = z.object({
+  proxyResourceRuleId: z.string().uuid(),
+  hostingTargetId: z.string().uuid(),
+  actorUserId: z.string().min(1),
+});
+
+const enableProxyResourceRulePayloadSchema = z.object({
+  proxyResourceRuleId: z.string().uuid(),
+  hostingTargetId: z.string().uuid(),
+  actorUserId: z.string().min(1),
+});
+
+const retireIpAliasFanOutRulePayloadSchema = z.object({
+  proxyResourceId: z.string().uuid(),
+  hostingTargetId: z.string().uuid(),
+  aliasName: z.string().min(1),
+  actorUserId: z.string().min(1),
+});
+
+/** `infrastructure.retire-proxy-resource-rule` — see the schema's own doc. */
+export const RETIRE_PROXY_RESOURCE_RULE_TASK = "infrastructure.retire-proxy-resource-rule";
+/** `infrastructure.enable-proxy-resource-rule` — the owner's filtering-UX ruling's "plus re-enable" half. */
+export const ENABLE_PROXY_RESOURCE_RULE_TASK = "infrastructure.enable-proxy-resource-rule";
+/** `infrastructure.retire-ip-alias-fan-out-rule` — completing M5's add-then-retire fan-out for real. */
+export const RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK = "infrastructure.retire-ip-alias-fan-out-rule";
+
 export interface InfrastructureProxyTasks {
   syncProxyResourceTask: LoxepTask<typeof syncProxyResourcePayloadSchema>;
-  tasks: readonly LoxepTask<typeof syncProxyResourcePayloadSchema>[];
+  retireProxyResourceRuleTask: LoxepTask<typeof retireProxyResourceRulePayloadSchema>;
+  enableProxyResourceRuleTask: LoxepTask<typeof enableProxyResourceRulePayloadSchema>;
+  retireIpAliasFanOutRuleTask: LoxepTask<typeof retireIpAliasFanOutRulePayloadSchema>;
+  tasks: readonly AnyLoxepTask[];
 }
 
 export function createInfrastructureProxyTasks(options: {
@@ -420,5 +493,120 @@ export function createInfrastructureProxyTasks(options: {
     },
   });
 
-  return { syncProxyResourceTask, tasks: [syncProxyResourceTask] };
+  const retireProxyResourceRuleTask = defineTask({
+    name: RETIRE_PROXY_RESOURCE_RULE_TASK,
+    payloadSchema: retireProxyResourceRulePayloadSchema,
+    handler: async (payload, { logger }) => {
+      const resolved = await resolveProxyProviderForHostingTarget(services, payload.hostingTargetId, {
+        actorIsAdmin: true,
+      });
+      if (resolved === null) {
+        logger.warn(
+          { hostingTargetId: payload.hostingTargetId },
+          "proxy resource rule retire: hosting target has no resolvable Pangolin connection",
+        );
+        return;
+      }
+      const result: RetireProxyRuleResult = await proxyResources.retireRule(
+        payload.proxyResourceRuleId,
+        {
+          trigger: "manual",
+          provider: resolved.provider,
+          orgId: resolved.orgId,
+          actorUserId: payload.actorUserId,
+          redact: proxyResultRedactor,
+          writeAuthorization: resolved.writeAuthorization,
+        },
+      );
+      logger.info(
+        { proxyResourceRuleId: payload.proxyResourceRuleId, status: result.status, alreadyDisabled: result.alreadyDisabled },
+        "proxy resource rule retire complete",
+      );
+    },
+  });
+
+  const enableProxyResourceRuleTask = defineTask({
+    name: ENABLE_PROXY_RESOURCE_RULE_TASK,
+    payloadSchema: enableProxyResourceRulePayloadSchema,
+    handler: async (payload, { logger }) => {
+      const resolved = await resolveProxyProviderForHostingTarget(services, payload.hostingTargetId, {
+        actorIsAdmin: true,
+      });
+      if (resolved === null) {
+        logger.warn(
+          { hostingTargetId: payload.hostingTargetId },
+          "proxy resource rule enable: hosting target has no resolvable Pangolin connection",
+        );
+        return;
+      }
+      const result: EnableProxyRuleResult = await proxyResources.enableRule(
+        payload.proxyResourceRuleId,
+        {
+          trigger: "manual",
+          provider: resolved.provider,
+          orgId: resolved.orgId,
+          actorUserId: payload.actorUserId,
+          redact: proxyResultRedactor,
+          writeAuthorization: resolved.writeAuthorization,
+        },
+      );
+      logger.info(
+        { proxyResourceRuleId: payload.proxyResourceRuleId, status: result.status, alreadyEnabled: result.alreadyEnabled },
+        "proxy resource rule enable complete",
+      );
+    },
+  });
+
+  const retireIpAliasFanOutRuleTask = defineTask({
+    name: RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+    payloadSchema: retireIpAliasFanOutRulePayloadSchema,
+    handler: async (payload, { logger }) => {
+      const resolved = await resolveProxyProviderForHostingTarget(services, payload.hostingTargetId, {
+        actorIsAdmin: true,
+      });
+      if (resolved === null) {
+        logger.warn(
+          { hostingTargetId: payload.hostingTargetId, aliasName: payload.aliasName },
+          "ip alias fan-out retire: hosting target has no resolvable Pangolin connection",
+        );
+        return;
+      }
+      const result: RetireAliasFanOutResult = await proxyResources.retireAliasFanOutRule(
+        payload.proxyResourceId,
+        payload.aliasName,
+        {
+          trigger: "manual",
+          provider: resolved.provider,
+          orgId: resolved.orgId,
+          actorUserId: payload.actorUserId,
+          redact: proxyResultRedactor,
+          writeAuthorization: resolved.writeAuthorization,
+        },
+      );
+      logger.info(
+        {
+          proxyResourceId: payload.proxyResourceId,
+          aliasName: payload.aliasName,
+          status: result.status,
+          retiredCount: result.retiredCount,
+          blockedCount: result.blockedCount,
+          failedCount: result.failedCount,
+        },
+        "ip alias fan-out retire complete",
+      );
+    },
+  });
+
+  return {
+    syncProxyResourceTask,
+    retireProxyResourceRuleTask,
+    enableProxyResourceRuleTask,
+    retireIpAliasFanOutRuleTask,
+    tasks: [
+      syncProxyResourceTask,
+      retireProxyResourceRuleTask,
+      enableProxyResourceRuleTask,
+      retireIpAliasFanOutRuleTask,
+    ],
+  };
 }

@@ -389,3 +389,22 @@ export function assertWouldNotLockOut(input: WouldLockOutInput): void {
     });
   }
 }
+
+/**
+ * The `reconcile_run_steps` fields a {@link WouldLockOutReason} becomes — M7
+ * (`loxep-acj.7`)'s retirement orchestration reuses `writePolicyBlockedStep`'s
+ * exact shape for the OTHER refusal source a retire can hit: not "the
+ * connection's policy tier is too low" but "applying this would remove the
+ * operator's own way back in". Both render as `status: 'blocked'`, never a
+ * failure and never a silent skip — the design's own rule 2 restated for this
+ * second gate.
+ */
+export function lockoutBlockedStep(
+  reason: WouldLockOutReason,
+): { status: "blocked"; errorCode: WouldLockOutReason; errorDetail: string } {
+  return {
+    status: "blocked",
+    errorCode: reason,
+    errorDetail: WOULD_LOCK_OUT_MESSAGES[reason],
+  };
+}

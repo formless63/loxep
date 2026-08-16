@@ -337,6 +337,21 @@ export type {
 } from "./gatus-push.ts";
 
 export {
+  ENABLE_PROXY_RESOURCE_RULE_TASK,
+  RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+  RETIRE_PROXY_RESOURCE_RULE_TASK,
+  createInfrastructureProxyTasks,
+  proxyProviderPortFromPangolinAdapter,
+  proxyResultRedactor,
+  resolveProxyProviderForHostingTarget,
+  resolveProxyWriteAuthorization,
+} from "./infrastructure-proxy.ts";
+export type {
+  InfrastructureProxyTasks,
+  ProxyPangolinAdapterLike,
+} from "./infrastructure-proxy.ts";
+
+export {
   IP_ALIAS_DETECTION_CRON_MATCH,
   IP_ALIAS_DETECTION_TASK_NAME,
   createIpAliasDetectionTasks,
