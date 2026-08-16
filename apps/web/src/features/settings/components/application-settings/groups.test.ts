@@ -129,6 +129,11 @@ describe('MANAGED_ELSEWHERE_SETTINGS', () => {
         key: 'integrations.enabled',
         to: '/settings/integrations',
         label: 'Edit per-provider on Integrations'
+      },
+      {
+        key: 'infrastructure.ip_aliases',
+        to: '/infrastructure/aliases',
+        label: 'Edit on IP aliases'
       }
     ]);
   });

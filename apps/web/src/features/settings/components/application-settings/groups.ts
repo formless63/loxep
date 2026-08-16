@@ -65,9 +65,13 @@ export const APPLICATION_SETTINGS_GROUPED_KEYS: string[] = APPLICATION_SETTINGS_
 );
 
 /**
- * The two record-shaped settings whose keys come from a foreign list this
- * page has no access to (settings-ux-design.md §1 rows 16-17) — rendered as
- * plain link rows under the "Managed elsewhere" heading, never a form.
+ * Record-shaped settings whose keys come from a foreign list this page has
+ * no access to (settings-ux-design.md §1 rows 16-18) — rendered as plain
+ * link rows under the "Managed elsewhere" heading, never a form.
+ *
+ * `infrastructure.ip_aliases` joined this list once its own dedicated CRUD
+ * surface shipped (loxep-8ja.5, `/infrastructure/aliases`) — before that it
+ * sat in `ADVANCED_REGISTERED_KEYS` as a temporary raw-JSON fallback.
  */
 export const MANAGED_ELSEWHERE_SETTINGS: {
   key: string;
@@ -83,6 +87,11 @@ export const MANAGED_ELSEWHERE_SETTINGS: {
     key: 'integrations.enabled',
     to: '/settings/integrations',
     label: 'Edit per-provider on Integrations'
+  },
+  {
+    key: 'infrastructure.ip_aliases',
+    to: '/infrastructure/aliases',
+    label: 'Edit on IP aliases'
   }
 ];
 
@@ -101,13 +110,11 @@ export const PROVISIONING_LINK = {
 /**
  * Registered settings with no dedicated UI of their own yet, kept reachable
  * through the collapsed "Advanced" raw-JSON fallback (settings-ux-design.md
- * §3's last paragraph) rather than disappearing from the page entirely:
- * `integration.tailscale.ignored_devices` permanently (class c — the real
- * editing affordance is the fleet page's "Ignore" action, not a form here),
- * `infrastructure.ip_aliases` until its dedicated CRUD surface ships
- * (loxep-8ja.5, independent of this bead).
+ * §3's last paragraph) rather than disappearing from the page entirely.
+ * `integration.tailscale.ignored_devices` stays here permanently (class c —
+ * the real editing affordance is the fleet page's "Ignore" action, not a
+ * form here). `infrastructure.ip_aliases` shipped its own dedicated CRUD
+ * surface (loxep-8ja.5, `/infrastructure/aliases`) and moved to
+ * `MANAGED_ELSEWHERE_SETTINGS` instead.
  */
-export const ADVANCED_REGISTERED_KEYS: string[] = [
-  'integration.tailscale.ignored_devices',
-  'infrastructure.ip_aliases'
-];
+export const ADVANCED_REGISTERED_KEYS: string[] = ['integration.tailscale.ignored_devices'];

@@ -13,6 +13,7 @@ import {
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
+import { formatRelativeTime } from '@/lib/format';
 import { createIpAlias, updateIpAlias, type IpAliasDto } from '@/server/infrastructure-functions';
 import {
   ipAliasesQuery,
@@ -246,6 +247,7 @@ export default function IpAliasDialog({
               />
             )}
           </FieldGroup>
+          {isEdit && <SystemWrittenFields alias={alias} />}
           <div className='flex justify-end gap-2'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
@@ -257,5 +259,46 @@ export default function IpAliasDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * `previousAddress`/`observedAt`/`confirmedAt` are system-written — a
+ * detector run or, for `confirmedAt`, this very dialog's own save (see
+ * `updateIpAlias`'s handler). They are never inputs: shown here read-only,
+ * outside `FieldGroup`, so there is no path through this form that submits a
+ * hand-edited value for any of them. Rendered only once there is at least
+ * one to show — a freshly created alias has none yet.
+ */
+function SystemWrittenFields({ alias }: { alias: IpAliasDto }) {
+  if (alias.previousAddress === null && alias.observedAt === null && alias.confirmedAt === null) {
+    return null;
+  }
+  return (
+    <div className='bg-muted/50 rounded-md border p-3'>
+      <p className='text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase'>
+        System-written — read only
+      </p>
+      <dl className='grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm'>
+        {alias.previousAddress !== null && (
+          <>
+            <dt className='text-muted-foreground'>Previous address</dt>
+            <dd className='font-mono'>{alias.previousAddress}</dd>
+          </>
+        )}
+        {alias.observedAt !== null && (
+          <>
+            <dt className='text-muted-foreground'>Last observed (detector)</dt>
+            <dd>{formatRelativeTime(alias.observedAt)}</dd>
+          </>
+        )}
+        {alias.confirmedAt !== null && (
+          <>
+            <dt className='text-muted-foreground'>Last confirmed (operator)</dt>
+            <dd>{formatRelativeTime(alias.confirmedAt)}</dd>
+          </>
+        )}
+      </dl>
+    </div>
   );
 }

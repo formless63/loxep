@@ -108,13 +108,14 @@ function SettingLinkCard({
  * (`defineSetting`) — every class (a) setting on the generic schema-driven
  * form (settings-ux-design.md §2), the class (b) composites that already
  * live on this page unchanged (`GatusPushCard`, `infrastructure.caa_policy`'s
- * banner), the two record-shaped settings pointing at their real editors
- * ("Managed elsewhere"), `auth.provisioning` linking to where it actually
- * lives (`/settings/users`, "link, don't duplicate"), and a collapsed
- * "Advanced" section preserving the old raw-JSON path for raw/unregistered
- * rows plus the two registered settings with no dedicated form yet
- * (`integration.tailscale.ignored_devices`, class c permanently;
- * `infrastructure.ip_aliases`, until loxep-8ja.5 ships its own CRUD).
+ * banner), the record-shaped settings pointing at their real editors
+ * ("Managed elsewhere" — including `infrastructure.ip_aliases`, whose
+ * dedicated CRUD surface at `/infrastructure/aliases` shipped in
+ * loxep-8ja.5), `auth.provisioning` linking to where it actually lives
+ * (`/settings/users`, "link, don't duplicate"), and a collapsed "Advanced"
+ * section preserving the old raw-JSON path for raw/unregistered rows plus
+ * the one registered setting with no dedicated form at all
+ * (`integration.tailscale.ignored_devices`, class c permanently).
  */
 export default function ApplicationSettings({ isAdmin }: { isAdmin: boolean }) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
@@ -288,8 +289,7 @@ function AdvancedSection({
               <CardTitle className='text-base'>Registered, no dedicated form yet</CardTitle>
               <CardDescription>
                 Edited as raw JSON, validated server-side against each setting's registered schema —
-                a device-ignore list and named IP aliases, neither of which has its own editing
-                surface on this page.
+                a device-ignore list with no editing surface of its own on this page.
               </CardDescription>
             </CardHeader>
             <CardContent>
