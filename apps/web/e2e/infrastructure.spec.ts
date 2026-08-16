@@ -454,10 +454,13 @@ test("the connections row action opens a Purelymail connection's estate page", a
   await page.getByRole('menuitem', { name: 'Open estate' }).click();
 
   await page.waitForURL('**/infrastructure/estate/**');
+  // Scoped to main — the sidebar carries a 'Domains' group label and link
+  // with identical accessible text (this file's own standing rule).
+  const estateMain = page.getByRole('main');
   await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
-  await expect(page.getByText(name, { exact: true })).toBeVisible();
-  await expect(page.getByText('Purelymail', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('Domains', { exact: true })).toBeVisible();
-  await expect(page.getByText('Mailboxes', { exact: true })).toBeVisible();
-  await expect(page.getByText('Routing rules', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Purelymail', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Domains', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Mailboxes', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Routing rules', { exact: true })).toBeVisible();
 });
