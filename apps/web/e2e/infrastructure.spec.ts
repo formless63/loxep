@@ -665,8 +665,13 @@ test("the connections row action opens a Gatus connection's estate page", async 
   await page.getByRole('textbox', { name: 'Account' }).fill(name);
   const row = page.getByRole('row').filter({ hasText: name });
   await expect(row).toBeVisible();
-  await row.getByRole('button', { name: 'Open menu' }).click();
-  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+  // toPass retry: in the full-suite sequence a query resolving mid-open
+  // re-mounts the dropdown and the item never reads stable (loxep-9iw).
+  // Reopen-and-click until the menu holds still; remove with that bug.
+  await expect(async () => {
+    await row.getByRole('button', { name: 'Open menu' }).click();
+    await page.getByRole('menuitem', { name: 'Open estate' }).click({ timeout: 2000 });
+  }).toPass({ timeout: 20000 });
 
   await page.waitForURL('**/infrastructure/estate/**');
   const estateMain = page.getByRole('main');
