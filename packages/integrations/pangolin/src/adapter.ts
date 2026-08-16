@@ -111,6 +111,7 @@ import {
   parsePangolinAdapterConfig,
 } from "./config.ts";
 import {
+
   PANGOLIN_SUGGESTED_CAPACITY,
   PANGOLIN_SUGGESTED_REFILL_PER_SECOND,
   type PangolinAdapterLogger,
@@ -118,6 +119,14 @@ import {
   type RateBudgetStats,
   createRateBudget,
 } from "./rate-budget.ts";
+
+/**
+ * Live Pangolin instances return SQLite-flavoured numeric booleans (`sso: 1`,
+ * `whitelist: 0`) alongside real ones (`ssl: true`) in the same row — observed
+ * against a real instance 2026-08-16, where strict `z.boolean()` silently
+ * dropped every resource. Accept both and normalize.
+ */
+const looseBoolean = z.union([z.boolean(), z.number()]).transform((v) => (typeof v === "number" ? v !== 0 : v));
 
 /** The injected `fetch`. Every test passes a stub; nothing here calls global. */
 export type PangolinFetch = (input: string, init: RequestInit) => Promise<Response>;
@@ -313,7 +322,7 @@ const siteSchema = z.object({
   orgId: z.string().optional(),
   name: z.string().optional(),
   type: z.string().optional(),
-  online: z.boolean().optional(),
+  online: looseBoolean.optional(),
   address: z.string().nullable().optional(),
   subnet: z.string().nullable().optional(),
   endpoint: z.string().nullable().optional(),
@@ -330,12 +339,12 @@ const resourceSchema = z.object({
   fullDomain: z.string().nullable().optional(),
   domainId: z.string().nullable().optional(),
   mode: z.string().optional(),
-  ssl: z.boolean().optional(),
-  enabled: z.boolean().optional(),
-  blockAccess: z.boolean().optional(),
-  sso: z.boolean().nullable().optional(),
-  emailWhitelistEnabled: z.boolean().nullable().optional(),
-  applyRules: z.boolean().nullable().optional(),
+  ssl: looseBoolean.optional(),
+  enabled: looseBoolean.optional(),
+  blockAccess: looseBoolean.optional(),
+  sso: looseBoolean.nullable().optional(),
+  emailWhitelistEnabled: looseBoolean.nullable().optional(),
+  applyRules: looseBoolean.nullable().optional(),
   health: z.string().nullable().optional(),
 });
 
@@ -347,7 +356,7 @@ const targetSchema = z.object({
   port: z.number().optional(),
   method: z.string().nullable().optional(),
   mode: z.string().optional(),
-  enabled: z.boolean().optional(),
+  enabled: looseBoolean.optional(),
   path: z.string().nullable().optional(),
   pathMatchType: z.string().nullable().optional(),
   priority: z.number().optional(),
@@ -360,7 +369,7 @@ const ruleSchema = z.object({
   match: z.string().optional(),
   value: z.string().optional(),
   priority: z.number().optional(),
-  enabled: z.boolean().optional(),
+  enabled: looseBoolean.optional(),
 });
 
 const domainSchema = z.object({
@@ -368,12 +377,12 @@ const domainSchema = z.object({
   orgId: z.string().optional(),
   baseDomain: z.string().optional(),
   type: z.string().nullable().optional(),
-  verified: z.boolean().optional(),
-  failed: z.boolean().optional(),
+  verified: looseBoolean.optional(),
+  failed: looseBoolean.optional(),
   tries: z.number().nullable().optional(),
-  configManaged: z.boolean().optional(),
+  configManaged: looseBoolean.optional(),
   certResolver: z.string().nullable().optional(),
-  preferWildcardCert: z.boolean().nullable().optional(),
+  preferWildcardCert: looseBoolean.nullable().optional(),
 });
 
 const dnsRecordSchema = z.object({
@@ -382,7 +391,7 @@ const dnsRecordSchema = z.object({
   recordType: z.string().optional(),
   baseDomain: z.string().nullable().optional(),
   value: z.string().optional(),
-  verified: z.boolean().optional(),
+  verified: looseBoolean.optional(),
 });
 
 function toNumberOrNull(value: number | string | undefined): number | null {
