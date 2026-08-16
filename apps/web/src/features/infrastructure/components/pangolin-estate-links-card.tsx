@@ -30,7 +30,7 @@ export default function PangolinEstateLinksCard() {
           {list.map((connection) => (
             <li key={connection.id}>
               <Link
-                to='/infrastructure/proxy/$connectionId'
+                to='/infrastructure/estate/$connectionId'
                 params={{ connectionId: connection.id }}
                 className='flex items-center justify-between gap-2 rounded-md px-2 py-1.5 outline-none transition-colors hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring'
               >

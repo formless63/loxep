@@ -92,8 +92,38 @@
  * where the link's `external_id` gets written the first time a create
  * succeeds or a check-mode plan matches by name — see
  * `selfRetireIdentity`'s doc below.
+ *
+ * ## The write-authorization gate (loxep-47o.10, joining Cloudflare/Purelymail/Pangolin)
+ *
+ * The estate-browser audit (`estate-browsers-design.md` §8.3) found this the
+ * one write-capable adapter with zero `assertWritePolicy` call sites — an
+ * undocumented asymmetry with its three siblings, not a considered exemption.
+ * Owner ruling 2026-08-16 (#2): join now. `reconcile()` gates its ONE
+ * possible write (`applyHost`, fired at most once per call — hb7 §2.4) with
+ * `assertWritePolicy` immediately before attempting it, keyed on the
+ * declared link's OWN `connectionId` (never a constructor option, unlike
+ * `sync.ts`'s single-connection-per-installation Cloudflare service — a
+ * Dockhand host can be registered against any of several connections, so
+ * "which connection" is a per-target fact read off the link, not an
+ * installation-wide constant; see the module doc above). Both `create` and
+ * `update` are tier 1 (additive): the write is narrow — it creates or
+ * updates a row in Dockhand's OWN database; nothing executes on the target
+ * machine (the owner's 2026-08-13 carve-out) — unlike Pangolin, whose
+ * `update-*` is tier 2. A refusal records a `'blocked'`
+ * `reconcile_run_steps` row (never a failure, never a silent skip) and the
+ * run finishes `'partial'`, exactly like `sync.ts`/`mail-sync.ts`. The
+ * owner's Dockhand connection defaults to `read_only`, so this join is a
+ * BEHAVIOR CHANGE: applies that previously always executed now block until
+ * the connection's tier is raised on `/settings/connections` — see the
+ * connecting-dockhand guide.
  */
-import { createResourceLinksService } from "@loxep/domain";
+import {
+  createResourceLinksService,
+  createSettingsService,
+  providerWritePolicySetting,
+  resolveProviderWritePolicy,
+} from "@loxep/domain";
+import type { SettingsService } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
 import {
   externalResources,
@@ -126,6 +156,12 @@ import {
   type DesiredContainerHost,
   type ObservedContainerHost,
 } from "./container-host-port.ts";
+import {
+  assertWritePolicy,
+  WritePolicyError,
+  writePolicyBlockedStep,
+  type WritePolicyBlockedReason,
+} from "./write-policy.ts";
 
 export type ReconcileRunRow = typeof reconcileRuns.$inferSelect;
 
@@ -271,6 +307,8 @@ export interface ReconcileContainerHostResult {
   operationCount: number;
   applied: number;
   unmatchedObservedCount: number;
+  /** Set when the write-authorization gate refused the one possible operation — see the module doc. `null` otherwise, including every `check`-mode run. */
+  writePolicyBlockedReason: WritePolicyBlockedReason | null;
 }
 
 /** One hosting target with a declared (operator-confirmed) container-host intent — Milestone D's drift-cadence subject list. */
@@ -293,6 +331,14 @@ export interface ContainerHostsService {
       provider: ContainerHostProviderPort;
       actorUserId?: string | null;
       /**
+       * Whether a known human actor is attached to this run — see
+       * `write-policy.ts`'s `assertWritePolicy` for why `undefined` (no
+       * actor; every current caller of `reconcile()` is a background task)
+       * is not the same as `false` (a known non-admin, which always
+       * refuses).
+       */
+      actorIsAdmin?: boolean;
+      /**
        * Defaults to a SAFE (never-leaking) local redactor —
        * {@link defaultContainerHostRedactor} — but the composition root
        * should still inject Dockhand's own allow-list redactor
@@ -314,8 +360,11 @@ export function createContainerHostsService(options: {
   writeSecret: TransactionalContainerHostSecretWriter;
   readSecret: ContainerHostSecretReader;
   enqueue: TransactionalEnqueue;
+  /** Defaults to `createSettingsService({ db })`. Overridable for tests. */
+  settings?: SettingsService;
 }): ContainerHostsService {
   const { db, writeSecret, readSecret, enqueue } = options;
+  const settings = options.settings ?? createSettingsService({ db });
   const ledger: ProviderOperationsLedger = createProviderOperationsLedger({ db });
 
   async function requireHostingTarget(
@@ -485,6 +534,7 @@ export function createContainerHostsService(options: {
       trigger: "intent_change" | "manual" | "poll";
       provider: ContainerHostProviderPort;
       actorUserId?: string | null;
+      actorIsAdmin?: boolean;
       redact?: ResponseRedactor;
     },
   ): Promise<ReconcileContainerHostResult> {
@@ -500,6 +550,7 @@ export function createContainerHostsService(options: {
         operationCount: 0,
         applied: 0,
         unmatchedObservedCount: 0,
+        writePolicyBlockedReason: null,
       };
     }
 
@@ -516,6 +567,7 @@ export function createContainerHostsService(options: {
         operationCount: 0,
         applied: 0,
         unmatchedObservedCount: 0,
+        writePolicyBlockedReason: null,
       };
     }
     const meta = link.metadata as ContainerHostIntentMetadata;
@@ -584,7 +636,8 @@ export function createContainerHostsService(options: {
     let sequence = 0;
     const step = async (entry: {
       step: string;
-      status: "succeeded" | "failed" | "skipped";
+      /** `'blocked'` — the write-authorization gate refused; see the module doc. Never a failure, never a silent skip. */
+      status: "succeeded" | "failed" | "skipped" | "blocked";
       requestSummary?: Record<string, unknown> | null;
       responseSummary?: Record<string, unknown> | null;
       errorCode?: string | null;
@@ -662,8 +715,39 @@ export function createContainerHostsService(options: {
       }
     }
 
+    // ---- write policy (loxep-47o.10, joining Cloudflare/Purelymail/Pangolin) --
+    let writePolicyBlockedError: WritePolicyError | null = null;
+    if (
+      reconcileOptions.mode === "apply" &&
+      plan.operations.length > 0 &&
+      link.connectionId !== null
+    ) {
+      const policies = await settings.get(providerWritePolicySetting);
+      const policyTier = resolveProviderWritePolicy(policies, link.connectionId);
+      try {
+        assertWritePolicy({
+          mode: reconcileOptions.mode,
+          trigger: reconcileOptions.trigger,
+          policyTier,
+          // Both create and update are tier 1 (additive) — see the module
+          // doc's "write-authorization gate" section for why this differs
+          // from Pangolin's update-is-tier-2 split.
+          operationTier: 1,
+          actorIsAdmin: reconcileOptions.actorIsAdmin,
+          unblockHint:
+            `allow writes for this Dockhand connection (currently '${policyTier}') ` +
+            "on /settings/connections to register or update this host",
+        });
+      } catch (error) {
+        if (!(error instanceof WritePolicyError)) throw error;
+        writePolicyBlockedError = error;
+      }
+    }
+
     let applied = 0;
-    if (reconcileOptions.mode === "apply" && plan.operations.length > 0) {
+    if (writePolicyBlockedError !== null) {
+      await step({ step: "apply.blocked", ...writePolicyBlockedStep(writePolicyBlockedError) });
+    } else if (reconcileOptions.mode === "apply" && plan.operations.length > 0) {
       // "At most one operation, mode==='apply' only" (hb7 §2.4) — one
       // desired host can produce at most one operation anyway, but the cap
       // is stated explicitly so a future edit to the planner cannot silently
@@ -792,14 +876,18 @@ export function createContainerHostsService(options: {
         .where(eq(externalResources.id, link.externalResourceId));
     }
 
-    await finish("succeeded", null);
+    // A write-policy refusal is neither a failure nor a silent skip (rule
+    // 2) — the run finishes 'partial', the same honest classification
+    // sync.ts/mail-sync.ts already apply.
+    await finish(writePolicyBlockedError !== null ? "partial" : "succeeded", null);
     return {
       runId: run.id,
-      status: "succeeded",
+      status: writePolicyBlockedError !== null ? "partial" : "succeeded",
       mode: reconcileOptions.mode,
       operationCount: plan.operations.length,
       applied,
       unmatchedObservedCount: plan.unmatchedObserved.length,
+      writePolicyBlockedReason: writePolicyBlockedError?.blockedReason ?? null,
     };
   }
 

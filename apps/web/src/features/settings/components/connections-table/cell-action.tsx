@@ -36,12 +36,12 @@ import { disableOrderSync, enableOrderSync } from '@/server/order-sync-functions
 import { disablePurchaseSync, enablePurchaseSync } from '@/server/purchase-sync-functions';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import { EbayConnectionActions } from '@/features/settings/components/ebay-connection-actions';
+import { estateHref } from '@/features/estate/provider-registry';
 import { isOrderSyncEligible, supportsOrderSync } from './order-sync-cell';
 import { isPurchaseSyncEligible, supportsPurchaseSync } from './purchase-sync-cell';
 import { TailscaleExpiryDialog, tailscaleExpiryEditable } from './tailscale-expiry-cell';
 
 const EBAY_PROVIDER = 'ebay';
-const PANGOLIN_PROVIDER = 'pangolin';
 
 /**
  * Row actions for one account (loxep-o7h).
@@ -63,6 +63,7 @@ export function CellAction({ data }: { data: ConnectionDto }) {
   const [blocking, setBlocking] = useState<ConnectionReferenceDto[] | null>(null);
   const [editingExpiry, setEditingExpiry] = useState(false);
   const archived = data.status === 'archived';
+  const estateLink = estateHref(data.provider, data.id);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
 
@@ -229,16 +230,17 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 )}
               </DropdownMenuItem>
             )}
-          {data.provider === PANGOLIN_PROVIDER &&
+          {estateLink !== null &&
             !archived && (
-              // loxep-pq2: the estate browser's one entry point from this
-              // table — "browse everything this instance actually has, with
-              // control in context" — distinct from the eBay/Tailscale-style
-              // account actions above, so it gets its own labelled entry
-              // rather than folding into "View acquisitions"'s pattern.
+              // loxep-47o.1 (Rule N1): "Open estate" is the universal entry
+              // point into a connection's estate page — registry-driven so
+              // this table never has to know provider-by-provider which ones
+              // have a page, matching `hasEstatePage`'s own "the single place
+              // this is decided" doc. Originated as a Pangolin-only "View
+              // estate" entry (loxep-pq2); generalized here.
               <DropdownMenuItem asChild>
-                <Link to='/infrastructure/proxy/$connectionId' params={{ connectionId: data.id }}>
-                  <Icons.integrations className='mr-2 h-4 w-4' /> View estate
+                <Link to={estateLink.to} params={estateLink.params}>
+                  <Icons.integrations className='mr-2 h-4 w-4' /> Open estate
                 </Link>
               </DropdownMenuItem>
             )}

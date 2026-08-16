@@ -67,6 +67,7 @@ import {
   createDriftService,
   createHostingTargetsService,
   createMailDomainsService,
+  createMailSyncService,
   createManagedDomainsService,
   createProvisioningTemplatesService,
   createProxyResourcesService,
@@ -77,6 +78,7 @@ import {
   type DriftService,
   type HostingTargetsService,
   type MailDomainsService,
+  type MailSyncService,
   type ManagedDomainsService,
   type ProvisioningTemplatesService,
   type ProxyResourcesService,
@@ -266,6 +268,34 @@ interface AdminRegistry {
    */
   pangolinAdapterFactoryPromise?: Promise<{
     getAdapterForConnection: import('@loxep/app').PangolinAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
+  /**
+   * The Purelymail READ adapter factory (loxep-47o.3's estate browser),
+   * loaded through the module above. Mirrors `pangolinAdapterFactoryPromise`
+   * exactly: `createPurelymailAdapterFactory` caches its own per-connection
+   * built adapter for `PURELYMAIL_ADAPTER_CACHE_TTL_MS` (a static bearer
+   * credential, no session to keep alive), so caching the FACTORY itself
+   * here costs nothing and saves rebuilding it (and its per-connection rate
+   * budget — deliberately small, see `purelymail.ts`'s own note) on every
+   * request.
+   */
+  purelymailAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').PurelymailAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
+  /**
+   * The Cloudflare READ adapter factory (loxep-47o.2's estate browser),
+   * loaded through the module above. Mirrors `pangolinAdapterFactoryPromise`
+   * exactly — a SEPARATE factory (and per-connection rate budget) from the
+   * worker composition root's own `services.getCloudflareAdapterForConnection`
+   * (`@loxep/app`'s `services.ts`, driving the reconciler's `sync()`), the
+   * same "estate reads get their own independent budget, never the
+   * reconciler's" split {@link getPangolinAdapterForConnection}'s doc
+   * explains for Pangolin.
+   */
+  cloudflareAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').CloudflareAdapterFactory;
     invalidate: (connectionId: string) => void;
   }>;
 }
@@ -642,6 +672,114 @@ export async function getPangolinAdapterForConnection(
 ): Promise<import('@loxep/app').PangolinConnectionAdapter> {
   const factory = await getPangolinAdapterFactory();
   return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * The Cloudflare READ adapter factory (loxep-47o.2's estate browser), loaded
+ * through {@link getFleetModule}. Mirrors {@link getPangolinAdapterFactory}
+ * exactly.
+ */
+function getCloudflareAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').CloudflareAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.cloudflareAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createCloudflareAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.cloudflareAdapterFactoryPromise;
+}
+
+/**
+ * A live Cloudflare adapter for one connection — the Cloudflare estate
+ * browser's (loxep-47o.2) only fleet-adapter access. Every OTHER Cloudflare
+ * call in this codebase goes through the worker's own
+ * `services.getCloudflareAdapterForConnection` (`@loxep/app`'s
+ * `services.ts`, driving the DNS reconciler's `sync()`); this is the SAME
+ * factory, reached the same way {@link getPangolinAdapterForConnection}
+ * reaches Pangolin's — a DIFFERENT (independently budgeted) instance from
+ * the worker's, per this registry field's own doc.
+ */
+export async function getCloudflareAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').CloudflareConnectionAdapter> {
+  const factory = await getCloudflareAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * The Purelymail READ adapter factory (loxep-47o.3), loaded through
+ * {@link getFleetModule}. Mirrors {@link getPangolinAdapterFactory} exactly.
+ */
+function getPurelymailAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').PurelymailAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.purelymailAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createPurelymailAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.purelymailAdapterFactoryPromise;
+}
+
+/**
+ * A live Purelymail adapter for one connection — the estate browser's
+ * (loxep-47o.3) only Purelymail-adapter access from `apps/web`. Every OTHER
+ * Purelymail call in this codebase goes through the worker's own
+ * `services.getPurelymailAdapterForConnection` (`@loxep/app`'s
+ * `services.ts`, driving `createMailSyncForDomain`); this is the SAME
+ * factory, reached the same way {@link getPangolinAdapterForConnection}
+ * reaches Pangolin's.
+ */
+export async function getPurelymailAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').PurelymailConnectionAdapter> {
+  const factory = await getPurelymailAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * Builds a `MailSyncService` scoped to ONE managed domain's mail connection
+ * — the estate page's manual-trigger write affordances (loxep-47o.3,
+ * "Register domain" / "Sync mailboxes") mount the SAME
+ * `runMailDomainSync`/`runMailboxSync` service calls the worker's
+ * `infrastructure.ensure-mail-domain`/`infrastructure.sync-mailboxes` tasks
+ * already drive (`@loxep/app`'s `createMailSyncForDomain`) — no new
+ * provider verb, no new payload shape (P10). This function cannot reuse
+ * `createMailSyncForDomain` directly because that helper takes the WORKER's
+ * `AppServices` shape (built with `@loxep/jobs`'s full graphile-worker
+ * composition), which `apps/web`'s request-scoped `AdminRegistry` is not —
+ * so the same construction is repeated here against `apps/web`'s own
+ * `db`/`secrets`, reached the same lazy-dynamic-import way every other
+ * `@loxep/app` access on this file is (`getFleetModule`).
+ *
+ * `connectionId` is ALWAYS passed to `createMailSyncService`, so the
+ * write-authorization gate (`mail-sync.ts`'s module doc) is always live —
+ * there is no code path from an estate-page click that skips it.
+ */
+export async function getMailSyncServiceForConnection(
+  mailConnectionId: string
+): Promise<MailSyncService> {
+  const registry = getAdminServices();
+  const [fleet, purelymail] = await Promise.all([
+    getFleetModule(),
+    getPurelymailAdapterForConnection(mailConnectionId)
+  ]);
+  return createMailSyncService({
+    db: registry.handle.db,
+    provider: fleet.mailProviderPortFromPurelymailAdapter(purelymail.adapter),
+    secrets: registry.secrets,
+    providerName: fleet.PURELYMAIL_CONNECTION_PROVIDER,
+    connectionId: mailConnectionId
+  });
 }
 
 /**

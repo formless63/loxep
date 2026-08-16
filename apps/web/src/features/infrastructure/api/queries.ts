@@ -29,6 +29,16 @@ import {
   fetchPangolinEstateOverview,
   fetchPangolinEstateResourceDetail
 } from '@/server/pangolin-estate-functions';
+import {
+  fetchPurelymailAccountFacts,
+  fetchPurelymailEstateDomains,
+  fetchPurelymailEstateMailboxes,
+  fetchPurelymailEstateRoutingRules
+} from '@/server/purelymail-estate-functions';
+import {
+  fetchCloudflareEstateRecords,
+  fetchCloudflareEstateZones
+} from '@/server/cloudflare-estate-functions';
 
 export const infrastructureOverviewQuery = queryOptions({
   queryKey: ['infrastructure', 'overview'],
@@ -169,6 +179,80 @@ export const pangolinEstateResourceDetailQuery = (connectionId: string, resource
   queryOptions({
     queryKey: ['infrastructure', 'pangolin-estate', connectionId, 'resource', resourceId],
     queryFn: () => fetchPangolinEstateResourceDetail({ data: { connectionId, resourceId } })
+  });
+
+/**
+ * The Purelymail estate browser's (loxep-47o.3) three sections — Domains,
+ * Mailboxes, Routing rules — each its OWN query (Rule P4: each section
+ * stamps its own clock), together the fixed three-call overview (Rule P7).
+ * Same "live, never a long `staleTime`" discipline as
+ * {@link pangolinEstateOverviewQuery}.
+ */
+export const purelymailEstateDomainsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'purelymail-estate', connectionId, 'domains'],
+    queryFn: () => fetchPurelymailEstateDomains({ data: { connectionId } })
+  });
+
+export const purelymailEstateMailboxesQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'purelymail-estate', connectionId, 'mailboxes'],
+    queryFn: () => fetchPurelymailEstateMailboxes({ data: { connectionId } })
+  });
+
+export const purelymailEstateRoutingRulesQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'purelymail-estate', connectionId, 'routing-rules'],
+    queryFn: () => fetchPurelymailEstateRoutingRules({ data: { connectionId } })
+  });
+
+/**
+ * Account facts (credit, ownership code) — a drill-in, not part of the
+ * overview (Rule P7's three-call budget). The caller sets `enabled` on
+ * explicit header expand, never eagerly.
+ */
+export const purelymailAccountFactsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'purelymail-estate', connectionId, 'account'],
+    queryFn: () => fetchPurelymailAccountFacts({ data: { connectionId } })
+  });
+
+/**
+ * The Cloudflare estate browser's (loxep-47o.2) zones overview — one
+ * `listZones` call per page, `maxPages` growing by one per operator "Load
+ * more" click (Rule P8; `maxPages` is IN the query key because each page
+ * count is a genuinely different read, never served from a smaller page's
+ * cache). Same live/never-cached discipline as every other estate query.
+ */
+export const cloudflareEstateZonesQuery = (connectionId: string, maxPages: number) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'cloudflare-estate', connectionId, 'zones', maxPages],
+    queryFn: () => fetchCloudflareEstateZones({ data: { connectionId, maxPages } })
+  });
+
+/**
+ * One zone's live DNS records — the per-zone drill-in (Rule P6), fetched
+ * only once an operator expands that zone. `externalZoneId` and `maxPages`
+ * are both in the query key: switching zones or clicking "Load more" are
+ * each a genuinely different read.
+ */
+export const cloudflareEstateRecordsQuery = (
+  connectionId: string,
+  externalZoneId: string,
+  zoneName: string,
+  maxPages: number
+) =>
+  queryOptions({
+    queryKey: [
+      'infrastructure',
+      'cloudflare-estate',
+      connectionId,
+      'records',
+      externalZoneId,
+      maxPages
+    ],
+    queryFn: () =>
+      fetchCloudflareEstateRecords({ data: { connectionId, externalZoneId, zoneName, maxPages } })
   });
 
 /** Named dynamic-IP aliases (Pangolin chain design M5, loxep-acj.5). */

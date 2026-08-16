@@ -328,19 +328,20 @@ test('creates the "New domain" example template, renders its step ladder, and th
 });
 
 /**
- * Pangolin estate browser (loxep-pq2). No Pangolin — or any provider —
- * connection exists in this harness (see the module doc), so these two
- * assertions are exactly what a harness with no live Pangolin CAN prove
- * honestly: the overview's quick-links card is ABSENT rather than an empty
- * list implying a browsable-but-empty estate (matching
- * `UnmatchedContainerHostsCard`'s own "punch list, not a status row" rule,
- * which `PangolinEstateLinksCard` mirrors), and the per-connection page
- * itself degrades to an honest error — never a blank page or an unhandled
- * exception — when asked for a connection id that does not exist. The
- * server function's `getPangolinAdapterForConnection` call is never reached
- * at all here: `fetchPangolinEstateOverview` resolves the connection FIRST
- * and throws before attempting any live Pangolin call, so this also proves
- * the "no live adapter build for a bad id" ordering.
+ * Pangolin estate browser (loxep-pq2), now mounted on the estate-browser
+ * SHELL at `/infrastructure/estate/$connectionId` (loxep-47o.1's route
+ * convergence — this page lived at `/infrastructure/proxy/$connectionId`
+ * before the shell existed; the "Pangolin estate" heading assertion below
+ * is gone for exactly that reason, see the second test's own comment). No
+ * Pangolin — or any provider — connection exists in this harness (see the
+ * module doc), so these two assertions are exactly what a harness with no
+ * live Pangolin CAN prove honestly: the overview's quick-links card is
+ * ABSENT rather than an empty list implying a browsable-but-empty estate
+ * (matching `UnmatchedContainerHostsCard`'s own "punch list, not a status
+ * row" rule, which `PangolinEstateLinksCard` mirrors), and the
+ * per-connection page itself degrades to an honest error — never a blank
+ * page or an unhandled exception — when asked for a connection id that does
+ * not exist.
  */
 test('infrastructure overview has no Pangolin estates card when no Pangolin connection exists', async ({
   page
@@ -350,11 +351,113 @@ test('infrastructure overview has no Pangolin estates card when no Pangolin conn
   await expect(page.getByText('Pangolin estates', { exact: true })).toHaveCount(0);
 });
 
-test('the Pangolin estate page degrades honestly for a connection that does not exist', async ({
+/**
+ * The estate SHELL's own honest degrade (loxep-47o.1) for an unresolvable
+ * connection id — provider-agnostic by construction (Rule P1: the provider
+ * is read FROM the connection row, so a connection that does not exist has
+ * no provider to name yet), which is why the page heading is the shell's
+ * generic "Estate" rather than "Pangolin estate": the loader's very first
+ * read (`fetchEstateConnectionSummary`) is what fails here, before any
+ * provider-specific server function — Pangolin's or Cloudflare's — is ever
+ * reached. This is the regression this route rename must keep passing.
+ */
+test('the estate shell degrades honestly for a connection that does not exist', async ({
   page
 }) => {
-  await page.goto('/infrastructure/proxy/00000000-0000-4000-8000-000000000000');
-  await expect(page.getByRole('heading', { name: 'Pangolin estate' })).toBeVisible();
-  await expect(page.getByText('Could not read this Pangolin instance')).toBeVisible();
+  await page.goto('/infrastructure/estate/00000000-0000-4000-8000-000000000000');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(page.getByText('Could not read this connection')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+});
+
+/**
+ * `/infrastructure/estate` — Rule N2's index. No connections exist in this
+ * harness, so the honest assertion is an empty, rendering table rather than
+ * an unhandled crash; the "Open estate" row action itself (Rule N1) is
+ * covered by the next test, once a connection exists to click it from.
+ */
+test('the estate index renders with no connections', async ({ page }) => {
+  await page.goto('/infrastructure/estate');
+  await expect(page.getByRole('heading', { name: 'Estates' })).toBeVisible();
+});
+
+/**
+ * The Cloudflare estate browser (loxep-47o.2) — Rule N1's "Open estate" row
+ * action, all the way to the estate page's connection-identity HEADER.
+ * Reuses the SAME fake-token Cloudflare fixture the proxy-resource tests
+ * above already establish (`createStoreConnection` writes the row with no
+ * live network call). This test deliberately asserts ONLY the header:
+ * `fetchEstateConnectionSummary` is a database read (Rule P1 — no provider
+ * call to resolve which provider a connection is), so it always resolves
+ * fast and reliably, but the Zones section mounted below it makes a REAL
+ * `listZones` call against Cloudflare with this fake token — this suite's
+ * own established discipline (see the "no live egress" module doc above)
+ * is to never depend on a live provider call's outcome or timing, so this
+ * test proves navigation and the shell's own read wire up correctly without
+ * waiting on that call at all.
+ */
+test("the connections row action opens a Cloudflare connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Cloudflare estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Cloudflare account' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Account name *').fill(name);
+  await connectionDialog.getByLabel('API token *').fill(`cf_e2e_estate_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect account' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  // Filtered lookup (`connections.spec.ts`'s own `filteredRow` precedent):
+  // this row's exact, unique name is guaranteed to be the only match even
+  // once this suite has accumulated fixtures across many runs against a
+  // reused scratch database.
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByText('Cloudflare', { exact: true }).first()).toBeVisible();
+});
+
+/**
+ * The Purelymail estate browser (loxep-47o.3) — same Rule N1 path as
+ * Cloudflare's test above, to the same connection-identity HEADER. Domains/
+ * Mailboxes/Routing rules each make a REAL provider call against this
+ * fake-token fixture and are expected to render their own error state (this
+ * suite's "never depend on a live provider call's outcome or timing"
+ * discipline) — asserted only as "not stuck pending", never for a specific
+ * error message, since the exact failure text is Purelymail's own.
+ */
+test("the connections row action opens a Purelymail connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Purelymail estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Purelymail account' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Account name *').fill(name);
+  await connectionDialog.getByLabel('API token *').fill(`pm_e2e_estate_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect account' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await expect(page.getByText('Purelymail', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Domains', { exact: true })).toBeVisible();
+  await expect(page.getByText('Mailboxes', { exact: true })).toBeVisible();
+  await expect(page.getByText('Routing rules', { exact: true })).toBeVisible();
 });

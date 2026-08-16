@@ -13,6 +13,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
+import { createSettingsService, providerWritePolicySetting } from "@loxep/domain";
 import {
   InfrastructureValidationError,
   ProviderCallError,
@@ -38,18 +39,36 @@ import { createScratchDb, dropScratchDb, scratchDbName, silentLogger } from "./h
 const dbName = scratchDbName("loxep_test_infra_container_hosts");
 let handle: DbHandle;
 let dockhandConnectionId = "";
+/** A second Dockhand connection left at the default `read_only` write-policy tier — the write-authorization gate tests' subject. */
+let readOnlyDockhandConnectionId = "";
+
+async function insertDockhandConnection(name: string): Promise<string> {
+  const connection = await handle.pool.query<{ id: string }>(
+    `insert into connections (provider, kind, name, status, config)
+     values ('dockhand', 'fleet_observability', $1, 'active', '{"dockhand":{"baseUrl":"https://dockhand.test"}}')
+     returning id`,
+    [name],
+  );
+  const id = connection.rows[0]?.id;
+  if (id === undefined) throw new Error("connection insert returned no row");
+  return id;
+}
 
 beforeAll(async () => {
   const databaseUrl = await createScratchDb(dbName);
   await runMigrations({ databaseUrl, logger: silentLogger });
   handle = createDb(databaseUrl);
 
-  const connection = await handle.pool.query<{ id: string }>(
-    `insert into connections (provider, kind, name, status, config)
-     values ('dockhand', 'fleet_observability', 'Dockhand (test)', 'active', '{"dockhand":{"baseUrl":"https://dockhand.test"}}')
-     returning id`,
-  );
-  dockhandConnectionId = connection.rows[0]?.id ?? "";
+  dockhandConnectionId = await insertDockhandConnection("Dockhand (test)");
+  readOnlyDockhandConnectionId = await insertDockhandConnection("Dockhand (read-only, test)");
+
+  // Every test in this file EXCEPT the "write-authorization gate" describe
+  // block below predates the gate and expects an apply to just work — set
+  // this connection's policy permissive ONCE so those tests need no change.
+  // The gate's own tests use `readOnlyDockhandConnectionId`, deliberately
+  // left at the default `read_only` tier.
+  const settings = createSettingsService({ db: handle.db });
+  await settings.set(providerWritePolicySetting, { [dockhandConnectionId]: "additive" }, {});
 });
 
 afterAll(async () => {
@@ -419,6 +438,7 @@ describe("reconcile — no declared intent", () => {
       operationCount: 0,
       applied: 0,
       unmatchedObservedCount: 0,
+      writePolicyBlockedReason: null,
     });
   });
 
@@ -886,5 +906,187 @@ describe("listRuns", () => {
     expect(runs.length).toBeGreaterThan(0);
     expect(runs.every((run) => run.subjectId === target.id)).toBe(true);
     expect(runs.every((run) => run.kind === "reconcile-container-host")).toBe(true);
+  });
+});
+
+describe("the write-authorization gate (loxep-47o.10, joining Cloudflare/Purelymail/Pangolin)", () => {
+  it("blocks a create when the connection's policy is the default read_only", async () => {
+    const target = await insertHostingTarget();
+    const { svc } = service({});
+    await svc.declareIntent({
+      hostingTargetId: target.id,
+      connectionId: readOnlyDockhandConnectionId,
+      url: "https://dockhand.test",
+      connectionType: "socket",
+    });
+
+    const provider = createStubProvider();
+    const result = await svc.reconcile(target.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      actorIsAdmin: true,
+      redact: scalarRedactor,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.writePolicyBlockedReason).toBe("write_policy");
+    expect(result.applied).toBe(0);
+    expect(provider.applyCalls).toHaveLength(0);
+
+    const steps = await handle.pool.query<{ step: string; status: string }>(
+      `select step, status from reconcile_run_steps where run_id = $1 order by sequence`,
+      [result.runId],
+    );
+    expect(
+      steps.rows.some((row) => row.step === "apply.blocked" && row.status === "blocked"),
+    ).toBe(true);
+
+    const run = await handle.pool.query<{ status: string }>(
+      `select status from reconcile_runs where id = $1`,
+      [result.runId],
+    );
+    expect(run.rows[0]?.status).toBe("partial");
+  });
+
+  it("blocks an update the same way a create is blocked", async () => {
+    const target = await insertHostingTarget();
+    const { svc } = service({});
+    await svc.declareIntent({
+      hostingTargetId: target.id,
+      connectionId: readOnlyDockhandConnectionId,
+      url: "https://dockhand.test",
+      connectionType: "socket",
+      socketPath: "/var/run/docker.sock",
+    });
+    // Already "registered" at the provider under a different socket path, so
+    // the plan produces an UPDATE rather than a create.
+    const provider = createStubProvider({
+      observed: [
+        {
+          externalHostId: "already-there",
+          name: target.name,
+          connectionType: "socket",
+          host: null,
+          port: null,
+          protocol: null,
+          socketPath: "/var/run/docker-old.sock",
+          tlsConfigured: false,
+          tlsSkipVerify: null,
+          labels: [],
+          publicIp: null,
+          hawserConfigured: false,
+          hawserLastSeen: null,
+          updatedAt: null,
+        },
+      ],
+    });
+    await svc.reconcile(target.id, {
+      mode: "check",
+      trigger: "manual",
+      provider,
+      redact: scalarRedactor,
+    });
+
+    const result = await svc.reconcile(target.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      actorIsAdmin: true,
+      redact: scalarRedactor,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.writePolicyBlockedReason).toBe("write_policy");
+    expect(provider.applyCalls).toHaveLength(0);
+  });
+
+  it("applies once the connection's policy is flipped to a non-read_only tier", async () => {
+    const target = await insertHostingTarget();
+    const { svc } = service({});
+    await svc.declareIntent({
+      hostingTargetId: target.id,
+      connectionId: readOnlyDockhandConnectionId,
+      url: "https://dockhand.test",
+      connectionType: "socket",
+    });
+
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(
+      providerWritePolicySetting,
+      { [readOnlyDockhandConnectionId]: "additive" },
+      {},
+    );
+
+    const provider = createStubProvider();
+    const result = await svc.reconcile(target.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      actorIsAdmin: true,
+      redact: scalarRedactor,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+    expect(result.applied).toBe(1);
+    expect(provider.applyCalls).toHaveLength(1);
+  });
+
+  it("check mode is never gated, even at the default read_only policy", async () => {
+    const target = await insertHostingTarget();
+    const { svc } = service({});
+    await svc.declareIntent({
+      hostingTargetId: target.id,
+      connectionId: readOnlyDockhandConnectionId,
+      url: "https://dockhand.test",
+      connectionType: "socket",
+    });
+
+    const provider = createStubProvider();
+    const result = await svc.reconcile(target.id, {
+      mode: "check",
+      trigger: "manual",
+      provider,
+      redact: scalarRedactor,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+    expect(provider.applyCalls).toHaveLength(0);
+  });
+
+  it("a poll trigger may still apply this tier-1 write once the tier allows it — no rule-3 refusal", async () => {
+    // Rule 3 (write-policy.ts) forbids a sweep/poll trigger from applying a
+    // tier >= 2 write, unconditionally. Dockhand's host create/update is
+    // tier 1 (additive) — structurally permitted from `poll`, matching the
+    // module doc's note that this is the deliberate seam a future dynamic-IP
+    // auto-apply is expected to use.
+    const target = await insertHostingTarget();
+    const { svc } = service({});
+    await svc.declareIntent({
+      hostingTargetId: target.id,
+      connectionId: readOnlyDockhandConnectionId,
+      url: "https://dockhand.test",
+      connectionType: "socket",
+    });
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(
+      providerWritePolicySetting,
+      { [readOnlyDockhandConnectionId]: "additive" },
+      {},
+    );
+
+    const provider = createStubProvider();
+    const result = await svc.reconcile(target.id, {
+      mode: "apply",
+      trigger: "poll",
+      provider,
+      redact: scalarRedactor,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+    expect(provider.applyCalls).toHaveLength(1);
   });
 });
