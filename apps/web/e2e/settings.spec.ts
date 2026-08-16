@@ -71,44 +71,99 @@ test('admin creates an economic entity through the dialog', async ({ page }) => 
 });
 
 /**
- * Application settings are editable by admins (loxep-fev). The registered
- * setting's Zod schema only exists server-side, so the dialog's job is to send
- * raw JSON and surface the server's validation message inline — both halves
- * are asserted here. `commerce.order_payload_retention` is used because
- * changing its window has no effect on any other spec's flow.
+ * `/settings/application`'s grouped-Cards rebuild (loxep-8ja.3): every class
+ * (a) registered setting now renders inline through the generic
+ * schema-driven form (`SchemaSettingForm`) instead of a row + raw-JSON
+ * dialog — one Card, one `useAppForm`, one Save, matching
+ * `SettingsService.write`'s one-setting-per-save discipline exactly.
+ * `commerce.order_payload_retention`'s `afterDays` number field is used
+ * because changing its window has no effect on any other spec's flow. The
+ * Card is found by its own key (rendered as the `CardTitle`, mono, via
+ * `data-slot="card"`) rather than by a table row, since there is no table
+ * for a class (a) setting anymore.
  */
-test('admin edits a registered application setting', async ({ page }) => {
+test('admin saves a numeric field through the generic schema-driven settings form', async ({
+  page
+}) => {
   await page.goto('/settings/application');
   const settingKey = 'commerce.order_payload_retention';
 
-  await page
-    .getByRole('row')
-    .filter({ hasText: settingKey })
-    .getByRole('button', { name: 'Edit' })
-    .first()
-    .click();
+  const card = page
+    .locator('[data-slot="card"]')
+    .filter({ has: page.getByText(settingKey, { exact: true }) });
+  await expect(card).toBeVisible();
+
+  const afterDaysField = card.getByLabel('After days');
+  await afterDaysField.fill('200');
+  await card.getByRole('button', { name: 'Save' }).click();
+
+  await expect(page.getByText(`Saved ${settingKey}`)).toBeVisible();
+  await expect(afterDaysField).toHaveValue('200');
+});
+
+/**
+ * The collapsed "Advanced" section (settings-ux-design.md §3's last
+ * paragraph) preserves today's exact raw-JSON `SettingEditDialog` behavior
+ * for registered settings with no dedicated form yet —
+ * `integration.tailscale.ignored_devices` here, a `Record<deviceNodeId,
+ * isoInstant>` with no operator-typed shape a generic form could render.
+ * Saving `{}` (its own default) back is idempotent, so this is safe to
+ * re-run against the harness's persisted database.
+ */
+test('the advanced raw-JSON section opens and still edits an unmapped registered setting', async ({
+  page
+}) => {
+  await page.goto('/settings/application');
+  const settingKey = 'integration.tailscale.ignored_devices';
+
+  await page.getByRole('button', { name: 'Raw settings (advanced)' }).click();
+
+  const row = tableRow(page, settingKey);
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Edit' }).click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText(settingKey)).toBeVisible();
   const valueField = dialog.getByLabel('Value (JSON) *');
+  await expect(valueField).toBeVisible();
 
-  // A shape the registered schema rejects: the server's message renders on the
-  // field, and the dialog stays open.
-  await valueField.fill('{"mode":"delete","afterDays":180}');
-  await dialog.getByRole('button', { name: 'Save setting' }).click();
-  // The textarea's JSON also contains "mode" — assert on the server-rendered
-  // validation message, which the field value can never contain.
-  await expect(dialog.getByText(/Invalid/)).toBeVisible();
-  await expect(dialog).toBeVisible();
-
-  // A valid value saves, closes the dialog, and shows up in the table.
-  await valueField.fill('{"mode":"redact","afterDays":200}');
+  await valueField.fill('{}');
   await dialog.getByRole('button', { name: 'Save setting' }).click();
   await expect(dialog).toBeHidden();
+});
 
-  const row = page.getByRole('row').filter({ hasText: settingKey }).first();
-  await expect(row.getByText('200')).toBeVisible();
-  await expect(row.getByText('stored')).toBeVisible();
+/**
+ * The `integrations.enabled` row editor (loxep-8ja.4) on the catalog grid:
+ * an admin-only per-provider `Switch`, one `useMutation` per row, mirroring
+ * `WritePolicyCell`'s row-scoped shape. Disabling hides the provider from
+ * the default catalog view entirely (not merely dims it) and folds it into
+ * "Show disabled"; re-enabling restores the default view exactly, so this
+ * test leaves no persisted side effect for a re-run against the harness's
+ * shared database. Reverb is used because no other e2e spec references it.
+ */
+test('admin hides a provider from the integrations catalog and re-enables it', async ({ page }) => {
+  await page.goto('/settings/integrations');
+  const providerName = 'Reverb';
+
+  const providerCard = page
+    .locator('[data-slot="card"]')
+    .filter({ has: page.getByText(providerName, { exact: true }) });
+  await expect(providerCard).toBeVisible();
+
+  await providerCard.getByRole('switch', { name: `Hide ${providerName} from the catalog` }).click();
+  await expect(page.getByText(`${providerName} hidden`)).toBeVisible();
+
+  // Hidden means gone from the default catalog view, not merely dimmed.
+  await expect(providerCard).toHaveCount(0);
+
+  // "Show disabled" reveals it again, dimmed and badged — never a silent stop.
+  await page.getByLabel(/^Show disabled/).click();
+  await expect(providerCard).toBeVisible();
+  await expect(providerCard.getByText('Disabled here')).toBeVisible();
+
+  // Re-enable, restoring the default view for the next run.
+  await providerCard.getByRole('switch', { name: `Show ${providerName} in the catalog` }).click();
+  await expect(page.getByText(`${providerName} shown in the catalog`)).toBeVisible();
 });
 
 test('admin creates a child entity beneath a parent', async ({ page }) => {

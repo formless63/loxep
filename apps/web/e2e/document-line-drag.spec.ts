@@ -65,17 +65,17 @@ async function ensureStorageBackend(page: Page): Promise<void> {
  * to call from `beforeAll` even if the harness DB is reused across runs.
  */
 async function enableTesseractOcr(page: Page): Promise<void> {
+  // The setting renders inline on a grouped Card since the 8ja.3 rebuild —
+  // no row, no Edit dialog. The card is titled with the setting key.
   await page.goto('/settings/application');
-  const settingKey = 'documents.parser_id';
-  const row = page.getByRole('row').filter({ hasText: settingKey }).first();
-  await expect(row).toBeVisible();
-  await row.getByRole('button', { name: 'Edit' }).click();
-
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText(settingKey)).toBeVisible();
-  await dialog.getByLabel('Parser id').fill('ocr_tesseract');
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(dialog).toBeHidden();
+  const card = page
+    .locator('[data-slot="card"]')
+    .filter({ hasText: 'documents.parser_id' })
+    .first();
+  await expect(card).toBeVisible();
+  await card.getByLabel('Parser id').fill('ocr_tesseract');
+  await card.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Saved documents.parser_id')).toBeVisible();
 }
 
 /**

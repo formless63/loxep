@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -32,11 +33,23 @@ import {
 export function SchemaSettingForm({
   setting,
   onSaved,
-  onCancel
+  onCancel,
+  banner
 }: {
   setting: RegisteredSettingDto;
   onSaved?: () => void;
   onCancel?: () => void;
+  /**
+   * Optional conditional callout above the fields (§2.5's "banner/slot"
+   * escape hatch — `infrastructure.caa_policy`'s "not reviewed yet" warning
+   * is the reference case). Reads the form's own live values through
+   * `form.Subscribe` internally, so the banner stays in sync with an
+   * untouched/unsaved edit exactly like `ProvisioningCard`'s hand-written
+   * ones do — this is the SAME mechanism, just parameterized so the generic
+   * form doesn't have to fork into a class (b) composite just to show one
+   * conditional sentence.
+   */
+  banner?: (values: Record<string, unknown>) => ReactNode;
 }) {
   const shape = mapSettingJsonSchema(setting.jsonSchema);
 
@@ -45,7 +58,13 @@ export function SchemaSettingForm({
   }
 
   return (
-    <MappedSettingForm setting={setting} shape={shape} onSaved={onSaved} onCancel={onCancel} />
+    <MappedSettingForm
+      setting={setting}
+      shape={shape}
+      onSaved={onSaved}
+      onCancel={onCancel}
+      banner={banner}
+    />
   );
 }
 
@@ -57,6 +76,63 @@ function fieldsOf(shape: SettingFormShape): SettingFieldWidget[] {
   if (shape.kind === 'bare') return [shape.field];
   if (shape.kind === 'object') return shape.fields;
   return [];
+}
+
+/** Formats one field's stored value for the non-admin read view — no editing affordance, just prose. */
+function formatReadOnlyValue(widget: SettingFieldWidget, raw: unknown): string {
+  switch (widget.kind) {
+    case 'switch':
+      return raw === true ? 'On' : 'Off';
+    case 'select': {
+      const option = widget.options.find((entry) => entry.value === raw);
+      return option?.label ?? (typeof raw === 'string' && raw !== '' ? raw : '—');
+    }
+    case 'number':
+      return typeof raw === 'number' ? String(raw) : '—';
+    case 'tags':
+      return Array.isArray(raw) && raw.length > 0 ? raw.join(', ') : '—';
+    case 'text':
+      return typeof raw === 'string' && raw !== '' ? raw : '—';
+  }
+}
+
+/**
+ * Non-admin read view for a class (a) setting — the same field list the
+ * generic form maps, rendered as plain label/value pairs rather than inputs.
+ * Mirrors `GatusPushCard`'s non-admin `<dl>` branch: a setting's value is
+ * non-secret configuration (ADR-0016), so a member reads it; only the write
+ * itself is admin-only (`updateApplicationSetting`'s own `requireAdmin`).
+ * An unmappable shape falls back to the same read-only pretty-printed JSON
+ * an admin's advanced fallback would edit, so nothing here can throw for a
+ * class (b)/(c) setting a caller mistakenly renders through this view.
+ */
+export function SettingReadOnlyView({ setting }: { setting: RegisteredSettingDto }) {
+  const shape = mapSettingJsonSchema(setting.jsonSchema);
+
+  if (shape.kind === 'unmappable') {
+    return (
+      <pre className='bg-muted overflow-x-auto rounded-md p-3 font-mono text-xs'>
+        {JSON.stringify(setting.value, null, 2)}
+      </pre>
+    );
+  }
+
+  const fields = fieldsOf(shape);
+  const source = isRecord(setting.value) ? setting.value : {};
+
+  return (
+    <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-sm'>
+      {fields.map((field) => {
+        const raw = shape.kind === 'bare' ? setting.value : source[field.name];
+        return (
+          <Fragment key={field.name}>
+            <dt className='text-muted-foreground'>{field.label}</dt>
+            <dd>{formatReadOnlyValue(field, raw)}</dd>
+          </Fragment>
+        );
+      })}
+    </dl>
+  );
 }
 
 /** The value shown while editing — `''` stands in for `null` on a nullable text field. */
@@ -131,12 +207,14 @@ function MappedSettingForm({
   setting,
   shape,
   onSaved,
-  onCancel
+  onCancel,
+  banner
 }: {
   setting: RegisteredSettingDto;
   shape: MappedSettingFormShape;
   onSaved?: () => void;
   onCancel?: () => void;
+  banner?: (values: Record<string, unknown>) => ReactNode;
 }) {
   const queryClient = useQueryClient();
   const fields = fieldsOf(shape);
@@ -270,6 +348,9 @@ function MappedSettingForm({
 
   return (
     <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
+      {banner && (
+        <form.Subscribe selector={(state) => state.values} children={(values) => banner(values)} />
+      )}
       {shape.kind === 'object' ? (
         <FieldGroup>{fields.map(renderWidget)}</FieldGroup>
       ) : (

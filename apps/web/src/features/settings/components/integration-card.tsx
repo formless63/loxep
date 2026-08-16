@@ -2,9 +2,10 @@ import type { ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { toastError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { integrationsEnabledQuery } from '@/features/settings/api/queries';
@@ -107,12 +108,23 @@ export function IntegrationCard({
 }
 
 /**
- * Admin-only per-card enable/disable control (loxep-dgg) — the catalog
- * grid's toggle for the `integrations.enabled` setting, mirroring the
- * existing Enable/Disable `Button` pattern
- * (`notification-endpoints-table/cell-action.tsx`) rather than introducing a
- * new control shape. Writes through `setIntegrationEnabled`, which is a pure
- * display toggle — it never touches `connections` rows or worker state.
+ * Admin-only per-card visibility control (loxep-8ja.4, settings-ux-design.md
+ * §1 row 17, §3 "Managed elsewhere") — the catalog grid's row editor for the
+ * `integrations.enabled` map, keyed by the catalog's own provider list (this
+ * grid's `integrationServices`) the same way `WritePolicyCell`
+ * (`connections-table/write-policy-cell.tsx`) is keyed by the connections
+ * table's own connection list: one `useMutation` per row, writing through
+ * `setIntegrationEnabled`, never a page-wide batch. A `Switch` rather than
+ * `WritePolicyCell`'s `Select` because this map's value is boolean, not a
+ * four-value tier — the same shape, the boolean-native control.
+ *
+ * A pure DISPLAY toggle: it never touches `connections` rows or worker job
+ * state (the setting's own doc — an already-connected provider keeps
+ * syncing and its jobs keep running unchanged either way). The card's
+ * "Disabled here" badge (`IntegrationCard`, above) already says so and is
+ * visible to every visitor, admin or not — honest about what disabling
+ * actually hides (the catalog and connection-add pickers) versus what it
+ * does not (existing connections, their jobs).
  */
 export function IntegrationEnabledToggle({
   serviceId,
@@ -135,14 +147,23 @@ export function IntegrationEnabledToggle({
     onError: (error) => toastError(error, 'Failed to update integration visibility')
   });
 
+  const switchId = `integration-enabled-${serviceId}`;
+
   return (
-    <Button
-      size='sm'
-      variant='ghost'
-      disabled={mutation.isPending}
-      onClick={() => mutation.mutate(!enabled)}
-    >
-      {enabled ? 'Disable' : 'Enable'}
-    </Button>
+    <div className='flex items-center gap-2'>
+      <Switch
+        id={switchId}
+        size='sm'
+        checked={enabled}
+        onCheckedChange={(nextEnabled) => mutation.mutate(nextEnabled)}
+        disabled={mutation.isPending}
+        aria-label={
+          enabled ? `Hide ${serviceName} from the catalog` : `Show ${serviceName} in the catalog`
+        }
+      />
+      <Label htmlFor={switchId} className='text-muted-foreground text-xs font-normal'>
+        {enabled ? 'Shown' : 'Hidden'}
+      </Label>
+    </div>
   );
 }
