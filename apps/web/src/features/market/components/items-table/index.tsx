@@ -130,6 +130,7 @@ function ItemsDataTable({
     data: data.items,
     columns,
     pageCount,
+    getRowId: (item) => item.id,
     shallow: true,
     debounceMs: 500,
     initialState: { pagination: { pageIndex: 0, pageSize: data.pageSize } }

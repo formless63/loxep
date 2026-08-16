@@ -36,6 +36,7 @@ function SystemsTable({
     data: rows,
     columns: beszelSystemsColumns({ onAttach }),
     pageCount,
+    getRowId: (system) => system.externalSystemId,
     shallow: true,
     debounceMs: 500
   });

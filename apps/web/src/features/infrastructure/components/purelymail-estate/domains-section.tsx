@@ -30,6 +30,7 @@ function DomainsTable({
     data: rows,
     columns: purelymailDomainColumns(connectionId),
     pageCount,
+    getRowId: (domain) => domain.name,
     shallow: true,
     debounceMs: 500
   });

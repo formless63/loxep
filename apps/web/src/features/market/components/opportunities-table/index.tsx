@@ -137,6 +137,7 @@ function OpportunitiesDataTable({ data }: { data: OpportunityEventsPageDto }) {
     data: data.events,
     columns,
     pageCount,
+    getRowId: (event) => event.id,
     shallow: true,
     debounceMs: 500,
     initialState: { pagination: { pageIndex: 0, pageSize: data.pageSize } }

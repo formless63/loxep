@@ -24,6 +24,7 @@ export default function CandidatesTable({
     data: candidates,
     columns,
     pageCount: 1,
+    getRowId: (candidate) => candidate.id,
     shallow: true,
     initialState: {
       pagination: { pageIndex: 0, pageSize: 50 }

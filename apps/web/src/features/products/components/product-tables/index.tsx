@@ -35,6 +35,7 @@ export function ProductTable() {
     data: data.products,
     columns,
     pageCount,
+    getRowId: (product) => String(product.id),
     shallow: true,
     debounceMs: 500,
     initialState: {

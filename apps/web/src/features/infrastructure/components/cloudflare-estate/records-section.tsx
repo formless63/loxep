@@ -52,6 +52,7 @@ function RecordsTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (record) => record.externalRecordId,
     shallow: true,
     debounceMs: 500
   });

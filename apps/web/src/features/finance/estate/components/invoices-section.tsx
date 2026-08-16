@@ -48,6 +48,7 @@ function InvoicesTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (invoice) => invoice.externalInvoiceId,
     shallow: true,
     debounceMs: 500
   });

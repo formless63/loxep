@@ -84,6 +84,7 @@ const { table } = useDataTable({
   data: data.items,
   columns,
   pageCount,
+  getRowId: (item) => item.id,
   shallow: true,
   debounceMs: 500,
   initialState: { columnPinning: { right: ['actions'] } }
@@ -99,6 +100,11 @@ return (
 Page, page size, sort and filters are **URL state owned by `useDataTable`**. Never `useState`
 for pagination. Read search params via `useSearch({ strict: false })` and decode sort with
 `parseSortingState` from `@/lib/parsers` (see the donor `users-table/index.tsx`).
+
+`getRowId` is not optional in practice: without it, `row.id` defaults to the row's index in
+the current page, and any row-set shift (filter landing, sort, page change, refetch) re-keys
+shifted rows and unmounts open row interactions mid-flight (loxep-9iw). Always return the
+row's stable domain identity — never positional.
 
 ## 4. Loading, empty, error
 
@@ -128,6 +134,7 @@ notebook are near-achromatic, so hue alone must never carry meaning); reserve
 ## Done when
 
 - [ ] No `<Table>` rendering data outside `DataTable`.
+- [ ] `useDataTable` is called with `getRowId` returning a stable domain identity, never positional identity.
 - [ ] Page/sort/filter live in the URL; toolbar filters come from column `meta`.
 - [ ] `actions` column pinned right; skeleton has the real `columnCount`/`filterCount`.
 - [ ] Empty/error/toast states present; formatters from `@/lib/format`.

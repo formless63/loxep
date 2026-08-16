@@ -363,6 +363,7 @@ function AdvancedRegisteredTable({
     data: rows,
     columns: getRegisteredColumns(isAdmin, onEdit),
     pageCount,
+    getRowId: (setting) => setting.key,
     shallow: true,
     debounceMs: 500
   });
@@ -396,6 +397,7 @@ function RawTable({
     data: rows,
     columns: rawColumns,
     pageCount,
+    getRowId: (setting) => setting.key,
     shallow: true,
     debounceMs: 500
   });

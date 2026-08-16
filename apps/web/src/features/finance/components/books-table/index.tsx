@@ -66,6 +66,7 @@ function BooksDataTable({
     data,
     columns,
     pageCount: 1,
+    getRowId: (book) => book.id,
     shallow: true,
     debounceMs: 500,
     initialState: { pagination: { pageIndex: 0, pageSize: 20 } }

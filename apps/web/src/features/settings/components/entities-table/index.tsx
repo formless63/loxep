@@ -117,6 +117,7 @@ function EntitiesDataTable({
     data: tree,
     columns,
     pageCount: 1,
+    getRowId: (entity) => entity.id,
     shallow: true,
     debounceMs: 500,
     getSubRows: (row) => (row.children.length > 0 ? row.children : undefined),

@@ -235,6 +235,7 @@ function ExpensesDataTable({
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (expense) => expense.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

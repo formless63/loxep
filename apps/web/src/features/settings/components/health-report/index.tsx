@@ -50,6 +50,7 @@ function CheckTable({
     data: pageRows,
     columns: checkColumns,
     pageCount,
+    getRowId: (row) => row.name,
     shallow: true,
     debounceMs: 500
   });

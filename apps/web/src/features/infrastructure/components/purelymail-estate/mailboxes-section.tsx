@@ -33,6 +33,7 @@ function MailboxesTable({ addresses }: { addresses: PurelymailEstateMailboxDto[]
     data: rows,
     columns: purelymailMailboxColumns,
     pageCount,
+    getRowId: (mailbox) => mailbox.address,
     shallow: true,
     debounceMs: 500
   });

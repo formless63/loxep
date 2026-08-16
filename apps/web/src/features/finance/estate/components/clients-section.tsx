@@ -42,6 +42,7 @@ function ClientsTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (client) => client.externalClientId,
     shallow: true,
     debounceMs: 500
   });

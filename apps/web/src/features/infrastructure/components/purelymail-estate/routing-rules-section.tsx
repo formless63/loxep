@@ -28,6 +28,7 @@ function RoutingRulesTable({ rules }: { rules: PurelymailEstateRoutingRuleDto[] 
     data: rows,
     columns: purelymailRoutingRuleColumns,
     pageCount,
+    getRowId: (rule) => String(rule.id),
     shallow: true,
     debounceMs: 500
   });

@@ -92,6 +92,7 @@ function ListingsDataTable({ listings }: { listings: ChannelListingListItemDto[]
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (listing) => listing.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

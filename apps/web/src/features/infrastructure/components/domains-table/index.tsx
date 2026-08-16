@@ -98,6 +98,7 @@ function DomainsDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (domain) => domain.id,
     shallow: true,
     debounceMs: 500
   });

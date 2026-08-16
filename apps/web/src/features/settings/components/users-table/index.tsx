@@ -119,6 +119,7 @@ function UsersDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (user) => user.id,
     shallow: true,
     debounceMs: 500,
     initialState: { columnPinning: { start: [], end: ['actions'] } }

@@ -37,6 +37,7 @@ function ContainersTable({ containers }: { containers: DockhandEstateContainerDt
     data: rows,
     columns: dockhandEstateContainerColumns,
     pageCount,
+    getRowId: (container) => container.externalContainerId,
     shallow: true,
     debounceMs: 500
   });
@@ -58,6 +59,8 @@ function StacksTable({ stacks }: { stacks: DockhandEstateStackDto[] }) {
     data: rows,
     columns: dockhandEstateStackColumns,
     pageCount,
+    // Stacks carry no external id; `name` is unique per Dockhand environment.
+    getRowId: (stack) => stack.name,
     shallow: true,
     debounceMs: 500
   });

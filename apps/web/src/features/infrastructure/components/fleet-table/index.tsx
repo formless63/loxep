@@ -104,6 +104,7 @@ function FleetDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (target) => target.id,
     shallow: true,
     debounceMs: 500
   });

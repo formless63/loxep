@@ -117,6 +117,7 @@ function TemplatesDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (template) => template.id,
     shallow: true,
     debounceMs: 500
   });

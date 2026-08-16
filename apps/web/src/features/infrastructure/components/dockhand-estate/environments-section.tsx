@@ -45,6 +45,7 @@ function EnvironmentsTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (environment) => environment.externalHostId,
     shallow: true,
     debounceMs: 500
   });

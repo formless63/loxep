@@ -35,6 +35,7 @@ export function UsersTable() {
     data: data.users,
     columns,
     pageCount,
+    getRowId: (user) => String(user.id),
     shallow: true,
     debounceMs: 500,
     initialState: {

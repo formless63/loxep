@@ -86,6 +86,7 @@ function DeliveriesDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (delivery) => delivery.id,
     shallow: true,
     debounceMs: 500
   });

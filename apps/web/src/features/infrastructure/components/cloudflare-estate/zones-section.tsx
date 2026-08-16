@@ -47,6 +47,7 @@ function ZonesTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (zone) => zone.externalZoneId,
     shallow: true,
     debounceMs: 500
   });

@@ -80,6 +80,7 @@ function RunsDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (run) => run.id,
     shallow: true,
     debounceMs: 500
   });

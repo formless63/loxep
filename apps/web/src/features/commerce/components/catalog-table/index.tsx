@@ -78,6 +78,7 @@ function CatalogDataTable({ items }: { items: CatalogItemListItemDto[] }) {
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (item) => item.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

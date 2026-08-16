@@ -73,6 +73,8 @@ function IntegrationHealthTable({
     data: rows,
     columns: integrationHealthColumns,
     pageCount,
+    // subjectId alone can repeat across subject types, so key on the pair.
+    getRowId: (row) => `${row.subjectType}:${row.subjectId}`,
     shallow: true,
     debounceMs: 500
   });

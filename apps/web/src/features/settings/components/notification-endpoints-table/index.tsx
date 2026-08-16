@@ -127,6 +127,7 @@ function EndpointsDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (endpoint) => endpoint.id,
     shallow: true,
     debounceMs: 500,
     initialState: { columnPinning: { start: [], end: ['actions'] } }

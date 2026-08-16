@@ -79,6 +79,7 @@ function FinanceEstateIndexDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (connection) => connection.id,
     shallow: true,
     debounceMs: 500
   });

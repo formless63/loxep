@@ -43,6 +43,7 @@ function EndpointsTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (endpoint) => endpoint.key,
     shallow: true,
     debounceMs: 500
   });

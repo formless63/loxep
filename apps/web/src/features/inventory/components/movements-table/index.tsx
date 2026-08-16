@@ -80,6 +80,7 @@ function MovementsDataTable({ movements }: { movements: InventoryMovementListIte
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (movement) => movement.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

@@ -91,6 +91,7 @@ function AcquisitionsDataTable({ acquisitions }: { acquisitions: AcquisitionList
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (acquisition) => acquisition.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

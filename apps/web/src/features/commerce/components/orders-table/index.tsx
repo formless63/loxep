@@ -125,6 +125,7 @@ function OrdersDataTable({ orders }: { orders: OrderListItemDto[] }) {
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (order) => order.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

@@ -80,6 +80,7 @@ Rules:
 - Table state (page, page size, sort, filters) is **URL state**, owned by `useDataTable`. Never `useState` for pagination. Caveat: `useDataTable`'s `page`/`perPage`/`sort` URL keys are global per route, not per table — when a route hosts two tables, only the primary one gets URL-synced state; the secondary uses local `useTable` state (with `features: dataTableFeatures`) to avoid key collisions.
 - Client-side sorting/filtering is only honest over the full dataset. A server function that paginates must accept sort key/direction and filter params and push them into its read model — never leave sortable/filterable columns silently acting on the current page only. An unbounded (unpaginated) fetch is the one legitimate exception: sorting/filtering the complete, already-fetched array client-side is correct, not a shortcut.
 - Row actions pin to the logical end: `initialState: { columnPinning: { start: [], end: ['actions'] } }` (v9 renamed physical `left`/`right` to logical `start`/`end`; both keys are required).
+- Every `useDataTable` call passes `getRowId`, returning the row's stable domain identity (a database id, provider id, unique name/key, or a composite of stable fields) — never positional identity. Without it, `row.id` defaults to the row's index in the current page, and `DataTable` keys `<TableRow>` on that index; any row-set shift (a debounced filter landing, a sort, a page change, a refetch) re-keys shifted rows and React unmounts their subtrees, silently killing any open row interaction — dropdown, confirmation dialog, inline select — mid-flight (loxep-9iw). Reference: `src/features/settings/components/connections-table/index.tsx`.
 - Loading is `<DataTableSkeleton columnCount={n} filterCount={n} />`, not a single grey block.
 - The wiring component is a thin container: query → `useDataTable` → `<DataTable table={table}><DataTableToolbar table={table} /></DataTable>`. Reference: `src/features/products/components/product-tables/index.tsx`.
 
@@ -117,6 +118,7 @@ const { table } = useDataTable({
   data: data.items,
   columns,
   pageCount,
+  getRowId: (item) => item.id,
   shallow: true,
   initialState: { columnPinning: { start: [], end: ['actions'] } }
 });
@@ -333,6 +335,7 @@ Keep these routes working. They are the executable half of this document.
 
 - [ ] No `<table>`/`<Table>` rendering data outside `DataTable`.
 - [ ] Table state (page/sort/filter) lives in the URL via `useDataTable`.
+- [ ] `useDataTable` is called with `getRowId` returning a stable domain identity, never positional identity.
 - [ ] Forms use `useAppForm` + a Zod `onSubmit` validator.
 - [ ] A registered-setting form has no hand-written shadow Zod schema mirroring the domain schema's shape; a `Record`-shaped setting has a row editor on the surface that already lists its keys, not a generic map editor on `/settings/application`.
 - [ ] Every chart series color is `var(--chart-1..5)` via `ChartConfig`.

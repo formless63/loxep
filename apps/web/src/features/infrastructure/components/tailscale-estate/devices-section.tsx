@@ -75,6 +75,7 @@ function DevicesTable({
     data: rows,
     columns: tailscaleEstateColumns({ onLink, onDeclare, onIgnoreChanged }),
     pageCount,
+    getRowId: (device) => device.externalDeviceId,
     shallow: true,
     debounceMs: 500
   });

@@ -152,6 +152,7 @@ function MonitorsDataTable({
     data: pageRows,
     columns,
     pageCount,
+    getRowId: (monitor) => monitor.id,
     shallow: true,
     debounceMs: 500,
     initialState: {

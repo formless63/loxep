@@ -175,6 +175,7 @@ function RulesDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (rule) => rule.id,
     shallow: true,
     debounceMs: 500,
     initialState: { columnPinning: { start: [], end: ['actions'] } }

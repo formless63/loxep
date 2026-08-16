@@ -38,6 +38,7 @@ function SessionsTable({ sessions }: { sessions: TermixSessionRowDto[] }) {
     // host (Rule P12 — mount, do not re-implement a parallel render).
     columns: termixSessionColumns,
     pageCount,
+    getRowId: (session) => session.sessionId,
     shallow: true,
     debounceMs: 500
   });

@@ -138,6 +138,7 @@ function DiscoveryMonitorsTable({ rows }: { rows: DiscoveryMonitorRow[] }) {
     data: pageRows,
     columns: discoveryColumns,
     pageCount,
+    getRowId: (row) => row.monitor.id,
     shallow: true,
     debounceMs: 500,
     initialState: { pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE } }

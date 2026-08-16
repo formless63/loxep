@@ -45,6 +45,7 @@ function SessionsTable({ sessions }: { sessions: TermixSessionRowDto[] }) {
     data: rows,
     columns: termixSessionColumns,
     pageCount,
+    getRowId: (session) => session.sessionId,
     shallow: true,
     debounceMs: 500
   });

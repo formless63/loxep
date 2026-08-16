@@ -119,6 +119,7 @@ function StorageBackendsDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (backend) => backend.id,
     shallow: true,
     debounceMs: 500,
     initialState: { columnPinning: { start: [], end: ['actions'] } }

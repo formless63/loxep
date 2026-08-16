@@ -24,6 +24,7 @@ function HostsTable({ hosts }: { hosts: TermixEstateHostDto[] }) {
     data: rows,
     columns: termixHostsColumns,
     pageCount,
+    getRowId: (host) => host.externalHostId,
     shallow: true,
     debounceMs: 500
   });

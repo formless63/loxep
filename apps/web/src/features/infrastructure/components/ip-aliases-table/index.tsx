@@ -131,6 +131,7 @@ function AliasesDataTable({
     data: rows,
     columns,
     pageCount,
+    getRowId: (alias) => alias.name,
     shallow: true,
     debounceMs: 500,
     initialState: { columnPinning: { start: [], end: ['actions'] } }

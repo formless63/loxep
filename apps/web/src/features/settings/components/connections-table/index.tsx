@@ -172,34 +172,6 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
     return connections.some((connection) => connection.provider === service.accounts?.provider);
   });
 
-  const disabledProviders = new Set(
-    visibleServices
-      .filter((service) => !isIntegrationEnabled(catalogEnabledMap, service.id))
-      .map((service) => service.accounts?.provider)
-      .filter((provider): provider is string => provider !== undefined)
-  );
-
-  const catalogProviders = new Set(
-    connectableIntegrationServices.map((service) => service.accounts?.provider)
-  );
-  const uncataloguedProviders = Array.from(
-    new Set(
-      connections
-        .filter((connection) => !catalogProviders.has(connection.provider))
-        .map((connection) => connection.provider)
-    )
-  );
-
-  const providerOptions = [
-    ...visibleServices.map((service) => ({
-      value: service.accounts?.provider ?? service.id,
-      label: disabledProviders.has(service.accounts?.provider ?? '')
-        ? `${service.name} (disabled)`
-        : service.name
-    })),
-    ...uncataloguedProviders.map((provider) => ({ value: provider, label: provider }))
-  ];
-
   // Defense in depth alongside AddConnectionMenu's own disabled item: even
   // if `addServiceId` somehow named a disabled-here service, the dialog
   // itself never opens for it.
