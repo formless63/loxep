@@ -9,13 +9,14 @@ import { CONNECTION_STATUS_LABELS } from '@/features/settings/constants';
 import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
 import { EbayCredentialStatus } from '@/features/settings/components/ebay-connection-actions';
 import type { ConnectionDto, EntityDto } from '@/server/admin-functions';
-import type { ConnectionStatus } from '@loxep/domain';
+import type { ConnectionStatus, ProviderWritePolicyTier } from '@loxep/domain';
 import { AttributionCell } from './attribution-cell';
 import { CellAction } from './cell-action';
 import { OrderSyncStatusCell, supportsOrderSync } from './order-sync-cell';
 import { PurchaseSyncStatusCell, supportsPurchaseSync } from './purchase-sync-cell';
 import { TAILSCALE_PROVIDER, TailscaleCredentialExpiryCell } from './tailscale-expiry-cell';
 import { TERMIX_PROVIDER, TermixAuthStatusCell } from './termix-auth-status-cell';
+import { WritePolicyCell, writePolicySortKey } from './write-policy-cell';
 
 const EBAY_PROVIDER = 'ebay';
 
@@ -194,7 +195,8 @@ export function getColumns({
   entities,
   isAdmin,
   disabledProviders,
-  providerOptions
+  providerOptions,
+  writePolicies
 }: {
   entities: EntityDto[];
   isAdmin: boolean;
@@ -207,6 +209,8 @@ export function getColumns({
    * neither an add-action nor a filter chip, see `index.tsx`).
    */
   providerOptions: { label: string; value: string }[];
+  /** The whole `infrastructure.provider_write_policy` map (Pangolin chain design M3) — a connection absent from it is `'read_only'`. */
+  writePolicies: Record<string, ProviderWritePolicyTier>;
 }): ColumnDef<DataTableFeatures, ConnectionDto>[] {
   const columns: ColumnDef<DataTableFeatures, ConnectionDto>[] = [
     {
@@ -295,6 +299,15 @@ export function getColumns({
       header: 'Credential state',
       cell: ({ row }) => <CredentialStateCell connection={row.original} />,
       meta: { label: 'Credential state' }
+    },
+    {
+      id: 'writePolicy',
+      accessorFn: (row) => writePolicySortKey(writePolicies, row),
+      header: 'Write policy',
+      cell: ({ row }) => (
+        <WritePolicyCell connection={row.original} policies={writePolicies} isAdmin={isAdmin} />
+      ),
+      meta: { label: 'Write policy' }
     },
     {
       id: 'syncHealth',

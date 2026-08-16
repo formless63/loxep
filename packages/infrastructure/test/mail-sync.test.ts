@@ -33,6 +33,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
+import { createSettingsService, providerWritePolicySetting } from "@loxep/domain";
 import {
   MAILBOX_RUN_KIND,
   MAIL_DOMAIN_RUN_KIND,
@@ -1406,5 +1407,137 @@ describe("the run and step ledgers", () => {
       }),
     ).rejects.toThrow(/no mail registration/);
     expect(totalCalls(provider)).toBe(0);
+  });
+});
+
+describe("the write-authorization gate (Pangolin chain design M3, loxep-acj.3)", () => {
+  it("does nothing when connectionId is omitted — every OTHER test in this file relies on this", async () => {
+    const domain = await newDomain();
+    const provider = stub();
+    // No `connectionId` passed — matches every other `syncFor` call in this file.
+    const result = await syncFor(provider).runMailDomainSync({
+      domainId: domain.id,
+      trigger: "manual",
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.outcome).toBe("verified");
+    expect(provider.calls.addDomain).toBe(1);
+  });
+
+  it("blocks runMailDomainSync's addDomain when the connection's policy is the default read_only", async () => {
+    const domain = await newDomain();
+    const provider = stub();
+    const settings = createSettingsService({ db: handle.db });
+    const sync = syncFor(provider, { connectionId: mailConnectionId, settings });
+
+    const result = await sync.runMailDomainSync({
+      domainId: domain.id,
+      trigger: "manual",
+      actorIsAdmin: true,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.outcome).toBe("write_policy_blocked");
+    // The ownership-code read is NOT gated (tier 0's own rule) — only the write.
+    expect(provider.calls.getOwnershipCode).toBe(1);
+    expect(provider.calls.addDomain).toBe(0);
+
+    const run = await runRow(result.runId);
+    expect(run.status).toBe("partial");
+    const names = await stepNames(result.runId);
+    expect(names).toContain("register-domain");
+
+    const steps = await handle.pool.query<{ status: string; error_code: string | null }>(
+      `select status, error_code from reconcile_run_steps
+        where run_id = $1 and step = 'register-domain'`,
+      [result.runId],
+    );
+    expect(steps.rows[0]?.status).toBe("blocked");
+    expect(steps.rows[0]?.error_code).toBe("credential_scope");
+  });
+
+  it("registers once the connection's policy is flipped to a non-read_only tier", async () => {
+    const domain = await newDomain();
+    const provider = stub();
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(
+      providerWritePolicySetting,
+      { [mailConnectionId]: "additive" },
+      {},
+    );
+    const sync = syncFor(provider, { connectionId: mailConnectionId, settings });
+
+    const result = await sync.runMailDomainSync({
+      domainId: domain.id,
+      trigger: "manual",
+      actorIsAdmin: true,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.outcome).toBe("verified");
+    expect(provider.calls.addDomain).toBe(1);
+  });
+
+  it("blocks runMailboxSync's writes when the connection's policy is the default read_only, after the reads it needs for reporting", async () => {
+    const domain = await newDomain();
+    const provider = stub();
+    const settings = createSettingsService({ db: handle.db });
+    // Domain sync unblocked (its own policy is additive) so the mailbox
+    // fixture below can register/verify normally; the MAILBOX sync itself is
+    // what this test blocks, by NOT flipping the policy before calling it.
+    await settings.set(
+      providerWritePolicySetting,
+      { [mailConnectionId]: "additive" },
+      {},
+    );
+    const sync = syncFor(provider, { connectionId: mailConnectionId, settings });
+    await sync.runMailDomainSync({ domainId: domain.id, trigger: "manual" });
+    await mail.addMailbox(domain.id, { localPart: "postmaster", kind: "mailbox" });
+
+    // Now revoke back to read_only before the mailbox sync.
+    await settings.set(providerWritePolicySetting, {}, {});
+
+    const result = await sync.runMailboxSync({
+      domainId: domain.id,
+      trigger: "manual",
+      actorIsAdmin: true,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.created).toBe(0);
+    // The reads needed for the unexpected/observed report DID happen.
+    expect(provider.calls.listUsers).toBe(1);
+    expect(provider.calls.listRoutingRules).toBe(1);
+    expect(provider.calls.createUser).toBe(0);
+
+    const steps = await handle.pool.query<{ status: string; error_code: string | null }>(
+      `select status, error_code from reconcile_run_steps
+        where run_id = $1 and step = 'sync-mailboxes'`,
+      [result.runId],
+    );
+    expect(steps.rows[0]?.status).toBe("blocked");
+    expect(steps.rows[0]?.error_code).toBe("credential_scope");
+  });
+
+  it("blocks a known non-admin actor even when the connection's policy allows the write", async () => {
+    const domain = await newDomain();
+    const provider = stub();
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(
+      providerWritePolicySetting,
+      { [mailConnectionId]: "lockout_class" },
+      {},
+    );
+    const sync = syncFor(provider, { connectionId: mailConnectionId, settings });
+
+    const result = await sync.runMailDomainSync({
+      domainId: domain.id,
+      trigger: "manual",
+      actorIsAdmin: false,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.outcome).toBe("write_policy_blocked");
+    expect(provider.calls.addDomain).toBe(0);
   });
 });

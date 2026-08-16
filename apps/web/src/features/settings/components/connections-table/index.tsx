@@ -15,7 +15,8 @@ import {
   ebayKeysetStatusQuery,
   entitiesQuery,
   etsyKeysetStatusQuery,
-  integrationsEnabledQuery
+  integrationsEnabledQuery,
+  providerWritePolicyQuery
 } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ConnectionAddDialog from '@/features/settings/components/connection-add-dialog';
@@ -73,13 +74,19 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   // absence-means-visible default the setting itself ships with.
   const { data: enabledMap } = useQuery(integrationsEnabledQuery);
   const catalogEnabledMap: IntegrationEnabledMap = enabledMap ?? {};
+  // Member-readable (Pangolin chain design M3, loxep-acj.3): the
+  // `infrastructure.provider_write_policy` map. Missing/loading reads as the
+  // empty map — a connection absent from it is `'read_only'`, the setting's
+  // own default, so a loading table never shows a permissive write policy it
+  // has not actually confirmed yet.
+  const { data: writePolicyMap } = useQuery(providerWritePolicyQuery);
   const [addServiceId, setAddServiceId] = React.useState<string | null>(null);
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
 
   if (isPending || entitiesPending) {
-    return <DataTableSkeleton columnCount={8} filterCount={3} />;
+    return <DataTableSkeleton columnCount={9} filterCount={3} />;
   }
 
   if (isError) {
@@ -156,7 +163,8 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
     entities: entities ?? [],
     isAdmin,
     disabledProviders,
-    providerOptions
+    providerOptions,
+    writePolicies: writePolicyMap ?? {}
   });
 
   const { rows, pageCount } = applyClientTableState(
@@ -242,7 +250,12 @@ function ConnectionsDataTable({
       // Chosen so the table needs no horizontal scroll at a 1440px viewport
       // (verified with a Playwright scrollWidth/clientWidth check, loxep-4t7)
       // — Entity and Credential state stay one toggle away in the View menu.
-      columnVisibility: { entity: false, credentialState: false }
+      // Write policy (Pangolin chain design M3, loxep-acj.3) joins them
+      // hidden-by-default for the same reason: it is meaningful for only
+      // three of 14+ providers today (`writePolicyEnforced`), and this
+      // milestone has no e2e run to re-verify the 1440px layout against a
+      // ninth visible column.
+      columnVisibility: { entity: false, credentialState: false, writePolicy: false }
     }
   });
 

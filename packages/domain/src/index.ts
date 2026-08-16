@@ -67,11 +67,22 @@ export {
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
+  providerWritePolicySetting,
   registeredApplicationSettings,
   tailscaleIgnoredDevicesSetting,
   wooRateBudgetSetting,
 } from "./settings-defaults.ts";
 export type { GatusPushFactSlug } from "./settings-defaults.ts";
+
+export {
+  PROVIDER_WRITE_POLICY_TIER_DESCRIPTIONS,
+  PROVIDER_WRITE_POLICY_TIER_LABELS,
+  PROVIDER_WRITE_POLICY_TIERS,
+  providerWritePolicyTierRank,
+  providerWritePolicyTierSchema,
+  resolveProviderWritePolicy,
+} from "./provider-write-policy.ts";
+export type { ProviderWritePolicyTier } from "./provider-write-policy.ts";
 
 export {
   applicationSecretAad,

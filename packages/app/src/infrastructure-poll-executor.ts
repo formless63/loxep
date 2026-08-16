@@ -174,6 +174,10 @@ export function createInfrastructureReconcilePollExecutor(
     const sync = createRecordSyncService({
       db,
       provider: providerPortFromCloudflareAdapter(cloudflare.adapter),
+      // Write-authorization gate (Pangolin chain design M3, loxep-acj.3):
+      // this connection's stored policy defaults to read_only, so an apply
+      // is refused (recorded as a 'blocked' step) until an admin flips it.
+      connectionId,
     });
 
     try {

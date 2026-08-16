@@ -22,9 +22,15 @@ import {
   FLEET_EVIDENCE_PROVIDERS,
   GATUS_PUSH_SECRET_KEY,
   gatusPushSetting,
-  integrationsEnabledSetting
+  integrationsEnabledSetting,
+  PROVIDER_WRITE_POLICY_TIERS,
+  providerWritePolicySetting
 } from '@loxep/domain';
-import type { ConnectionStatus, FleetEvidenceProvider } from '@loxep/domain';
+import type {
+  ConnectionStatus,
+  FleetEvidenceProvider,
+  ProviderWritePolicyTier
+} from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { NotificationEventClass } from '@loxep/db/schema';
 // Pure renderer (no runtime imports at all), so the bell and the outbound
@@ -1741,6 +1747,65 @@ export const setIntegrationEnabled = createServerFn({ method: 'POST' })
     }
 
     return settings.set(integrationsEnabledSetting, next, { actorUserId: session.user.id });
+  });
+
+// ---------------------------------------------------------------------------
+// Provider write-authorization policy (Pangolin chain design M3, loxep-acj.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `infrastructure.provider_write_policy` map: every connection id that
+ * has an EXPLICIT tier stored. A connection absent from this map is
+ * `'read_only'` (`resolveProviderWritePolicy`'s own fallback, applied
+ * client-side by the connections table) — a fresh install cannot write to
+ * any provider connection without an explicit, audited flip. Member-readable
+ * like `fetchIntegrationsEnabled`: knowing a connection's write tier is no
+ * more sensitive than knowing its sync status; only the FLIP below is
+ * admin-only.
+ */
+export const fetchProviderWritePolicy = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<Record<string, ProviderWritePolicyTier>> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    return getAdminServices().settings.get(providerWritePolicySetting);
+  }
+);
+
+const setConnectionWritePolicyInput = z.strictObject({
+  connectionId: z.uuid(),
+  tier: z.enum(PROVIDER_WRITE_POLICY_TIERS)
+});
+
+/**
+ * Admin-only flip of ONE connection's write-authorization tier (design rule
+ * 1: "Flipping it is an admin-only server function that writes an
+ * audit_events row in the same transaction"). `SettingsService.set` already
+ * provides that transaction/audit discipline (`settings.ts`'s `write()`) —
+ * this function adds no bespoke transaction, it inherits one.
+ *
+ * Reads the current map and writes back the whole map with one key changed,
+ * the same read-then-set shape `setIntegrationEnabled` and
+ * `setTailscaleDeviceIgnored` already use for a settings-backed map. Setting
+ * a connection back to `'read_only'` REMOVES its key rather than storing the
+ * literal value, keeping the stored map minimal — an absent key already
+ * means `read_only`.
+ */
+export const setConnectionWritePolicy = createServerFn({ method: 'POST' })
+  .inputValidator(setConnectionWritePolicyInput)
+  .handler(async ({ data }): Promise<Record<string, ProviderWritePolicyTier>> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { settings } = getAdminServices();
+
+    const current = await settings.get(providerWritePolicySetting);
+    const next = { ...current };
+    if (data.tier === 'read_only') {
+      delete next[data.connectionId];
+    } else {
+      next[data.connectionId] = data.tier;
+    }
+
+    return settings.set(providerWritePolicySetting, next, { actorUserId: session.user.id });
   });
 
 // ---------------------------------------------------------------------------

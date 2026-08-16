@@ -28,6 +28,7 @@ import {
   integrationsEnabledSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
+  providerWritePolicySetting,
   registeredApplicationSettings,
 } from "../src/index.ts";
 import type { SettingsService } from "../src/index.ts";
@@ -846,5 +847,100 @@ describe("auth.onboarding_oidc_prompt_dismissed (ADR-0024, loxep-yk8)", () => {
     expect(
       authOnboardingOidcPromptDismissedSetting.schema.safeParse(null).success,
     ).toBe(false);
+  });
+});
+
+describe("infrastructure.provider_write_policy setting (Pangolin chain design M3, loxep-acj.3)", () => {
+  it("is registered under the documented key", () => {
+    expect(providerWritePolicySetting.key).toBe(
+      "infrastructure.provider_write_policy",
+    );
+    expect(registeredApplicationSettings).toContain(providerWritePolicySetting);
+  });
+
+  // The load-bearing default: an EMPTY map means every connection resolves
+  // to 'read_only' (via resolveProviderWritePolicy's own fallback), so a
+  // fresh install cannot write to any provider without an explicit, audited
+  // flip.
+  it("ships EMPTY, so every connection defaults to read_only", () => {
+    expect(providerWritePolicySetting.defaultValue).toEqual({});
+  });
+
+  it("accepts a map of connection ids to any of the four tiers", () => {
+    expect(
+      providerWritePolicySetting.schema.safeParse({
+        "conn-1": "read_only",
+        "conn-2": "additive",
+        "conn-3": "access_affecting",
+        "conn-4": "lockout_class",
+      }).success,
+    ).toBe(true);
+    expect(providerWritePolicySetting.schema.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects an unregistered tier value and non-object shapes", () => {
+    expect(
+      providerWritePolicySetting.schema.safeParse({ "conn-1": "allow" }).success,
+    ).toBe(false);
+    expect(
+      providerWritePolicySetting.schema.safeParse({ "conn-1": true }).success,
+    ).toBe(false);
+    expect(providerWritePolicySetting.schema.safeParse("read_only").success).toBe(
+      false,
+    );
+    expect(providerWritePolicySetting.schema.safeParse(null).success).toBe(false);
+    expect(providerWritePolicySetting.schema.safeParse([]).success).toBe(false);
+  });
+
+  it("round-trips through the settings service, audited like every other write", async () => {
+    const dbName = scratchDbName("loxep_test_domain_write_policy");
+    const databaseUrl = await createScratchDb(dbName);
+    try {
+      await runMigrations({ databaseUrl, logger: silentLogger });
+      const handle = createDb(databaseUrl);
+      try {
+        const service = createSettingsService({ db: handle.db });
+        const adminId = await insertTestUser(
+          handle.db,
+          "user_write_policy_admin",
+        );
+
+        await expect(
+          service.get(providerWritePolicySetting),
+        ).resolves.toEqual({});
+
+        const written = await service.set(
+          providerWritePolicySetting,
+          { "conn-pangolin-1": "additive" },
+          { actorUserId: adminId },
+        );
+        expect(written).toEqual({ "conn-pangolin-1": "additive" });
+        await expect(
+          service.get(providerWritePolicySetting),
+        ).resolves.toEqual({ "conn-pangolin-1": "additive" });
+
+        // settings.ts's write() appends an audit_events row in the SAME
+        // transaction as every other registered setting — this setting adds
+        // no bespoke auditing, it inherits it.
+        const audit = await handle.pool.query<{
+          action: string;
+          actor_user_id: string | null;
+        }>(
+          `select action, actor_user_id
+             from audit_events
+            where resource_type = 'application_setting'
+              and resource_id = $1
+            order by occurred_at desc
+            limit 1`,
+          [providerWritePolicySetting.key],
+        );
+        expect(audit.rows[0]?.action).toBe("settings.create");
+        expect(audit.rows[0]?.actor_user_id).toBe(adminId);
+      } finally {
+        await closeDb(handle);
+      }
+    } finally {
+      await dropScratchDb(dbName);
+    }
   });
 });

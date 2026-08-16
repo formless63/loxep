@@ -41,13 +41,39 @@
  * duplicate run row and nothing else. `provider_operations` exists for the
  * calls where that is NOT true (zone create, token create) — none of which
  * this milestone's record sync makes.
+ *
+ * ## The write-authorization gate (Pangolin chain design M3, `loxep-acj.3`)
+ *
+ * `run()` accepts an optional `connectionId` (constructor option). When it
+ * is supplied, an `input.mode === 'apply'` run checks
+ * `write-policy.ts`'s `assertWritePolicy` BEFORE calling `provider.apply` —
+ * the design's cross-provider rule 1: the owner's current Cloudflare token is
+ * a full-account READ-ONLY token, ruled read-only BY POLICY rather than by
+ * scope, so this connection needs the same honest-refusal gate Pangolin
+ * does. A refusal is recorded as a `'blocked'` step (never a failure, never a
+ * silent skip) and the run finishes `'partial'`; `apply` proceeds normally
+ * otherwise. `connectionId` is OPTIONAL for backward compatibility with
+ * direct construction (tests, and any future caller that has not resolved
+ * one) — omitting it skips the gate entirely, so every real caller MUST pass
+ * it. The composition root (`@loxep/app`'s `infrastructure-poll-executor.ts`)
+ * does.
+ *
+ * DNS writes are treated as a uniform tier 1 for this gate (`operationTier:
+ * 1`, i.e. the connection's policy must be anything other than `read_only`):
+ * the design's four-tier RISK MODEL is Pangolin-specific (about proxy
+ * resource/rule semantics); Cloudflare gets the same mechanism at its
+ * simplest threshold rather than a re-derivation of Pangolin's tiers for an
+ * unrelated provider.
  */
 import {
+  createSettingsService,
   createTransactionalNotificationEnqueue,
+  providerWritePolicySetting,
   publishNotificationEvent,
+  resolveProviderWritePolicy,
 } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
-import type { NotificationEnqueue } from "@loxep/domain";
+import type { NotificationEnqueue, SettingsService } from "@loxep/domain";
 import {
   dnsRecords,
   managedDomains,
@@ -65,6 +91,7 @@ import {
   type DnsDiff,
   type IntentRecord,
 } from "./reconcile.ts";
+import { assertWritePolicy, WritePolicyError } from "./write-policy.ts";
 
 export type ReconcileRunRow = typeof reconcileRuns.$inferSelect;
 
@@ -73,6 +100,12 @@ export interface RunRecordSyncInput {
   mode: "apply" | "check";
   trigger: "intent_change" | "sweep" | "manual" | "poll";
   actorUserId?: string | null;
+  /**
+   * Whether a known human actor is attached to this run — see
+   * `write-policy.ts`'s `assertWritePolicy` for why `undefined` (no actor,
+   * a background trigger) is not the same as `false` (a known non-admin).
+   */
+  actorIsAdmin?: boolean;
   /** Defaults to a pass-through that keeps only scalar fields. */
   redact?: ResponseRedactor;
 }
@@ -85,6 +118,8 @@ export interface RunRecordSyncResult {
   applied: number;
   unresolvedFindings: number;
   disappearedFindings: number;
+  /** Set when `apply` was refused by the write-authorization gate — see the module doc. */
+  writePolicyBlockedReason: string | null;
 }
 
 /**
@@ -123,11 +158,22 @@ export function createRecordSyncService(options: {
    * this defaults rather than requiring every composition root to pass one.
    */
   notificationEnqueue?: NotificationEnqueue;
+  /**
+   * The `connections.id` this provider was resolved from — see the module
+   * doc's "write-authorization gate" section. Omitting it skips the gate
+   * (backward-compatible default for direct/test construction); every real
+   * composition-root caller must supply it.
+   */
+  connectionId?: string;
+  /** Defaults to `createSettingsService({ db })`. Overridable for tests. */
+  settings?: SettingsService;
 }): RecordSyncService {
   const { db, provider } = options;
   const notificationEnqueue =
     options.notificationEnqueue ?? createTransactionalNotificationEnqueue();
   const drift = createDriftService({ db, notificationEnqueue });
+  const settings = options.settings ?? createSettingsService({ db });
+  const connectionId = options.connectionId;
 
   return {
     async run(input) {
@@ -172,7 +218,8 @@ export function createRecordSyncService(options: {
       let sequence = 0;
       const step = async (entry: {
         step: string;
-        status: "succeeded" | "failed" | "skipped";
+        /** `'blocked'` — the write-authorization gate refused; see the module doc. Never a failure, never a silent skip. */
+        status: "succeeded" | "failed" | "skipped" | "blocked";
         requestSummary?: Record<string, unknown> | null;
         responseSummary?: Record<string, unknown> | null;
         errorCode?: string | null;
@@ -385,9 +432,42 @@ export function createRecordSyncService(options: {
           },
         });
 
+        // ---- write policy (Pangolin chain design M3) -----------------------
+        let writePolicyBlocked: { errorCode: string; errorDetail: string } | null =
+          null;
+        if (input.mode === "apply" && connectionId !== undefined) {
+          const policies = await settings.get(providerWritePolicySetting);
+          const policyTier = resolveProviderWritePolicy(policies, connectionId);
+          try {
+            assertWritePolicy({
+              mode: input.mode,
+              trigger: input.trigger,
+              policyTier,
+              operationTier: 1,
+              actorIsAdmin: input.actorIsAdmin,
+              unblockHint:
+                `allow writes for this Cloudflare connection (currently '${policyTier}') ` +
+                "on /settings/connections to publish DNS changes",
+            });
+          } catch (error) {
+            if (!(error instanceof WritePolicyError)) throw error;
+            writePolicyBlocked = {
+              errorCode: error.blockedReason,
+              errorDetail: error.message,
+            };
+          }
+        }
+
         // ---- apply (or not) -----------------------------------------------
         let applied = 0;
-        if (input.mode === "apply") {
+        if (writePolicyBlocked !== null) {
+          await step({
+            step: "apply.blocked",
+            status: "blocked",
+            errorCode: writePolicyBlocked.errorCode,
+            errorDetail: writePolicyBlocked.errorDetail,
+          });
+        } else if (input.mode === "apply") {
           const operations = applyOperationsFor(diff, tombstones);
           // Belt and braces around open question 3: even if a future edit
           // added unexpected records to the operation builder, this throws
@@ -448,7 +528,7 @@ export function createRecordSyncService(options: {
           findings,
         });
 
-        if (input.mode === "apply") {
+        if (input.mode === "apply" && writePolicyBlocked === null) {
           const unresolved = await drift.listUnresolved(domain.id);
           // Everything except `unexpected`: those are NEVER resolved by an
           // apply, because an apply never touches them.
@@ -478,16 +558,21 @@ export function createRecordSyncService(options: {
           })
           .where(eq(managedDomains.id, domain.id));
 
-        await finish("succeeded", null);
+        // A write-policy refusal is neither a failure nor a silent skip
+        // (rule 2) — the run finishes 'partial', the same honest
+        // classification mail-sync.ts already applies to a domain waiting on
+        // delegation.
+        await finish(writePolicyBlocked !== null ? "partial" : "succeeded", null);
 
         return {
           runId: run.id,
-          status: "succeeded",
+          status: writePolicyBlocked !== null ? "partial" : "succeeded",
           mode: input.mode,
           diff,
           applied,
           unresolvedFindings: recorded.unresolved,
           disappearedFindings: recorded.disappeared,
+          writePolicyBlockedReason: writePolicyBlocked?.errorCode ?? null,
         };
       } catch (error) {
         if (error instanceof ProviderCallError) throw error;

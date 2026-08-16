@@ -12,7 +12,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
-import { createRecordingNotificationEnqueue } from "@loxep/domain";
+import {
+  createRecordingNotificationEnqueue,
+  createSettingsService,
+  providerWritePolicySetting,
+} from "@loxep/domain";
 import {
   createDriftService,
   createManagedDomainsService,
@@ -837,5 +841,126 @@ describe("ADR-0023 infrastructure notification events", () => {
     expect(enqueue.calls).toHaveLength(1);
     expect(enqueue.calls[0]?.taskName).toBe("notifications.deliver");
     expect(enqueue.calls[0]?.payload).toMatchObject({ endpointId });
+  });
+});
+
+describe("the write-authorization gate (Pangolin chain design M3, loxep-acj.3)", () => {
+  it("does nothing when connectionId is omitted — every OTHER test in this file relies on this", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    // No `connectionId` passed — the gate must be a no-op, matching every
+    // other `createRecordSyncService` construction in this file.
+    const sync = createRecordSyncService({ db: handle.db, provider });
+    const result = await sync.run({ domainId, mode: "apply", trigger: "manual" });
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+  });
+
+  it("blocks an apply when the connection's policy is the default read_only", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    const settings = createSettingsService({ db: handle.db });
+    const sync = createRecordSyncService({
+      db: handle.db,
+      provider,
+      connectionId,
+      settings,
+    });
+
+    const result = await sync.run({
+      domainId,
+      mode: "apply",
+      trigger: "manual",
+      actorIsAdmin: true,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.writePolicyBlockedReason).toBe("write_policy");
+    expect(result.applied).toBe(0);
+    // Nothing reached the provider.
+    expect(provider.state()).toHaveLength(0);
+
+    const steps = await handle.pool.query<{ step: string; status: string }>(
+      `select step, status from reconcile_run_steps where run_id = $1 order by sequence`,
+      [result.runId],
+    );
+    expect(steps.rows.some((row) => row.step === "apply.blocked" && row.status === "blocked")).toBe(
+      true,
+    );
+
+    const run = await handle.pool.query<{ status: string }>(
+      `select status from reconcile_runs where id = $1`,
+      [result.runId],
+    );
+    expect(run.rows[0]?.status).toBe("partial");
+  });
+
+  it("applies once the connection's policy is flipped to a non-read_only tier", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(providerWritePolicySetting, { [connectionId]: "additive" }, {});
+    const sync = createRecordSyncService({
+      db: handle.db,
+      provider,
+      connectionId,
+      settings,
+    });
+
+    const result = await sync.run({
+      domainId,
+      mode: "apply",
+      trigger: "manual",
+      actorIsAdmin: true,
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+    expect(result.applied).toBe(1);
+    expect(provider.state()).toHaveLength(1);
+  });
+
+  it("check mode is never gated, even at the default read_only policy", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    const settings = createSettingsService({ db: handle.db });
+    const sync = createRecordSyncService({
+      db: handle.db,
+      provider,
+      connectionId,
+      settings,
+    });
+
+    const result = await sync.run({ domainId, mode: "check", trigger: "sweep" });
+    expect(result.status).toBe("succeeded");
+    expect(result.writePolicyBlockedReason).toBeNull();
+  });
+
+  it("blocks a known non-admin actor even when the connection's policy allows the write", async () => {
+    await domains.applyMaterializedRecords(domainId, [APEX]);
+    const provider = providerFor();
+    const settings = createSettingsService({ db: handle.db });
+    await settings.set(
+      providerWritePolicySetting,
+      { [connectionId]: "lockout_class" },
+      {},
+    );
+    const sync = createRecordSyncService({
+      db: handle.db,
+      provider,
+      connectionId,
+      settings,
+    });
+
+    const result = await sync.run({
+      domainId,
+      mode: "apply",
+      trigger: "manual",
+      actorIsAdmin: false,
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.writePolicyBlockedReason).toBe("write_policy");
+    expect(provider.state()).toHaveLength(0);
   });
 });

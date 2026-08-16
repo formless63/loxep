@@ -32,6 +32,7 @@
  */
 import { z } from "zod";
 import { defineSetting } from "./settings.ts";
+import { providerWritePolicyTierSchema } from "./provider-write-policy.ts";
 
 /**
  * Installation-wide monitor cadence defaults.
@@ -857,6 +858,44 @@ export const authOnboardingOidcPromptDismissedSetting = defineSetting({
   defaultValue: false,
 });
 
+/**
+ * The per-connection write-authorization policy (Pangolin chain design
+ * milestone 3, `loxep-acj.3`, "The write-risk model", six binding rules —
+ * rule 1). Keyed by `connections.id`; a key absent from the map is
+ * `'read_only'` ({@link resolveProviderWritePolicy}'s own fallback), so a
+ * fresh install cannot write to ANY provider connection without an explicit,
+ * audited flip. See `provider-write-policy.ts`'s module doc for the tier
+ * vocabulary and why it is a four-value ordinal rather than a binary switch.
+ *
+ * Applies to every connection, not only Pangolin's: rule 1 explicitly widens
+ * this to Cloudflare and Purelymail, because both of the owner's current
+ * credentials are read-only BY POLICY rather than by scope
+ * (`owner-credential-constraints` memory, 2026-08-15) — a full-account
+ * Cloudflare token and a fully-scoped Purelymail admin token that has NO
+ * token scoping at all. This setting is where that policy actually lives for
+ * every provider connection it is wired to check, not only Pangolin's.
+ *
+ * Flipping one connection's tier is an ADMIN-ONLY server function
+ * (`setConnectionWritePolicy`, `apps/web/src/server/admin-functions.ts`)
+ * that writes an `audit_events` row in the SAME transaction, via
+ * `SettingsService.set`'s own discipline (`settings.ts`'s `write()` — every
+ * setting write is already audited that way; nothing bespoke is added here).
+ */
+export const providerWritePolicySetting = defineSetting({
+  key: "infrastructure.provider_write_policy",
+  schema: z.record(z.string().min(1), providerWritePolicyTierSchema),
+  description:
+    "Per-connection write-authorization tier: 'read_only' (default), " +
+    "'additive', 'access_affecting', or 'lockout_class' — keyed by " +
+    "connection id. A connection absent from this map is read_only. " +
+    "Applies to every write-capable provider connection this policy is " +
+    "wired to check (Pangolin, Cloudflare, Purelymail as of milestone 3) — " +
+    "see infrastructure.provider_write_policy's own design section for the " +
+    "tier meanings",
+  schemaVersion: 1,
+  defaultValue: {},
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -864,6 +903,7 @@ export const registeredApplicationSettings = [
   ebayRateBudgetSetting,
   wooRateBudgetSetting,
   orderPayloadRetentionSetting,
+  providerWritePolicySetting,
   cloudflareRateBudgetSetting,
   caaPolicySetting,
   documentsMediaLimitsSetting,

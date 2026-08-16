@@ -89,6 +89,27 @@
  * same rule milestone 1 applies to unexpected DNS records, with considerably
  * higher stakes, because deleting a mailbox takes the mail with it. Loxep
  * deletes exactly one thing: a mailbox an operator explicitly soft-deleted.
+ *
+ * ## The write-authorization gate (Pangolin chain design M3, `loxep-acj.3`)
+ *
+ * The owner's Purelymail token is a fully-scoped account admin token with NO
+ * token scoping at all — "there is no safe-by-construction credential to ask
+ * for. Safety has to come from Loxep" (the design's own words). So an
+ * optional `connectionId` (constructor option) gates the FIRST write attempt
+ * in each entry point: `runMailDomainSync` checks it immediately before
+ * `provider.addDomain` (never before — the ownership-code fetch and the
+ * delegation gate above it are reads/no-ops and stay ungated, tier 0's own
+ * rule); `runMailboxSync` checks it immediately before its create/delete
+ * loop (never before — `listUsers`/`listRoutingRules` are reads needed for
+ * the `unexpected` report even at `read_only`). A refusal is the design's
+ * own worked example (`purelymail.add-domain` / `purelymail.create-user`
+ * both block with reason `'credential_scope'`, not `'write_policy'` — see
+ * `write-policy.ts`'s doc for why): recorded as a `'blocked'` step, never a
+ * failure, never a silent skip, and the run finishes `'partial'`.
+ * `connectionId` is OPTIONAL for backward compatibility with direct
+ * construction (tests) — omitting it skips the gate entirely, so every real
+ * caller MUST pass it. The composition root
+ * (`@loxep/app`'s `infrastructure-mail.ts`) does.
  */
 import type { LoxepDb } from "@loxep/db";
 import {
@@ -100,6 +121,12 @@ import {
 } from "@loxep/db/schema";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
+import {
+  createSettingsService,
+  providerWritePolicySetting,
+  resolveProviderWritePolicy,
+} from "@loxep/domain";
+import type { SettingsService } from "@loxep/domain";
 import { domainJobKey, MATERIALIZE_RECORDS_TASK } from "./domains.ts";
 import {
   InfrastructureNotFoundError,
@@ -118,6 +145,7 @@ import {
   type ProviderOperationsLedger,
 } from "./operations.ts";
 import type { ResponseRedactor } from "./port.ts";
+import { assertWritePolicy, WritePolicyError } from "./write-policy.ts";
 
 export type MailDomainRow = typeof mailDomains.$inferSelect;
 export type ManagedDomainRow = typeof managedDomains.$inferSelect;
@@ -140,7 +168,9 @@ export type MailDomainOutcome =
   /** Registered and verified; the provider's DNS checks do not all pass yet. */
   | "dns_pending"
   /** Registered, verified, all four DNS checks pass. */
-  | "verified";
+  | "verified"
+  /** The write-authorization gate refused `addDomain` — see the module doc. */
+  | "write_policy_blocked";
 
 export interface MailDomainSyncResult {
   runId: string;
@@ -173,6 +203,12 @@ export interface RunMailSyncInput {
   domainId: string;
   trigger: "intent_change" | "sweep" | "manual" | "poll";
   actorUserId?: string | null;
+  /**
+   * Whether a known human actor is attached to this run — see
+   * `write-policy.ts`'s `assertWritePolicy` for why `undefined` (no actor, a
+   * background trigger) is not the same as `false` (a known non-admin).
+   */
+  actorIsAdmin?: boolean;
   /** Defaults to a pass-through that keeps only scalar fields. */
   redact?: ResponseRedactor;
 }
@@ -305,6 +341,15 @@ export interface CreateMailSyncServiceOptions {
   /** Enqueues a re-materialize once the ownership code exists. */
   enqueue?: TransactionalEnqueue;
   ledger?: ProviderOperationsLedger;
+  /**
+   * The `connections.id` this provider was resolved from — see the module
+   * doc's "write-authorization gate" section. Omitting it skips the gate
+   * (backward-compatible default for direct/test construction); every real
+   * composition-root caller must supply it.
+   */
+  connectionId?: string;
+  /** Defaults to `createSettingsService({ db })`. Overridable for tests. */
+  settings?: SettingsService;
 }
 
 export function createMailSyncService(
@@ -316,6 +361,44 @@ export function createMailSyncService(
   const enqueue: TransactionalEnqueue =
     options.enqueue ?? (async () => undefined);
   const ledger = options.ledger ?? createProviderOperationsLedger({ db });
+  const settings = options.settings ?? createSettingsService({ db });
+  const connectionId = options.connectionId;
+
+  /**
+   * Checks the write-authorization gate for ONE named write attempt. Returns
+   * the caught {@link WritePolicyError}'s fields when refused, `null` when
+   * the write may proceed (including always, when `connectionId` is unset).
+   * Mail work is always `mode: 'apply'` (there is no check-mode form of
+   * "register this domain") and mail writes are treated as tier 1 for this
+   * gate — a create, never an update.
+   */
+  async function checkWritePolicy(
+    trigger: RunMailSyncInput["trigger"],
+    actorIsAdmin: boolean | undefined,
+    unblockHint: string,
+  ): Promise<{ errorCode: string; errorDetail: string } | null> {
+    if (connectionId === undefined) return null;
+    const policies = await settings.get(providerWritePolicySetting);
+    const policyTier = resolveProviderWritePolicy(policies, connectionId);
+    try {
+      assertWritePolicy({
+        mode: "apply",
+        trigger,
+        policyTier,
+        operationTier: 1,
+        actorIsAdmin,
+        // The design's own worked example: Purelymail has no token scoping
+        // at all, so a refusal here is framed as a credential-scope problem
+        // rather than a plain policy one — see the module doc.
+        blockedReason: "credential_scope",
+        unblockHint,
+      });
+      return null;
+    } catch (error) {
+      if (!(error instanceof WritePolicyError)) throw error;
+      return { errorCode: error.blockedReason, errorDetail: error.message };
+    }
+  }
 
   async function loadDomain(domainId: string): Promise<{
     domain: ManagedDomainRow;
@@ -355,7 +438,8 @@ export function createMailSyncService(
     runId: string;
     step: (entry: {
       step: string;
-      status: "succeeded" | "failed" | "skipped";
+      /** `'blocked'` — the write-authorization gate refused; see the module doc. Never a failure, never a silent skip. */
+      status: "succeeded" | "failed" | "skipped" | "blocked";
       requestSummary?: Record<string, unknown> | null;
       responseSummary?: Record<string, unknown> | null;
       errorCode?: string | null;
@@ -586,6 +670,33 @@ export function createMailSyncService(
             dns: null,
             verifyAttempts,
           };
+        }
+
+        /* ---- write-authorization gate, immediately before the first write - */
+        if (providerAddedAt === null) {
+          const blocked = await checkWritePolicy(
+            input.trigger,
+            input.actorIsAdmin,
+            "allow writes for this Purelymail connection " +
+              "(currently read-only by policy) on /settings/connections to register this domain",
+          );
+          if (blocked !== null) {
+            await run.step({
+              step: "register-domain",
+              status: "blocked",
+              errorCode: blocked.errorCode,
+              errorDetail: blocked.errorDetail,
+            });
+            await run.finish("partial", null);
+            return {
+              runId: run.runId,
+              status: "partial",
+              outcome: "write_policy_blocked",
+              ownershipCodeFetched,
+              dns: null,
+              verifyAttempts,
+            };
+          }
         }
 
         /* ---- 3. register at the provider (ledgered) --------------------- */
@@ -915,6 +1026,32 @@ export function createMailSyncService(
             routingRules: rulesHere.size,
           },
         });
+
+        /* ---- write-authorization gate, immediately before the first write - */
+        const mailboxBlocked = await checkWritePolicy(
+          input.trigger,
+          input.actorIsAdmin,
+          "allow writes for this Purelymail connection " +
+            "(currently read-only by policy) on /settings/connections to sync mailboxes",
+        );
+        if (mailboxBlocked !== null) {
+          await run.step({
+            step: "sync-mailboxes",
+            status: "blocked",
+            errorCode: mailboxBlocked.errorCode,
+            errorDetail: mailboxBlocked.errorDetail,
+          });
+          await run.finish("partial", null);
+          return {
+            runId: run.runId,
+            status: "partial",
+            created: 0,
+            routingRulesCreated: 0,
+            deleted: 0,
+            unchanged: 0,
+            unexpected: [],
+          };
+        }
 
         /* ---- create what intent describes and the provider lacks -------- */
         for (const row of live) {

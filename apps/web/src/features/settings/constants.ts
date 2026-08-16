@@ -5,7 +5,7 @@
  * kind/status upstream fails typechecking here instead of silently drifting.
  */
 import type { EconomicEntityKind } from '@loxep/db/schema';
-import type { ConnectionStatus } from '@loxep/domain';
+import type { ConnectionStatus, ProviderWritePolicyTier } from '@loxep/domain';
 import type { StorageDriverFamily } from '@loxep/storage';
 import type { MarketEventType } from '@loxep/market';
 import type { NotificationEventClass } from '@loxep/db/schema';
@@ -41,6 +41,40 @@ export const CONNECTION_STATUS_LABELS = {
   error: 'Error',
   archived: 'Archived'
 } satisfies Record<ConnectionStatus, string>;
+
+/**
+ * The write-authorization tier vocabulary (Pangolin chain design M3,
+ * loxep-acj.3), re-declared client-safe — the same convention
+ * `CONNECTION_STATUS_LABELS` above uses: `ProviderWritePolicyTier` is a
+ * type-only import, and the label/description TEXT is the single source of
+ * truth in `@loxep/domain`'s `provider-write-policy.ts`, kept in step by
+ * hand rather than imported at runtime, because `@loxep/domain` pulls in
+ * `@loxep/db` (Node-only) and this file ships in the client bundle.
+ */
+export const PROVIDER_WRITE_POLICY_TIER_LABELS = {
+  read_only: 'Read-only',
+  additive: 'Additive writes',
+  access_affecting: 'Access-affecting writes',
+  lockout_class: 'Lockout-class writes'
+} satisfies Record<ProviderWritePolicyTier, string>;
+
+export const PROVIDER_WRITE_POLICY_TIER_DESCRIPTIONS = {
+  read_only:
+    'Loxep may only read from this connection. No create, update, or disable call is ever made — the default for every connection.',
+  additive:
+    'Loxep may create new objects at this provider (a resource, a target, a rule) but may never change or disable an existing one.',
+  access_affecting:
+    'Loxep may also change existing objects at this provider — including updates that affect who or what can reach them. Every access-affecting apply is from a shown plan, never a background sweep.',
+  lockout_class:
+    "Loxep may also apply changes that could remove the operator's own way in — always behind a typed confirmation naming the object, and the self-lockout preflight can still refuse regardless of this setting."
+} satisfies Record<ProviderWritePolicyTier, string>;
+
+export const PROVIDER_WRITE_POLICY_TIER_VALUES = Object.keys(
+  PROVIDER_WRITE_POLICY_TIER_LABELS
+) as readonly ProviderWritePolicyTier[];
+
+/** Providers this policy is wired to actually check (Pangolin chain design M3's cross-provider rule). Every other row shows "not applicable". */
+export const WRITE_POLICY_ENFORCED_PROVIDERS = new Set(['cloudflare', 'purelymail', 'pangolin']);
 
 export const STORAGE_DRIVER_LABELS = {
   local: 'Local filesystem',

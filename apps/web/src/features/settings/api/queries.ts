@@ -16,6 +16,7 @@ import {
   fetchNotificationEndpoints,
   fetchNotificationRules,
   fetchOnboardingOidcPrompt,
+  fetchProviderWritePolicy,
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
@@ -134,6 +135,18 @@ export const gatusPushSettingsQuery = queryOptions({
 export const integrationsEnabledQuery = queryOptions({
   queryKey: ['settings', 'integrations-enabled'],
   queryFn: () => fetchIntegrationsEnabled()
+});
+
+/**
+ * The `infrastructure.provider_write_policy` map (Pangolin chain design M3,
+ * loxep-acj.3). Member-readable, matching `integrationsEnabledQuery` — only
+ * the flip itself (`setConnectionWritePolicy`) is admin-only. A connection
+ * absent from this map is `'read_only'`, applied by the connections table's
+ * own render, not here.
+ */
+export const providerWritePolicyQuery = queryOptions({
+  queryKey: ['settings', 'provider-write-policy'],
+  queryFn: () => fetchProviderWritePolicy()
 });
 
 export const notificationEndpointsQuery = queryOptions({
