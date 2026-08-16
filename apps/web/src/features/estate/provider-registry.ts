@@ -28,7 +28,12 @@ export interface EstateProviderRegistryEntry {
 export const ESTATE_PROVIDER_REGISTRY: Record<string, EstateProviderRegistryEntry> = {
   pangolin: { workspace: 'infrastructure', label: 'Pangolin estate' },
   cloudflare: { workspace: 'infrastructure', label: 'Cloudflare estate' },
-  purelymail: { workspace: 'infrastructure', label: 'Purelymail estate' }
+  purelymail: { workspace: 'infrastructure', label: 'Purelymail estate' },
+  tailscale: { workspace: 'infrastructure', label: 'Tailscale estate' },
+  beszel: { workspace: 'infrastructure', label: 'Beszel estate' },
+  termix: { workspace: 'infrastructure', label: 'Termix estate' },
+  dockhand: { workspace: 'infrastructure', label: 'Dockhand estate' },
+  gatus: { workspace: 'infrastructure', label: 'Gatus estate' }
 };
 
 /**

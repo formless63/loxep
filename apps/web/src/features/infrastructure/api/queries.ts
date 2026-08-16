@@ -39,6 +39,21 @@ import {
   fetchCloudflareEstateRecords,
   fetchCloudflareEstateZones
 } from '@/server/cloudflare-estate-functions';
+import { fetchTailscaleEstateDevices } from '@/server/tailscale-estate-functions';
+import { fetchBeszelEstateHub, fetchBeszelEstateSystems } from '@/server/beszel-estate-functions';
+import {
+  fetchTermixEstateHosts,
+  fetchTermixEstateSessions
+} from '@/server/termix-estate-functions';
+import {
+  fetchDockhandEstateEnvironmentDetail,
+  fetchDockhandEstateEnvironments
+} from '@/server/dockhand-estate-functions';
+import {
+  fetchGatusEstateEndpointUptime,
+  fetchGatusEstateEndpoints,
+  fetchGatusEstateInstance
+} from '@/server/gatus-estate-functions';
 
 export const infrastructureOverviewQuery = queryOptions({
   queryKey: ['infrastructure', 'overview'],
@@ -253,6 +268,117 @@ export const cloudflareEstateRecordsQuery = (
     ],
     queryFn: () =>
       fetchCloudflareEstateRecords({ data: { connectionId, externalZoneId, zoneName, maxPages } })
+  });
+
+/**
+ * The Dockhand estate browser's (loxep-47o.4, read-only) Environments
+ * overview — instance-wide, one `listHosts` call. Same live/never-cached
+ * discipline as every other estate query.
+ */
+export const dockhandEstateEnvironmentsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'dockhand-estate', connectionId, 'environments'],
+    queryFn: () => fetchDockhandEstateEnvironments({ data: { connectionId } })
+  });
+
+/**
+ * One environment's live containers + stacks — the per-environment drill-in
+ * (Rule P6), fetched only once an operator expands that row. Deliberately
+ * NOT `dockhandHostViewQuery` (that one is keyed on `hostingTargetId` and
+ * mounted only for a LINKED host) — this estate drill-in reads by
+ * `externalHostId` directly so it also works for an unmatched environment.
+ */
+export const dockhandEstateEnvironmentDetailQuery = (
+  connectionId: string,
+  externalHostId: string
+) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'dockhand-estate', connectionId, 'environment', externalHostId],
+    queryFn: () => fetchDockhandEstateEnvironmentDetail({ data: { connectionId, externalHostId } })
+  });
+
+/**
+ * The Gatus estate browser's (loxep-47o.5) Instance section —
+ * `probeConfig()` + `health()`, both unauthenticated. Same live/never-cached
+ * discipline as every other estate query.
+ */
+export const gatusEstateInstanceQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'gatus-estate', connectionId, 'instance'],
+    queryFn: () => fetchGatusEstateInstance({ data: { connectionId } })
+  });
+
+/**
+ * The Gatus estate browser's Endpoints section — `listEndpointStatuses()`,
+ * direct posture only (renders BLOCKED under OIDC, never an error — see
+ * `gatus-estate-functions.ts`). `page`/`pageSize` are in the query key: a
+ * different page is a genuinely different read, matching Rule P8.
+ */
+export const gatusEstateEndpointsQuery = (connectionId: string, page: number, pageSize: number) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'gatus-estate', connectionId, 'endpoints', page, pageSize],
+    queryFn: () => fetchGatusEstateEndpoints({ data: { connectionId, page, pageSize } })
+  });
+
+/**
+ * One endpoint's live uptime — the drill-in (Rule P6) that works in EVERY
+ * Gatus auth posture, fetched only once an operator expands that row and
+ * picks a duration bucket.
+ */
+export const gatusEstateEndpointUptimeQuery = (
+  connectionId: string,
+  key: string,
+  duration: '30d' | '7d' | '24h' | '1h'
+) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'gatus-estate', connectionId, 'uptime', key, duration],
+    queryFn: () => fetchGatusEstateEndpointUptime({ data: { connectionId, key, duration } })
+  });
+
+/**
+ * The Tailscale estate browser's (loxep-47o.6) Tailnet section —
+ * `listDevices()`, the whole tailnet in one call. Same live/never-cached
+ * discipline as every other estate query.
+ */
+export const tailscaleEstateDevicesQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'tailscale-estate', connectionId, 'devices'],
+    queryFn: () => fetchTailscaleEstateDevices({ data: { connectionId } })
+  });
+
+/**
+ * The Beszel estate browser's (loxep-47o.7) two sections — `health()`
+ * (unauthenticated) and `listSystems()` (hub-wide; the adapter already
+ * paginates internally up to `BESZEL_MAX_LIST_PAGES`). Each stamps its own
+ * clock (Rule P4), so each is its own query.
+ */
+export const beszelEstateHubQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'beszel-estate', connectionId, 'hub'],
+    queryFn: () => fetchBeszelEstateHub({ data: { connectionId } })
+  });
+
+export const beszelEstateSystemsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'beszel-estate', connectionId, 'systems'],
+    queryFn: () => fetchBeszelEstateSystems({ data: { connectionId } })
+  });
+
+/**
+ * The Termix estate browser's (loxep-47o.7) two sections — `listHosts()`
+ * instance-wide, and `listSessions()` instance-wide (sessions per the
+ * owner's 5b ruling, 2026-08-16 — see `termix-estate-functions.ts`).
+ */
+export const termixEstateHostsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'termix-estate', connectionId, 'hosts'],
+    queryFn: () => fetchTermixEstateHosts({ data: { connectionId } })
+  });
+
+export const termixEstateSessionsQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'termix-estate', connectionId, 'sessions'],
+    queryFn: () => fetchTermixEstateSessions({ data: { connectionId } })
   });
 
 /** Named dynamic-IP aliases (Pangolin chain design M5, loxep-acj.5). */

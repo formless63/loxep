@@ -37,6 +37,45 @@ export const CONTROL_SURFACE_OPTIONS = Object.entries(CONTROL_SURFACE_LABELS).ma
   ([value, label]) => ({ value, label })
 );
 
+/** `host_addresses.kind` (loxep-bub) — WAN is the only kind the DNS materializer ever reads, and only when declared. */
+export const HOST_ADDRESS_KIND_LABELS: Record<string, string> = {
+  wan: 'WAN',
+  lan: 'LAN',
+  tailnet: 'Tailnet',
+  other: 'Other'
+};
+
+export const HOST_ADDRESS_KIND_OPTIONS = Object.entries(HOST_ADDRESS_KIND_LABELS).map(
+  ([value, label]) => ({ value, label })
+);
+
+export const HOST_ADDRESS_KIND_TONE: Record<string, Tone> = {
+  wan: 'success',
+  lan: 'secondary',
+  tailnet: 'warning',
+  other: 'secondary'
+};
+
+/** `host_addresses.family`. */
+export const HOST_ADDRESS_FAMILY_OPTIONS = [
+  { value: 'v4', label: 'IPv4' },
+  { value: 'v6', label: 'IPv6' }
+];
+
+/**
+ * `host_addresses.provenance` — `'operator_declared'` or
+ * `'observed:<provider>[.<field>]'` (open set; the provider name is not
+ * Loxep-owned). Renders the one closed literal by name and everything else
+ * as "observed via <provider>".
+ */
+export function hostAddressProvenanceLabel(provenance: string): string {
+  if (provenance === 'operator_declared') return 'Declared';
+  const provider = provenance.startsWith('observed:')
+    ? provenance.slice('observed:'.length)
+    : provenance;
+  return `Observed via ${provider}`;
+}
+
 /** `dns_drift_findings.kind`. */
 export const DRIFT_KIND_LABELS: Record<string, string> = {
   missing: 'Missing at provider',

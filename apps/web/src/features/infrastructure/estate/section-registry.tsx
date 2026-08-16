@@ -4,6 +4,11 @@ import { pangolinEstateOverviewQuery } from '@/features/infrastructure/api/queri
 import PangolinEstateSections from './pangolin-sections';
 import PurelymailEstateSections from './purelymail-sections';
 import CloudflareEstateSections from './cloudflare-sections';
+import TailscaleEstateSections from './tailscale-sections';
+import BeszelEstateSections from './beszel-sections';
+import TermixEstateSections from './termix-sections';
+import DockhandEstateSections from './dockhand-sections';
+import GatusEstateSections from './gatus-sections';
 
 /**
  * The infrastructure workspace's provider→sections registry (loxep-47o.1),
@@ -43,5 +48,24 @@ export const INFRASTRUCTURE_ESTATE_SECTION_REGISTRY: Record<
   },
   cloudflare: {
     Sections: CloudflareEstateSections
+  },
+  // Wave 2 (loxep-47o.6/loxep-47o.7): same "no prefetch" shape as
+  // Purelymail/Cloudflare above — every section uses a plain `useQuery`, not
+  // `useSuspenseQuery`, so there is no loader-suspense boundary to preload.
+  tailscale: {
+    Sections: TailscaleEstateSections
+  },
+  beszel: {
+    Sections: BeszelEstateSections
+  },
+  termix: {
+    Sections: TermixEstateSections
+  },
+  // Wave 2 continued (loxep-47o.4/loxep-47o.5): same "no prefetch" shape.
+  dockhand: {
+    Sections: DockhandEstateSections
+  },
+  gatus: {
+    Sections: GatusEstateSections
   }
 };
