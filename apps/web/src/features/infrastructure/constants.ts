@@ -66,3 +66,14 @@ export const RUN_MODE_LABELS: Record<string, string> = {
 
 /** `dns_provider_tokens.permission_scope` — one value today. */
 export const DNS_PROVIDER_TOKEN_SCOPE_OPTIONS = [{ value: 'dns_edit', label: 'DNS edit' }];
+
+/** `infrastructure.ip_aliases[name].source` (Pangolin chain design M5, loxep-acj.5) — ranked by how much Loxep has to trust the detector. */
+export const IP_ALIAS_SOURCE_LABELS: Record<string, string> = {
+  manual: 'Manual',
+  dns: 'DNS lookup',
+  pangolin_site: 'Pangolin site'
+};
+
+export const IP_ALIAS_SOURCE_OPTIONS = Object.entries(IP_ALIAS_SOURCE_LABELS).map(
+  ([value, label]) => ({ value, label })
+);

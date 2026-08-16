@@ -57,5 +57,18 @@ export const infrastructureNavGroups: NavGroup[] = [
         items: []
       }
     ]
+  },
+  {
+    label: 'Dynamic IP',
+    items: [
+      {
+        title: 'IP aliases',
+        url: '/infrastructure/aliases',
+        icon: 'integrations',
+        isActive: false,
+        shortcut: ['g', 'a'],
+        items: []
+      }
+    ]
   }
 ];

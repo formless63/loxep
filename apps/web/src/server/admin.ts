@@ -359,7 +359,10 @@ function buildRegistry(): AdminRegistry {
       db: handle.db,
       keyring: config.keyring
     }),
-    proxyResources: createProxyResourcesService({ db: handle.db })
+    proxyResources: createProxyResourcesService({
+      db: handle.db,
+      settings: createSettingsService({ db: handle.db })
+    })
   };
 }
 

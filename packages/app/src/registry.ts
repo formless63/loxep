@@ -224,6 +224,7 @@ import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureProxyTasks } from "./infrastructure-proxy.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createInfrastructureTokenTasks } from "./infrastructure-token.ts";
+import { createIpAliasDetectionTasks } from "./ip-alias-detection.ts";
 import {
   createEbayPurchasePollExecutor,
   createInventoryPurchaseSyncTasks,
@@ -326,6 +327,7 @@ export function buildCronItems(input: {
   healthSweep: AppCronItem;
   gatusPush: AppCronItem;
   accountingPostFacts: AppCronItem;
+  ipAliasDetection: AppCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -337,6 +339,7 @@ export function buildCronItems(input: {
     input.healthSweep,
     input.gatusPush,
     input.accountingPostFacts,
+    input.ipAliasDetection,
   ];
 }
 
@@ -552,6 +555,14 @@ export function buildWorkerRegistry(
   // account of what is, and is not, wired yet.
   const infrastructureProxy = createInfrastructureProxyTasks({ services });
 
+  // --- dynamic-IP named-alias detection (Pangolin chain design M5,
+  // loxep-acj.5) -----------------------------------------------------
+  // One recurring sweep: detect (dns/pangolin_site), update the alias,
+  // fan out to every referencing rule (add-only, gated by the connection's
+  // write-policy tier and wouldLockOut, same as a manual apply), and notify
+  // once per genuine change. See ip-alias-detection.ts's own module doc.
+  const ipAliasDetection = createIpAliasDetectionTasks({ services });
+
   // --- fleet health (Phase 8 milestone 1, loxep-ovj.1) -----------------
   // One recurring sweep, no monitor_targets row — see health-sweep.ts's
   // module doc. `@loxep/domain` owns the registry/mechanics; this is only
@@ -605,6 +616,7 @@ export function buildWorkerRegistry(
     ...infrastructureTokens.tasks,
     ...infrastructureContainerHosts.tasks,
     ...infrastructureProxy.tasks,
+    ipAliasDetection.ipAliasDetectionTask,
     health.healthSweepTask,
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,
@@ -621,6 +633,7 @@ export function buildWorkerRegistry(
       healthSweep: health.healthSweepCronItem,
       gatusPush: gatusPush.gatusPushCronItem,
       accountingPostFacts: accountingPostFacts.accountingPostFactsCronItem,
+      ipAliasDetection: ipAliasDetection.ipAliasDetectionCronItem,
     }),
     services,
     listings,

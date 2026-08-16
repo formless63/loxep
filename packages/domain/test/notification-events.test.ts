@@ -134,9 +134,11 @@ describe("notification events", () => {
         "drift_found",
         "drift_disappeared",
         "reconcile_run_failed",
+        "ip_alias_changed",
       ]);
       expect(infrastructure.subjectTypes).toContain("managed_domain");
       expect(infrastructure.subjectTypes).toContain("reconcile_run");
+      expect(infrastructure.subjectTypes).toContain("hosting_target");
 
       const { created } = await recordNotificationEvent(handle.db, {
         eventClass: "infrastructure",
@@ -165,6 +167,41 @@ describe("notification events", () => {
           deduplicationKey: "infra-registry:reconcile_run_failed",
         }),
       ).resolves.toMatchObject({ created: true });
+    });
+
+    it("records an 'ip_alias_changed' event (Pangolin chain design milestone 5, loxep-acj.5) on a 'hosting_target' subject, deduplicated per alias change rather than per sweep", async () => {
+      const first = await recordNotificationEvent(handle.db, {
+        eventClass: "infrastructure",
+        eventType: "ip_alias_changed",
+        subjectType: "hosting_target",
+        subjectId: SUBJECT_A,
+        occurredAt: new Date(),
+        payload: {
+          aliasName: "home",
+          previousAddress: "203.0.113.4",
+          newAddress: "203.0.113.7",
+          resourceCount: 4,
+          ruleCount: 7,
+          autoApplied: false,
+        },
+        deduplicationKey: "ip-alias-changed:home:203.0.113.4->203.0.113.7",
+      });
+      expect(first.created).toBe(true);
+
+      // A second sweep observing the SAME change is a no-op, not a second
+      // notification — "never a silent apply" does not mean "notify every
+      // sweep"; the design's own words are "ONE notification".
+      const second = await recordNotificationEvent(handle.db, {
+        eventClass: "infrastructure",
+        eventType: "ip_alias_changed",
+        subjectType: "hosting_target",
+        subjectId: SUBJECT_A,
+        occurredAt: new Date(),
+        payload: { aliasName: "home" },
+        deduplicationKey: "ip-alias-changed:home:203.0.113.4->203.0.113.7",
+      });
+      expect(second.created).toBe(false);
+      expect(second.event.id).toBe(first.event.id);
     });
   });
 

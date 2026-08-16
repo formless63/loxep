@@ -118,7 +118,8 @@
  * `container-hosts.ts`'s own update/create split.
  */
 import type { LoxepDb } from "@loxep/db";
-import type { ProviderWritePolicyTier } from "@loxep/domain";
+import type { IpAliasMap, ProviderWritePolicyTier, SettingsService } from "@loxep/domain";
+import { ipAliasesSetting } from "@loxep/domain";
 import {
   managedDomains,
   proxyResourceRules,
@@ -130,6 +131,7 @@ import { and, asc, eq } from "drizzle-orm";
 import {
   InfrastructureNotFoundError,
   InfrastructureValidationError,
+  MaterializationError,
   ProviderCallError,
 } from "./errors.ts";
 import type { ResponseRedactor } from "./port.ts";
@@ -142,6 +144,7 @@ import {
   type ProxyOperation,
   type ProxyProviderPort,
 } from "./proxy-port.ts";
+import { materializeProxyRuleValue } from "./ip-aliases.ts";
 import {
   createProviderOperationsLedger,
   idempotencyKey,
@@ -182,23 +185,39 @@ export class ProxyWritePolicyError extends InfrastructureValidationError {
 }
 
 /**
- * M4-specific, and STRICTER than `write-policy.ts`'s own `assertWritePolicy`
- * for a poll trigger: that function permits a tier-1 write on `'poll'`
- * because M5's per-alias `autoApply` flag is expected to use exactly that
- * seam. M5 has not shipped — there is no alias, no per-alias flag, and no
- * owner ruling on auto-apply yet — so this milestone does not open the seam
- * even though the generic gate would allow it. `bd show loxep-acj.4`'s own
- * scope item 3: "permitted only for manual and intent_change triggers."
- * `'poll'` is refused here, unconditionally, before `assertWritePolicy` (or
- * any provider call) ever runs.
+ * M4 refused EVERY `'poll'`-triggered apply here, stricter than
+ * `write-policy.ts`'s own `assertWritePolicy` (which already permits a
+ * tier-1 write on `'poll'` — rule 3 only forbids tier ≥ 2 there) — because at
+ * M4 nothing had an alias, a per-alias `autoApply` flag, or an owner ruling
+ * to justify opening that seam yet. Milestone 5 (`loxep-acj.5`) is that
+ * ruling: the owner confirmed dynamic-IP alias updates MAY auto-apply
+ * (`pangolin-credential-constraints` memory, 2026-08-15), scoped to exactly
+ * the ADD half of add-then-retire — which is tier 1 (a `create-rule`), never
+ * retirement (tier 2, still unconditionally refused on `'poll'` by
+ * `assertWritePolicy`'s own rule 3, structurally, regardless of this
+ * function). So this function now imposes NO restriction beyond the generic
+ * gate: `'poll'` is permitted for the SAME reason `write-policy.ts`'s module
+ * doc already documented as "the seam M5 is expected to use". Kept as its
+ * own named function (rather than deleted outright) so the milestone history
+ * stays legible and a future milestone has one place to add a NEW trigger-
+ * shaped restriction if one is ever needed.
+ *
+ * Three gates still stand between a `'poll'` trigger and an actual Pangolin
+ * write, in order: (1) the connection's stored `infrastructure.
+ * provider_write_policy` tier must be `'additive'` or higher — defaults to
+ * `'read_only'`, so nothing auto-applies until an admin explicitly flips it;
+ * (2) the CALLER (the alias-detection sweep, `@loxep/app`'s `ip-alias-
+ * detection.ts`) checks the alias's own `autoApply` flag (default `false`)
+ * and its `source` (never `'manual'`) BEFORE ever requesting `mode: 'apply'`
+ * with `trigger: 'poll'` — this function has no alias to check, so it is not
+ * this function's gate to enforce; (3) `wouldLockOut`'s self-managed-resource
+ * clauses, evaluated identically to a `'manual'` apply.
  */
-function assertApplyTriggerAllowed(trigger: "intent_change" | "manual" | "poll"): void {
-  if (trigger === "poll") {
-    throw new ProxyWritePolicyError(
-      "a 'poll'-triggered proxy reconcile may not apply in this milestone (loxep-acj.4) — only 'manual' and 'intent_change' triggers may. The M5 auto-apply seam (a per-alias autoApply flag, gated on its own owner ruling) is not open yet.",
-      { trigger },
-    );
-  }
+function assertApplyTriggerAllowed(_trigger: "intent_change" | "manual" | "poll"): void {
+  // No restriction beyond `assertWritePolicy`'s own rule 3 — see the doc
+  // above. The parameter is retained (and still passed by every call site)
+  // so a future milestone can reintroduce a trigger-shaped restriction
+  // without changing every caller's signature.
 }
 
 /** Whether `host` is exactly `candidate`, comparing case-insensitively and tolerating either a bare host or a full URL on either side. */
@@ -337,29 +356,56 @@ export interface ProxyResourcesService {
     hostingTargetId: string,
   ): Promise<Array<{ resource: ProxyResourceRow; rules: ProxyResourceRuleRow[] }>>;
   listRuns(proxyResourceId: string): Promise<ReconcileRunRow[]>;
+  /**
+   * Every `dynamic_ip`-owned rule across EVERY declared resource whose
+   * stored `value` is `aliasReference` (`formatIpAliasReference(name)`,
+   * i.e. `'alias:<name>'`) — the cross-domain fan-out query the dynamic-IP
+   * alias detection sweep needs (`@loxep/app`'s `ip-alias-detection.ts`) to
+   * find every rule an alias change affects, regardless of which domain or
+   * hosting target owns the resource. Kept here, not as a raw query in
+   * `@loxep/app`, matching this package's own "database access lives in the
+   * domain/infrastructure layer" discipline.
+   */
+  listRulesReferencingAlias(
+    aliasReference: string,
+  ): Promise<Array<{ resource: ProxyResourceRow; rule: ProxyResourceRuleRow }>>;
 }
 
+/**
+ * `aliases`: the `infrastructure.ip_aliases` setting's current value, read
+ * ONCE by the caller per `reconcile()` call — this function stays PURE
+ * (sync, no I/O) so a `dynamic_ip`-owned rule's `alias:<name>` reference
+ * resolves to today's literal address the same way `resolveHostingAddress`
+ * resolves a fronting chain: throws {@link MaterializationError} on an
+ * unresolvable alias rather than falling back to the reference string or a
+ * stale value — see `ip-aliases.ts`'s module doc.
+ */
 function buildDesired(
   resource: ProxyResourceRow,
   domainName: string,
   rules: ProxyResourceRuleRow[],
+  aliases: IpAliasMap,
 ): DesiredProxyResource {
   const fullDomain =
     resource.subdomain === null
       ? domainName
       : `${resource.subdomain}.${domainName}`;
 
-  const desiredRules: DesiredProxyRule[] = rules.map((rule) => ({
-    externalRuleId: rule.externalRuleId,
-    action: rule.action,
-    match: rule.match,
-    value: rule.value,
-    priority: rule.priority,
-    enabled: rule.enabled,
-    // Closed set validated by the `proxy_resource_rules_owner_check`
-    // constraint; the cast is a plain narrowing, not a trust boundary.
-    owner: rule.owner as DesiredProxyRule["owner"],
-  }));
+  const desiredRules: DesiredProxyRule[] = rules.map((rule) => {
+    const materialized = materializeProxyRuleValue(rule.value, aliases);
+    return {
+      externalRuleId: rule.externalRuleId,
+      action: rule.action,
+      match: rule.match,
+      value: materialized.value,
+      aliasName: materialized.aliasName,
+      priority: rule.priority,
+      enabled: rule.enabled,
+      // Closed set validated by the `proxy_resource_rules_owner_check`
+      // constraint; the cast is a plain narrowing, not a trust boundary.
+      owner: rule.owner as DesiredProxyRule["owner"],
+    };
+  });
 
   return {
     proxyResourceId: resource.id,
@@ -384,8 +430,21 @@ function buildDesired(
 
 export function createProxyResourcesService(options: {
   db: LoxepDb;
+  /**
+   * Resolves `infrastructure.ip_aliases` — needed so `dynamic_ip`-owned
+   * rules can materialize (`buildDesired`). Optional and defaulting to an
+   * always-empty map ONLY for a caller with no alias to resolve yet (a
+   * resource whose rules are all `template`/`manual`-owned): any
+   * `dynamic_ip` row it encounters would then refuse with
+   * {@link MaterializationError} exactly as if the alias were genuinely
+   * missing, which is the honest behavior — there is no such thing as "this
+   * caller opted out of aliases" for a row that references one.
+   */
+  settings?: Pick<SettingsService, "get">;
 }): ProxyResourcesService {
   const { db } = options;
+  const settings: Pick<SettingsService, "get"> =
+    options.settings ?? { get: async (definition) => definition.defaultValue };
   const ledger: ProviderOperationsLedger = createProviderOperationsLedger({ db });
 
   async function requireResource(
@@ -735,9 +794,7 @@ export function createProxyResourcesService(options: {
     const resource = await requireResource(db, proxyResourceId);
     const rules = await loadRules(db, proxyResourceId);
     const domainName = await requireDomainName(db, resource.domainId);
-    const desired = buildDesired(resource, domainName, rules);
-    const ruleRowByNaturalKey = new Map<string, ProxyResourceRuleRow>();
-    for (const row of rules) ruleRowByNaturalKey.set(ruleNaturalKey(row), row);
+    const aliases = await settings.get(ipAliasesSetting);
 
     const runRows = await db
       .insert(reconcileRuns)
@@ -783,6 +840,37 @@ export function createProxyResourcesService(options: {
         .set({ status, finishedAt: new Date(), stepCount: sequence, errorSummary })
         .where(eq(reconcileRuns.id, run.id));
     };
+
+    // Materialize `dynamic_ip`-owned rule references into literal values
+    // (`ip-aliases.ts`'s `materializeProxyRuleValue`, via `buildDesired`)
+    // BEFORE any provider call — an unresolvable alias is refused the same
+    // way a broken fronting chain is, never silently applied with a stale or
+    // literal-reference value. `ruleRowByNaturalKey` is keyed from the
+    // RESOLVED desired rules (not the raw DB rows) so it lines up with the
+    // literal values `planProxyResourceOperations` actually diffs and
+    // `applyTier1Operation`'s create-rule ledger lookup actually receives —
+    // rows[i] and desired.rules[i] share the same order by construction.
+    let desired: DesiredProxyResource;
+    try {
+      desired = buildDesired(resource, domainName, rules, aliases);
+    } catch (error) {
+      if (!(error instanceof MaterializationError)) throw error;
+      await step({
+        step: "materialize-aliases",
+        status: "failed",
+        errorCode: "alias_unresolvable",
+        errorDetail: error.message,
+      });
+      await finish("failed", `alias materialization failed: ${error.message}`);
+      throw error;
+    }
+    const ruleRowByNaturalKey = new Map<string, ProxyResourceRuleRow>();
+    for (let i = 0; i < rules.length; i++) {
+      const row = rules[i];
+      const desiredRule = desired.rules[i];
+      if (row === undefined || desiredRule === undefined) continue;
+      ruleRowByNaturalKey.set(ruleNaturalKey(desiredRule), row);
+    }
 
     let observed: ObservedProxyResource[];
     try {
@@ -1091,11 +1179,28 @@ export function createProxyResourcesService(options: {
       );
   }
 
+  async function listRulesReferencingAlias(
+    aliasReference: string,
+  ): Promise<Array<{ resource: ProxyResourceRow; rule: ProxyResourceRuleRow }>> {
+    return db
+      .select({ resource: proxyResources, rule: proxyResourceRules })
+      .from(proxyResourceRules)
+      .innerJoin(proxyResources, eq(proxyResourceRules.proxyResourceId, proxyResources.id))
+      .where(
+        and(
+          eq(proxyResourceRules.owner, "dynamic_ip"),
+          eq(proxyResourceRules.value, aliasReference),
+        ),
+      )
+      .orderBy(asc(proxyResources.createdAt));
+  }
+
   return {
     reconcile,
     reconcileDomain,
     listResourcesForDomain,
     listResourcesForHostingTarget,
     listRuns,
+    listRulesReferencingAlias,
   };
 }

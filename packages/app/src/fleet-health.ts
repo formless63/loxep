@@ -143,6 +143,7 @@ import { TailscaleAdapterError } from "@loxep/integration-tailscale";
 import type { TailscaleDeviceFact } from "@loxep/integration-tailscale";
 import { TermixAdapterError, normalizeTermixBaseUrl } from "@loxep/integration-termix";
 import type { TermixAdapter, TermixHostFact } from "@loxep/integration-termix";
+import { PangolinAdapterError } from "@loxep/integration-pangolin";
 import { createContainerHostsService } from "@loxep/infrastructure";
 import type {
   ContainerHostProviderPort,
@@ -167,6 +168,8 @@ import type {
   TailscaleAdapterFactory,
   TermixAdapterFactory,
 } from "./fleet.ts";
+import { PANGOLIN_CONNECTION_PROVIDER } from "./pangolin.ts";
+import type { PangolinAdapterFactory } from "./pangolin.ts";
 
 /**
  * The slice of {@link AppServices} (`services.ts`) this module actually
@@ -184,6 +187,20 @@ export interface FleetHealthServices {
   getGatusAdapterForConnection: GatusAdapterFactory;
   getTailscaleAdapterForConnection: TailscaleAdapterFactory;
   getTermixAdapterForConnection: TermixAdapterFactory;
+  /**
+   * Pangolin chain design milestone 5 (`loxep-acj.5`) fold-in: Pangolin is a
+   * CONTROL-PLANE provider (Phase 7's own category, alongside Cloudflare and
+   * Purelymail), not one of the five FLEET companion tools above — but it had
+   * no connection health probe at all before this milestone (`healthPath` is
+   * not even a concept for it; it is not in `fleet-tool-registry.ts`), so its
+   * connection read `@loxep/domain`'s generic `probeConnection` fallback,
+   * which for a provider with no configured health path always answers
+   * `unknown`. `probePangolinConnection` below closes that gap with the
+   * IDENTICAL five-sibling recipe (one authenticated read proving the
+   * credential), dispatched separately from `probeFleetConnection`'s
+   * fleet-only switch — see `CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE`.
+   */
+  getPangolinAdapterForConnection: PangolinAdapterFactory;
 }
 
 const FLEET_PROVIDERS = new Set<string>([
@@ -192,6 +209,18 @@ const FLEET_PROVIDERS = new Set<string>([
   GATUS_CONNECTION_PROVIDER,
   TAILSCALE_CONNECTION_PROVIDER,
   TERMIX_CONNECTION_PROVIDER,
+]);
+
+/**
+ * Control-plane (never "fleet") providers this module ALSO probes, with
+ * their own adapter read — see {@link FleetHealthServices.getPangolinAdapterForConnection}'s
+ * doc for why Pangolin needs this despite not being a fleet companion tool.
+ * Kept as its own set (not folded into `FLEET_PROVIDERS`) so that constant's
+ * name and its module doc's "the five fleet providers" language both stay
+ * literally true.
+ */
+const CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE = new Set<string>([
+  PANGOLIN_CONNECTION_PROVIDER,
 ]);
 
 /**
@@ -1829,6 +1858,65 @@ async function probeTermixConnection(
 }
 
 // =============================================================================
+// Pangolin — loxep-acj.5 (Pangolin chain design milestone 5 fold-in)
+// =============================================================================
+
+/**
+ * Pangolin's connection health probe, following the identical five-sibling
+ * recipe: one AUTHENTICATED read that proves the credential, not merely
+ * reachability. `adapter.listOrgs()` is the cheapest such read — unlike
+ * `listSites`/`listResources`, it needs no `orgId` argument, so it proves the
+ * bearer key for BOTH an org-scoped key and a root key (a root key's
+ * connection may have no resolvable `orgId` at all — `pangolin.ts`'s own
+ * `PangolinConnectionAdapter.orgId: string | null` doc).
+ *
+ * ```text
+ * adapter factory throws (misconfigured)         -> unknown   { kind: 'misconfigured' }
+ * listOrgs() throws, no detail.httpStatus          -> unknown   { kind: 'unreachable' }
+ *   (a transport failure — normalizePangolinError never sets httpStatus)
+ * listOrgs() throws, detail.httpStatus is a number -> failing  { kind: <PangolinErrorKind> }
+ *   (the instance answered and refused/misbehaved — auth, rate_limited,
+ *    invalid_request, or a 5xx provider_unavailable are all "answered")
+ * listOrgs() succeeds                              -> ok       { orgs: n }
+ * ```
+ *
+ * This is the connection's ONLY writer of `last_success_at`/`last_error_at`/
+ * `last_error_code` — Pangolin has no poll executor (M2/M4's own reconciler
+ * is check/apply-on-demand, never a recurring sweep of its own before this
+ * milestone), matching the module doc's asymmetry rule for the five fleet
+ * probes above. No discovery side effect: unlike Beszel/Tailscale/Gatus/
+ * Dockhand/Termix, Pangolin resources are already discovered by
+ * `proxy.ts`'s own `reconcile()` (`unmatchedObserved`), so this probe stays
+ * a pure health read.
+ */
+async function probePangolinConnection(
+  services: FleetHealthServices,
+  connection: Connection,
+): Promise<HealthProbeOutcome> {
+  let handle;
+  try {
+    handle = await services.getPangolinAdapterForConnection(connection.id);
+  } catch (error) {
+    return misconfiguredOutcome(error);
+  }
+  const { adapter } = handle;
+
+  try {
+    const orgs = await adapter.listOrgs();
+    return { status: "ok", detail: { orgs: orgs.length }, source: "adapter" };
+  } catch (error) {
+    if (error instanceof PangolinAdapterError) {
+      const httpStatus = error.detail["httpStatus"];
+      if (typeof httpStatus !== "number") {
+        return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+      }
+      return { status: "failing", detail: { kind: error.kind }, source: "adapter" };
+    }
+    return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+  }
+}
+
+// =============================================================================
 // Composition
 // =============================================================================
 
@@ -1903,11 +1991,17 @@ async function probeConnectionDispatch(
     throw error;
   }
 
-  if (!FLEET_PROVIDERS.has(connection.provider)) {
+  const isFleetProvider = FLEET_PROVIDERS.has(connection.provider);
+  const isControlPlaneWithProbe = CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE.has(
+    connection.provider,
+  );
+  if (!isFleetProvider && !isControlPlaneWithProbe) {
     return fallbackProbe(db, subjectId);
   }
 
-  const outcome = await probeFleetConnection(services, connection, db);
+  const outcome = isControlPlaneWithProbe
+    ? await probePangolinConnection(services, connection)
+    : await probeFleetConnection(services, connection, db);
   await recordConnectionOutcome(services, connection.id, outcome);
   return outcome;
 }

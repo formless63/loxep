@@ -30,7 +30,24 @@ function RuleRow({ rule }: { rule: ProxyResourceChainDto['rules'][number] }) {
     <li className='flex flex-wrap items-center gap-2 rounded-md border px-2 py-1 text-sm'>
       <ToneBadge tone={RULE_ACTION_TONE[rule.action] ?? 'secondary'}>{rule.action}</ToneBadge>
       <Badge variant='outline'>{rule.match}</Badge>
-      <span className='font-mono'>{rule.value}</span>
+      {rule.aliasName === null ? (
+        <span className='font-mono'>{rule.value}</span>
+      ) : (
+        // Pangolin chain design milestone 5 (loxep-acj.5): a dynamic_ip rule
+        // stores the STABLE REFERENCE 'alias:<name>', never the resolved
+        // literal — this badge names the alias rather than the raw
+        // reference string, and links to where the alias's current address
+        // and every rule it binds are managed.
+        <Link
+          to='/infrastructure/aliases'
+          className='outline-none focus-visible:ring-[3px] focus-visible:ring-ring'
+        >
+          <Badge variant='secondary'>
+            <Icons.integrations />
+            bound to alias &lsquo;{rule.aliasName}&rsquo;
+          </Badge>
+        </Link>
+      )}
       <span className='text-muted-foreground tabular-nums'>priority {rule.priority}</span>
       <span className='text-muted-foreground'>· {rule.owner}</span>
       {!rule.enabled && (

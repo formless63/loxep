@@ -4,18 +4,21 @@
  * `reconcileDomain` fan-out, and — from M4 (`loxep-acj.4`) — the tier-1
  * apply leg: the write-authorization gate, the ledgered create/read-back
  * flow, and the tier-2-not-implemented skip. M2's own headline test ("no
- * sweep can reach an apply") still passes, in its M4-evolved form: a
- * `'poll'`-triggered apply is still refused before any provider call, and an
- * apply with no resolved write authorization still cannot reach
- * `provider.apply()`.
+ * sweep can reach an apply") still passes for TIER 2 (`assertWritePolicy`'s
+ * own rule 3 unconditionally refuses a `'poll'`/`'sweep'` trigger applying
+ * tier ≥ 2 — see `write-policy.test.ts`); M5 (`loxep-acj.5`) deliberately
+ * OPENS the tier-1 half of that gate for `'poll'` — the seam the dynamic-IP
+ * auto-apply detector uses — so a `'poll'`-triggered tier-1 apply is now
+ * PERMITTED here, still behind the connection's own write-policy tier.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
+import type { IpAliasMap, SettingsService } from "@loxep/domain";
 import {
   InfrastructureValidationError,
+  MaterializationError,
   ProviderCallError,
-  ProxyWritePolicyError,
   WritePolicyError,
   createProxyResourcesService,
 } from "../src/index.ts";
@@ -27,6 +30,15 @@ import type {
   ProxyWriteAuthorizationContext,
 } from "../src/index.ts";
 import { createScratchDb, dropScratchDb, scratchDbName, silentLogger } from "./helpers.ts";
+
+/** A minimal `Pick<SettingsService, "get">` that always answers the same alias map — every test here only ever asks for `infrastructure.ip_aliases`. */
+function fakeAliasSettings(aliases: IpAliasMap): Pick<SettingsService, "get"> {
+  return {
+    async get<T>(): Promise<T> {
+      return aliases as unknown as T;
+    },
+  };
+}
 
 const dbName = scratchDbName("loxep_test_infra_proxy");
 let handle: DbHandle;
@@ -285,45 +297,66 @@ describe("write-authorization gate — M2's headline constraint, M4-evolved", ()
     service = createProxyResourcesService({ db: handle.db });
   });
 
-  it("reconcile() refuses a 'poll'-triggered apply before any provider call — the M4-specific, stricter-than-M3 gate", async () => {
+  it("reconcile() now PERMITS a 'poll'-triggered tier-1 apply — M5 (loxep-acj.5) opens the seam M4 reserved for the dynamic-IP auto-apply detector, gated by the connection's write-policy tier exactly like a 'manual' apply", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     const resource = await insertProxyResource({
       domainId: domain.id,
       hostingTargetId: target.id,
     });
-    const provider = createStubProvider();
+    // observed: [] -> the planner emits a create-resource op, so the apply
+    // path is actually exercised (an empty plan would never reach it).
+    const provider = createStubProvider({ observed: [] });
 
-    await expect(
-      service.reconcile(resource.id, {
-        mode: "apply",
-        trigger: "poll",
-        provider,
-        orgId: "home-lab",
-        writeAuthorization: additivePolicy(pangolinConnectionId),
-      }),
-    ).rejects.toThrow(ProxyWritePolicyError);
-    expect(provider.readCallCount).toBe(0);
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "poll",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(1);
+    expect(provider.applyCallCount).toBe(1);
+  });
+
+  it("reconcile() still refuses a 'poll'-triggered apply at a 'read_only' policy tier — opening the trigger seam did not open the policy gate", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+    });
+    const provider = createStubProvider({ observed: [] });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "poll",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: { connectionId: pangolinConnectionId, policyTier: "read_only" },
+    });
+    expect(result.status).toBe("partial");
+    expect(result.appliedCount).toBe(0);
     expect(provider.applyCallCount).toBe(0);
   });
 
-  it("reconcileDomain() refuses a 'poll'-triggered apply before resolving any provider", async () => {
+  it("reconcileDomain() propagates a 'poll'-triggered apply through to reconcile() per resource, resolving a provider for each", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
     let resolveCalls = 0;
 
-    await expect(
-      service.reconcileDomain(domain.id, {
-        mode: "apply",
-        trigger: "poll",
-        resolveProvider: async () => {
-          resolveCalls += 1;
-          return null;
-        },
-      }),
-    ).rejects.toThrow(ProxyWritePolicyError);
-    expect(resolveCalls).toBe(0);
+    const results = await service.reconcileDomain(domain.id, {
+      mode: "apply",
+      trigger: "poll",
+      resolveProvider: async () => {
+        resolveCalls += 1;
+        return null;
+      },
+    });
+    expect(resolveCalls).toBe(1);
+    expect(results[0]?.status).toBe("skipped");
   });
 
   it("throws when mode:'apply' would apply a tier-1 op but no writeAuthorization was resolved — a caller bug, not a policy refusal", async () => {
@@ -926,5 +959,255 @@ describe("listResourcesForHostingTarget()", () => {
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     const results = await service.listResourcesForHostingTarget(target.id);
     expect(results).toEqual([]);
+  });
+});
+
+describe("listRulesReferencingAlias() (loxep-acj.5)", () => {
+  let service: ProxyResourcesService;
+  beforeAll(() => {
+    service = createProxyResourcesService({ db: handle.db });
+  });
+
+  it("finds every dynamic_ip rule referencing an alias, ACROSS domains and hosting targets", async () => {
+    const domainA = await insertDomain();
+    const domainB = await insertDomain();
+    const targetA = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const targetB = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resourceA = await insertProxyResource({ domainId: domainA.id, hostingTargetId: targetA.id });
+    const resourceB = await insertProxyResource({ domainId: domainB.id, hostingTargetId: targetB.id });
+    await insertRule({ proxyResourceId: resourceA.id, owner: "dynamic_ip", value: "alias:home" });
+    await insertRule({ proxyResourceId: resourceB.id, owner: "dynamic_ip", value: "alias:home", priority: 50 });
+    // A decoy: a different alias, and a manual/template rule — neither should surface.
+    await insertRule({ proxyResourceId: resourceA.id, owner: "dynamic_ip", value: "alias:office" });
+    await insertRule({ proxyResourceId: resourceA.id, owner: "manual", value: "198.51.100.1/32" });
+
+    const found = await service.listRulesReferencingAlias("alias:home");
+    expect(found).toHaveLength(2);
+    expect(found.map((f) => f.resource.id).sort()).toEqual([resourceA.id, resourceB.id].sort());
+    expect(found.every((f) => f.rule.owner === "dynamic_ip" && f.rule.value === "alias:home")).toBe(true);
+  });
+
+  it("returns an empty list when no rule references the alias", async () => {
+    const found = await service.listRulesReferencingAlias("alias:nonexistent");
+    expect(found).toEqual([]);
+  });
+});
+
+/**
+ * Dynamic-IP alias materialization wired into `reconcile()` (Pangolin chain
+ * design milestone 5, `loxep-acj.5`). `buildDesired()` resolves a
+ * `dynamic_ip`-owned rule's stored `alias:<name>` reference into today's
+ * literal address before ANY provider call — an unresolvable alias fails the
+ * run loudly (never a fallback), and a resolvable one diffs/applies exactly
+ * like an ordinary literal rule from here on.
+ */
+describe("dynamic-IP alias materialization (loxep-acj.5)", () => {
+  it("an unresolvable alias reference fails the run before any provider read, with a 'materialize-aliases' step", async () => {
+    const service = createProxyResourcesService({ db: handle.db, settings: fakeAliasSettings({}) });
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
+    await insertRule({ proxyResourceId: resource.id, owner: "dynamic_ip", value: "alias:home" });
+    const provider = createStubProvider();
+
+    await expect(
+      service.reconcile(resource.id, { mode: "check", trigger: "manual", provider, orgId: "home-lab" }),
+    ).rejects.toThrow(MaterializationError);
+    expect(provider.readCallCount).toBe(0);
+
+    const runs = await service.listRuns(resource.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe("failed");
+    const steps = await readSteps(runs[0]?.id ?? null);
+    expect(steps.find((s) => s.step === "materialize-aliases")?.status).toBe("failed");
+  });
+
+  it("resolves an alias to its current address and diffs an existing observed resource against the LITERAL value, producing a create-rule op for a genuinely new address", async () => {
+    const aliases: IpAliasMap = {
+      home: {
+        address: "203.0.113.7",
+        source: "manual",
+        hostname: null,
+        connectionId: null,
+        siteId: null,
+        previousAddress: null,
+        observedAt: null,
+        confirmedAt: "2026-08-16T00:00:00.000Z",
+        autoApply: false,
+      },
+    };
+    const service = createProxyResourcesService({ db: handle.db, settings: fakeAliasSettings(aliases) });
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
+    await insertRule({ proxyResourceId: resource.id, owner: "dynamic_ip", value: "alias:home" });
+
+    const operations: ProxyOperation[] = [];
+    const provider: ProxyProviderPort = {
+      async read() {
+        return [observedResource({ fullDomain: `api.${domain.name}`, rules: [] })];
+      },
+      async apply(operation) {
+        operations.push(operation);
+        if (operation.kind === "create-rule") {
+          return { kind: operation.kind, status: "applied", externalRuleId: "created-rule-1" };
+        }
+        return { kind: operation.kind, status: "applied" };
+      },
+      capabilities() {
+        return {
+          provider: "pangolin",
+          bulkRuleSet: false,
+          ruleAliases: false,
+          ruleDisable: true,
+          domainCreate: false,
+          siteCreate: false,
+          ruleMatches: ["CIDR", "IP"],
+          ruleActions: ["ACCEPT", "DROP", "PASS"],
+        };
+      },
+    };
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(1);
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({ kind: "create-rule", rule: { value: "203.0.113.7/32" } });
+  });
+
+  it("add-then-retire in practice: when the alias's address changes, reconcile() ADDS a rule for the new address and leaves the old (still-observed) rule completely untouched", async () => {
+    const aliases: IpAliasMap = {
+      home: {
+        address: "203.0.113.7",
+        source: "manual",
+        hostname: null,
+        connectionId: null,
+        siteId: null,
+        previousAddress: "203.0.113.4",
+        observedAt: "2026-08-16T00:00:00.000Z",
+        confirmedAt: "2026-08-15T00:00:00.000Z",
+        autoApply: false,
+      },
+    };
+    const service = createProxyResourcesService({ db: handle.db, settings: fakeAliasSettings(aliases) });
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
+    await insertRule({ proxyResourceId: resource.id, owner: "dynamic_ip", value: "alias:home" });
+
+    const operations: ProxyOperation[] = [];
+    const provider: ProxyProviderPort = {
+      async read() {
+        return [
+          observedResource({
+            fullDomain: `api.${domain.name}`,
+            rules: [
+              {
+                externalRuleId: "900",
+                action: "ACCEPT",
+                match: "CIDR",
+                value: "203.0.113.4/32",
+                priority: 100,
+                enabled: true,
+              },
+            ],
+          }),
+        ];
+      },
+      async apply(operation) {
+        operations.push(operation);
+        if (operation.kind === "create-rule") {
+          return { kind: operation.kind, status: "applied", externalRuleId: "created-rule-2" };
+        }
+        return { kind: operation.kind, status: "applied" };
+      },
+      capabilities() {
+        return {
+          provider: "pangolin",
+          bulkRuleSet: false,
+          ruleAliases: false,
+          ruleDisable: true,
+          domainCreate: false,
+          siteCreate: false,
+          ruleMatches: ["CIDR", "IP"],
+          ruleActions: ["ACCEPT", "DROP", "PASS"],
+        };
+      },
+    };
+
+    // 'poll' — the trigger the alias-detection sweep uses, now permitted for
+    // a tier-1 op behind an 'additive' policy (this milestone's own change).
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "poll",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(1);
+    // ONLY a create-rule for the NEW address — never an update-rule against
+    // the old one, and never a retire. Add-then-retire's "keep the old one"
+    // half falls out of the planner naturally (see ip-aliases.ts's module
+    // doc): there is exactly one operation here, and it is a create.
+    expect(operations).toHaveLength(1);
+    expect(operations[0]).toMatchObject({ kind: "create-rule", rule: { value: "203.0.113.7/32" } });
+  });
+
+  it("an unchanged alias value is idempotent: the resolved literal matches the observed rule, so no operation is emitted at all", async () => {
+    const aliases: IpAliasMap = {
+      home: {
+        address: "203.0.113.7",
+        source: "manual",
+        hostname: null,
+        connectionId: null,
+        siteId: null,
+        previousAddress: null,
+        observedAt: "2026-08-16T00:00:00.000Z",
+        confirmedAt: "2026-08-15T00:00:00.000Z",
+        autoApply: false,
+      },
+    };
+    const service = createProxyResourcesService({ db: handle.db, settings: fakeAliasSettings(aliases) });
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
+    await insertRule({ proxyResourceId: resource.id, owner: "dynamic_ip", value: "alias:home" });
+
+    const provider = createStubProvider({
+      observed: [
+        observedResource({
+          fullDomain: `api.${domain.name}`,
+          rules: [
+            {
+              externalRuleId: "900",
+              action: "ACCEPT",
+              match: "CIDR",
+              value: "203.0.113.7/32",
+              priority: 100,
+              enabled: true,
+            },
+          ],
+        }),
+      ],
+    });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "poll",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+    expect(result.status).toBe("succeeded");
+    expect(result.operationCount).toBe(0);
+    expect(result.appliedCount).toBe(0);
+    expect(provider.applyCallCount).toBe(0);
   });
 });

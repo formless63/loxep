@@ -39,6 +39,7 @@ import {
   FLEET_EVIDENCE_INGEST_TASK,
   GATUS_PUSH_TASK_NAME,
   HEALTH_SWEEP_TASK_NAME,
+  IP_ALIAS_DETECTION_TASK_NAME,
   REFRESH_TOKENS_TASK_NAME,
   SYNC_EBAY_PURCHASES_TASK_NAME,
   WOO_ABSOLUTE_MIN_INTERVAL_SECONDS,
@@ -124,6 +125,11 @@ describe("buildWorkerRegistry", () => {
         // `infrastructure-proxy.ts`'s for why it registers no poll-executor
         // route or cron item yet.
         SYNC_PROXY_RESOURCE_TASK,
+        // Pangolin chain design milestone 5 (loxep-acj.5): the dynamic-IP
+        // named-alias detection sweep — one recurring cron, no
+        // monitor_targets row, riding the shared scheduling foundation the
+        // same way health.sweep does.
+        IP_ALIAS_DETECTION_TASK_NAME,
         "maintenance.heartbeat",
         // Phase 8 milestone 1 (loxep-ovj.1): the one recurring integration
         // health sweep, no monitor_targets row.
@@ -152,6 +158,7 @@ describe("buildWorkerRegistry", () => {
     expect(cronTasks).toContain(HEALTH_SWEEP_TASK_NAME);
     expect(cronTasks).toContain(GATUS_PUSH_TASK_NAME);
     expect(cronTasks).toContain(ACCOUNTING_POST_FACTS_TASK_NAME);
+    expect(cronTasks).toContain(IP_ALIAS_DETECTION_TASK_NAME);
     // @loxep/commerce's ORDER SYNC defines no cron item on purpose: its
     // scheduled work is a `woo_orders` / `ebay_orders` / `medusa_orders`
     // monitor target the market dispatcher claims, which is the whole point

@@ -213,7 +213,7 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
         </Card>
       </div>
 
-      <div className='grid grid-cols-1 gap-4 md:grid-cols-3'>
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4'>
         <Link
           to='/infrastructure/domains'
           className='block rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring'
@@ -248,6 +248,19 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
             <CardHeader>
               <CardTitle className='text-base'>Reconcile runs</CardTitle>
               <CardDescription>Every apply and check run, with its steps.</CardDescription>
+            </CardHeader>
+          </Card>
+        </Link>
+        <Link
+          to='/infrastructure/aliases'
+          className='block rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring'
+        >
+          <Card className='h-full transition-colors hover:bg-accent/50'>
+            <CardHeader>
+              <CardTitle className='text-base'>IP aliases</CardTitle>
+              <CardDescription>
+                Named dynamic-IP addresses and the Pangolin rules bound to them.
+              </CardDescription>
             </CardHeader>
           </Card>
         </Link>

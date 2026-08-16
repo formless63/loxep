@@ -284,7 +284,16 @@ async function runEnsure(domainId: string): Promise<void> {
   await waitFor(
     async () => {
       const rows = await runsFor(domainId);
-      return rows.length > before ? rows : undefined;
+      // Wait for the run to reach a TERMINAL status, not merely for its row
+      // to exist — a run row is inserted with status 'running' before the
+      // handler finishes, so a caller that returns as soon as the row
+      // appears can read 'running' instead of the eventual 'succeeded'/
+      // 'partial'/'failed' under enough system load for the two DB writes
+      // to land on separate polls. Every caller of `runEnsure` asserts on
+      // the run's OWN final status immediately afterward, so this is the
+      // honest wait condition, not merely "a job ran".
+      const latest = rows.at(-1);
+      return rows.length > before && latest?.status !== "running" ? rows : undefined;
     },
     { timeoutMs: 30_000, label: `ensure-mail-domain run for ${domainId}` },
   );

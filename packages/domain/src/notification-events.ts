@@ -139,11 +139,24 @@ export const SALE_EVENT_TYPES = ["manual_sale_recorded"] as const;
  * reconciler ACTION (a click, an apply run's own step log) rather than a
  * passively-DETECTED fact — the same distinction that keeps `dismiss`/
  * `markApplied` outside this event's write site.
+ *
+ * `ip_alias_changed` (Pangolin chain design milestone 5, `loxep-acj.5`) is
+ * the dynamic-IP alias case: ONE event per detected address change, never
+ * per sweep and never per affected rule/resource — the design's own "never a
+ * silent apply" rule. Emitted whether or not the change auto-applied
+ * (`payload.autoApplied`), because an unattended change to an access rule
+ * that nobody is told about is the exact failure the alias feature exists to
+ * avoid. `subject_type` is `hosting_target` or `managed_domain` (an
+ * attribution anchor — one of the affected resources/domains, not an
+ * enumeration; the full "N rules across M resources" detail travels in
+ * `payload`, the same way a drift finding's identity travels in payload
+ * rather than a new subject table).
  */
 export const INFRASTRUCTURE_EVENT_TYPES = [
   "drift_found",
   "drift_disappeared",
   "reconcile_run_failed",
+  "ip_alias_changed",
 ] as const;
 
 /** One registered event class: what it is about, and what it may say. */
@@ -221,10 +234,12 @@ export const notificationEventClasses: Record<
     eventClass: "infrastructure",
     label: "Infrastructure",
     description:
-      "DNS drift findings (found / disappeared) and reconcile-run " +
-      "failures. Emitted from @loxep/infrastructure's drift-detection " +
-      "write site (drift.ts's recordRun) and the reconcile orchestrator " +
-      "(sync.ts's run) respectively.",
+      "DNS drift findings (found / disappeared), reconcile-run " +
+      "failures, and dynamic-IP alias changes. Emitted from " +
+      "@loxep/infrastructure's drift-detection write site (drift.ts's " +
+      "recordRun), the reconcile orchestrator (sync.ts's run), and the " +
+      "IP-alias detection sweep (@loxep/app's ip-alias-detection.ts) " +
+      "respectively.",
     subjectTypes: ["managed_domain", "reconcile_run", "hosting_target"],
     eventTypes: INFRASTRUCTURE_EVENT_TYPES,
     wired: true,

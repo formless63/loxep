@@ -33,6 +33,7 @@
 import { z } from "zod";
 import { defineSetting } from "./settings.ts";
 import { providerWritePolicyTierSchema } from "./provider-write-policy.ts";
+import { ipAliasesSchema } from "./ip-aliases.ts";
 
 /**
  * Installation-wide monitor cadence defaults.
@@ -896,6 +897,37 @@ export const providerWritePolicySetting = defineSetting({
   defaultValue: {},
 });
 
+/**
+ * Named dynamic-IP aliases (Pangolin chain design milestone 5,
+ * `loxep-acj.5`, "Where the address comes from"). Keyed by alias name (see
+ * `ip-aliases.ts`'s own doc for why the name lives in the map key rather
+ * than duplicated in the value); a key absent from the map simply does not
+ * exist as an alias — there is no "default alias".
+ *
+ * Deliberately NOT a table. Milestone 2's own migration (`0027`) already
+ * shipped `proxy_resource_rules.owner`'s `dynamic_ip` value in anticipation
+ * of this milestone, and this milestone re-reads the design's own schema
+ * section rather than assuming a table follows: "One registered setting,
+ * `infrastructure.ip_aliases`, holding a small list" is the design's own
+ * words. A handful of named aliases per installation has no per-row
+ * ownership, no independent lifecycle, and no query shape a settings map
+ * cannot answer — unlike `proxy_resource_rules` itself, which earned its own
+ * table for exactly the reasons open question 7 states (multi-row,
+ * per-row-owned). No migration ships with this milestone.
+ */
+export const ipAliasesSetting = defineSetting({
+  key: "infrastructure.ip_aliases",
+  schema: ipAliasesSchema,
+  description:
+    "Named dynamic-IP aliases (e.g. 'home'): the current address, where it " +
+    "comes from (manual / dns / pangolin_site), and whether a detected " +
+    "change may auto-apply the ADD half of an add-then-retire fan-out. A " +
+    "proxy_resource_rules row with owner='dynamic_ip' references one by " +
+    "storing 'alias:<name>' as its value, resolved at materialization time.",
+  schemaVersion: 1,
+  defaultValue: {},
+});
+
 /** Every definition this module registers, for diagnostics and tests. */
 export const registeredApplicationSettings = [
   monitorDefaultsSetting,
@@ -904,6 +936,7 @@ export const registeredApplicationSettings = [
   wooRateBudgetSetting,
   orderPayloadRetentionSetting,
   providerWritePolicySetting,
+  ipAliasesSetting,
   cloudflareRateBudgetSetting,
   caaPolicySetting,
   documentsMediaLimitsSetting,

@@ -64,6 +64,7 @@ export {
   integrationsEnabledSetting,
   inventoryDefaultSaleModeSetting,
   inventoryMediaLimitsSetting,
+  ipAliasesSetting,
   monitorDefaultsSetting,
   monitorObservationCapsSetting,
   orderPayloadRetentionSetting,
@@ -83,6 +84,18 @@ export {
   resolveProviderWritePolicy,
 } from "./provider-write-policy.ts";
 export type { ProviderWritePolicyTier } from "./provider-write-policy.ts";
+
+export {
+  formatIpAliasReference,
+  IP_ALIAS_REFERENCE_PREFIX,
+  IP_ALIAS_SOURCES,
+  ipAliasCidrValue,
+  ipAliasEntrySchema,
+  ipAliasesSchema,
+  ipAliasNameSchema,
+  parseIpAliasReference,
+} from "./ip-aliases.ts";
+export type { IpAliasEntry, IpAliasMap, IpAliasSource } from "./ip-aliases.ts";
 
 export {
   applicationSecretAad,

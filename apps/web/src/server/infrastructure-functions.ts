@@ -718,6 +718,13 @@ export interface ProxyResourceRuleDto {
   enabled: boolean;
   /** Closed set: `template` | `manual` | `dynamic_ip`. See `dns_records.owner`'s precedent. */
   owner: string;
+  /**
+   * The `ip_aliases` name `value` references (`alias:<name>` — Pangolin
+   * chain design milestone 5, `loxep-acj.5`), or `null` for an ordinary
+   * literal `value`. Parsed server-side so the row list can render "bound to
+   * alias 'home'" instead of the raw `alias:home` reference string.
+   */
+  aliasName: string | null;
 }
 
 /**
@@ -793,6 +800,8 @@ async function buildProxyResourceChainDtos(
   entries: ReadonlyArray<{ resource: ProxyResourceRow; rules: ProxyResourceRuleRow[] }>,
   names: { domainNameById: Map<string, string>; hostingTargetNameById: Map<string, string> }
 ): Promise<ProxyResourceChainDto[]> {
+  const { parseIpAliasReference } = await import('@loxep/domain');
+
   // The connection each entry's hosting target links to, plus that
   // connection's stored write-policy tier — batched once for the whole
   // list rather than per-row, matching `domainNameById`'s own precedent.
@@ -863,7 +872,8 @@ async function buildProxyResourceChainDtos(
           value: rule.value,
           priority: rule.priority,
           enabled: rule.enabled,
-          owner: rule.owner
+          owner: rule.owner,
+          aliasName: parseIpAliasReference(rule.value)
         }))
         .sort((a, b) => a.priority - b.priority),
       lastRun:
@@ -1190,6 +1200,223 @@ export const requestProxyResourceDomainApply = createServerFn({ method: 'POST' }
       );
     });
     return { enqueued: true };
+  });
+
+// ---------------------------------------------------------------------------
+// Dynamic-IP named aliases (Pangolin chain design milestone 5, loxep-acj.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * One `infrastructure.ip_aliases` entry, plus a derived `boundRulesCount` —
+ * how many `dynamic_ip`-owned rules, across every domain and hosting target,
+ * currently reference this alias (`ProxyResourcesService.
+ * listRulesReferencingAlias`). Member-readable like `fetchProviderWritePolicy`:
+ * knowing an alias's current address is no more sensitive than knowing a
+ * connection's write tier.
+ */
+export interface IpAliasDto {
+  name: string;
+  address: string;
+  source: string;
+  hostname: string | null;
+  connectionId: string | null;
+  siteId: string | null;
+  previousAddress: string | null;
+  observedAt: string | null;
+  confirmedAt: string | null;
+  autoApply: boolean;
+  boundRulesCount: number;
+}
+
+export const fetchIpAliases = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<IpAliasDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { ipAliasesSetting, formatIpAliasReference } = await import('@loxep/domain');
+    const { settings, proxyResources } = getAdminServices();
+    const aliases = await settings.get(ipAliasesSetting);
+
+    const entries = Object.entries(aliases);
+    const results: IpAliasDto[] = [];
+    for (const [name, entry] of entries) {
+      const referencing = await proxyResources.listRulesReferencingAlias(
+        formatIpAliasReference(name)
+      );
+      results.push({
+        name,
+        address: entry.address,
+        source: entry.source,
+        hostname: entry.hostname,
+        connectionId: entry.connectionId,
+        siteId: entry.siteId,
+        previousAddress: entry.previousAddress,
+        observedAt: entry.observedAt,
+        confirmedAt: entry.confirmedAt,
+        autoApply: entry.autoApply,
+        boundRulesCount: referencing.length
+      });
+    }
+    return results.sort((a, b) => a.name.localeCompare(b.name));
+  }
+);
+
+const ipAliasSourceSchema = z.enum(['manual', 'dns', 'pangolin_site']);
+
+const createIpAliasInput = z.strictObject({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(
+      /^[a-z][a-z0-9_-]*$/,
+      'Alias names must start with a lowercase letter and contain only lowercase letters, digits, - and _'
+    ),
+  address: z.string().trim().min(1, 'Address is required'),
+  source: ipAliasSourceSchema,
+  hostname: z.string().trim().min(1).nullish(),
+  connectionId: z.uuid().nullish(),
+  siteId: z.string().trim().min(1).nullish(),
+  autoApply: z.boolean()
+});
+
+/**
+ * Admin-only. Refuses a duplicate name — the map's own key is the alias's
+ * identity, so a create that reused one would silently overwrite it rather
+ * than reporting a conflict.
+ */
+export const createIpAlias = createServerFn({ method: 'POST' })
+  .inputValidator(createIpAliasInput)
+  .handler(async ({ data }): Promise<IpAliasDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { ipAliasesSetting } = await import('@loxep/domain');
+    const { settings } = getAdminServices();
+
+    const current = await settings.get(ipAliasesSetting);
+    if (Object.hasOwn(current, data.name)) {
+      throw new Error(`An alias named '${data.name}' already exists.`);
+    }
+    const now = new Date().toISOString();
+    // A manual alias has no detector to trust — never persisted as
+    // auto-applying, regardless of what the client sent (the design's own
+    // "never for source: 'manual'" rule, enforced server-side too).
+    const autoApply = data.source === 'manual' ? false : data.autoApply;
+    const next = {
+      ...current,
+      [data.name]: {
+        address: data.address,
+        source: data.source,
+        hostname: data.hostname ?? null,
+        connectionId: data.connectionId ?? null,
+        siteId: data.siteId ?? null,
+        previousAddress: null,
+        observedAt: null,
+        confirmedAt: now,
+        autoApply
+      }
+    };
+    await settings.set(ipAliasesSetting, next, { actorUserId: session.user.id });
+    return {
+      name: data.name,
+      address: data.address,
+      source: data.source,
+      hostname: data.hostname ?? null,
+      connectionId: data.connectionId ?? null,
+      siteId: data.siteId ?? null,
+      previousAddress: null,
+      observedAt: null,
+      confirmedAt: now,
+      autoApply,
+      boundRulesCount: 0
+    };
+  });
+
+const updateIpAliasInput = z.strictObject({
+  name: z.string().trim().min(1),
+  address: z.string().trim().min(1, 'Address is required'),
+  source: ipAliasSourceSchema,
+  hostname: z.string().trim().min(1).nullish(),
+  connectionId: z.uuid().nullish(),
+  siteId: z.string().trim().min(1).nullish(),
+  autoApply: z.boolean()
+});
+
+/**
+ * Admin-only. An operator-typed address change is treated exactly like a
+ * detector's own: `previousAddress` retained, `confirmedAt` bumped — the
+ * design's own "the alias is updated, previousAddress retained" flow,
+ * triggered by a human hand instead of a detector run. Unchanged fields
+ * (`source`/`hostname`/`connectionId`/`siteId`/`autoApply`) simply overwrite,
+ * since this form always submits the full entry.
+ */
+export const updateIpAlias = createServerFn({ method: 'POST' })
+  .inputValidator(updateIpAliasInput)
+  .handler(async ({ data }): Promise<IpAliasDto> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { ipAliasesSetting, formatIpAliasReference } = await import('@loxep/domain');
+    const { settings, proxyResources } = getAdminServices();
+
+    const current = await settings.get(ipAliasesSetting);
+    const existing = current[data.name];
+    if (existing === undefined) {
+      throw new Error(`No alias named '${data.name}' exists.`);
+    }
+    const addressChanged = existing.address !== data.address;
+    const updated = {
+      address: data.address,
+      source: data.source,
+      hostname: data.hostname ?? null,
+      connectionId: data.connectionId ?? null,
+      siteId: data.siteId ?? null,
+      previousAddress: addressChanged ? existing.address : existing.previousAddress,
+      observedAt: existing.observedAt,
+      confirmedAt: new Date().toISOString(),
+      // See createIpAlias's identical rule.
+      autoApply: data.source === 'manual' ? false : data.autoApply
+    };
+    const next = { ...current, [data.name]: updated };
+    await settings.set(ipAliasesSetting, next, { actorUserId: session.user.id });
+
+    const referencing = await proxyResources.listRulesReferencingAlias(
+      formatIpAliasReference(data.name)
+    );
+    return { name: data.name, ...updated, boundRulesCount: referencing.length };
+  });
+
+/**
+ * Admin-only. Refuses when a `dynamic_ip` rule still references the alias —
+ * deleting out from under a bound rule would leave it permanently
+ * unresolvable (`MaterializationError` on every future reconcile) with no
+ * UI path back except editing the rule's own `value` directly. The operator
+ * unbinds (or deletes) the referencing rule first.
+ */
+export const deleteIpAlias = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ name: z.string().trim().min(1) }))
+  .handler(async ({ data }): Promise<{ deleted: true }> => {
+    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { ipAliasesSetting, formatIpAliasReference } = await import('@loxep/domain');
+    const { settings, proxyResources } = getAdminServices();
+
+    const referencing = await proxyResources.listRulesReferencingAlias(
+      formatIpAliasReference(data.name)
+    );
+    if (referencing.length > 0) {
+      throw new Error(
+        `Alias '${data.name}' is still referenced by ${referencing.length} rule${referencing.length === 1 ? '' : 's'} — unbind or remove ${referencing.length === 1 ? 'it' : 'them'} first.`
+      );
+    }
+
+    const current = await settings.get(ipAliasesSetting);
+    if (!Object.hasOwn(current, data.name)) {
+      throw new Error(`No alias named '${data.name}' exists.`);
+    }
+    const next = { ...current };
+    delete next[data.name];
+    await settings.set(ipAliasesSetting, next, { actorUserId: session.user.id });
+    return { deleted: true };
   });
 
 // ---------------------------------------------------------------------------

@@ -35,9 +35,11 @@ import { TailscaleAdapterError } from "@loxep/integration-tailscale";
 import type { TailscaleAdapter } from "@loxep/integration-tailscale";
 import { TermixAdapterError } from "@loxep/integration-termix";
 import type { TermixAdapter } from "@loxep/integration-termix";
+import { PangolinAdapterError } from "@loxep/integration-pangolin";
 import { createFleetHealthSubjectRegistry } from "../src/fleet-health.ts";
 import type { FleetHealthServices } from "../src/fleet-health.ts";
 import { BeszelCredentialsMissingError } from "../src/fleet.ts";
+import { PangolinCredentialsMissingError } from "../src/pangolin.ts";
 import { createScratchDb, dropScratchDb, scratchDbName, testKeyring } from "./helpers.ts";
 
 describe("createFleetHealthSubjectRegistry", () => {
@@ -100,6 +102,7 @@ describe("createFleetHealthSubjectRegistry", () => {
       getGatusAdapterForConnection: () => notConfigured("Gatus"),
       getTailscaleAdapterForConnection: () => notConfigured("Tailscale"),
       getTermixAdapterForConnection: () => notConfigured("Termix"),
+      getPangolinAdapterForConnection: () => notConfigured("Pangolin"),
       ...overrides,
     };
   }
@@ -1831,6 +1834,133 @@ describe("createFleetHealthSubjectRegistry", () => {
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("ok");
       expect(outcome?.detail).toEqual({ hostsReadable: false });
+    });
+  });
+
+  describe("pangolin (control-plane, not a fleet companion — loxep-acj.5's fold-in)", () => {
+    async function createPangolinConnection(label: string): Promise<Connection> {
+      return connections.createConnection({
+        provider: "pangolin",
+        kind: "proxy",
+        name: `pangolin ${label}`,
+        config: { pangolin: { baseUrl: "https://pangolin.test", orgId: "home-lab" } },
+        createdByUserId: "fleet-health-test-user",
+      });
+    }
+
+    function makePangolinServices(
+      adapter: { listOrgs: () => Promise<unknown[]> },
+    ): FleetHealthServices {
+      return fakeServices({
+        getPangolinAdapterForConnection: async (id) => ({
+          connectionId: id,
+          baseUrl: "https://pangolin.test",
+          orgId: "home-lab",
+          sourceAccountKey: "pangolin:test",
+          adapter: adapter as never,
+          minIntervalSeconds: 3600,
+        }),
+      });
+    }
+
+    it("listOrgs() throws with no httpStatus (transport failure) -> unknown, never failing", async () => {
+      const connection = await createPangolinConnection("unreachable");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({
+          listOrgs: async () => {
+            throw new PangolinAdapterError("provider_unavailable", "network error", {
+              errorName: "TypeError",
+            });
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail).toEqual({ kind: "unreachable" });
+    });
+
+    it("listOrgs() throws a non-PangolinAdapterError -> unknown (never assumed to be a rejection)", async () => {
+      const connection = await createPangolinConnection("weird-throw");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({
+          listOrgs: async () => {
+            throw new Error("something unrelated");
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail).toEqual({ kind: "unreachable" });
+    });
+
+    it("listOrgs() throws kind auth WITH httpStatus (the instance answered and rejected the key) -> failing", async () => {
+      const connection = await createPangolinConnection("bad-credential");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({
+          listOrgs: async () => {
+            throw new PangolinAdapterError("auth", "401", { httpStatus: 401 });
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("failing");
+      expect(outcome?.detail).toEqual({ kind: "auth" });
+    });
+
+    it("listOrgs() throws kind provider_unavailable WITH httpStatus (a 5xx — the instance answered and misbehaved) -> failing", async () => {
+      const connection = await createPangolinConnection("hub-5xx");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({
+          listOrgs: async () => {
+            throw new PangolinAdapterError("provider_unavailable", "500", { httpStatus: 500 });
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("failing");
+      expect(outcome?.detail).toEqual({ kind: "provider_unavailable" });
+    });
+
+    it("listOrgs() succeeds -> ok, detail carries only the org count", async () => {
+      const connection = await createPangolinConnection("healthy");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({ listOrgs: async () => [{ orgId: "home-lab" }, { orgId: "second" }] }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("ok");
+      expect(outcome?.detail).toEqual({ orgs: 2 });
+    });
+
+    it("the adapter factory itself throwing an AppConfigurationError -> unknown, kind misconfigured", async () => {
+      const connection = await createPangolinConnection("no-credential");
+      const registry = createFleetHealthSubjectRegistry(
+        fakeServices({
+          getPangolinAdapterForConnection: () => {
+            throw new PangolinCredentialsMissingError(
+              "no stored pangolin_credentials for this connection",
+            );
+          },
+        }),
+      );
+      const outcome = await registry.connection?.probe(handle.db, connection.id);
+      expect(outcome?.status).toBe("unknown");
+      expect(outcome?.detail).toEqual({ kind: "misconfigured" });
+    });
+
+    it("records the sweep's own success/failure bookkeeping — Pangolin has no poll executor, so this probe is its sole writer, exactly like the five fleet siblings", async () => {
+      const connection = await createPangolinConnection("bookkeeping");
+      const registry = createFleetHealthSubjectRegistry(
+        makePangolinServices({
+          listOrgs: async () => {
+            throw new PangolinAdapterError("auth", "401", { httpStatus: 401 });
+          },
+        }),
+      );
+      await runHealthSweep({ db: handle.db, registry, maxSubjectsPerType: 500 });
+
+      const updated = await connections.getConnection(connection.id);
+      expect(updated.lastErrorCode).toBe("fleet_auth");
+      expect(updated.lastErrorAt).not.toBeNull();
     });
   });
 

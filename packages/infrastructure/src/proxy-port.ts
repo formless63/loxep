@@ -278,6 +278,15 @@ export interface DesiredProxyTarget extends ProxyTargetPayload {
 export interface DesiredProxyRule extends ProxyRulePayload {
   externalRuleId?: string | null;
   owner: "template" | "manual" | "dynamic_ip";
+  /**
+   * The `ip_aliases` name `value` was resolved from at materialization
+   * (`ip-aliases.ts`'s `materializeProxyRuleValue`), or `null` for an
+   * ordinary literal. `value` itself is ALWAYS the resolved literal by the
+   * time it reaches this type — this field is provenance for
+   * `write-policy.ts`'s `wouldLockOut` (`LockoutCheckRule.aliasName`), never
+   * re-interpreted by this port or its planner.
+   */
+  aliasName?: string | null;
 }
 
 /**

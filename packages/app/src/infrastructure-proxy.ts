@@ -379,7 +379,10 @@ export function createInfrastructureProxyTasks(options: {
   services: AppServices;
 }): InfrastructureProxyTasks {
   const { services } = options;
-  const proxyResources = createProxyResourcesService({ db: services.db });
+  const proxyResources = createProxyResourcesService({
+    db: services.db,
+    settings: services.settings,
+  });
 
   const syncProxyResourceTask = defineTask({
     name: SYNC_PROXY_RESOURCE_TASK,

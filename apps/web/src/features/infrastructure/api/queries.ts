@@ -9,6 +9,7 @@ import {
   fetchHostingTargetOptions,
   fetchHostingTargets,
   fetchInfrastructureOverview,
+  fetchIpAliases,
   fetchMailConnectionOptions,
   fetchManagedDomain,
   fetchManagedDomains,
@@ -127,4 +128,10 @@ export const containerHostRegistrationQuery = (hostingTargetId: string) =>
 export const pangolinConnectionOptionsQuery = queryOptions({
   queryKey: ['infrastructure', 'connection-options', 'pangolin'],
   queryFn: () => fetchPangolinConnectionOptions()
+});
+
+/** Named dynamic-IP aliases (Pangolin chain design M5, loxep-acj.5). */
+export const ipAliasesQuery = queryOptions({
+  queryKey: ['infrastructure', 'ip-aliases'],
+  queryFn: () => fetchIpAliases()
 });

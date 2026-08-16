@@ -337,6 +337,21 @@ export type {
 } from "./gatus-push.ts";
 
 export {
+  IP_ALIAS_DETECTION_CRON_MATCH,
+  IP_ALIAS_DETECTION_TASK_NAME,
+  createIpAliasDetectionTasks,
+  extractAddressFromPangolinEndpoint,
+  runIpAliasDetectionSweep,
+} from "./ip-alias-detection.ts";
+export type {
+  DnsResolver,
+  IpAliasDetectionOutcome,
+  IpAliasDetectionTask,
+  IpAliasDetectionTasks,
+  RunIpAliasDetectionSweepOptions,
+} from "./ip-alias-detection.ts";
+
+export {
   FLEET_EVIDENCE_INGEST_TASK,
   createFleetEvidenceTasks,
   fleetEvidenceIngestJobKey,

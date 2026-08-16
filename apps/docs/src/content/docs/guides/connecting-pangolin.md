@@ -73,6 +73,24 @@ A write policy below `additive` does not make Apply fail — it makes the run co
 The design's own rule: point Loxep's very first apply on a live instance at a throwaway resource on a throwaway subdomain, created for the purpose, with you watching — never a resource you actually need.
 :::
 
+## Dynamic-IP named aliases (milestone 5)
+
+Pangolin has no alias or IP-group primitive — a rule's `value` is always a plain literal, and there is no bulk-rule endpoint on a self-hosted build. So if a home connection's address changes, every bypass rule that referenced it goes stale silently, one rule at a time. Loxep's answer is its own named alias, managed entirely on the Loxep side: create one under **Infrastructure → IP aliases** (for example, `home`), then reference it from a rule instead of typing a literal address. The rule's stored value becomes `alias:home` — a reference, resolved to today's address only at the moment Loxep builds a request to send to Pangolin.
+
+**Where the address comes from.** Three sources, in the order Loxep trusts them:
+
+- **Manual** — you type the address. No detector runs; you update it yourself when it changes. Always available.
+- **DNS** — Loxep resolves a hostname you already maintain (a dynamic-DNS name, which a dynamic address usually already has) once every detection cycle. No third party learns your address; the only new dependency is a DNS lookup you already trust for that hostname.
+- **Pangolin site** — Loxep reads the address Pangolin itself has observed for one of your newt sites. Best when it works, because it is the exact address Pangolin will match rules against — but this field is unverified against a live Pangolin release, so treat it as a bonus, not a guarantee, and fall back to DNS or manual if it never changes.
+
+Loxep deliberately never calls a third-party "what is my IP" service — that would be a new outbound dependency and a new trust boundary on a value that becomes a firewall rule, for a convenience DNS or manual already cover.
+
+**Add-then-retire, never replace.** When a detector (or you, editing the alias by hand) observes a new address, Loxep **adds** a new rule for the new address on every resource that references the alias; it never rewrites the old rule in place. The worst case of a wrong detection is a harmless extra ACCEPT rule for an address you no longer hold — never a lost way in. Retiring the old rule (disabling it, never deleting it) is a separate, later, typed-confirmation action milestone 7 adds; until then the old rule simply stays, doing no harm.
+
+**Auto-apply ships off, per alias.** An alias's **Auto-apply** toggle, when turned on, lets a detected change apply the ADD half automatically the next time the detection sweep runs (roughly every 15 minutes) — never the retire half, and only when the connection's own write-authorization tier is `additive` or higher (the same gate every other write here goes through). Turning auto-apply on is never itself sufficient: it only ever permits a *scoped*, reversible-by-construction class of write, and every apply — automatic or manual — still fires the same notification, so an unattended change to an access rule is never one nobody hears about. Auto-apply is unavailable for a `manual`-sourced alias: there is no detector run to trust.
+
+**Every alias change notifies once**, not once per sweep and not once per affected rule — "7 rules across 4 resources reference an address that changed", with a one-click apply for any resource that did not qualify for auto-apply.
+
 ## When it does not work
 
 | Symptom | Usual cause |

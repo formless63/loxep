@@ -110,6 +110,7 @@ function notConfiguredServices(
     getGatusAdapterForConnection: () => notConfigured("Gatus"),
     getTailscaleAdapterForConnection: () => notConfigured("Tailscale"),
     getTermixAdapterForConnection: () => notConfigured("Termix"),
+    getPangolinAdapterForConnection: () => notConfigured("Pangolin"),
     ...overrides,
   };
 }

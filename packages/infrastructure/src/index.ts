@@ -442,3 +442,18 @@ export type {
   WriteOperationTier,
   WritePolicyBlockedReason,
 } from "./write-policy.ts";
+
+/* ------------------------------ dynamic-IP aliases (Pangolin chain, loxep-acj.5) --- */
+
+export {
+  IP_ALIAS_REFERENCE_PREFIX,
+  materializeProxyRuleValue,
+  planIpAliasFanOut,
+} from "./ip-aliases.ts";
+export type {
+  IpAliasFanOutPlan,
+  IpAliasFanOutResourceInput,
+  IpAliasFanOutRuleAction,
+  IpAliasFanOutRuleInput,
+  MaterializedProxyRuleValue,
+} from "./ip-aliases.ts";

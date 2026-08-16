@@ -800,11 +800,60 @@ M4  TIER-1 PANGOLIN WRITES             SHIPPED 2026-08-16, loxep-acj.4
     First write STILL targets a throwaway resource, with the owner
     watching — not attempted this session (see the closeout note).
 
-M5  DYNAMIC-IP ALIASES                 gate: M4 + owner ruling on auto-apply
-    infrastructure.ip_aliases, the manual and DNS detectors, alias
-    resolution at materialization, fan-out across every referencing rule,
-    the add-then-retire apply, and the notification. autoApply ships
-    OFF and stays off unless the owner rules otherwise.
+M5  DYNAMIC-IP ALIASES                 SHIPPED 2026-08-16, loxep-acj.5
+    infrastructure.ip_aliases (a REGISTERED SETTING, not a table — the
+    design's own schema section, re-confirmed rather than assumed) ships in
+    @loxep/domain's ip-aliases.ts, keyed by alias name (record, not the
+    sketch's literal array — the tailscaleIgnoredDevicesSetting/
+    providerWritePolicySetting precedent for structural-uniqueness-by-key,
+    PROVISIONAL). Three detector sources ship: manual (no detector — the
+    sweep skips it), dns (node:dns/promises resolve4 against the alias's
+    stored hostname), and pangolin_site (adapter.getSite's endpoint field —
+    UNVERIFIED against a live read, per open question 5 below; degrades to
+    "no detection this round" on any failure, never a guess).
+    materializeProxyRuleValue (@loxep/infrastructure's ip-aliases.ts)
+    resolves alias:<name> to a literal EXACTLY as resolveHostingAddress
+    resolves a fronting chain — pure, and an unresolvable alias throws
+    MaterializationError, wired into proxy.ts's buildDesired() ahead of
+    every provider read. The row's OWN value column never changes (it keeps
+    storing the reference), which is what makes add-then-retire fall out of
+    the EXISTING M4 planner with no special case: a changed alias value
+    resolves to a NEW literal the planner cannot match against the observed
+    (still-old-valued) rule, so it emits an ordinary create-rule — the ADD
+    half — while the old rule sits untouched, exactly rule 2's shape,
+    because no milestone has ever persisted proxy_resource_rules.
+    externalRuleId back after a create (a real M4 gap, unclosed, noted
+    honestly). planIpAliasFanOut (pure, @loxep/infrastructure) builds the
+    add-then-retire PLAN as data for the notification/UI and for M7's
+    future apply — a retire is computed against currently-observed provider
+    state but never applied by this milestone. ProxyResourcesService grew
+    listRulesReferencingAlias, the cross-domain query the fan-out needs.
+    Auto-apply ships per-alias (autoApply, default false), gated on BOTH
+    the alias's own flag (never for source:'manual') AND the connection's
+    infrastructure.provider_write_policy tier being 'additive' or above —
+    M4's own M4-specific 'poll'-trigger refusal in proxy.ts's
+    assertApplyTriggerAllowed is RELAXED this milestone (the seam
+    write-policy.ts's own module doc predicted M5 would use), opening
+    exactly the tier-1 poll-triggered apply path the owner's auto-apply
+    ruling needs — tier ≥ 2 stays unconditionally refused on poll/sweep by
+    write-policy.ts's own rule 3, untouched. packages/app's
+    ip-alias-detection.ts is the one recurring cron
+    (infrastructure.detect-ip-aliases, every 15 minutes — slower than
+    health.sweep's 5, because this makes a genuinely NEW outbound read per
+    alias that no other sweep already makes) that detects, updates the
+    alias unconditionally, fans out, applies the ADD half only when
+    permitted, and emits ONE ip_alias_changed infrastructure-class
+    notification event per genuine change (a new event type on the
+    existing class — no new subject type, per the design's own note).
+    Folded in: packages/app/src/fleet-health.ts gained
+    probePangolinConnection, the five-sibling connection-health-probe
+    recipe (one authenticated adapter.listOrgs() read proving the
+    credential) — despite Pangolin being a control-plane provider rather
+    than a fleet companion tool, it had no connection probe at all before
+    this milestone, so a saved credential read unknown forever.
+    LIVE: read-only verification permitted (LOXEP_LIVE_TESTS=pangolin,
+    reads only); no live write was attempted this milestone, matching M4's
+    own closeout — every apply-path test drives a fake adapter.
 
 M6  THE TEMPLATE ENGINE                gate: M4 (the Pangolin write leg)
                                              + Purelymail write policy for
