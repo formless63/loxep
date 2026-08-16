@@ -169,6 +169,10 @@ import type {
   TermixAdapterFactory,
 } from "./fleet.ts";
 import { PANGOLIN_CONNECTION_PROVIDER } from "./pangolin.ts";
+import { CLOUDFLARE_CONNECTION_PROVIDER, type CloudflareAdapterFactory } from "./cloudflare.ts";
+import { PURELYMAIL_CONNECTION_PROVIDER, type PurelymailAdapterFactory } from "./purelymail.ts";
+import { CloudflareAdapterError } from "@loxep/integration-cloudflare";
+import { PurelymailAdapterError } from "@loxep/integration-purelymail";
 import type { PangolinAdapterFactory } from "./pangolin.ts";
 
 /**
@@ -201,6 +205,9 @@ export interface FleetHealthServices {
    * fleet-only switch — see `CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE`.
    */
   getPangolinAdapterForConnection: PangolinAdapterFactory;
+  /** Cloudflare/Purelymail joined the control-plane probe set 2026-08-16. */
+  getCloudflareAdapterForConnection: CloudflareAdapterFactory;
+  getPurelymailAdapterForConnection: PurelymailAdapterFactory;
 }
 
 const FLEET_PROVIDERS = new Set<string>([
@@ -221,6 +228,8 @@ const FLEET_PROVIDERS = new Set<string>([
  */
 const CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE = new Set<string>([
   PANGOLIN_CONNECTION_PROVIDER,
+  CLOUDFLARE_CONNECTION_PROVIDER,
+  PURELYMAIL_CONNECTION_PROVIDER,
 ]);
 
 /**
@@ -1934,6 +1943,82 @@ async function probePangolinConnection(
   }
 }
 
+/**
+ * Dispatch for {@link CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE}: each
+ * control-plane provider proves its credential with its own cheapest
+ * authenticated read, exactly like the fleet five — added when the owner's
+ * real Cloudflare/Purelymail connections sat at unknown forever for the same
+ * no-probe reason Pangolin's once did.
+ */
+async function probeControlPlaneConnection(
+  services: FleetHealthServices,
+  connection: Connection,
+): Promise<HealthProbeOutcome> {
+  if (connection.provider === CLOUDFLARE_CONNECTION_PROVIDER) {
+    return probeCloudflareConnection(services, connection);
+  }
+  if (connection.provider === PURELYMAIL_CONNECTION_PROVIDER) {
+    return probePurelymailConnection(services, connection);
+  }
+  return probePangolinConnection(services, connection);
+}
+
+/** One page of zones proves the token; the count is the only detail kept. */
+async function probeCloudflareConnection(
+  services: FleetHealthServices,
+  connection: Connection,
+): Promise<HealthProbeOutcome> {
+  let handle;
+  try {
+    handle = await services.getCloudflareAdapterForConnection(connection.id);
+  } catch (error) {
+    return misconfiguredOutcome(error);
+  }
+  try {
+    const zones = await handle.adapter.listZones({ maxPages: 1 });
+    return { status: "ok", detail: { zones: zones.length }, source: "adapter" };
+  } catch (error) {
+    if (error instanceof CloudflareAdapterError) {
+      const httpStatus = error.detail["httpStatus"];
+      if (typeof httpStatus !== "number") {
+        return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+      }
+      return { status: "failing", detail: { kind: error.kind }, source: "adapter" };
+    }
+    return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+  }
+}
+
+/**
+ * The credit check is Purelymail's cheapest authenticated read. The credit
+ * VALUE is account-financial and never lands in detail — only the fact the
+ * read succeeded.
+ */
+async function probePurelymailConnection(
+  services: FleetHealthServices,
+  connection: Connection,
+): Promise<HealthProbeOutcome> {
+  let handle;
+  try {
+    handle = await services.getPurelymailAdapterForConnection(connection.id);
+  } catch (error) {
+    return misconfiguredOutcome(error);
+  }
+  try {
+    await handle.adapter.checkAccountCredit();
+    return { status: "ok", detail: { credential: "accepted" }, source: "adapter" };
+  } catch (error) {
+    if (error instanceof PurelymailAdapterError) {
+      const httpStatus = error.detail["httpStatus"];
+      if (typeof httpStatus !== "number") {
+        return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+      }
+      return { status: "failing", detail: { kind: error.kind }, source: "adapter" };
+    }
+    return { status: "unknown", detail: { kind: "unreachable" }, source: "adapter" };
+  }
+}
+
 // =============================================================================
 // Composition
 // =============================================================================
@@ -2018,7 +2103,7 @@ async function probeConnectionDispatch(
   }
 
   const outcome = isControlPlaneWithProbe
-    ? await probePangolinConnection(services, connection)
+    ? await probeControlPlaneConnection(services, connection)
     : await probeFleetConnection(services, connection, db);
   await recordConnectionOutcome(services, connection.id, outcome);
   return outcome;

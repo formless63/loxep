@@ -107,6 +107,8 @@ function notConfiguredServices(
     settings,
     getBeszelAdapterForConnection: () => notConfigured("Beszel"),
     getDockhandAdapterForConnection: () => notConfigured("Dockhand"),
+    getCloudflareAdapterForConnection: () => notConfigured("Cloudflare"),
+    getPurelymailAdapterForConnection: () => notConfigured("Purelymail"),
     getGatusAdapterForConnection: () => notConfigured("Gatus"),
     getTailscaleAdapterForConnection: () => notConfigured("Tailscale"),
     getTermixAdapterForConnection: () => notConfigured("Termix"),
