@@ -18,6 +18,7 @@ import { Icons } from '@/components/icons';
 import { FleetSignalsBand } from '@/features/infrastructure/components/fleet-signals-band';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import UnmatchedContainerHostsCard from '@/features/infrastructure/components/unmatched-container-hosts-card';
+import PangolinEstateLinksCard from '@/features/infrastructure/components/pangolin-estate-links-card';
 import { infrastructureOverviewQuery } from '@/features/infrastructure/api/queries';
 import {
   MANAGED_DOMAIN_STATE_LABELS,
@@ -120,6 +121,10 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
           see the component's own doc for why this reads discovery's
           candidate set rather than a per-target reconcile diff. */}
       <UnmatchedContainerHostsCard />
+
+      {/* loxep-pq2: absent entirely when no Pangolin connection exists —
+          see the component's own doc. */}
+      <PangolinEstateLinksCard />
 
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <Card>

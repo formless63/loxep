@@ -218,6 +218,19 @@ export type {
 // above uses for the read leg.
 export { normalizeDockhandBaseUrl } from "@loxep/integration-dockhand";
 
+// loxep-pq2 (Pangolin estate browser): `apps/web/src/server/admin.ts` needs a
+// live Pangolin READ adapter for the per-connection estate page, loaded
+// through this package the same way {@link createDockhandAdapterFactory}
+// above is — `pangolin.ts` was previously reached only by this package's own
+// worker-side `services.ts`, so this is its first re-export out to
+// `apps/web`. No write-shaped export added here: `PangolinAdapter` itself
+// (from `@loxep/integration-pangolin`, not re-exported by this module at
+// all) is where the four tier-1/POST writes live, and `apps/web` reaches
+// them only through the ALREADY-BUILT `retireProxyResourceRule`/
+// `enableProxyResourceRule` job-enqueueing server functions, never directly.
+export { createPangolinAdapterFactory } from "./pangolin.ts";
+export type { PangolinAdapterFactory, PangolinConnectionAdapter } from "./pangolin.ts";
+
 export {
   REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,
   REVERB_ADAPTER_CACHE_TTL_MS,

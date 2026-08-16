@@ -326,3 +326,35 @@ test('creates the "New domain" example template, renders its step ladder, and th
   // connection ids and never reaches that state.
   await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
 });
+
+/**
+ * Pangolin estate browser (loxep-pq2). No Pangolin — or any provider —
+ * connection exists in this harness (see the module doc), so these two
+ * assertions are exactly what a harness with no live Pangolin CAN prove
+ * honestly: the overview's quick-links card is ABSENT rather than an empty
+ * list implying a browsable-but-empty estate (matching
+ * `UnmatchedContainerHostsCard`'s own "punch list, not a status row" rule,
+ * which `PangolinEstateLinksCard` mirrors), and the per-connection page
+ * itself degrades to an honest error — never a blank page or an unhandled
+ * exception — when asked for a connection id that does not exist. The
+ * server function's `getPangolinAdapterForConnection` call is never reached
+ * at all here: `fetchPangolinEstateOverview` resolves the connection FIRST
+ * and throws before attempting any live Pangolin call, so this also proves
+ * the "no live adapter build for a bad id" ordering.
+ */
+test('infrastructure overview has no Pangolin estates card when no Pangolin connection exists', async ({
+  page
+}) => {
+  await page.goto('/infrastructure/overview');
+  await expect(page.getByRole('heading', { name: 'Infrastructure' })).toBeVisible();
+  await expect(page.getByText('Pangolin estates', { exact: true })).toHaveCount(0);
+});
+
+test('the Pangolin estate page degrades honestly for a connection that does not exist', async ({
+  page
+}) => {
+  await page.goto('/infrastructure/proxy/00000000-0000-4000-8000-000000000000');
+  await expect(page.getByRole('heading', { name: 'Pangolin estate' })).toBeVisible();
+  await expect(page.getByText('Could not read this Pangolin instance')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+});

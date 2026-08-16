@@ -254,6 +254,20 @@ interface AdminRegistry {
     getAdapterForConnection: import('@loxep/app').TermixAdapterFactory;
     invalidate: (connectionId: string) => void;
   }>;
+  /**
+   * The Pangolin READ adapter factory (loxep-pq2's estate browser), loaded
+   * through the module above. Mirrors `dockhandAdapterFactoryPromise` /
+   * `termixAdapterFactoryPromise` exactly: `createPangolinAdapterFactory`
+   * caches its own per-connection built adapter for `PANGOLIN_ADAPTER_CACHE_TTL_MS`
+   * (a static bearer credential, no session to keep alive the way Dockhand's
+   * login cookie needs), so caching the FACTORY itself here costs nothing and
+   * saves rebuilding it (and its per-connection rate budgets — deliberately
+   * long-lived, see `pangolin.ts`'s own note) on every request.
+   */
+  pangolinAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').PangolinAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -591,6 +605,43 @@ export async function getTermixAdapterForConnection(
   const factory = await getTermixAdapterFactory();
   const { adapter } = await factory.getAdapterForConnection(connectionId);
   return adapter;
+}
+
+/**
+ * The Pangolin READ adapter factory (loxep-pq2), loaded through
+ * {@link getFleetModule}. Mirrors {@link getDockhandAdapterFactory} exactly.
+ */
+function getPangolinAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').PangolinAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.pangolinAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createPangolinAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.pangolinAdapterFactoryPromise;
+}
+
+/**
+ * A live Pangolin adapter for one connection, plus its resolved `orgId` and
+ * `baseUrl` — the estate browser's (loxep-pq2) only fleet-adapter access.
+ * Every OTHER Pangolin call in this codebase goes through the worker's own
+ * `services.getPangolinAdapterForConnection` (`@loxep/app`'s `services.ts`,
+ * driving `reconcile()`/`retireRule()`/`enableRule()`); this is the SAME
+ * factory, reached the same way {@link getDockhandAdapterForConnection}
+ * reaches Dockhand's — unlike that function, this one returns the whole
+ * resolved record (not just `.adapter`) because every read this page makes
+ * (`listSites`/`listResources`/`listDomains`) needs `orgId` too.
+ */
+export async function getPangolinAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').PangolinConnectionAdapter> {
+  const factory = await getPangolinAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   fetchIpAliases,
   fetchMailConnectionOptions,
   fetchManagedDomain,
+  fetchManagedDomainOptions,
   fetchManagedDomains,
   fetchPangolinConnectionOptions,
   fetchReconcileRun,
@@ -24,6 +25,10 @@ import {
   fetchProvisioningTemplateRun,
   fetchProvisioningTemplates
 } from '@/server/provisioning-functions';
+import {
+  fetchPangolinEstateOverview,
+  fetchPangolinEstateResourceDetail
+} from '@/server/pangolin-estate-functions';
 
 export const infrastructureOverviewQuery = queryOptions({
   queryKey: ['infrastructure', 'overview'],
@@ -134,6 +139,37 @@ export const pangolinConnectionOptionsQuery = queryOptions({
   queryKey: ['infrastructure', 'connection-options', 'pangolin'],
   queryFn: () => fetchPangolinConnectionOptions()
 });
+
+/** Every managed domain, name only — the estate browser's (loxep-pq2) adopt-dialog domain picker. */
+export const managedDomainOptionsQuery = queryOptions({
+  queryKey: ['infrastructure', 'domain-options'],
+  queryFn: () => fetchManagedDomainOptions()
+});
+
+/**
+ * The Pangolin estate browser's (loxep-pq2) whole-connection LIVE read —
+ * sites, resources (cross-referenced against Loxep's own declared
+ * `proxy_resources`), and org domains. Not suspense-preloaded with a long
+ * `staleTime`: same "live, request-scoped, never persisted" discipline
+ * {@link dockhandHostViewQuery} documents, so a refetch always shows the
+ * CURRENT provider state, never a stale cache.
+ */
+export const pangolinEstateOverviewQuery = (connectionId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'pangolin-estate', connectionId],
+    queryFn: () => fetchPangolinEstateOverview({ data: { connectionId } })
+  });
+
+/**
+ * One resource's live `listTargets`/`listRules` — fetched only when its row
+ * is expanded (see `pangolin-estate-functions.ts`'s own rate-budget doc).
+ * The caller enables this per-row, never eagerly.
+ */
+export const pangolinEstateResourceDetailQuery = (connectionId: string, resourceId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'pangolin-estate', connectionId, 'resource', resourceId],
+    queryFn: () => fetchPangolinEstateResourceDetail({ data: { connectionId, resourceId } })
+  });
 
 /** Named dynamic-IP aliases (Pangolin chain design M5, loxep-acj.5). */
 export const ipAliasesQuery = queryOptions({

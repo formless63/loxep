@@ -47,6 +47,12 @@ Save. The instance URL and organization id are kept as ordinary connection confi
 
 Orgs, sites, resources, targets, access rules, and org domains — the whole read surface the design document defines. `/infrastructure/domains/$name` renders the chain (domain → DNS record → Pangolin resource → hosting target); `/infrastructure/fleet/$name` renders the same chain grouped by hosting target instead. Both pages also show "Pangolin knows about N resources Loxep does not" whenever the instance holds a resource nothing in Loxep declared — information, never something Loxep will touch.
 
+### The estate browser: everything this connection has, not only what Loxep declared
+
+`/infrastructure/proxy/$connectionId` — reached from **Settings → Connections**' row action (**View estate**) or the infrastructure overview's quick-links — is a live, read-only view of the WHOLE connection: every site, every resource, and every org domain, whether or not Loxep has declared anything about it. Nothing here is stored; the page is stamped with the moment it was read, on every open. Sites and org domains are a plain list. Each resource shows its full domain, mode, enabled/SSL state, and access posture (SSO/whitelist presence only, never contents) up front; its targets and access rules are read only once you expand that ONE resource's row — never all at once, to stay well inside the connection's rate budget regardless of how large the estate is.
+
+A resource already matched to something Loxep has declared shows its rules with the same **Retire**/**Re-enable** buttons the domain and fleet detail pages already have — see [Retirement](#retirement-milestone-7) below; nothing new to learn there. A resource Loxep has never declared instead offers **Adopt as declared resource**: pick which managed domain and hosting target it belongs to, and Loxep records a `proxy_resources` row for it. Adopting writes only that Loxep-side record — it never contacts Pangolin, and it does not itself apply anything; use the domain or fleet detail page's own **Apply** action afterward, the same as for any other declared resource.
+
 **Loxep never manages the Pangolin dashboard's own resource, and never manages the resource that fronts Loxep itself.** That rule is designed in from the start (see the design document's write-risk model) and holds however permissive this connection's write policy is set — it is not a setting an admin can turn off.
 
 ## Why writes here are different from every other provider
@@ -126,6 +132,6 @@ Every write this connection can make — creating a resource, adding a rule, ret
 
 ## Related
 
-- [Pangolin Integration & Chain-Provisioning Templates](../../architecture/pangolin-chain-design/) — the full design this connection is milestone 1 of, including the write-risk model that gates every milestone after this one.
+- [Pangolin Integration & Chain-Provisioning Templates](../../architecture/pangolin-chain-design/) — the full design this connection is milestone 1 of, including the write-risk model that gates every milestone after this one, and the estate browser's own entry in that document's milestone table.
 - [Provisioning templates](../provisioning-templates/) — the milestone-6 engine that sequences this connection's writes alongside Cloudflare's and Purelymail's, from one form.
 - [Connecting Cloudflare](../connecting-cloudflare/) and [Connecting Purelymail](../connecting-purelymail/) — the other two control-plane providers in the same chain.

@@ -91,6 +91,7 @@ export default defineConfig({
             { label: 'Knowledge & Task Companion Integration Design', slug: 'architecture/knowledge-tasks-integration-design' },
             { label: 'Expense Entry & Document Intelligence Design', slug: 'architecture/expense-entry-design' },
             { label: 'Settings UX Overhaul Design', slug: 'architecture/settings-ux-design' },
+            { label: 'Estate Browsers Design', slug: 'architecture/estate-browsers-design' },
           ],
         },
         {

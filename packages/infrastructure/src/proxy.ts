@@ -203,7 +203,7 @@ import {
   reconcileRunSteps,
   reconcileRuns,
 } from "@loxep/db/schema";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import {
   InfrastructureNotFoundError,
   InfrastructureValidationError,
@@ -538,6 +538,35 @@ export interface RetireAliasFanOutResult {
   failedCount: number;
 }
 
+/**
+ * loxep-pq2 (Pangolin estate browser)'s "Adopt as declared resource" input —
+ * see {@link ProxyResourcesService.declareFromObserved}'s doc. Every field
+ * but `externalResourceId` is caller-supplied from the SAME live read the
+ * estate browser already rendered (no second Pangolin call this package
+ * would otherwise need to make); `externalResourceId` is the provider's own
+ * numeric resource id, as a string (matching `proxyResources.externalResourceId`'s
+ * own `text` column).
+ */
+export interface DeclareProxyResourceFromObservedInput {
+  domainId: string;
+  hostingTargetId: string;
+  /** `null` = the domain's apex — matches `proxy_resources.subdomain`'s own convention. */
+  subdomain: string | null;
+  mode: string;
+  ssl: boolean;
+  proxyPort?: number | null;
+  externalDomainId?: string | null;
+  externalResourceId: string;
+  createdByUserId?: string | null;
+}
+
+/** {@link ProxyResourcesService.declareFromObserved}'s outcome. */
+export interface DeclareProxyResourceFromObservedResult {
+  proxyResourceId: string;
+  /** `false` when a `proxy_resources` row for this `(domainId, subdomain)` already existed — adopt never overwrites it. */
+  created: boolean;
+}
+
 /** What `reconcile()`/`reconcileDomain()` need to evaluate the write-authorization gate for one resolved connection — see `write-policy.ts`. */
 export interface ProxyWriteAuthorizationContext {
   connectionId: string;
@@ -595,6 +624,14 @@ export interface ProxyResourcesService {
       redact?: ResponseRedactor;
     },
   ): Promise<ReconcileProxyResourceResult[]>;
+  /**
+   * loxep-pq2 (Pangolin estate browser)'s "Adopt as declared resource"
+   * action — see the implementation's own doc for why this is additive-only,
+   * idempotent, and never calls `reconcile()` itself.
+   */
+  declareFromObserved(
+    input: DeclareProxyResourceFromObservedInput,
+  ): Promise<DeclareProxyResourceFromObservedResult>;
   /** Every declared resource for a domain, with its rule-set intent. */
   listResourcesForDomain(
     domainId: string,
@@ -1555,6 +1592,71 @@ export function createProxyResourcesService(options: {
     return results;
   }
 
+  /**
+   * loxep-pq2 (Pangolin estate browser)'s "Adopt as declared resource"
+   * action: turns ONE live-observed Pangolin resource into a `proxy_resources`
+   * intent row — Loxep's own fact, never a Pangolin call. Mirrors
+   * `provisioning.ts`'s `dispatchProxyEnsureResource` find-or-insert half
+   * (the only other place this package writes a `proxy_resources` row
+   * directly) but stops there: no `reconcile()` call, because adopting is
+   * "start controlling this", not "apply now" — the operator applies
+   * separately, from the domain or fleet detail page, once ready.
+   *
+   * Idempotent like `container-hosts.ts`'s `declareIntent`: a resource
+   * already declared for this exact `(domainId, subdomain)` is returned
+   * as-is (`created: false`) — an adopt click never overwrites a human's
+   * already-declared intent, only self-retires the id if that row somehow
+   * has none yet (Loxep's own row, not a Pangolin write, matching
+   * `selfRetireIdentity`'s own convergent rule above). A FRESH row is
+   * inserted with `externalResourceId` set immediately, because the caller
+   * already read this resource live — unlike an ordinary declare (which
+   * waits for a future check-mode `reconcile()` to match by `fullDomain`),
+   * an adopt already knows the provider's own id and should never make a
+   * later reconcile re-discover what it was just told.
+   */
+  async function declareFromObserved(
+    input: DeclareProxyResourceFromObservedInput,
+  ): Promise<DeclareProxyResourceFromObservedResult> {
+    const existingRows = await db
+      .select()
+      .from(proxyResources)
+      .where(
+        and(
+          eq(proxyResources.domainId, input.domainId),
+          input.subdomain === null
+            ? isNull(proxyResources.subdomain)
+            : eq(proxyResources.subdomain, input.subdomain),
+        ),
+      );
+    const existing = existingRows[0];
+    if (existing !== undefined) {
+      if (existing.externalResourceId === null) {
+        await selfRetireIdentity(existing.id, input.externalResourceId);
+      }
+      return { proxyResourceId: existing.id, created: false };
+    }
+
+    const inserted = await db
+      .insert(proxyResources)
+      .values({
+        domainId: input.domainId,
+        hostingTargetId: input.hostingTargetId,
+        subdomain: input.subdomain,
+        mode: input.mode,
+        proxyPort: input.proxyPort ?? null,
+        ssl: input.ssl,
+        externalDomainId: input.externalDomainId ?? null,
+        externalResourceId: input.externalResourceId,
+        createdByUserId: input.createdByUserId ?? null,
+      })
+      .returning();
+    const row = inserted[0];
+    if (row === undefined) {
+      throw new Error("proxy_resources insert returned no row");
+    }
+    return { proxyResourceId: row.id, created: true };
+  }
+
   async function listRuns(proxyResourceId: string): Promise<ReconcileRunRow[]> {
     return db
       .select()
@@ -2492,6 +2594,7 @@ export function createProxyResourcesService(options: {
   return {
     reconcile,
     reconcileDomain,
+    declareFromObserved,
     listResourcesForDomain,
     listResourcesForHostingTarget,
     listRuns,

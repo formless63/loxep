@@ -41,6 +41,7 @@ import { isPurchaseSyncEligible, supportsPurchaseSync } from './purchase-sync-ce
 import { TailscaleExpiryDialog, tailscaleExpiryEditable } from './tailscale-expiry-cell';
 
 const EBAY_PROVIDER = 'ebay';
+const PANGOLIN_PROVIDER = 'pangolin';
 
 /**
  * Row actions for one account (loxep-o7h).
@@ -226,6 +227,19 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                     <Icons.integrations className='mr-2 h-4 w-4' /> Enable purchase sync
                   </>
                 )}
+              </DropdownMenuItem>
+            )}
+          {data.provider === PANGOLIN_PROVIDER &&
+            !archived && (
+              // loxep-pq2: the estate browser's one entry point from this
+              // table — "browse everything this instance actually has, with
+              // control in context" — distinct from the eBay/Tailscale-style
+              // account actions above, so it gets its own labelled entry
+              // rather than folding into "View acquisitions"'s pattern.
+              <DropdownMenuItem asChild>
+                <Link to='/infrastructure/proxy/$connectionId' params={{ connectionId: data.id }}>
+                  <Icons.integrations className='mr-2 h-4 w-4' /> View estate
+                </Link>
               </DropdownMenuItem>
             )}
           {supportsPurchaseSync(data) && (

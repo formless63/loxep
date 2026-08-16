@@ -416,6 +416,8 @@ export {
   createProxyResourcesService,
 } from "./proxy.ts";
 export type {
+  DeclareProxyResourceFromObservedInput,
+  DeclareProxyResourceFromObservedResult,
   EnableProxyRuleResult,
   ProxyResourceRow,
   ProxyResourceRuleRow,

@@ -946,6 +946,49 @@ M7  RETIREMENT BY DISABLE              SHIPPED 2026-08-16, loxep-acj.7
     auto-corrected. NO DELETE VERB ships in this milestone or any other.
     LIVE: none — every apply-path test drives a fake adapter, matching
     M4's/M5's own closeout notes; the FIRST WRITE PROTOCOL has not run.
+
+ESTATE BROWSER (visibility, control  SHIPPED 2026-08-16, loxep-pq2
+in context) — filed separately,
+not an loxep-acj.N milestone
+    Owner, 2026-08-16: "no real surface to see anything about it... nothing
+    that shows me everything about the org/install, exposes control over
+    them." M1/M2/M4/M5/M7 above built the INTENT/RECONCILE half; browsing
+    the real estate — everything the connection actually has, whether or
+    not Loxep has declared it — never had a page. `/infrastructure/proxy
+    /$connectionId` (one page per Pangolin CONNECTION, reached from the
+    connections table's row action and the infrastructure overview's
+    quick-links) renders a LIVE read of sites, resources, and org domains —
+    the SAME `PangolinAdapter` this design's adapter section describes,
+    reached through `apps/web/src/server/admin.ts` the same way Dockhand's
+    containers panel reaches its own read adapter (loxep-hb7's precedent,
+    generalized to a second provider). Never persisted, clock-stamped fresh
+    on every render — no table, no cache, no cadence, matching the
+    Dockhand panel's own discipline exactly. Rate-budget-aware BY
+    CONSTRUCTION: the overview spends exactly three calls (`listSites`/
+    `listResources`/`listDomains`) regardless of estate size; a resource's
+    `listTargets`/`listRules` are read only once an operator expands that
+    ONE resource's row, and only when it is NOT already matched to a
+    declared `proxy_resources` row (a matched resource's rules come from
+    the database, not a fourth Pangolin call) — the exact lesson this
+    design's own M2 reconciler-test note about a full render never fanning
+    out one call per resource, applied to a browsing surface instead of a
+    reconciler. Control in context, no new write path: a matched resource
+    renders with the SAME `ProxyResourceRow`/`RuleRow` components the
+    domain/fleet detail pages use, wired to the SAME M7 `retireRule`/
+    `enableRule` server functions — never reimplemented. The one addition
+    is `ProxyResourcesService.declareFromObserved` (`packages/infrastructure
+    /src/proxy.ts`) — "Adopt as declared resource," turning one live
+    resource into a `proxy_resources` intent row, idempotent by
+    `(domainId, subdomain)`, writing ONLY Loxep's own row (mirrors
+    `provisioning.ts`'s `dispatchProxyEnsureResource` find-or-insert half,
+    minus the `reconcile()` call — adopting means "start controlling this,"
+    not "apply now"). `packages/integrations/pangolin` and its four writes
+    are UNCHANGED by this addition — nothing here gives the adapter a new
+    write shape. LIVE: read-only, manually checked against the owner's real
+    instance during this milestone (see the adapter's own module doc for
+    the 2026-08-16 reconnaissance this reuses) — no new live run was filed,
+    since this surface calls the SAME already-live-verified read methods
+    M1 did, through the SAME already-live-verified factory M2 built.
 ```
 
 M1 and M2 can ship against the owner's live instance today with no ruling and no credential change, and they deliver the visibility half of the owner's vision on their own. That is the argument for this ordering: **the read half is useful before the write half is safe.**

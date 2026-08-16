@@ -962,6 +962,117 @@ describe("listResourcesForHostingTarget()", () => {
   });
 });
 
+describe("declareFromObserved() (loxep-pq2, the estate browser's 'Adopt as declared resource' action)", () => {
+  let service: ProxyResourcesService;
+  beforeAll(() => {
+    service = createProxyResourcesService({ db: handle.db });
+  });
+
+  it("inserts a fresh proxy_resources row with the external id set immediately — never left for a later reconcile to discover", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+
+    const result = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "app",
+      mode: "http",
+      ssl: true,
+      externalDomainId: "domain-42",
+      externalResourceId: "999",
+    });
+
+    expect(result.created).toBe(true);
+    const [entry] = await service.listResourcesForHostingTarget(target.id);
+    expect(entry?.resource.id).toBe(result.proxyResourceId);
+    expect(entry?.resource.subdomain).toBe("app");
+    expect(entry?.resource.externalResourceId).toBe("999");
+    expect(entry?.resource.externalDomainId).toBe("domain-42");
+  });
+
+  it("is idempotent by (domainId, subdomain) — a second adopt of the same resource returns the existing row, created: false, and never overwrites it", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+
+    const first = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "api",
+      mode: "http",
+      ssl: true,
+      externalResourceId: "111",
+    });
+    const second = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "api",
+      mode: "tcp",
+      ssl: false,
+      externalResourceId: "222",
+    });
+
+    expect(second.created).toBe(false);
+    expect(second.proxyResourceId).toBe(first.proxyResourceId);
+    const [entry] = await service.listResourcesForHostingTarget(target.id);
+    // The second call's mode/ssl/externalResourceId are ignored entirely —
+    // an adopt never rewrites an already-declared row.
+    expect(entry?.resource.mode).toBe("http");
+    expect(entry?.resource.ssl).toBe(true);
+    expect(entry?.resource.externalResourceId).toBe("111");
+  });
+
+  it("self-retires the external id onto an already-declared row that had none yet, without touching anything else", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const existing = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "bare",
+      externalResourceId: null,
+    });
+
+    const result = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "bare",
+      mode: "http",
+      ssl: true,
+      externalResourceId: "777",
+    });
+
+    expect(result.created).toBe(false);
+    expect(result.proxyResourceId).toBe(existing.id);
+    const after = await readProxyResource(existing.id);
+    expect(after.externalResourceId).toBe("777");
+  });
+
+  it("treats null subdomain (the domain's apex) the same as any other (domainId, subdomain) key", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+
+    const result = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: null,
+      mode: "http",
+      ssl: true,
+      externalResourceId: "555",
+    });
+    expect(result.created).toBe(true);
+
+    const again = await service.declareFromObserved({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: null,
+      mode: "tcp",
+      ssl: false,
+      externalResourceId: "556",
+    });
+    expect(again.created).toBe(false);
+    expect(again.proxyResourceId).toBe(result.proxyResourceId);
+  });
+});
+
 describe("listRulesReferencingAlias() (loxep-acj.5)", () => {
   let service: ProxyResourcesService;
   beforeAll(() => {

@@ -99,6 +99,21 @@ export const fetchHostingTargetOptions = createServerFn({ method: 'GET' }).handl
   }
 );
 
+export interface ManagedDomainOptionDto {
+  id: string;
+  name: string;
+}
+
+/** Every managed domain, name only — the Pangolin estate browser's (loxep-pq2) "Adopt as declared resource" dialog's domain picker. Lighter than `fetchManagedDomains`, which loads each domain's full DNS/mail/proxy detail. */
+export const fetchManagedDomainOptions = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<ManagedDomainOptionDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getAdminServices().managedDomains.list();
+    return rows.map((row) => ({ id: row.id, name: row.name }));
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Fleet signals (loxep-cum) — the honest rollup over the five fleet
 // providers' CONNECTION-level `integration_health` rows.
@@ -797,9 +812,12 @@ export interface ManagedDomainDetailDto extends ManagedDomainDto {
 }
 
 /**
- * Shared by `fetchManagedDomain` (grouped by domain) and `fetchHostingTarget`
- * (grouped by hosting target) — the ONE place `ProxyResourceChainDto` is
- * assembled, so the two detail pages can never render the chain differently.
+ * Shared by `fetchManagedDomain` (grouped by domain), `fetchHostingTarget`
+ * (grouped by hosting target), and `pangolin-estate-functions.ts`'s
+ * `fetchPangolinEstateOverview` (grouped by Pangolin CONNECTION, loxep-pq2)
+ * — the ONE place `ProxyResourceChainDto` is assembled, so no page can ever
+ * render the chain differently. Exported for that third caller; every other
+ * export in this module stays local unless a second file genuinely needs it.
  *
  * `unmatchedObservedCount` is read from the most recent run's `'diff'` step
  * summary rather than stored as its own column — `@loxep/infrastructure`'s
@@ -807,7 +825,7 @@ export interface ManagedDomainDetailDto extends ManagedDomainDto {
  * `ContainerHostPlan.unmatchedObserved`'s own "ride the plan, no drift table"
  * precedent (the Pangolin chain design's resolved open question 8).
  */
-async function buildProxyResourceChainDtos(
+export async function buildProxyResourceChainDtos(
   handle: DbHandle,
   entries: ReadonlyArray<{ resource: ProxyResourceRow; rules: ProxyResourceRuleRow[] }>,
   names: { domainNameById: Map<string, string>; hostingTargetNameById: Map<string, string> }
