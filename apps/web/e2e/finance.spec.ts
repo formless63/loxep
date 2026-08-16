@@ -87,3 +87,58 @@ test('a recorded expense offers void-and-re-record, never an edit affordance', a
   await expect(reRecordDialog.getByLabel('Amount *')).toHaveValue('42.500000');
   await reRecordDialog.getByRole('button', { name: 'Cancel' }).click();
 });
+
+/**
+ * The Invoice Ninja estate browser (loxep-47o.8) — the FIRST estate page
+ * outside `/infrastructure`, so this is also the FIRST end-to-end proof that
+ * Rule P1's workspace parameter actually routes to `/finance` rather than
+ * `/infrastructure`: same Rule N1 "Open estate" row action on
+ * `/settings/connections`, landing on `/finance/estate/$connectionId`
+ * (never `/infrastructure/estate/...`).
+ *
+ * Mirrors `infrastructure.spec.ts`'s Gatus estate test's shape exactly:
+ * Clients/Invoices make REAL provider calls against this fake-credential,
+ * fake-URL fixture and are expected to render their own honesty state (Rule
+ * P13) — this harness has no live Invoice Ninja instance to reach, so only
+ * the section TITLES are asserted, never a specific error/blocked wording
+ * that would couple this spec to network-timing or DNS-resolution details.
+ * Zero write affordances are asserted absent: this page never grows a
+ * create/edit/send button of any kind, unlike `/finance/overview`'s
+ * existing push-draft dialog, which this page never mounts.
+ */
+test("the connections row action opens an Invoice Ninja connection's estate page", async ({
+  page
+}) => {
+  const name = `E2E Invoice Ninja estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Invoice Ninja instance' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Instance name *').fill(name);
+  await connectionDialog.getByLabel('Instance URL *').fill('https://billing.example.test');
+  await connectionDialog.getByLabel('API token *').fill(`e2e-fake-token-${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect instance' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/finance/estate/**');
+  expect(page.url()).not.toContain('/infrastructure/estate/');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Invoice Ninja', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Clients', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Invoices', { exact: true })).toBeVisible();
+
+  // Zero write affordances anywhere on this page — no create/edit/send
+  // button of any kind, for either section.
+  await expect(
+    estateMain.getByRole('button', { name: /new client|new invoice|edit|send|mark sent/i })
+  ).toHaveCount(0);
+});

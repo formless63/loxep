@@ -7,9 +7,11 @@
  * from `/settings/connections`' row action and the `/infrastructure/estate`
  * index without pulling every provider's section components into that
  * bundle. The heavier per-workspace registry that maps a provider to its
- * actual `Sections` component lives beside its route
- * (`features/infrastructure/estate/section-registry.tsx` today; a future
- * `features/finance/estate/section-registry.tsx` for Invoice Ninja).
+ * actual `Sections` component lives beside its route —
+ * `features/infrastructure/estate/section-registry.tsx` for every
+ * Infrastructure-category provider, `features/finance/estate/
+ * section-registry.tsx` (loxep-47o.8) for Invoice Ninja. Rule P16 keeps these
+ * two registries from ever growing each other's provider.
  *
  * Rule P1: the route is `/<workspace>/estate/$connectionId` — the connection
  * id is the only param, and the provider is read from the connection row,
@@ -33,7 +35,12 @@ export const ESTATE_PROVIDER_REGISTRY: Record<string, EstateProviderRegistryEntr
   beszel: { workspace: 'infrastructure', label: 'Beszel estate' },
   termix: { workspace: 'infrastructure', label: 'Termix estate' },
   dockhand: { workspace: 'infrastructure', label: 'Dockhand estate' },
-  gatus: { workspace: 'infrastructure', label: 'Gatus estate' }
+  gatus: { workspace: 'infrastructure', label: 'Gatus estate' },
+  // Wave 3 (loxep-47o.8) — the FIRST estate page outside `/infrastructure`,
+  // which is what actually proves Rule P1's workspace parameter: the
+  // workspace is a property of the PROVIDER (via `integrations-catalog.ts`'s
+  // `category: 'Billing'`), never of the page or the route file.
+  invoiceninja: { workspace: 'finance', label: 'Invoice Ninja estate' }
 };
 
 /**
@@ -53,6 +60,18 @@ export const INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS = new Set([
   'termix',
   'gatus'
 ]);
+
+/**
+ * The `/finance` sibling of {@link INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS}
+ * (Rule N2's "`/finance` gains the equivalent when Invoice Ninja's wave
+ * lands") — every provider ruled INTO the finance-category estate index,
+ * `integrations-catalog.ts`'s `category: 'Billing'` providers with a shipped
+ * estate page. One entry today; the set exists (rather than inlining a
+ * single-provider check at the index route) so a future finance-category
+ * provider needs no index-route change, matching the infrastructure set's
+ * own shape exactly.
+ */
+export const FINANCE_ESTATE_CATEGORY_PROVIDERS = new Set(['invoiceninja']);
 
 /** Whether this provider has a SHIPPED estate page (an entry in the registry above). */
 export function hasEstatePage(provider: string): boolean {

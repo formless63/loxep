@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   ESTATE_PROVIDER_REGISTRY,
+  FINANCE_ESTATE_CATEGORY_PROVIDERS,
   INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS,
   estateHref,
   hasEstatePage
@@ -43,5 +44,21 @@ describe('estate provider registry (loxep-47o.1, Rule P1/N1)', () => {
 
   test('the infrastructure-category set excludes invoiceninja — that is a /finance estate', () => {
     expect(INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS.has('invoiceninja')).toBe(false);
+  });
+
+  test('invoiceninja is a shipped estate page under /finance (loxep-47o.8 — proves Rule P1)', () => {
+    expect(hasEstatePage('invoiceninja')).toBe(true);
+    expect(ESTATE_PROVIDER_REGISTRY.invoiceninja?.workspace).toBe('finance');
+    const link = estateHref('invoiceninja', 'connection-1');
+    expect(link).not.toBeNull();
+    expect(link?.to).toBe('/finance/estate/$connectionId');
+    expect(link?.params).toEqual({ connectionId: 'connection-1' });
+  });
+
+  test('the finance-category set contains invoiceninja and only providers whose registry workspace is finance', () => {
+    expect(FINANCE_ESTATE_CATEGORY_PROVIDERS.has('invoiceninja')).toBe(true);
+    for (const provider of FINANCE_ESTATE_CATEGORY_PROVIDERS) {
+      expect(ESTATE_PROVIDER_REGISTRY[provider]?.workspace).toBe('finance');
+    }
   });
 });

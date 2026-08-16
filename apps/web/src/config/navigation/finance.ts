@@ -21,6 +21,12 @@ import type { NavGroup } from '@/types';
  * `redirect({ to: '/finance/expenses', search: { quickEntry: true } })` that
  * opens the quick-entry dialog on arrival — "New expense" needs no such
  * indirection because `/finance/expenses/new` IS the real page.
+ *
+ * "Estates" (loxep-47o.8) points at `/finance/estate` — the ONE nav entry
+ * Rule N2 allows this workspace for the estate-browser program, mirroring
+ * `config/navigation/infrastructure.ts`'s own "Estates" item exactly. It is
+ * placed ahead of "Expenses" because it is the workspace's only other
+ * top-level list (alongside Overview and Books).
  */
 export const financeNavGroups: NavGroup[] = [
   {
@@ -32,6 +38,19 @@ export const financeNavGroups: NavGroup[] = [
         icon: 'dashboard',
         isActive: false,
         shortcut: ['g', 'f'],
+        items: []
+      }
+    ]
+  },
+  {
+    label: 'Estates',
+    items: [
+      {
+        title: 'Estates',
+        url: '/finance/estate',
+        icon: 'integrations',
+        isActive: false,
+        shortcut: ['g', 's'],
         items: []
       }
     ]
