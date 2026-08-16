@@ -86,6 +86,16 @@ FROM node:24-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
+# poppler-utils supplies pdftotext, the PDF text-layer extractor
+# (@loxep/documents pdf-text-layer.ts, loxep-cd3.4 M4): a digital invoice's
+# existing text layer is lifted directly instead of OCRing a rendering of
+# it. Without the binary the code path degrades honestly to available:false
+# — this line is what makes it real in the shipped image. ~30MB apt delta;
+# the WASM OCR engine itself ships in node_modules and needs no apt package.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends poppler-utils \
+ && rm -rf /var/lib/apt/lists/*
+
 # Production node_modules (COPY preserves the relative @loxep/* symlinks,
 # which resolve because packages/ lands at the same relative location).
 COPY --from=deps /app/node_modules ./node_modules

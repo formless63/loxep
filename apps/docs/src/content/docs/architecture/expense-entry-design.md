@@ -1085,6 +1085,18 @@ M5  OCR tier B — drag to field        IMPLEMENTED (loxep-cd3.5). no migration.
                                       one, and it costs nothing today because no PDF
                                       backend produces boxes either.
 
+                                      RULED 2026-08-16 (loxep-ytu, PROVISIONAL):
+                                      `pdfjs-dist` stays out. The dependency's only
+                                      job is a canvas to draw boxes on, and no
+                                      backend emits a PDF line box — tesseract
+                                      parses images, `pdftotext` lifts a text layer
+                                      without geometry — so the ~4 MB buys an
+                                      overlay with nothing to overlay. The decision
+                                      reopens on its own trigger: the first backend
+                                      that produces PDF line boxes (`pdftotext
+                                      -tsv`, or the M4+ neural sidecar's polygons)
+                                      reopens the manifest question, not before.
+
                                       Drop targets, per the design's "drag a line
                                       into LINES, or a value into a field" split:
                                       `/finance/expenses/new` wraps payee
