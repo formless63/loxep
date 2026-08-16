@@ -194,3 +194,135 @@ test('a domain with no declared proxy resource shows the honest empty state and 
   await expect(page.getByText('No proxy resource declared')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply' })).toHaveCount(0);
 });
+
+/**
+ * M7 (`loxep-acj.7`)'s rules-panel filter and retire/re-enable actions,
+ * rendered — the "no live providers" reachable state.
+ *
+ * The same gap the test just above documents applies here with equal force:
+ * M2 (`loxep-acj.2`) shipped `proxy_resources`/`proxy_resource_rules` as
+ * VISIBILITY ONLY, and no milestone through M7 has added a rule-authoring
+ * UI (declaring a resource's rule set stays a later milestone's surface,
+ * per the design's own milestone table) — so there is still no UI path in
+ * this app that can seed a `proxy_resource_rules` row for a genuine
+ * filter-round-trip or blocked-disable render to exercise. Seeding one
+ * directly in the database would break this suite's own convention
+ * (`books.spec.ts`/`inventory.spec.ts`/`connections.spec.ts` all seed
+ * exclusively through the UI).
+ *
+ * What IS reachable, and what this test proves instead: the honest absence
+ * of every rule-scoped control — the "Show only disabled rules" filter
+ * toggle (`RulesList` renders it only when `disabledCount > 0`) and the
+ * Retire/Re-enable buttons (`RuleRow`, offered per rule) — when a domain's
+ * declared resource has no rules at all. The filter toggle's own
+ * hide-disabled/only-disabled logic (a pure client-side `Array#filter` over
+ * `resource.rules`) and the retire/enable orchestration's tier/lockout gates
+ * are exhaustively covered where they can actually be driven with real data:
+ * `packages/infrastructure/test/proxy-retire.test.ts` (20 tests, real
+ * PostgreSQL) and `packages/app/test/infrastructure-proxy.test.ts` (the job
+ * wiring, end to end).
+ */
+test('the rules panel renders no filter toggle and no retire/re-enable controls when a resource has no rules', async ({
+  page
+}) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Cloudflare account' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Account name *').fill(`E2E Cloudflare rules ${runId}`);
+  await connectionDialog.getByLabel('API token *').fill(`cf_e2e_token_rules_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect account' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  const domainName = `e2e-proxy-rules-${runId}.test`;
+  await page.goto('/infrastructure/domains/new');
+  await page.getByLabel('Domain name *').fill(domainName);
+  await page.getByRole('combobox', { name: /^DNS connection/ }).click();
+  await page.getByRole('option', { name: `E2E Cloudflare rules ${runId}` }).click();
+  await page.getByRole('button', { name: 'Declare domain' }).click();
+  await page.waitForURL('**/infrastructure/domains/**');
+
+  await expect(page.getByText('Proxy resources', { exact: true })).toBeVisible();
+  const main = page.getByRole('main');
+  await expect(main.getByText('Show only disabled rules', { exact: false })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Retire' })).toHaveCount(0);
+  await expect(main.getByRole('button', { name: 'Re-enable' })).toHaveCount(0);
+});
+
+/**
+ * The provisioning-template engine (Pangolin chain design milestone 6,
+ * `loxep-acj.6`) — the list, the "create from example" affordance, the
+ * step ladder, and the run wizard's MANDATORY compiled-plan preview.
+ *
+ * ## Why this suite never clicks "Start run"
+ *
+ * `--mode=all` runs a real worker in this harness, and
+ * `infrastructure.run-provisioning-template` would genuinely process a
+ * started run — but `domain.declare`'s zone RESOLVE is a tier-0 READ, never
+ * gated by the connection's write policy (which defaults `read_only`), so it
+ * is NOT one of the honest write-policy blocks this design demonstrates: it
+ * is a live `findZoneByName` call against whatever Cloudflare connection the
+ * run's inputs name. This harness's Cloudflare connections carry FAKE tokens
+ * with no live network call anywhere else in this suite (see the module doc
+ * above) — deliberately, because nothing here has real egress to Cloudflare
+ * to rely on. Starting a run would be the one path in this file that breaks
+ * that property. So this suite stops exactly where `infrastructure.spec.ts`'s
+ * own established convention already stops for the proxy-resource tests
+ * above: the most-conservative REACHABLE state — list, create, preview — no
+ * live call, no started run, no fabricated 'blocked' render. The actual
+ * driver behavior (advance/blocked-naming/evidence/no-rollback) is
+ * exhaustively covered against fakes at the service level instead:
+ * `packages/infrastructure/test/provisioning.test.ts` (14 tests) and
+ * `packages/app/test/infrastructure-provisioning.test.ts` (4 tests, through
+ * the real composition-root wiring).
+ */
+test('templates list shows the empty state with a Create from example action', async ({ page }) => {
+  await page.goto('/infrastructure/templates');
+  await expect(page.getByRole('heading', { name: 'Provisioning templates' })).toBeVisible();
+  await expect(page.getByText('No provisioning templates yet')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create from example' })).toBeVisible();
+});
+
+test('creates the "New domain" example template, renders its step ladder, and the run wizard previews a compiled plan with no live provider call', async ({
+  page
+}) => {
+  await page.goto('/infrastructure/templates');
+  await page.getByRole('button', { name: 'Create from example' }).click();
+  await page.waitForURL('**/infrastructure/templates/**');
+
+  await expect(page.getByRole('heading', { name: 'Provisioning template' })).toBeVisible();
+  await expect(page.getByText('New domain', { exact: true })).toBeVisible();
+  // The closed seven step kinds this example uses, in order — declare,
+  // point DNS, ensure the Pangolin resource and its rules, enable mail,
+  // ensure the mailbox.
+  await expect(page.getByText('Declare domain', { exact: true })).toBeVisible();
+  await expect(page.getByText('Point DNS at target', { exact: true })).toBeVisible();
+  await expect(page.getByText('Ensure Pangolin resource', { exact: true })).toBeVisible();
+  await expect(page.getByText('Ensure Pangolin rules', { exact: true })).toBeVisible();
+  await expect(page.getByText('Enable mail', { exact: true })).toBeVisible();
+  await expect(page.getByText('Ensure mailbox', { exact: true })).toBeVisible();
+
+  await page.getByRole('link', { name: 'Run template' }).click();
+  await page.waitForURL('**/infrastructure/templates/**/run');
+  await expect(page.getByRole('heading', { name: 'Run template' })).toBeVisible();
+
+  // One field per `${placeholder}` the template's own steps reference — no
+  // hand-authored form. `domain`/`bypassAddress` render as plain text
+  // fields; the three connection-shaped keys render as selects, empty in
+  // this harness (no DNS/mail/Pangolin connection or hosting target exists
+  // for THIS test) — a real UUID is required to compile, so a `domain`-only
+  // fill honestly fails to compile, proving the MANDATORY preview refuses
+  // an incomplete plan rather than fabricating a "Start run" it cannot back.
+  await expect(page.getByLabel(/^domain/)).toBeVisible();
+  await expect(page.getByRole('combobox', { name: /DNS connection/ })).toBeVisible();
+  await page.getByLabel(/^domain/).fill('e2e-preview-only.test');
+
+  await page.getByRole('button', { name: 'Preview compiled plan' }).click();
+  await expect(page.getByText('Compiled plan preview', { exact: true })).toHaveCount(0);
+  // `Start run` stays disabled until a real preview has succeeded — see
+  // this test's own module doc for why this suite never supplies real
+  // connection ids and never reaches that state.
+  await expect(page.getByRole('button', { name: 'Start run' })).toBeDisabled();
+});
