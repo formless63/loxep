@@ -139,6 +139,16 @@ return (
 
 Loxep settings and market dialogs already comply; keep it that way.
 
+### Settings forms
+
+`/settings/application` is the operator's front door to every registered `defineSetting()` in `packages/domain/src/settings-defaults.ts` (19 as of this writing — see the [Settings UX Overhaul Design](../../architecture/settings-ux-design/) for the full inventory and rationale). A setting's Zod schema is the validator; **never hand-write a second, parallel Zod object in a settings form that mirrors a registered schema's shape** — that duplication is exactly what `GatusPushCard`/`ProvisioningCard` had to do before the generic renderer existed, and it drifts silently the moment the domain schema changes underneath it.
+
+- **The browser never imports a setting's live Zod schema.** `@loxep/domain` value imports (as opposed to `import type`) stay confined to `apps/web/src/server/*.ts` — the barrel re-exports server-only code (`@loxep/db`, `createSettingsService`), so a browser-bundle import of the schema object itself is a boundary violation, not a shortcut. Instead, the server ships each setting's shape as data: `RegisteredSettingDto.jsonSchema`, computed with `z.toJSONSchema(definition.schema)`. The generic renderer maps that JSON Schema to fields; the server's `schema.safeParse()` remains the sole validation authority, exactly as it is for today's raw-JSON dialog.
+- **Field mapping** (from a setting's `jsonSchema`): `boolean` → `SwitchField`; `enum` → `SelectField`; `integer`/`number` (with `minimum`/`maximum`) → `TextField[type=number]`, unit and help text from the field's own `.describe()`; `string[]` → `TagsField`; nullable `string` → `TextField`, empty input submits `null` (the convention `GatusPushCard`'s `baseUrl` already uses). A `Record<K, V>`-shaped setting (a keyed map) is **not** rendered generically here — go find where the map's keys are already enumerated (a connections table, a catalog grid) and add a row editor there, following `WritePolicyCell` (`src/features/settings/components/connections-table/write-policy-cell.tsx`) — a settings page has no way to enumerate foreign ids it was never given.
+- **Descriptions travel through `.describe()`.** A setting's own top-level `description` already flows registry → DTO → UI; a per-field description is `.describe()` on that field in its Zod schema (Zod 4, already pinned), which is exactly what `z.toJSONSchema()` reads. Do not invent a second metadata channel (a parallel labels/units object) for what `.describe()` already carries end to end.
+- **Save granularity is one registered setting per save.** `SettingsService.write()` persists and audits one `application_settings` row per call — never batch several settings behind one page-level "Save all," and never autosave per keystroke. One Card, one `useAppForm`, one `SubmitButton`, matching `GatusPushCard`/`ProvisioningCard`'s existing shape exactly.
+- **A setting is exempt from the generic renderer** — gets its own hand-built form instead — when its schema crosses a boundary the generic mapping above cannot express: it carries a secret alongside non-secret fields (`infrastructure.gatus_push`, whose bearer token is not part of the setting's own schema at all — ADR-0019, secrets are never settings), it needs cross-field derived warnings read from live form state (`auth.provisioning`'s `form.Subscribe` banners), or its map values are rich composites with conditional/system-written fields (a future alias-editor shape). A setting whose keys are opaque and system-written, with no operator-typed value at all (`integration.tailscale.ignored_devices`), stays behind the raw-JSON "Advanced" fallback permanently — building a form for it would invent an editing affordance nobody should use.
+
 ## Charts
 
 Recharts is the accepted chart library. It is always wrapped:
@@ -324,6 +334,7 @@ Keep these routes working. They are the executable half of this document.
 - [ ] No `<table>`/`<Table>` rendering data outside `DataTable`.
 - [ ] Table state (page/sort/filter) lives in the URL via `useDataTable`.
 - [ ] Forms use `useAppForm` + a Zod `onSubmit` validator.
+- [ ] A registered-setting form has no hand-written shadow Zod schema mirroring the domain schema's shape; a `Record`-shaped setting has a row editor on the surface that already lists its keys, not a generic map editor on `/settings/application`.
 - [ ] Every chart series color is `var(--chart-1..5)` via `ChartConfig`.
 - [ ] No `gray-*`/`zinc-*`/`slate-*`/hex/`text-green-*` on product surfaces.
 - [ ] The surface uses at least one emphasis token, not only `muted-foreground`.

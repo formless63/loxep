@@ -90,6 +90,7 @@ export default defineConfig({
             { label: 'Flipping Lifecycle Design (Phase 9)', slug: 'architecture/flipping-lifecycle-design' },
             { label: 'Knowledge & Task Companion Integration Design', slug: 'architecture/knowledge-tasks-integration-design' },
             { label: 'Expense Entry & Document Intelligence Design', slug: 'architecture/expense-entry-design' },
+            { label: 'Settings UX Overhaul Design', slug: 'architecture/settings-ux-design' },
           ],
         },
         {
