@@ -1851,13 +1851,21 @@ describe("createFleetHealthSubjectRegistry", () => {
     function makePangolinServices(
       adapter: { listOrgs: () => Promise<unknown[]> },
     ): FleetHealthServices {
+      // The fixture connection carries orgId "home-lab", so the probe takes
+      // the org-scoped listSites path (the root-key-only GET /orgs finding);
+      // each test still declares behavior once, via listOrgs, and this
+      // delegation keeps that single source of truth.
+      const withSites = {
+        ...adapter,
+        listSites: (_orgId: string) => adapter.listOrgs(),
+      };
       return fakeServices({
         getPangolinAdapterForConnection: async (id) => ({
           connectionId: id,
           baseUrl: "https://pangolin.test",
           orgId: "home-lab",
           sourceAccountKey: "pangolin:test",
-          adapter: adapter as never,
+          adapter: withSites as never,
           minIntervalSeconds: 3600,
         }),
       });
@@ -1921,14 +1929,14 @@ describe("createFleetHealthSubjectRegistry", () => {
       expect(outcome?.detail).toEqual({ kind: "provider_unavailable" });
     });
 
-    it("listOrgs() succeeds -> ok, detail carries only the org count", async () => {
+    it("an org-scoped read succeeds -> ok, detail carries only the site count", async () => {
       const connection = await createPangolinConnection("healthy");
       const registry = createFleetHealthSubjectRegistry(
         makePangolinServices({ listOrgs: async () => [{ orgId: "home-lab" }, { orgId: "second" }] }),
       );
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("ok");
-      expect(outcome?.detail).toEqual({ orgs: 2 });
+      expect(outcome?.detail).toEqual({ sites: 2 });
     });
 
     it("the adapter factory itself throwing an AppConfigurationError -> unknown, kind misconfigured", async () => {

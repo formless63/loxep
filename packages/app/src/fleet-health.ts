@@ -1901,7 +1901,25 @@ async function probePangolinConnection(
   }
   const { adapter } = handle;
 
+  // Org-scoped keys 403 on GET /orgs — the M1 live reconnaissance's
+  // root-key-only finding — and an org-scoped key is the guide's own
+  // recommendation, so the common case must probe with an org-scoped read.
+  // listOrgs stays as the fallback for a root key with no configured org.
+  const configRecord = connection.config as Record<string, unknown> | null;
+  const pangolinConfig =
+    configRecord && typeof configRecord["pangolin"] === "object"
+      ? (configRecord["pangolin"] as Record<string, unknown>)
+      : null;
+  const orgId =
+    pangolinConfig && typeof pangolinConfig["orgId"] === "string"
+      ? pangolinConfig["orgId"]
+      : null;
+
   try {
+    if (orgId !== null) {
+      const sites = await adapter.listSites(orgId);
+      return { status: "ok", detail: { sites: sites.length }, source: "adapter" };
+    }
     const orgs = await adapter.listOrgs();
     return { status: "ok", detail: { orgs: orgs.length }, source: "adapter" };
   } catch (error) {
