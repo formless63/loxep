@@ -97,7 +97,7 @@ The exact split can evolve as real workflows appear. The initial UX map should b
 | **Customers** | `/customers` | people, organizations, contacts, addresses/sites, operational history, terms/tax metadata |
 | **Projects** | `/projects` | jobs/projects, tasks/milestones, time, materials, expenses, service delivery, subscriptions/recurring services |
 | **Finance** | `/finance` | billing/AR, expenses/AP, payments, marketplace payouts/fees, banking, reconciliation, accounting, tax-oriented reporting |
-| **Infrastructure** | `/infrastructure` | the installation's own operational estate: domains and their DNS desired-versus-actual state, delegation status, mail-provider state, hosting targets/fleet, reconciler run history, and — later — the container, metrics, and uptime layers Loxep links rather than owns |
+| **Infrastructure** | `/infrastructure` | the installation's own operational estate: domains and their DNS desired-versus-actual state, delegation status, mail-provider state, hosting targets/fleet, reverse-proxy resources and access rules (Pangolin) with dynamic-IP aliases, provisioning templates that sequence the whole chain, reconciler run history, and — later — the container, metrics, and uptime layers Loxep links rather than owns |
 | **Settings** | `/settings` | users/admin, economic entities, integrations (the catalog of supported services and their set-up: eBay keyset, WooCommerce, Medusa, notification transports), connections (accounts added under a chosen service), notifications, storage, application settings, secret status/rotation, health/diagnostics |
 | **Starter Reference** | `/starter` | preserved donor demos and UI patterns; development/reference use rather than product data |
 
@@ -114,24 +114,29 @@ Two placements are worth stating because they are easy to get wrong:
 
 `/dashboard` gains nothing from this phase, deliberately — Phase 9 built the three workspaces above and left the dashboard untouched on purpose. Expenses already reach it through the Financial band, which reads the ledger. *(Update: COGS posting from inventory depletion has since shipped, outside this phase's own scope — see [Phase 5](../roadmap/#phase-5--financial-foundation) — so acquisitions now reach the ledger too. The dashboard's own blindness to the six domains that shipped after it has since been closed by `loxep-9m2`, which is where the band table below now reflects; this section describes what Phase 9 itself did, not the current dashboard.)*
 
-### Infrastructure is a future peer root, and it is about the installation itself
+### Infrastructure is a peer root, and it is about the installation itself
 
-`/infrastructure` is reserved now and built later. It is the odd one out in the table above, and the difference is worth stating so it is not mistaken for a Settings page or for a new commercial domain.
+`/infrastructure` is a live peer root, not a placeholder. It is the odd one out in the table above, and the difference is worth stating so it is not mistaken for a Settings page or for a new commercial domain.
 
 Every other workspace presents facts about **the business Loxep runs** — items observed, goods sold, money moved, people billed. Infrastructure presents facts about **the machines and names Loxep and its owner's other services run on**. Those facts have no counterparty, no economic entity, and no place in any accounting book; see [Domain Boundaries](../../architecture/domain-boundaries/#infrastructure) for the ownership rules that follow from that.
 
-It is the meeting point for capability that arrives in layers:
+It is the meeting point for capability that arrived in layers:
 
 ```text
-now (designed)   domains, DNS desired-vs-actual state, delegation, mail provider,
-                 hosting targets/fleet, reconciler runs and drift
-later (designed) container/stack management, host and container metrics, uptime and
-                 endpoint monitoring — surfaced as links plus one current-status
-                 health row per subject, never reimplemented and never stored as a
-                 metric series, per the companion-services guiding rule
+shipped   domains, DNS desired-vs-actual state, delegation, mail provider,
+          hosting targets/fleet, reverse-proxy resources and access rules
+          (Pangolin) with dynamic-IP named aliases and disable-only
+          retirement, a provisioning-template engine that sequences all
+          of the above from one form, reconciler runs and drift
+later     container/stack management, host and container metrics, uptime and
+          endpoint monitoring — surfaced as links plus one current-status
+          health row per subject, never reimplemented and never stored as a
+          metric series, per the companion-services guiding rule
 ```
 
-The second layer is designed in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/). It adds one shared health table and no other schema: companion tools are linked through the generic external-resource model, a deep link opens the real tool rather than a Loxep copy of it, and infrastructure alerts continue to be delivered by the tools themselves — because Loxep runs on the fleet it observes and cannot alert on its own outage.
+`/infrastructure` today: `overview`, `domains` (list, detail with DNS/mail/proxy panels, `new` wizard), `fleet` (list, detail with tokens/proxy-connection/companion-links panels), `aliases` (dynamic-IP named aliases), `templates` (list, detail, the run wizard, run history), and `runs` (reconcile-run and template-run history with retry/resume/abandon). The physical design for the DNS/mail/token leg is [Infrastructure Control Plane Design (Phase 7)](../../architecture/infrastructure-control-design/); the reverse-proxy leg and the template engine are [Pangolin Integration & Chain-Provisioning Templates](../../architecture/pangolin-chain-design/).
+
+The second, still-future layer is designed in [Fleet Observability Design (Phase 8)](../../architecture/fleet-observability-design/). It adds one shared health table and no other schema: companion tools are linked through the generic external-resource model, a deep link opens the real tool rather than a Loxep copy of it, and infrastructure alerts continue to be delivered by the tools themselves — because Loxep runs on the fleet it observes and cannot alert on its own outage. (Most of Phase 8 has itself since shipped — see [its own roadmap section](../roadmap/#phase-8--fleet-observability-and-management) — the point standing here is the *shape* of the two-layer split, not that the second layer is still undesigned.)
 
 It is **not** `/settings`. `/settings` configures Loxep — its users, connections, secrets, storage, and application behavior. `/infrastructure` is a working surface over external estate that Loxep observes and reconciles, with its own tables, its own jobs, and its own daily use. The credentials that reach those external systems still live where every other provider credential lives: connections and encrypted secrets administered under `/settings`. The physical design is [Infrastructure Control Plane Design](../../architecture/infrastructure-control-design/).
 

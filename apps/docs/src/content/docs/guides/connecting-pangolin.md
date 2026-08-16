@@ -111,6 +111,10 @@ Behind the dialog, a **self-lockout preflight** runs before anything is sent to 
 
 **Infrastructure → IP aliases** gets a **Retire old rules** action on any alias that has changed address at least once. One click disables every currently-live rule still referencing the PREVIOUS address, across every resource the alias is bound to — completing the add-then-retire pair the [dynamic-IP section](#dynamic-ip-named-aliases-milestone-5) above describes. It is typed-confirmed against the alias's own name (there may be several resources involved, so no single resource's domain names the action), and it goes through the identical write-policy and self-lockout gates every other retirement does. The rule that references the alias's CURRENT address is never touched by this action — only the stale one.
 
+## Provisioning templates (milestone 6)
+
+Every write this connection can make — creating a resource, adding a rule, retiring one — is also reachable as one step inside a **provisioning template**: a strictly ordered, idempotent recipe (declare a domain, point DNS at a hosting target, front it with a Pangolin resource and rules, enable mail, ensure a mailbox) that an admin runs from one form instead of six separate actions across three settings pages. A template-driven Pangolin write goes through the identical write-policy tier, ledger, and self-lockout preflight a manual **Apply** click does — the template engine sequences the same services this guide describes, it never calls Pangolin on its own. See [Provisioning templates](../provisioning-templates/).
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -123,4 +127,5 @@ Behind the dialog, a **self-lockout preflight** runs before anything is sent to 
 ## Related
 
 - [Pangolin Integration & Chain-Provisioning Templates](../../architecture/pangolin-chain-design/) — the full design this connection is milestone 1 of, including the write-risk model that gates every milestone after this one.
+- [Provisioning templates](../provisioning-templates/) — the milestone-6 engine that sequences this connection's writes alongside Cloudflare's and Purelymail's, from one form.
 - [Connecting Cloudflare](../connecting-cloudflare/) and [Connecting Purelymail](../connecting-purelymail/) — the other two control-plane providers in the same chain.

@@ -27,6 +27,8 @@ Loxep also pushes in one direction, the reverse of every provider above: [Publis
 
 A third direction runs entirely the other way: [Sending fleet alert evidence](./fleet-evidence-webhooks/) is Loxep's first INBOUND webhook receiver — Gatus, Beszel, Databasus, or anything else that can POST JSON sends alert or backup-status evidence to a per-source URL Loxep gives you. Recording is not delivering: the sending tool must still alert you directly, the same way it always has.
 
+Provisioning a chain of these connections at once has its own guide, not a per-provider one: [Provisioning templates](./provisioning-templates/) sequences a domain declaration, DNS, a Pangolin resource and rules, and mail enablement from a single form, driving the Cloudflare/Pangolin/Purelymail connections above exactly as a manual click on each would.
+
 ## How these guides relate to the application
 
 Every step described here also appears inside the application, in the dialog where it is needed: each setup form carries a **Where to get these** section with the same path, and the eBay keyset form shows this installation's own callback URL with a copy button rather than an example. These pages exist for planning the work before you start it, for the parts that live outside Loxep entirely, and for reading somewhere other than the machine you are configuring.
