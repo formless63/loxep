@@ -85,6 +85,56 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
 
+  // Memoized on the real inputs (loxep-acj.3 follow-up): getColumns
+  // previously ran on every render with fresh object identities, tolerated
+  // until the write-policy query resolving mid-interaction recreated the
+  // columns under an OPEN row menu — Radix re-mounts the menu, the item
+  // never reads "stable", and the e2e toggle click times out. The
+  // provider-derived inputs are computed inside the callback from the same
+  // stable sources so the memo has no forward references.
+  const connectionsForColumns = isPending || isError ? undefined : data;
+  const columns = React.useMemo(() => {
+    const rowsForDerivation = connectionsForColumns ?? [];
+    const visible = connectableIntegrationServices.filter((service) => {
+      if (isIntegrationEnabled(catalogEnabledMap, service.id)) return true;
+      return rowsForDerivation.some(
+        (connection) => connection.provider === service.accounts?.provider
+      );
+    });
+    const disabled = new Set(
+      visible
+        .filter((service) => !isIntegrationEnabled(catalogEnabledMap, service.id))
+        .map((service) => service.accounts?.provider)
+        .filter((provider): provider is string => provider !== undefined)
+    );
+    const catalogued = new Set(
+      connectableIntegrationServices.map((service) => service.accounts?.provider)
+    );
+    const uncatalogued = Array.from(
+      new Set(
+        rowsForDerivation
+          .filter((connection) => !catalogued.has(connection.provider))
+          .map((connection) => connection.provider)
+      )
+    );
+    return getColumns({
+      entities: entities ?? [],
+      isAdmin,
+      disabledProviders: disabled,
+      providerOptions: [
+        ...visible.map((service) => ({
+          value: service.accounts?.provider ?? service.id,
+          label: disabled.has(service.accounts?.provider ?? '')
+            ? `${service.name} (disabled)`
+            : service.name
+        })),
+        ...uncatalogued.map((provider) => ({ value: provider, label: provider }))
+      ],
+      writePolicies: writePolicyMap ?? {}
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- catalogEnabledMap is the enabledMap query data's derivation; connectionsForColumns tracks the connections query
+  }, [entities, isAdmin, writePolicyMap, enabledMap, connectionsForColumns]);
+
   if (isPending || entitiesPending) {
     return <DataTableSkeleton columnCount={9} filterCount={3} />;
   }
@@ -158,14 +208,6 @@ export default function ConnectionsTable({ isAdmin }: { isAdmin: boolean }) {
       (service) =>
         service.id === addServiceId && isIntegrationEnabled(catalogEnabledMap, service.id)
     ) ?? null;
-
-  const columns = getColumns({
-    entities: entities ?? [],
-    isAdmin,
-    disabledProviders,
-    providerOptions,
-    writePolicies: writePolicyMap ?? {}
-  });
 
   const { rows, pageCount } = applyClientTableState(
     connections,
