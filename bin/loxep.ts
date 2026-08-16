@@ -109,6 +109,28 @@ async function registerDatabaseChecks(config: BootstrapConfig, logger: Logger): 
   }
 }
 
+/**
+ * Fail fast if another process already holds the web port (loxep-ysb).
+ * The Nitro entry's server layer (srvx) swallows its own listen
+ * error — `this.serve().catch(() => {})` — so without this probe a second
+ * `loxep start` on a bound port logs "web runtime started", holds NO
+ * listener, and (in mode=all) keeps running its worker against its own
+ * database while every HTTP request lands on the other process. The bound
+ * socket itself is exclusive (srvx passes `exclusive: true`, i.e. no
+ * SO_REUSEPORT), so a probe bind here is a faithful preflight of the bind
+ * Nitro is about to make.
+ */
+async function assertPortFree(port: number, host: string): Promise<void> {
+  const net = await import('node:net');
+  await new Promise<void>((resolvePromise, rejectPromise) => {
+    const probe = net.createServer();
+    probe.once('error', (error) => rejectPromise(error));
+    probe.listen({ port, host, exclusive: true }, () => {
+      probe.close(() => resolvePromise());
+    });
+  });
+}
+
 async function startWebRuntime(config: BootstrapConfig, logger: Logger): Promise<void> {
   // The built Nitro node-server entry reads PORT/HOST at import time and
   // starts listening; importing it inside this process keeps ADR-0018's
@@ -116,6 +138,15 @@ async function startWebRuntime(config: BootstrapConfig, logger: Logger): Promise
   process.env['PORT'] = String(config.port);
   process.env['NITRO_PORT'] = String(config.port);
   process.env['HOST'] = '0.0.0.0';
+  try {
+    await assertPortFree(config.port, '0.0.0.0');
+  } catch (error) {
+    logger.error(
+      { err: error, port: config.port },
+      'web port is not bindable; refusing to start (another loxep process is likely already listening)',
+    );
+    process.exit(1);
+  }
   const entry =
     process.env['LOXEP_SERVER_ENTRY'] ?? resolve(import.meta.dirname, '../apps/web/.output/server/index.mjs');
   await import(pathToFileURL(entry).href);

@@ -43,9 +43,23 @@ export LOXEP_MEDIA_ROOT="$(mktemp -d)"   # keep scratch media out of the repo
 # 3. Migrate (explicit — startup never migrates, ADR-0018)
 node bin/loxep.ts migrate
 
-# 4. Start the built app (leave running while tests execute)
+# 4. Confirm nothing else holds the port, then start the built app
+#    (leave running while tests execute)
+lsof -t -i :3093    # must print nothing; if it prints a PID, kill that PID
+                    # by number — never pkill by name
 node bin/loxep.ts start --mode=all
 ```
+
+**Port 3093 is single-occupant.** `loxep start` refuses to start when the
+port is already bound (it exits 1 with `EADDRINUSE` — this is deliberate;
+the underlying Nitro/srvx server layer swallows its own listen failure, so
+without the preflight a second process would report "web runtime started"
+while holding no listener, and every request would silently land on the
+_other_ process's server and database). The `lsof` check before starting is
+the companion rule: know whose server you are about to test against. If two
+harnesses must run in parallel, give each its own port and database —
+override `LOXEP_PORT`, `LOXEP_PUBLIC_ORIGIN`, and `LOXEP_E2E_BASE_URL`
+together, and use a distinct scratch database name.
 
 `LOXEP_BOOTSTRAP_ADMIN_EMAIL=e2e-admin@example.com` is load-bearing:
 `settings.spec.ts` signs in as that address and expects the deployment
