@@ -36,6 +36,20 @@
  * `reconcile_runs.subject_type`'s `CHECK` widens to include `proxy_resource`,
  * exactly as that table's own doc comment promised.
  *
+ * Pangolin chain design, milestone 6 (`0028_provisioning_templates`,
+ * loxep-acj.6) — the template engine, a COMPILER and a DRIVER, never a
+ * second workflow engine:
+ *
+ *   provisioning_templates, provisioning_template_steps, template_runs,
+ *   template_run_steps
+ *
+ * plus the one constraint the design's own "template run" section names:
+ * `reconcile_runs.subject_type`'s `CHECK` widens AGAIN, to include
+ * `template_run` — a template run's own driver-pass evidence is an ordinary
+ * `reconcile_runs` row (`kind = 'run-provisioning-template'`), exactly the
+ * same "one-word edit now; a migration plus data repair later" reasoning
+ * `caa` and `proxy_resource` already used on this same column.
+ *
 
  * **No existing table gains a column** — the design's own rule. `connections`,
  * `application_secrets`, `monitor_targets`, `audit_events`, and every
@@ -274,12 +288,23 @@ export type ReconcileStatus = (typeof RECONCILE_STATUSES)[number];
  * reconciler. Widening this `CHECK` is a one-word migration edit; discovering
  * the overload later is a migration plus a data repair — the same reasoning
  * that gave `dns_records.owner` its `caa` value.
+ *
+ * `template_run` (loxep-acj.6, M6 of the Pangolin chain design) is the
+ * second addition: the provisioning-template driver opens ONE `reconcile_runs`
+ * row per drive (per resume), `subject_id = template_runs.id`, so a driver
+ * pass is legible next to every other reconciler run on `/infrastructure/
+ * runs` — "distinguished by kind", never a parallel history table. The
+ * PERSISTENT step ladder (which steps ran, which are blocked, which reconcile
+ * run is each step's evidence) lives on `template_run_steps`, not here — this
+ * row is one pass's own summary, the same relationship an ordinary
+ * `reconcile_runs` row already has to the domain/resource it reconciled.
  */
 export const RECONCILE_SUBJECT_TYPES = [
   "domain",
   "hosting_target",
   "token",
   "proxy_resource",
+  "template_run",
 ] as const;
 export type ReconcileSubjectType = (typeof RECONCILE_SUBJECT_TYPES)[number];
 
@@ -828,7 +853,7 @@ export const reconcileRuns = pgTable(
     ),
     check(
       "reconcile_runs_subject_type_check",
-      sql`${table.subjectType} in ('domain', 'hosting_target', 'token', 'proxy_resource')`,
+      sql`${table.subjectType} in ('domain', 'hosting_target', 'token', 'proxy_resource', 'template_run')`,
     ),
     check(
       "reconcile_runs_trigger_check",
@@ -1607,5 +1632,368 @@ export const proxyResourceRules = pgTable(
     index("proxy_resource_rules_proxy_resource_id_idx").on(
       table.proxyResourceId,
     ),
+  ],
+);
+
+/* ------------------------------------ provisioning templates (loxep-acj.6) */
+
+/**
+ * `provisioning_template_steps.step_kind` — CLOSED and `CHECK`ed on purpose:
+ * the design's own words are "a template that wants an eighth thing is a
+ * template that wants a new service, and the closed set forces that
+ * conversation instead of letting `params` grow a scripting language." Each
+ * kind maps to an EXISTING service this package already ships:
+ *
+ * ```text
+ * domain.declare          managedDomains.create + updateIntent   (intent only)
+ * dns.point-at-target     apex_target_id / proxied flags;
+ *                         the materializer does the rest         (intent only)
+ * dns.manual-record       addManualRecord                        (intent only)
+ * proxy.ensure-resource   proxy_resources intent + reconcile()
+ * proxy.ensure-rules      proxy_resource_rules intent + reconcile()
+ * mail.enable             enableMail + runMailDomainSync
+ * mail.ensure-mailbox     mailbox intent + runMailboxSync
+ * ```
+ *
+ * See `provisioning.ts`'s module doc for exactly how the driver dispatches
+ * each kind — this column is the closed vocabulary, not the behavior.
+ */
+export const PROVISIONING_STEP_KINDS = [
+  "domain.declare",
+  "dns.point-at-target",
+  "dns.manual-record",
+  "proxy.ensure-resource",
+  "proxy.ensure-rules",
+  "mail.enable",
+  "mail.ensure-mailbox",
+] as const;
+export type ProvisioningStepKind = (typeof PROVISIONING_STEP_KINDS)[number];
+
+/**
+ * `provisioning_template_steps.provider` / `template_run_steps.provider` —
+ * the three providers a compiled step can touch, or `null` for a step that
+ * writes only Loxep-owned intent with no provider call this milestone (a
+ * `dns.*` step still touches Cloudflare THROUGH the existing record-sync
+ * service, so it is NOT `null` — see the vocabulary above; `null` is reserved
+ * for a genuinely provider-less step, none of which exist in the closed seven
+ * today, kept as a real value because a future Loxep-only step kind should not
+ * need a schema change to express "no provider").
+ */
+export const PROVISIONING_STEP_PROVIDERS = [
+  "cloudflare",
+  "purelymail",
+  "pangolin",
+] as const;
+export type ProvisioningStepProvider =
+  (typeof PROVISIONING_STEP_PROVIDERS)[number];
+
+/** `template_runs.status` — CLOSED and `CHECK`ed. Same four values `reconcile_runs.status` uses, same meanings. */
+export const TEMPLATE_RUN_STATUSES = [
+  "running",
+  "succeeded",
+  "partial",
+  "failed",
+] as const;
+export type TemplateRunStatus = (typeof TEMPLATE_RUN_STATUSES)[number];
+
+/**
+ * `template_run_steps.status` — CLOSED and `CHECK`ed, and the design's
+ * `'blocked'` state is a FIRST-CLASS member here, not a repurposed `'failed'`:
+ * never a silent skip, never conflated with a real fault. `'skipped'` is
+ * reserved for an `optional` step whose prerequisite never clears — the run
+ * still finishes without it, honestly recorded as skipped rather than
+ * pretending it succeeded.
+ */
+export const TEMPLATE_RUN_STEP_STATUSES = [
+  "pending",
+  "running",
+  "succeeded",
+  "blocked",
+  "failed",
+  "skipped",
+] as const;
+export type TemplateRunStepStatus =
+  (typeof TEMPLATE_RUN_STEP_STATUSES)[number];
+
+/**
+ * A provisioning template: a NAMED, VERSIONED, strictly ordered list of
+ * idempotent steps an operator can run against a fresh set of inputs
+ * (`template_runs.inputs`) — "provision a standard domain", data-driven, the
+ * same reason `mailbox_templates` exists rather than a hardcoded list
+ * (Pangolin chain design, "The template engine").
+ *
+ * `version` is bumped on every edit to the template's step list —
+ * `template_runs.template_version` freezes the value a run started against,
+ * so the compiled plan a run is driving never silently changes underfoot.
+ *
+ * `unique(is_default) where is_default` is `mailbox_templates`' own singleton
+ * idiom, copied verbatim: "at most one default", declaratively, immune to two
+ * concurrent writers both passing a service-level check.
+ *
+ * SHIPS UNSEEDED, deliberately, following `mailbox_templates`' own precedent
+ * (design open question 10): no migration-authored 'new domain' row. The
+ * operator guide is where that step list is described; `/infrastructure/
+ * templates/new` (or a "create from example" affordance) is where it becomes
+ * a real row, exactly the way an installation's mailbox template starts as
+ * "none" rather than a guessed default.
+ */
+export const provisioningTemplates = pgTable(
+  "provisioning_templates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description"),
+    version: integer("version").notNull().default(1),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("provisioning_templates_name_uq").on(table.name),
+    // "At most one default", declaratively — `mailbox_templates_default_uq`'s
+    // own idiom.
+    uniqueIndex("provisioning_templates_default_uq")
+      .on(table.isDefault)
+      .where(sql`${table.isDefault}`),
+    check("provisioning_templates_version_check", sql`${table.version} >= 1`),
+  ],
+);
+
+/**
+ * One step of a template's DEFINITION — never a run's own step; see
+ * {@link templateRunSteps} for that. `params` is `jsonb` and that is
+ * deliberate: "the parameters of 'create a resource named `$name` with rule
+ * set `$rules`' are genuinely heterogeneous across step kinds, and columns
+ * for the union of them would be the 'shared table containing unrelated
+ * optional columns' cross-domain rule 5 forbids." It is safe because
+ * `step_kind` is closed and `CHECK`ed, so every jsonb shape has exactly one
+ * zod schema that parses it (`provisioning.ts`'s `provisioningStepParamsSchemas`,
+ * the same closed-union-plus-per-member-schema discipline
+ * `monitorTargetConfigSchemas` uses for `monitor_targets.config`) — an
+ * unknown kind fails at the `CHECK` constraint, never at a runtime switch
+ * statement with no `default` arm.
+ *
+ * `optional` — a blocked or failed optional step does not stop the REST of
+ * the plan from being judged complete; the run can still finish `succeeded`
+ * around it. Every step in the seeded 'new domain' example is non-optional
+ * (`optional = false`), because each one is load-bearing for that template's
+ * own promise.
+ */
+export const provisioningTemplateSteps = pgTable(
+  "provisioning_template_steps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    templateId: uuid("template_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    /** Closed set: see {@link PROVISIONING_STEP_KINDS}. */
+    stepKind: text("step_kind").notNull(),
+    /** Closed set or `NULL`: see {@link PROVISIONING_STEP_PROVIDERS}. */
+    provider: text("provider"),
+    /** Loxep-owned; one zod schema per `step_kind`. See the table doc. */
+    params: jsonb("params").notNull().default({}),
+    optional: boolean("optional").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "provisioning_template_steps_template_fk",
+      columns: [table.templateId],
+      foreignColumns: [provisioningTemplates.id],
+    }).onDelete("cascade"),
+
+    unique("provisioning_template_steps_sequence_uq").on(
+      table.templateId,
+      table.sequence,
+    ),
+
+    check(
+      "provisioning_template_steps_kind_check",
+      sql`${table.stepKind} in ('domain.declare', 'dns.point-at-target', 'dns.manual-record', 'proxy.ensure-resource', 'proxy.ensure-rules', 'mail.enable', 'mail.ensure-mailbox')`,
+    ),
+    check(
+      "provisioning_template_steps_provider_check",
+      sql`${table.provider} is null or ${table.provider} in ('cloudflare', 'purelymail', 'pangolin')`,
+    ),
+    check(
+      "provisioning_template_steps_sequence_check",
+      sql`${table.sequence} >= 0`,
+    ),
+
+    index("provisioning_template_steps_template_id_idx").on(table.templateId),
+  ],
+);
+
+/**
+ * One RUN of a template against a concrete set of inputs.
+ *
+ * `compiled_plan` is the single most important column in this design: it is
+ * the FROZEN step list, resolved against the template at start. "Freezing the
+ * plan at start is what makes a run reproducible after a template edit, what
+ * makes 'resume' mean the same thing three days later, and what lets the UI
+ * show the whole ladder — including steps not yet reached — instead of only
+ * what has happened." A template edited mid-run therefore cannot change a
+ * running run: the driver reads `compiled_plan`, never `provisioning_template_steps`,
+ * once a run exists. Its shape mirrors `provisioning.ts`'s `CompiledStep[]` —
+ * kept as untyped `jsonb` here (like `reconcile_run_steps.request_summary`)
+ * because validating it is the COMPILER's job, at write time, not a `CHECK`
+ * constraint's.
+ *
+ * `template_version` is the template's `version` at compile time — evidence
+ * of which edit of the template this run was compiled against, independent of
+ * whether the template has since been edited again.
+ */
+export const templateRuns = pgTable(
+  "template_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    templateId: uuid("template_id").notNull(),
+    templateVersion: integer("template_version").notNull(),
+    /** The operator's answers, e.g. `{domain: 'example.com', ...}`. */
+    inputs: jsonb("inputs").notNull().default({}),
+    /** The FROZEN step list. See the table doc — never re-read from the template. */
+    compiledPlan: jsonb("compiled_plan").notNull(),
+    /** Closed set: see {@link TEMPLATE_RUN_STATUSES}. */
+    status: text("status").notNull().default("running"),
+    actorUserId: text("actor_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: "template_runs_template_fk",
+      columns: [table.templateId],
+      foreignColumns: [provisioningTemplates.id],
+      // Deliberately NOT cascade: a template's run history is evidence that
+      // outlives an edit, matching `dns_drift_findings`' `first_seen_run_id`/
+      // `last_seen_run_id` reasoning for `reconcile_runs` — the default
+      // (`NO ACTION`) simply means a template with runs cannot be deleted
+      // out from under them, which this design's own "no teardown" stance
+      // treats as correct rather than inconvenient.
+    }),
+
+    check(
+      "template_runs_status_check",
+      sql`${table.status} in ('running', 'succeeded', 'partial', 'failed')`,
+    ),
+    check(
+      "template_runs_template_version_check",
+      sql`${table.templateVersion} >= 1`,
+    ),
+
+    index("template_runs_template_id_idx").on(table.templateId),
+    index("template_runs_status_idx").on(table.status),
+  ],
+);
+
+/**
+ * One step of one RUN — the persistent ladder `/infrastructure/templates/
+ * $id/run/$runId` renders, distinct from {@link provisioningTemplateSteps}
+ * (the template's own DEFINITION). Copied verbatim from `compiled_plan` at
+ * start (`step_kind`/`provider` never change after that), then advanced by
+ * the driver task exactly as far as it currently can on each pass.
+ *
+ * `reconcile_run_id` is the second most important column in this design: "a
+ * template step does not invent its own evidence." A `dns.point-at-target`
+ * step's evidence is an ordinary `reconcile_runs` row of kind `sync-records`,
+ * identical to one an operator's manual re-sync would produce — this column
+ * is that link, and it is what keeps this from being a second execution
+ * engine: the template run is a SPINE, the reconcile runs it points at are
+ * the VERTEBRAE. `NULL` for a step with no reconciler run of its own
+ * (`domain.declare` writes Loxep-owned intent only — see `provisioning.ts`).
+ *
+ * `blocked_reason` is deliberately an OPEN `text` column, not `CHECK`ed —
+ * the design's own list ("`'credential_scope' | 'awaiting_delegation' |
+ * 'write_policy' | …'`") is explicitly non-exhaustive, the same open-taxonomy
+ * treatment `reconcile_run_steps.error_code` already gets, because a NEW
+ * blocked reason should never need a migration to express — only new,
+ * legible copy at the call site.
+ */
+export const templateRunSteps = pgTable(
+  "template_run_steps",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id").notNull(),
+    sequence: integer("sequence").notNull(),
+    /** Closed set: see {@link PROVISIONING_STEP_KINDS}. Copied from `compiled_plan` at start. */
+    stepKind: text("step_kind").notNull(),
+    /** Closed set or `NULL`: see {@link PROVISIONING_STEP_PROVIDERS}. */
+    provider: text("provider"),
+    /** Closed set: see {@link TEMPLATE_RUN_STEP_STATUSES}. */
+    status: text("status").notNull().default("pending"),
+    /** Open taxonomy. See the table doc. `NULL` unless `status = 'blocked'`. */
+    blockedReason: text("blocked_reason"),
+    /** This step's EVIDENCE — an ordinary `reconcile_runs` row. See the table doc. */
+    reconcileRunId: uuid("reconcile_run_id"),
+    /** Set when this step made a non-idempotent provider create, ledgered through `provider_operations`. */
+    providerOperationKey: text("provider_operation_key"),
+    /** One of the adapter's taxonomy kinds, or a Loxep-owned reason code. */
+    errorCode: text("error_code"),
+    /** Sanitized. Never headers, query strings, or credential material — same discipline as `reconcile_run_steps.error_detail`. */
+    errorDetail: text("error_detail"),
+    occurredAt: timestamp("occurred_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "template_run_steps_run_fk",
+      columns: [table.runId],
+      foreignColumns: [templateRuns.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "template_run_steps_reconcile_run_fk",
+      columns: [table.reconcileRunId],
+      foreignColumns: [reconcileRuns.id],
+      // Deliberately NOT cascade: `reconcile_runs` rows are never deleted
+      // (same "history is not deleted" stance as `dns_drift_findings`'
+      // `first_seen_run_id` FK above), so this can never actually fire — but
+      // the default (no action) is still the right one to state explicitly.
+    }),
+    foreignKey({
+      name: "template_run_steps_provider_operation_fk",
+      columns: [table.providerOperationKey],
+      foreignColumns: [providerOperations.idempotencyKey],
+    }),
+
+    unique("template_run_steps_sequence_uq").on(table.runId, table.sequence),
+
+    check(
+      "template_run_steps_kind_check",
+      sql`${table.stepKind} in ('domain.declare', 'dns.point-at-target', 'dns.manual-record', 'proxy.ensure-resource', 'proxy.ensure-rules', 'mail.enable', 'mail.ensure-mailbox')`,
+    ),
+    check(
+      "template_run_steps_provider_check",
+      sql`${table.provider} is null or ${table.provider} in ('cloudflare', 'purelymail', 'pangolin')`,
+    ),
+    check(
+      "template_run_steps_status_check",
+      sql`${table.status} in ('pending', 'running', 'succeeded', 'blocked', 'failed', 'skipped')`,
+    ),
+    check(
+      "template_run_steps_blocked_reason_check",
+      sql`(${table.status} = 'blocked') = (${table.blockedReason} is not null)`,
+    ),
+    check(
+      "template_run_steps_sequence_check",
+      sql`${table.sequence} >= 0`,
+    ),
+
+    index("template_run_steps_run_id_idx").on(table.runId),
   ],
 );

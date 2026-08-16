@@ -221,6 +221,7 @@ import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureContainerHostTasks } from "./infrastructure-container-host.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
+import { createInfrastructureProvisioningTasks } from "./infrastructure-provisioning.ts";
 import { createInfrastructureProxyTasks } from "./infrastructure-proxy.ts";
 import { createInfrastructureReconcilePollExecutor } from "./infrastructure-poll-executor.ts";
 import { createInfrastructureTokenTasks } from "./infrastructure-token.ts";
@@ -555,6 +556,18 @@ export function buildWorkerRegistry(
   // account of what is, and is not, wired yet.
   const infrastructureProxy = createInfrastructureProxyTasks({ services });
 
+  // --- the provisioning-template engine's driver (Pangolin chain design M6,
+  // loxep-acj.6) ----------------------------------------------------------
+  // One on-demand task, `infrastructure.run-provisioning-template`, enqueued
+  // transactionally by `@loxep/infrastructure`'s `ProvisioningTemplatesService
+  // .startRun` and re-enqueued (same job key, `preserve_run_at`) by an
+  // operator's "Resume run" click — never a poll or a sweep. See
+  // `infrastructure-provisioning.ts`'s own module doc for the three provider
+  // resolvers it reuses, unchanged, from the mail/DNS/proxy wiring above.
+  const infrastructureProvisioning = createInfrastructureProvisioningTasks({
+    services,
+  });
+
   // --- dynamic-IP named-alias detection (Pangolin chain design M5,
   // loxep-acj.5) -----------------------------------------------------
   // One recurring sweep: detect (dns/pangolin_site), update the alias,
@@ -616,6 +629,7 @@ export function buildWorkerRegistry(
     ...infrastructureTokens.tasks,
     ...infrastructureContainerHosts.tasks,
     ...infrastructureProxy.tasks,
+    ...infrastructureProvisioning.tasks,
     ipAliasDetection.ipAliasDetectionTask,
     health.healthSweepTask,
     gatusPush.gatusPushTask,

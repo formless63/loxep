@@ -52,6 +52,7 @@ export default defineConfig({
             { label: 'Connecting Gatus', slug: 'guides/connecting-gatus' },
             { label: 'Publishing health to Gatus', slug: 'guides/gatus-health-push' },
             { label: 'Sending fleet alert evidence', slug: 'guides/fleet-evidence-webhooks' },
+            { label: 'Provisioning templates', slug: 'guides/provisioning-templates' },
           ],
         },
         {

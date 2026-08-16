@@ -46,6 +46,19 @@ export const infrastructureNavGroups: NavGroup[] = [
     ]
   },
   {
+    label: 'Templates',
+    items: [
+      {
+        title: 'Templates',
+        url: '/infrastructure/templates',
+        icon: 'integrations',
+        isActive: false,
+        shortcut: ['g', 'p'],
+        items: []
+      }
+    ]
+  },
+  {
     label: 'History',
     items: [
       {

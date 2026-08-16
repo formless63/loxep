@@ -77,3 +77,48 @@ export const IP_ALIAS_SOURCE_LABELS: Record<string, string> = {
 export const IP_ALIAS_SOURCE_OPTIONS = Object.entries(IP_ALIAS_SOURCE_LABELS).map(
   ([value, label]) => ({ value, label })
 );
+
+/** `provisioning_template_steps.step_kind` / `template_run_steps.step_kind` — the closed seven (Pangolin chain design M6, loxep-acj.6). */
+export const PROVISIONING_STEP_KIND_LABELS: Record<string, string> = {
+  'domain.declare': 'Declare domain',
+  'dns.point-at-target': 'Point DNS at target',
+  'dns.manual-record': 'Add manual DNS record',
+  'proxy.ensure-resource': 'Ensure Pangolin resource',
+  'proxy.ensure-rules': 'Ensure Pangolin rules',
+  'mail.enable': 'Enable mail',
+  'mail.ensure-mailbox': 'Ensure mailbox'
+};
+
+/** `template_run_steps.status` — `'blocked'` is first-class, never a silent skip and never conflated with `'failed'`. */
+export const TEMPLATE_RUN_STEP_STATUS_TONE: Record<string, Tone> = {
+  pending: 'secondary',
+  running: 'secondary',
+  succeeded: 'success',
+  blocked: 'warning',
+  failed: 'destructive',
+  skipped: 'secondary'
+};
+
+export const TEMPLATE_RUN_STEP_STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  running: 'Running',
+  succeeded: 'Succeeded',
+  blocked: 'Blocked',
+  failed: 'Failed',
+  skipped: 'Skipped'
+};
+
+/**
+ * `template_run_steps.blocked_reason` — an OPEN taxonomy (see
+ * `provisioning.ts`'s own doc), so this map is a best-effort label set, never
+ * exhaustive; an unknown reason falls back to the raw code.
+ */
+export const TEMPLATE_BLOCKED_REASON_LABELS: Record<string, string> = {
+  credential_scope: 'Write policy',
+  zone_not_found: 'No Cloudflare zone',
+  org_domain_not_found: 'No Pangolin org domain',
+  no_proxy_connection: 'No proxy connection linked',
+  awaiting_delegation: 'Awaiting DNS delegation',
+  ownership_not_yet_provable: 'Ownership not yet provable',
+  mail_disabled: 'Mail not enabled'
+};

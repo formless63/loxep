@@ -409,16 +409,21 @@ export type {
 
 export {
   PROXY_RESOURCE_SUBJECT_TYPE,
+  RECONCILE_PROXY_RESOURCE_ENABLE_RUN_KIND,
+  RECONCILE_PROXY_RESOURCE_RETIRE_RUN_KIND,
   RECONCILE_PROXY_RESOURCE_RUN_KIND,
   ProxyWritePolicyError,
   createProxyResourcesService,
 } from "./proxy.ts";
 export type {
+  EnableProxyRuleResult,
   ProxyResourceRow,
   ProxyResourceRuleRow,
   ProxyResourcesService,
   ProxyWriteAuthorizationContext,
   ReconcileProxyResourceResult,
+  RetireAliasFanOutResult,
+  RetireProxyRuleResult,
 } from "./proxy.ts";
 
 /* ---------------------------- write authorization (Pangolin chain, loxep-acj.3) --- */
@@ -429,6 +434,7 @@ export {
   assertWouldNotLockOut,
   assertWritePolicy,
   highestOperationTier,
+  lockoutBlockedStep,
   proxyOperationTier,
   wouldLockOut,
   writePolicyBlockedStep,
@@ -457,3 +463,50 @@ export type {
   IpAliasFanOutRuleInput,
   MaterializedProxyRuleValue,
 } from "./ip-aliases.ts";
+
+/* -------------------------- provisioning templates (Pangolin chain, loxep-acj.6) --- */
+
+export {
+  RUN_PROVISIONING_TEMPLATE_TASK,
+  provisioningTemplateRunJobKey,
+} from "./tasks.ts";
+export type { RunProvisioningTemplatePayload } from "./tasks.ts";
+
+export {
+  PROVISIONING_STEP_KINDS,
+  PROVISIONING_STEP_PROVIDERS,
+  RUN_PROVISIONING_TEMPLATE_RUN_KIND,
+  TEMPLATE_RUN_SUBJECT_TYPE,
+  compileTemplate,
+  createProvisioningDriver,
+  createProvisioningTemplatesService,
+  extractTemplateInputKeys,
+  provisioningStepParamsSchemas,
+} from "./provisioning.ts";
+export type {
+  CompiledPlan,
+  CompiledStep,
+  CreateProvisioningDriverOptions,
+  CreateProvisioningTemplateInput,
+  CreateTemplateStepInput,
+  DnsManualRecordParams,
+  DnsPointAtTargetParams,
+  DomainDeclareParams,
+  MailEnableParams,
+  MailEnsureMailboxParams,
+  ProvisioningDriver,
+  ProvisioningProviders,
+  ProvisioningStepKind,
+  ProvisioningStepProvider,
+  ProvisioningTemplateRow,
+  ProvisioningTemplateStepRow,
+  ProvisioningTemplatesService,
+  ProxyEnsureResourceParams,
+  ProxyEnsureRulesParams,
+  StartTemplateRunInput,
+  TemplateRunRow,
+  TemplateRunStatus,
+  TemplateRunStepRow,
+  TemplateRunStepStatus,
+  TemplateStepDefinitionInput,
+} from "./provisioning.ts";

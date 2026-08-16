@@ -773,6 +773,18 @@ export interface ProxyResourceChainDto {
    * always reflects the CURRENT flip, not a stale one.
    */
   writePolicyTier: ProviderWritePolicyTier | null;
+  /**
+   * "Who/when" for the rules list's disabled rows (the owner's filtering-UX
+   * ruling) — the most recent SUCCESSFUL retire/enable run for this
+   * resource, resource-level (not per-rule; see `buildProxyResourceChainDtos`'s
+   * own doc for why), `null` when no such run has ever completed.
+   */
+  lastRuleLifecycleChange: {
+    kind: 'retire' | 'enable';
+    /** `null` when the run has no attributed admin (should not occur for a `'manual'`-triggered retire/enable, but never assumed). */
+    actorUserName: string | null;
+    occurredAt: string;
+  } | null;
 }
 
 export interface ManagedDomainDetailDto extends ManagedDomainDto {
@@ -852,6 +864,45 @@ async function buildProxyResourceChainDtos(
     const writePolicyTier: ProviderWritePolicyTier | null =
       connectionId === null ? null : (writePolicies[connectionId] ?? 'read_only');
 
+    // M7 (loxep-acj.7): "who/when" for the rules list's disabled rows, per
+    // the owner's filtering-UX ruling. The ledger's own granularity is per
+    // RESOURCE (`reconcile_runs.subject_id`), not per rule — a `proxy_resource
+    // _rules` row carries no "last changed by" column of its own — so this is
+    // the most recent SUCCESSFUL retire/enable run for the WHOLE resource,
+    // honestly documented as resource-level rather than claimed as
+    // per-rule-precise. Literal kind strings, matching this function's own
+    // 'proxy_resource'/'diff' literals just above — see the module doc's
+    // "only type-only imports" rule for why `RECONCILE_PROXY_RESOURCE
+    // _RETIRE_RUN_KIND` is not imported as a value here.
+    const lifecycleRunRow = await handle.db.query.reconcileRuns.findFirst({
+      where: (table, { and, eq, inArray }) =>
+        and(
+          eq(table.subjectType, 'proxy_resource'),
+          eq(table.subjectId, resource.id),
+          inArray(table.kind, [
+            'reconcile-proxy-resource-retire',
+            'reconcile-proxy-resource-enable'
+          ]),
+          eq(table.status, 'succeeded')
+        ),
+      orderBy: (table, { desc }) => [desc(table.startedAt)]
+    });
+    let lastRuleLifecycleChange: ProxyResourceChainDto['lastRuleLifecycleChange'] = null;
+    if (lifecycleRunRow !== undefined) {
+      const actor =
+        lifecycleRunRow.actorUserId === null
+          ? undefined
+          : await handle.db.query.user.findFirst({
+              where: (table, { eq }) => eq(table.id, lifecycleRunRow.actorUserId as string),
+              columns: { name: true }
+            });
+      lastRuleLifecycleChange = {
+        kind: lifecycleRunRow.kind === 'reconcile-proxy-resource-retire' ? 'retire' : 'enable',
+        actorUserName: actor?.name ?? null,
+        occurredAt: iso(lifecycleRunRow.startedAt)
+      };
+    }
+
     results.push({
       id: resource.id,
       domainId: resource.domainId,
@@ -887,7 +938,8 @@ async function buildProxyResourceChainDtos(
             },
       unmatchedObservedCount,
       connectionId,
-      writePolicyTier
+      writePolicyTier,
+      lastRuleLifecycleChange
     });
   }
   return results;
@@ -1203,6 +1255,130 @@ export const requestProxyResourceDomainApply = createServerFn({ method: 'POST' }
   });
 
 // ---------------------------------------------------------------------------
+// Rule retirement / re-enable (Pangolin chain design milestone 7, loxep-acj.7)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the full domain a `proxy_resource_rules` row's OWN resource
+ * fronts, plus that resource's `hostingTargetId` — what every retire/enable
+ * server function below needs both to enqueue the right task AND to
+ * independently verify the typed confirmation SERVER-SIDE, never trusting
+ * the client's disabled-button gating alone (`TypedConfirmDialog` is a UI
+ * affordance; the string it collects must be re-checked here, because a
+ * client that skips the dialog entirely could otherwise post any payload it
+ * likes straight to this admin-gated endpoint).
+ */
+async function resolveProxyResourceRuleTarget(
+  handle: DbHandle,
+  proxyResourceRuleId: string
+): Promise<{ proxyResourceId: string; hostingTargetId: string; fullDomain: string } | null> {
+  const rule = await handle.db.query.proxyResourceRules.findFirst({
+    where: (table, { eq }) => eq(table.id, proxyResourceRuleId)
+  });
+  if (rule === undefined) return null;
+  const resource = await handle.db.query.proxyResources.findFirst({
+    where: (table, { eq }) => eq(table.id, rule.proxyResourceId)
+  });
+  if (resource === undefined) return null;
+  const domain = await handle.db.query.managedDomains.findFirst({
+    where: (table, { eq }) => eq(table.id, resource.domainId)
+  });
+  if (domain === undefined) return null;
+  const fullDomain =
+    resource.subdomain === null ? domain.name : `${resource.subdomain}.${domain.name}`;
+  return { proxyResourceId: resource.id, hostingTargetId: resource.hostingTargetId, fullDomain };
+}
+
+const retireProxyResourceRuleInput = z.strictObject({
+  proxyResourceRuleId: z.uuid(),
+  /** The operator's typed confirmation — re-verified against the rule's OWN resource, server-side, below. */
+  confirmedFullDomain: z.string().trim().min(1)
+});
+
+/**
+ * Disable ONE rule at the provider — `enabled: false`, the reversible
+ * retirement form (owner ruling, `pangolin-credential-constraints` memory:
+ * "retirement = disable-never-delete CONFIRMED"). Admin-only; enqueues
+ * `infrastructure.retire-proxy-resource-rule` (job-based — see that task's
+ * own doc for why this cannot be a synchronous call from `apps/web`) and
+ * returns immediately, matching every other intent-changing action in this
+ * module. The typed confirmation is checked TWICE: once in the UI
+ * (`TypedConfirmDialog`, which disables the primary action until it
+ * matches) and independently here, against the resource's OWN full domain
+ * read fresh from the database — never the client's own copy.
+ */
+export const retireProxyResourceRule = createServerFn({ method: 'POST' })
+  .inputValidator(retireProxyResourceRuleInput)
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const { requireAdmin, getAdminServices, getInfrastructureEnqueue, getFleetModule } =
+      await import('@/server/admin');
+    const session = await requireAdmin();
+    const { handle } = getAdminServices();
+    const target = await resolveProxyResourceRuleTarget(handle, data.proxyResourceRuleId);
+    if (target === null) {
+      throw new Error(`Proxy resource rule "${data.proxyResourceRuleId}" not found`);
+    }
+    if (data.confirmedFullDomain !== target.fullDomain) {
+      throw new Error(
+        `Confirmation text did not match this resource's domain (expected "${target.fullDomain}")`
+      );
+    }
+    const app = await getFleetModule();
+    const enqueue = getInfrastructureEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        app.RETIRE_PROXY_RESOURCE_RULE_TASK,
+        {
+          proxyResourceRuleId: data.proxyResourceRuleId,
+          hostingTargetId: target.hostingTargetId,
+          actorUserId: session.user.id
+        },
+        { jobKey: `${app.RETIRE_PROXY_RESOURCE_RULE_TASK}:${data.proxyResourceRuleId}` }
+      );
+    });
+    return { enqueued: true };
+  });
+
+/**
+ * The owner's filtering-UX ruling's "plus re-enable" half — `enabled: true`
+ * on ONE rule. Same admin-only, typed-confirmation, job-based shape as
+ * {@link retireProxyResourceRule}, mirrored.
+ */
+export const enableProxyResourceRule = createServerFn({ method: 'POST' })
+  .inputValidator(retireProxyResourceRuleInput)
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const { requireAdmin, getAdminServices, getInfrastructureEnqueue, getFleetModule } =
+      await import('@/server/admin');
+    const session = await requireAdmin();
+    const { handle } = getAdminServices();
+    const target = await resolveProxyResourceRuleTarget(handle, data.proxyResourceRuleId);
+    if (target === null) {
+      throw new Error(`Proxy resource rule "${data.proxyResourceRuleId}" not found`);
+    }
+    if (data.confirmedFullDomain !== target.fullDomain) {
+      throw new Error(
+        `Confirmation text did not match this resource's domain (expected "${target.fullDomain}")`
+      );
+    }
+    const app = await getFleetModule();
+    const enqueue = getInfrastructureEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        app.ENABLE_PROXY_RESOURCE_RULE_TASK,
+        {
+          proxyResourceRuleId: data.proxyResourceRuleId,
+          hostingTargetId: target.hostingTargetId,
+          actorUserId: session.user.id
+        },
+        { jobKey: `${app.ENABLE_PROXY_RESOURCE_RULE_TASK}:${data.proxyResourceRuleId}` }
+      );
+    });
+    return { enqueued: true };
+  });
+
+// ---------------------------------------------------------------------------
 // Dynamic-IP named aliases (Pangolin chain design milestone 5, loxep-acj.5)
 // ---------------------------------------------------------------------------
 
@@ -1417,6 +1593,73 @@ export const deleteIpAlias = createServerFn({ method: 'POST' })
     delete next[data.name];
     await settings.set(ipAliasesSetting, next, { actorUserId: session.user.id });
     return { deleted: true };
+  });
+
+const retireIpAliasFanOutRuleInput = z.strictObject({
+  aliasName: z.string().trim().min(1),
+  /** The operator's typed confirmation — re-verified against `aliasName` itself, server-side, below (there is no single resource this action names: it can span every resource bound to the alias). */
+  confirmedAliasName: z.string().trim().min(1)
+});
+
+/**
+ * Completes the M5 (`loxep-acj.5`) add-then-retire fan-out's retire half for
+ * real: disables every currently-live provider rule matching `aliasName`'s
+ * PREVIOUS address, across EVERY resource bound to it — the "drift-finding
+ * one-click" this milestone's UI wires from `/infrastructure/aliases`. One
+ * `infrastructure.retire-ip-alias-fan-out-rule` job per DISTINCT bound
+ * resource (that task's own scope stays per-resource — see its doc); this
+ * function is the fan-out ACROSS resources the one-click affordance needs.
+ * Admin-only, typed-confirmed against the alias name (the object this
+ * one-click action names), job-based for the same reason
+ * {@link retireProxyResourceRule} is.
+ */
+export const retireIpAliasFanOutRule = createServerFn({ method: 'POST' })
+  .inputValidator(retireIpAliasFanOutRuleInput)
+  .handler(async ({ data }): Promise<{ enqueued: true; resourceCount: number }> => {
+    const { requireAdmin, getAdminServices, getInfrastructureEnqueue, getFleetModule } =
+      await import('@/server/admin');
+    const session = await requireAdmin();
+    if (data.confirmedAliasName !== data.aliasName) {
+      throw new Error(
+        `Confirmation text did not match the alias name (expected "${data.aliasName}")`
+      );
+    }
+    const { handle, proxyResources } = getAdminServices();
+    const { formatIpAliasReference } = await import('@loxep/domain');
+    const referencing = await proxyResources.listRulesReferencingAlias(
+      formatIpAliasReference(data.aliasName)
+    );
+    // One job per DISTINCT resource — `referencing` has one row per RULE
+    // (a resource can carry more than one `dynamic_ip` rule for the same
+    // alias), but `infrastructure.retire-ip-alias-fan-out-rule` already
+    // fans out over every such rule on ONE resource itself.
+    const hostingTargetIdByResourceId = new Map(
+      referencing.map((entry) => [entry.resource.id, entry.resource.hostingTargetId])
+    );
+    if (hostingTargetIdByResourceId.size === 0) {
+      return { enqueued: true, resourceCount: 0 };
+    }
+
+    const app = await getFleetModule();
+    const enqueue = getInfrastructureEnqueue();
+    await handle.db.transaction(async (tx) => {
+      for (const [proxyResourceId, hostingTargetId] of hostingTargetIdByResourceId) {
+        await enqueue(
+          tx,
+          app.RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK,
+          {
+            proxyResourceId,
+            hostingTargetId,
+            aliasName: data.aliasName,
+            actorUserId: session.user.id
+          },
+          {
+            jobKey: `${app.RETIRE_IP_ALIAS_FAN_OUT_RULE_TASK}:${proxyResourceId}:${data.aliasName}`
+          }
+        );
+      }
+    });
+    return { enqueued: true, resourceCount: hostingTargetIdByResourceId.size };
   });
 
 // ---------------------------------------------------------------------------

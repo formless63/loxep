@@ -19,6 +19,11 @@ import {
   fetchTermixHostSessions,
   fetchUnmatchedTailscaleDevices
 } from '@/server/infrastructure-functions';
+import {
+  fetchProvisioningTemplate,
+  fetchProvisioningTemplateRun,
+  fetchProvisioningTemplates
+} from '@/server/provisioning-functions';
 
 export const infrastructureOverviewQuery = queryOptions({
   queryKey: ['infrastructure', 'overview'],
@@ -135,3 +140,22 @@ export const ipAliasesQuery = queryOptions({
   queryKey: ['infrastructure', 'ip-aliases'],
   queryFn: () => fetchIpAliases()
 });
+
+/* -------------------- provisioning templates (Pangolin chain, loxep-acj.6) */
+
+export const provisioningTemplatesQuery = queryOptions({
+  queryKey: ['infrastructure', 'templates'],
+  queryFn: () => fetchProvisioningTemplates()
+});
+
+export const provisioningTemplateQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'templates', id],
+    queryFn: () => fetchProvisioningTemplate({ data: { id } })
+  });
+
+export const provisioningTemplateRunQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'templates', 'runs', id],
+    queryFn: () => fetchProvisioningTemplateRun({ data: { id } })
+  });

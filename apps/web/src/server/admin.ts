@@ -68,6 +68,7 @@ import {
   createHostingTargetsService,
   createMailDomainsService,
   createManagedDomainsService,
+  createProvisioningTemplatesService,
   createProxyResourcesService,
   createTransactionalEnqueue,
   type ContainerHostsService,
@@ -77,6 +78,7 @@ import {
   type HostingTargetsService,
   type MailDomainsService,
   type ManagedDomainsService,
+  type ProvisioningTemplatesService,
   type ProxyResourcesService,
   type TransactionalEnqueue
 } from '@loxep/infrastructure';
@@ -211,6 +213,18 @@ interface AdminRegistry {
    * on `db`, so it is built eagerly.
    */
   proxyResources: ProxyResourcesService;
+  /**
+   * The provisioning-template engine (Pangolin chain design milestone 6,
+   * loxep-acj.6): template CRUD, the mandatory-preview compile, `startRun`
+   * (writes intent + enqueues `infrastructure.run-provisioning-template` in
+   * one transaction), and `abandonRun`. Depends only on `db` +
+   * `TransactionalEnqueue`, so it is built eagerly like `managedDomains`
+   * above. DRIVING a run (`advance()`) needs the real per-connection
+   * adapters only `@loxep/app`'s composition root can build — this registry
+   * never drives one directly, matching `proxyResources`' own "a request
+   * only reads or enqueues; reconciling needs a live adapter" split.
+   */
+  provisioningTemplates: ProvisioningTemplatesService;
   /**
    * Dynamically-loaded `@loxep/app` module, cached on the registry. `@loxep/app`
    * depends on `@loxep/jobs`/`@loxep/market`/`@loxep/notifications` (its whole
@@ -362,6 +376,10 @@ function buildRegistry(): AdminRegistry {
     proxyResources: createProxyResourcesService({
       db: handle.db,
       settings: createSettingsService({ db: handle.db })
+    }),
+    provisioningTemplates: createProvisioningTemplatesService({
+      db: handle.db,
+      enqueue: createTransactionalEnqueue()
     })
   };
 }
@@ -480,6 +498,11 @@ export function getResourceLinksService(): ResourceLinksService {
 /** Proxy-resource intent + read-only run history (Pangolin chain design M2, loxep-acj.2). */
 export function getProxyResourcesService(): ProxyResourcesService {
   return getAdminServices().proxyResources;
+}
+
+/** The provisioning-template engine's CRUD + `startRun`/`abandonRun` (Pangolin chain design M6, loxep-acj.6). */
+export function getProvisioningTemplatesService(): ProvisioningTemplatesService {
+  return getAdminServices().provisioningTemplates;
 }
 
 /**
