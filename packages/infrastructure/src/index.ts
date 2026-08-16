@@ -210,6 +210,25 @@ export type {
   UpdateProxyConnectionInput,
 } from "./targets.ts";
 
+/* ------------------------------------- typed addresses (loxep-bub) --- */
+
+export { createHostAddressesService, wanAddressPair } from "./host-addresses.ts";
+export type {
+  ClassifyHostAddressInput,
+  DeclareHostAddressInput,
+  HostAddressesService,
+  HostAddressRow,
+  UpsertObservedHostAddressInput,
+} from "./host-addresses.ts";
+export {
+  HOST_ADDRESS_FAMILIES,
+  HOST_ADDRESS_KINDS,
+  HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE,
+  HOST_ADDRESS_RESOURCE_TYPE,
+  observedProvenance,
+} from "@loxep/db/schema";
+export type { HostAddressFamily, HostAddressKind } from "@loxep/db/schema";
+
 export {
   createProviderOperationsLedger,
   idempotencyKey,

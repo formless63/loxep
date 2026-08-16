@@ -81,8 +81,17 @@ import {
  *      expenses gains nullable payee_counterparty_id (FK to counterparties,
  *      explicitly named expenses_payee_counterparty_fk) plus a partial
  *      index. No backfill; payee_name stays written on every expense.
+ * 0029 host addresses (loxep-bub): host_addresses replaces
+ *      hosting_targets.address_v4/address_v6 with a typed, multi-row model
+ *      (kind wan/lan/tailnet/other, family v4/v6, provenance
+ *      operator_declared/observed:<provider>, primary-per-kind-and-family).
+ *      Every existing address_v4/address_v6 value backfills into a wan,
+ *      operator_declared, primary row before both columns are dropped —
+ *      pre-release, a clean cut. hosting_targets_addressable_check is
+ *      dropped (a CHECK cannot query another table) and re-expressed as a
+ *      service-level invariant in @loxep/infrastructure.
  */
-const MIGRATION_FILE_COUNT = 29;
+const MIGRATION_FILE_COUNT = 30;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

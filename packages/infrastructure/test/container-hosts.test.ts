@@ -87,8 +87,8 @@ async function insertHostingTarget(
 ): Promise<{ id: string; name: string }> {
   const n = options.name ?? nextName("target");
   const row = await handle.pool.query<{ id: string }>(
-    `insert into hosting_targets (name, control_surface, address_v4, decommissioned_at)
-     values ($1, 'direct_reverse_proxy', '203.0.113.5', $2)
+    `insert into hosting_targets (name, control_surface, decommissioned_at)
+     values ($1, 'direct_reverse_proxy', $2)
      returning id`,
     [n, options.decommissioned === true ? new Date() : null],
   );

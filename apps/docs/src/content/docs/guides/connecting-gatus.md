@@ -57,6 +57,16 @@ Every status is rendered with its age, the same discipline [Connecting Beszel](.
 
 If you have also set up [Publishing health to Gatus](../gatus-health-push/) and this connection points at the same instance, the endpoint named by that feature's configured key is never offered for linking, never becomes a status of its own, and never appears in the attach picker at all — see the next guide for what Loxep shows about that endpoint instead.
 
+## The estate browser: every endpoint, and uptime that works even under OIDC
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of this connection. The **Instance** section shows the same three-way security mode as above plus Gatus's own process liveness. The **Endpoints** section lists every endpoint from `/api/v1/endpoints/statuses` — available in the same modes the connection status itself is (no security, or `security.basic`) — with each row's latest result, error count, and Gatus's own observed-at timestamp, which is deliberately a DIFFERENT clock from the moment Loxep read it: Gatus's opinion of an endpoint and Loxep's read of Gatus are never merged into one field.
+
+Every endpoint offers a **View uptime** drill-in over 1 hour / 24 hours / 7 days / 30 days. This is the one read that works in **every** security mode, including `security.oidc` where the Endpoints list itself is unavailable — so an OIDC-secured instance's estate page still answers "how has this endpoint been doing," even though it cannot answer "what is failing right now."
+
+If you have also set up [Publishing health to Gatus](../gatus-health-push/) and this connection points at the same instance, the endpoint(s) that feature pushes to are excluded from this list too, in every security mode, whether or not the push is currently enabled — the same self-latching-loop reason the "This instance's endpoints" attach picker above already excludes them. The page states how many were excluded rather than silently showing a shorter list.
+
+**This page never writes anything.** Gatus configuration is files-only; there is no config editor here, and never will be.
+
 ## Alerts stay in Gatus
 
 Gatus's own alerting (`ntfy`, `custom` webhooks, and everything else it supports) is untouched by this connection. Point Gatus's alerting at your existing ntfy topic if you have not already, the same recommendation [Connecting Beszel](../connecting-beszel/) makes, and for the same reason: Loxep runs on infrastructure Gatus may be watching, so routing Gatus's alerts through Loxep would mean the alert most worth receiving is the one that might not arrive.
@@ -72,5 +82,6 @@ Gatus's own alerting (`ntfy`, `custom` webhooks, and everything else it supports
 ## Related
 
 - [Fleet Observability Design](../../architecture/fleet-observability-design/) — the auth-branch design this connection implements, and why Gatus is the best-integrated tool in the fleet-observability set.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above, including why the heartbeat mirror and this page never merge.
 - [Publishing health to Gatus](../gatus-health-push/) — the reverse direction: Loxep's own health, pushed outward to an endpoint you declare.
 - [Connecting Beszel](../connecting-beszel/) — the read-only fleet companion this connection's design most closely follows.

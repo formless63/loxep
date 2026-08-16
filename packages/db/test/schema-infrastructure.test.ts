@@ -90,7 +90,20 @@ describe("infrastructure control plane schema (migration 0012)", () => {
     return insertRow("hosting_targets", {
       name: `'target-${n}'`,
       control_surface: `'direct_reverse_proxy'`,
-      address_v4: `'203.0.113.${n % 200}'`,
+      ...overrides,
+    });
+  }
+
+  async function insertAddress(
+    hostingTargetId: string,
+    overrides: Record<string, string> = {},
+  ): Promise<string> {
+    return insertRow("host_addresses", {
+      hosting_target_id: `'${hostingTargetId}'`,
+      kind: `'wan'`,
+      family: `'v4'`,
+      value: `'203.0.113.${nextSeq() % 200}'`,
+      provenance: `'operator_declared'`,
       ...overrides,
     });
   }
@@ -123,43 +136,12 @@ describe("infrastructure control plane schema (migration 0012)", () => {
   /* ------------------------------------------------------- hosting_targets */
 
   describe("hosting_targets", () => {
-    it("accepts a direct reverse proxy with an address", async () => {
+    it("accepts a direct reverse proxy target (addressability moved to host_addresses)", async () => {
+      // `hosting_targets_addressable_check` is GONE — a `CHECK` cannot query
+      // another table. The rule it enforced now lives in
+      // `@loxep/infrastructure`'s target/address services; see
+      // packages/infrastructure/test/targets.test.ts for that coverage.
       await expect(insertTarget()).resolves.toBeTypeOf("string");
-    });
-
-    it("validates addresses through inet, so a malformed one never reaches DNS", async () => {
-      // inet preserves the netmask it was given (this is `inet`, not `cidr`),
-      // so the materializer must publish host(address), not address::text.
-      const id = await insertTarget({ address_v4: `'203.0.113.7/32'` });
-      const row = await handle.pool.query<{ addr: string; host: string }>(
-        `select address_v4::text as addr, host(address_v4) as host
-           from hosting_targets where id = $1`,
-        [id],
-      );
-      expect(row.rows[0]?.addr).toBe("203.0.113.7/32");
-      expect(row.rows[0]?.host).toBe("203.0.113.7");
-
-      // The whole reason the column is inet rather than text: PostgreSQL
-      // refuses the malformed value that would otherwise become a published,
-      // unresolvable record.
-      await expect(
-        insertTarget({ address_v4: `'not-an-address'` }),
-      ).rejects.toThrow(/invalid input syntax|inet/i);
-      await expect(
-        insertTarget({ address_v4: `'203.0.113.300'` }),
-      ).rejects.toThrow(/invalid input syntax|inet/i);
-    });
-
-    it("accepts an IPv6 address", async () => {
-      const id = await insertTarget({
-        address_v4: `null`,
-        address_v6: `'2001:db8::1'`,
-      });
-      const row = await handle.pool.query<{ host: string }>(
-        `select host(address_v6) as host from hosting_targets where id = $1`,
-        [id],
-      );
-      expect(row.rows[0]?.host).toBe("2001:db8::1");
     });
 
     it("rejects an unknown control surface", async () => {
@@ -173,16 +155,6 @@ describe("infrastructure control plane schema (migration 0012)", () => {
       await expect(insertTarget({ name: `'shared-name'` })).rejects.toThrow(
         /hosting_targets_name_uq/,
       );
-    });
-
-    it("requires an addressable target unless control_surface is 'none'", async () => {
-      await expect(
-        insertTarget({ address_v4: `null` }),
-      ).rejects.toThrow(/hosting_targets_addressable_check/);
-
-      await expect(
-        insertTarget({ control_surface: `'none'`, address_v4: `null` }),
-      ).resolves.toBeTypeOf("string");
     });
 
     it("ties control_surface = 'tunnel_client' to fronted_by_target_id, both ways", async () => {
@@ -202,7 +174,6 @@ describe("infrastructure control plane schema (migration 0012)", () => {
       await expect(
         insertTarget({
           control_surface: `'tunnel_client'`,
-          address_v4: `null`,
           fronted_by_target_id: `'${node}'`,
         }),
       ).resolves.toBeTypeOf("string");
@@ -222,15 +193,177 @@ describe("infrastructure control plane schema (migration 0012)", () => {
       // reader does not assume the CHECK covers it.
       const b = await insertTarget({
         control_surface: `'tunnel_client'`,
-        address_v4: `null`,
         fronted_by_target_id: `'${a}'`,
       });
       const c = await insertTarget({
         control_surface: `'tunnel_client'`,
-        address_v4: `null`,
         fronted_by_target_id: `'${b}'`,
       });
       expect(c).toBeTypeOf("string");
+    });
+  });
+
+  /* -------------------------------------------------------- host_addresses */
+
+  describe("host_addresses (loxep-bub)", () => {
+    it("validates a value through inet, so a malformed one never reaches DNS", async () => {
+      const target = await insertTarget();
+      // inet preserves the netmask it was given (this is `inet`, not `cidr`),
+      // so the materializer must publish host(value), not value::text.
+      const id = await insertAddress(target, { value: `'203.0.113.7/32'` });
+      const row = await handle.pool.query<{ addr: string; host: string }>(
+        `select value::text as addr, host(value) as host
+           from host_addresses where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.addr).toBe("203.0.113.7/32");
+      expect(row.rows[0]?.host).toBe("203.0.113.7");
+
+      await expect(
+        insertAddress(target, { value: `'not-an-address'` }),
+      ).rejects.toThrow(/invalid input syntax|inet/i);
+      await expect(
+        insertAddress(target, { value: `'203.0.113.300'` }),
+      ).rejects.toThrow(/invalid input syntax|inet/i);
+    });
+
+    it("accepts an IPv6 address under family = 'v6'", async () => {
+      const target = await insertTarget();
+      const id = await insertAddress(target, {
+        family: `'v6'`,
+        value: `'2001:db8::1'`,
+      });
+      const row = await handle.pool.query<{ host: string }>(
+        `select host(value) as host from host_addresses where id = $1`,
+        [id],
+      );
+      expect(row.rows[0]?.host).toBe("2001:db8::1");
+    });
+
+    it("rejects an unknown kind", async () => {
+      const target = await insertTarget();
+      await expect(
+        insertAddress(target, { kind: `'wireguard'` }),
+      ).rejects.toThrow(/host_addresses_kind_check/);
+    });
+
+    it("rejects a family that disagrees with the value's actual IP version", async () => {
+      const target = await insertTarget();
+      await expect(
+        insertAddress(target, { family: `'v6'`, value: `'203.0.113.9'` }),
+      ).rejects.toThrow(/host_addresses_family_matches_value_check/);
+      await expect(
+        insertAddress(target, { family: `'v4'`, value: `'2001:db8::9'` }),
+      ).rejects.toThrow(/host_addresses_family_matches_value_check/);
+    });
+
+    it("rejects a provenance outside 'operator_declared' / 'observed:<provider>'", async () => {
+      const target = await insertTarget();
+      await expect(
+        insertAddress(target, { provenance: `'guessed'`, observed_at: `now()` }),
+      ).rejects.toThrow(/host_addresses_provenance_check/);
+      await expect(
+        insertAddress(target, {
+          provenance: `'observed:tailscale'`,
+          observed_at: `now()`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("requires observed_at if and only if the row is observed", async () => {
+      const target = await insertTarget();
+      await expect(
+        insertAddress(target, {
+          provenance: `'observed:dockhand'`,
+          observed_at: `null`,
+        }),
+      ).rejects.toThrow(/host_addresses_observed_at_check/);
+      await expect(
+        insertAddress(target, { observed_at: `now()` }),
+      ).rejects.toThrow(/host_addresses_observed_at_check/);
+      await expect(
+        insertAddress(target, {
+          provenance: `'observed:dockhand'`,
+          observed_at: `now()`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("allows more than one operator-declared row of the same (kind, family)", async () => {
+      const target = await insertTarget();
+      await insertAddress(target, { value: `'203.0.113.20'` });
+      await expect(
+        insertAddress(target, { value: `'203.0.113.21'` }),
+      ).resolves.toBeTypeOf("string");
+      // But not the literal same value twice.
+      await expect(
+        insertAddress(target, { value: `'203.0.113.20'` }),
+      ).rejects.toThrow(/host_addresses_kind_family_value_uq/);
+    });
+
+    it("upserts an observed slot idempotently: at most one row per (target, kind, family, provenance)", async () => {
+      const target = await insertTarget();
+      await insertAddress(target, {
+        kind: `'tailnet'`,
+        value: `'198.51.100.5'`,
+        provenance: `'observed:tailscale'`,
+        observed_at: `now()`,
+      });
+      // A second sweep's raw INSERT (not the service's upsert) collides on
+      // the SAME slot even with a different observed value — this is the
+      // constraint the service's `upsertObserved` relies on to UPDATE
+      // in place instead.
+      await expect(
+        insertAddress(target, {
+          kind: `'tailnet'`,
+          value: `'198.51.100.6'`,
+          provenance: `'observed:tailscale'`,
+          observed_at: `now()`,
+        }),
+      ).rejects.toThrow(/host_addresses_observed_slot_uq/);
+      // A different provider's observation of the SAME kind/family is a
+      // separate slot, not a collision.
+      await expect(
+        insertAddress(target, {
+          kind: `'tailnet'`,
+          value: `'198.51.100.7'`,
+          provenance: `'observed:dockhand'`,
+          observed_at: `now()`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("allows at most one primary per (target, kind, family)", async () => {
+      const target = await insertTarget();
+      await insertAddress(target, {
+        value: `'203.0.113.30'`,
+        is_primary: `true`,
+      });
+      await expect(
+        insertAddress(target, {
+          value: `'203.0.113.31'`,
+          is_primary: `true`,
+        }),
+      ).rejects.toThrow(/host_addresses_primary_uq/);
+      // A different family is a different primary slot.
+      await expect(
+        insertAddress(target, {
+          family: `'v6'`,
+          value: `'2001:db8::30'`,
+          is_primary: `true`,
+        }),
+      ).resolves.toBeTypeOf("string");
+    });
+
+    it("cascades on hosting_targets delete", async () => {
+      const target = await insertTarget();
+      const addressId = await insertAddress(target);
+      await handle.pool.query(`delete from hosting_targets where id = $1`, [target]);
+      const remaining = await handle.pool.query(
+        `select 1 from host_addresses where id = $1`,
+        [addressId],
+      );
+      expect(remaining.rowCount).toBe(0);
     });
   });
 
@@ -1190,7 +1323,7 @@ describe("infrastructure control plane schema (migration 0012)", () => {
         `select conname as name, length(conname) as len
            from pg_constraint
           where conrelid::regclass::text in (
-            'hosting_targets','managed_domains','dns_records','reconcile_runs',
+            'hosting_targets','host_addresses','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
             'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
             'dns_provider_tokens','dns_provider_token_zones',
@@ -1199,7 +1332,7 @@ describe("infrastructure control plane schema (migration 0012)", () => {
          select indexname as name, length(indexname) as len
            from pg_indexes
           where tablename in (
-            'hosting_targets','managed_domains','dns_records','reconcile_runs',
+            'hosting_targets','host_addresses','managed_domains','dns_records','reconcile_runs',
             'reconcile_run_steps','dns_drift_findings','provider_operations',
             'mailbox_templates','mailbox_template_entries','mail_domains','mailboxes',
             'dns_provider_tokens','dns_provider_token_zones',

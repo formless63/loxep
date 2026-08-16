@@ -65,6 +65,7 @@ import {
   createContainerHostsService,
   createDnsProviderTokensService,
   createDriftService,
+  createHostAddressesService,
   createHostingTargetsService,
   createMailDomainsService,
   createMailSyncService,
@@ -76,6 +77,7 @@ import {
   type DnsProviderTokensService,
   type DnsTokenProviderPort,
   type DriftService,
+  type HostAddressesService,
   type HostingTargetsService,
   type MailDomainsService,
   type MailSyncService,
@@ -166,6 +168,8 @@ interface AdminRegistry {
    */
   managedDomains: ManagedDomainsService;
   hostingTargets: HostingTargetsService;
+  /** Typed multi-address model (loxep-bub): declare/classify/setPrimary/remove, `/infrastructure/fleet/$name`'s address card. */
+  hostAddresses: HostAddressesService;
   infraMail: MailDomainsService;
   drift: DriftService;
   /**
@@ -298,6 +302,41 @@ interface AdminRegistry {
     getAdapterForConnection: import('@loxep/app').CloudflareAdapterFactory;
     invalidate: (connectionId: string) => void;
   }>;
+  /**
+   * The Tailscale READ adapter factory (loxep-47o.6's estate browser), loaded
+   * through the module above. Mirrors `cloudflareAdapterFactoryPromise`
+   * exactly — a SEPARATE factory (and per-connection rate budget) from the
+   * connection health probe's own `listDevices()`/`probe()` reads
+   * (`@loxep/app`'s `fleet-health.ts`), the same "estate reads get their own
+   * independent budget" split every other estate adapter factory follows.
+   */
+  tailscaleAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').TailscaleAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
+  /**
+   * The Beszel READ adapter factory (loxep-47o.7's estate browser), loaded
+   * through the module above. Mirrors `cloudflareAdapterFactoryPromise`
+   * exactly — a SEPARATE factory from the connection health probe's own
+   * `health()`/`listSystems()` reads.
+   */
+  beszelAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').BeszelAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
+  /**
+   * The Gatus READ adapter factory (loxep-47o.5's estate browser), loaded
+   * through the module above. Mirrors `cloudflareAdapterFactoryPromise`
+   * exactly — a SEPARATE factory (and per-connection rate budget) from
+   * `health.sweep`'s own discovery-side `services.getGatusAdapterForConnection`
+   * (`@loxep/app`'s `services.ts`), the same "estate reads get their own
+   * independent budget, never the sweep's" split every sibling factory field
+   * in this registry already documents.
+   */
+  gatusAdapterFactoryPromise?: Promise<{
+    getAdapterForConnection: import('@loxep/app').GatusAdapterFactory;
+    invalidate: (connectionId: string) => void;
+  }>;
 }
 
 const REGISTRY_KEY = Symbol.for('loxep.web.admin');
@@ -381,6 +420,7 @@ function buildRegistry(): AdminRegistry {
       enqueue: createTransactionalEnqueue()
     }),
     hostingTargets: createHostingTargetsService({ db: handle.db }),
+    hostAddresses: createHostAddressesService({ db: handle.db }),
     infraMail: createMailDomainsService({
       db: handle.db,
       enqueue: createTransactionalEnqueue()
@@ -507,6 +547,11 @@ export function getManagedDomainsService(): ManagedDomainsService {
 /** Hosting targets and the fronting-chain guard (`/infrastructure/fleet`). */
 export function getHostingTargetsService(): HostingTargetsService {
   return getAdminServices().hostingTargets;
+}
+
+/** Typed multi-address model (loxep-bub): `/infrastructure/fleet/$name`'s address card. */
+export function getHostAddressesService(): HostAddressesService {
+  return getAdminServices().hostAddresses;
 }
 
 /** Mail registration/verification/mailbox intent (`/infrastructure/domains/$name`'s mail panel). */
@@ -743,6 +788,111 @@ export async function getPurelymailAdapterForConnection(
   connectionId: string
 ): Promise<import('@loxep/app').PurelymailConnectionAdapter> {
   const factory = await getPurelymailAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * The Tailscale READ adapter factory (loxep-47o.6), loaded through
+ * {@link getFleetModule}. Mirrors {@link getCloudflareAdapterFactory} exactly.
+ */
+function getTailscaleAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').TailscaleAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.tailscaleAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createTailscaleAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.tailscaleAdapterFactoryPromise;
+}
+
+/**
+ * A live Tailscale adapter for one connection — the Tailscale estate
+ * browser's (loxep-47o.6) only fleet-adapter access. `listDevices()` is the
+ * SAME read the connection health probe already makes
+ * (`@loxep/app`'s `fleet-health.ts`), but through an INDEPENDENTLY budgeted
+ * instance, matching {@link getCloudflareAdapterForConnection}'s own split
+ * from the reconciler's adapter.
+ */
+export async function getTailscaleAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').TailscaleConnectionAdapter> {
+  const factory = await getTailscaleAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * The Beszel READ adapter factory (loxep-47o.7), loaded through
+ * {@link getFleetModule}. Mirrors {@link getCloudflareAdapterFactory} exactly.
+ */
+function getBeszelAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').BeszelAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.beszelAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createBeszelAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.beszelAdapterFactoryPromise;
+}
+
+/**
+ * A live Beszel adapter for one connection — the Beszel estate browser's
+ * (loxep-47o.7) only fleet-adapter access, independently budgeted from the
+ * connection health probe's own `health()`/`listSystems()` reads, matching
+ * {@link getTailscaleAdapterForConnection}'s own split.
+ */
+export async function getBeszelAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').BeszelConnectionAdapter> {
+  const factory = await getBeszelAdapterFactory();
+  return factory.getAdapterForConnection(connectionId);
+}
+
+/**
+ * The Gatus READ adapter factory (loxep-47o.5's estate browser), loaded
+ * through {@link getFleetModule}. Mirrors {@link getBeszelAdapterFactory}
+ * exactly — a SEPARATE, independently budgeted factory from `health.sweep`'s
+ * own discovery-side Gatus reads.
+ */
+function getGatusAdapterFactory(): Promise<{
+  getAdapterForConnection: import('@loxep/app').GatusAdapterFactory;
+  invalidate: (connectionId: string) => void;
+}> {
+  const registry = getAdminServices();
+  registry.gatusAdapterFactoryPromise ??= (async () => {
+    const fleet = await getFleetModule();
+    return fleet.createGatusAdapterFactory({
+      connections: registry.connections,
+      connectionCredentials: registry.connectionCredentials
+    });
+  })();
+  return registry.gatusAdapterFactoryPromise;
+}
+
+/**
+ * A live Gatus adapter for one connection — the Gatus estate browser's
+ * (loxep-47o.5) only fleet-adapter access, independently budgeted from the
+ * connection health probe's own `probeConfig()`/`health()` reads, matching
+ * {@link getBeszelAdapterForConnection}'s own split. Unlike the OTHER estate
+ * adapter factories, this one takes no `resolveRateBudget` override — the
+ * registered `integration.gatus.rate_budget` setting `health.sweep`'s own
+ * factory reads is deliberately NOT threaded through here, so an operator
+ * lowering that setting for the sweep's cadence cannot silently starve an
+ * estate page's on-demand reads of their documented default budget.
+ */
+export async function getGatusAdapterForConnection(
+  connectionId: string
+): Promise<import('@loxep/app').GatusConnectionAdapter> {
+  const factory = await getGatusAdapterFactory();
   return factory.getAdapterForConnection(connectionId);
 }
 

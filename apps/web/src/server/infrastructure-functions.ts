@@ -1690,6 +1690,14 @@ export interface HostingTargetDto {
   controlSurface: string;
   provider: string | null;
   region: string | null;
+  /**
+   * The target's PRIMARY operator-declared WAN address per family (loxep-bub)
+   * — derived from `host_addresses` through `wanAddressPair()`, the SAME
+   * structural-quarantine filter the DNS materializer's own input goes
+   * through. A `lan`/`tailnet`/`other` address, or an OBSERVED wan row, is
+   * never eligible here even if it exists — see the fleet detail page's full
+   * typed address card for those.
+   */
   addressV4: string | null;
   addressV6: string | null;
   frontedByTargetId: string | null;
@@ -1705,10 +1713,12 @@ export const fetchHostingTargets = createServerFn({ method: 'GET' }).handler(
     const { requireSession, getAdminServices } = await import('@/server/admin');
     await requireSession();
     const { handle } = getAdminServices();
-    const [targets, domains, tokens] = await Promise.all([
+    const { wanAddressPair } = await import('@loxep/infrastructure');
+    const [targets, domains, tokens, addresses] = await Promise.all([
       handle.db.query.hostingTargets.findMany({ orderBy: (table, { asc }) => [asc(table.name)] }),
       handle.db.query.managedDomains.findMany({ columns: { apexTargetId: true } }),
-      handle.db.query.dnsProviderTokens.findMany({ columns: { hostingTargetId: true } })
+      handle.db.query.dnsProviderTokens.findMany({ columns: { hostingTargetId: true } }),
+      handle.db.query.hostAddresses.findMany()
     ]);
     const nameById = new Map(targets.map((row) => [row.id, row.name]));
     const domainCountByTarget = new Map<string, number>();
@@ -1726,24 +1736,33 @@ export const fetchHostingTargets = createServerFn({ method: 'GET' }).handler(
         (tokenCountByTarget.get(token.hostingTargetId) ?? 0) + 1
       );
     }
+    const addressesByTarget = new Map<string, typeof addresses>();
+    for (const address of addresses) {
+      const list = addressesByTarget.get(address.hostingTargetId) ?? [];
+      list.push(address);
+      addressesByTarget.set(address.hostingTargetId, list);
+    }
 
-    return targets.map((target) => ({
-      id: target.id,
-      name: target.name,
-      controlSurface: target.controlSurface,
-      provider: target.provider,
-      region: target.region,
-      addressV4: target.addressV4,
-      addressV6: target.addressV6,
-      frontedByTargetId: target.frontedByTargetId,
-      frontedByTargetName: target.frontedByTargetId
-        ? (nameById.get(target.frontedByTargetId) ?? null)
-        : null,
-      domainCount: domainCountByTarget.get(target.id) ?? 0,
-      tokenCount: tokenCountByTarget.get(target.id) ?? 0,
-      decommissionedAt: iso(target.decommissionedAt),
-      createdAt: iso(target.createdAt)
-    }));
+    return targets.map((target) => {
+      const wan = wanAddressPair(addressesByTarget.get(target.id) ?? []);
+      return {
+        id: target.id,
+        name: target.name,
+        controlSurface: target.controlSurface,
+        provider: target.provider,
+        region: target.region,
+        addressV4: wan.addressV4,
+        addressV6: wan.addressV6,
+        frontedByTargetId: target.frontedByTargetId,
+        frontedByTargetName: target.frontedByTargetId
+          ? (nameById.get(target.frontedByTargetId) ?? null)
+          : null,
+        domainCount: domainCountByTarget.get(target.id) ?? 0,
+        tokenCount: tokenCountByTarget.get(target.id) ?? 0,
+        decommissionedAt: iso(target.decommissionedAt),
+        createdAt: iso(target.createdAt)
+      };
+    });
   }
 );
 
@@ -1843,6 +1862,15 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
   addressV4TailnetKind: TailnetAddressKind | null;
   addressV6TailnetKind: TailnetAddressKind | null;
   /**
+   * The typed multi-address model (loxep-bub): every `host_addresses` row for
+   * this target — WAN, LAN, tailnet, and unclassified/`other` alike, operator-
+   * declared or observed — for the fleet detail page's address card.
+   * `addressV4`/`addressV6` above remain the derived PRIMARY-wan-declared
+   * pair (`wanAddressPair()`) for every OTHER surface (the list table, the
+   * tailnet warning); this array is the full picture.
+   */
+  addresses: HostAddressDto[];
+  /**
    * `@loxep/domain`'s `diagnoseHostWitnesses` (loxep-50t §3.1, loxep-1au §5,
    * loxep-y64 §4), computed from this target's LINKED tailscale/beszel/
    * dockhand/gatus companion links and their tier-2 health projections —
@@ -1873,6 +1901,26 @@ export interface HostingTargetDetailDto extends HostingTargetDto {
   externalSiteId: string | null;
   /** Every declared `proxy_resources` row fronted by THIS target. */
   proxyResources: ProxyResourceChainDto[];
+}
+
+/**
+ * One `host_addresses` row (loxep-bub), for the fleet detail address card.
+ * `kind`/`family`/`provenance` are the DB's own closed-set text values,
+ * carried through verbatim rather than re-typed here — the card's badge
+ * rendering owns the display mapping, not this DTO.
+ */
+export interface HostAddressDto {
+  id: string;
+  kind: string;
+  family: string;
+  value: string;
+  /** `'operator_declared'` or `'observed:<provider>[.<field>]'`. */
+  provenance: string;
+  isPrimary: boolean;
+  /** `null` for `operator_declared`; the observer's clock otherwise. */
+  observedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -2129,7 +2177,7 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
     // packages (drizzle-orm, pg, graphile-worker via other modules in its
     // barrel) that must stay out of the client bundle — same reason every
     // other server-package access in this file goes through `@/server/admin`.
-    const { tailnetAddressKind } = await import('@loxep/infrastructure');
+    const { tailnetAddressKind, wanAddressPair } = await import('@loxep/infrastructure');
     // `diagnoseHostWitnesses`, the known-tool registry, and its panel-order
     // comparator are all pure (no db, no network) — imported dynamically
     // anyway, matching this file's own rule that only TYPES from a server
@@ -2157,7 +2205,8 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       rawCompanionLinks,
       frontingNode,
       proxyConnection,
-      proxyResourceEntries
+      proxyResourceEntries,
+      addressRows
     ] = await Promise.all([
       handle.db.query.hostingTargets.findMany({
         where: (table, { eq }) => eq(table.frontedByTargetId, target.id),
@@ -2187,7 +2236,12 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
             columns: { id: true, name: true }
           })
         : null,
-      getProxyResourcesService().listResourcesForHostingTarget(target.id)
+      getProxyResourcesService().listResourcesForHostingTarget(target.id),
+      // loxep-bub: every typed address for the fleet detail address card.
+      handle.db.query.hostAddresses.findMany({
+        where: (table, { eq }) => eq(table.hostingTargetId, target.id),
+        orderBy: (table, { asc }) => [asc(table.kind), asc(table.family), asc(table.createdAt)]
+      })
     ]);
 
     const domainIdsForProxy = [
@@ -2299,16 +2353,34 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       zonesByToken.set(row.tokenId, list);
     }
 
+    // loxep-bub: the SAME structural-quarantine filter the DNS materializer's
+    // input goes through — `addressV4`/`addressV6` below are this derived
+    // pair, never a direct column read (that column is gone).
+    const wanPair = wanAddressPair(addressRows);
+
     return {
       id: target.id,
       name: target.name,
       controlSurface: target.controlSurface,
       provider: target.provider,
       region: target.region,
-      addressV4: target.addressV4,
-      addressV6: target.addressV6,
-      addressV4TailnetKind: target.addressV4 === null ? null : tailnetAddressKind(target.addressV4),
-      addressV6TailnetKind: target.addressV6 === null ? null : tailnetAddressKind(target.addressV6),
+      addressV4: wanPair.addressV4,
+      addressV6: wanPair.addressV6,
+      addressV4TailnetKind:
+        wanPair.addressV4 === null ? null : tailnetAddressKind(wanPair.addressV4),
+      addressV6TailnetKind:
+        wanPair.addressV6 === null ? null : tailnetAddressKind(wanPair.addressV6),
+      addresses: addressRows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        family: row.family,
+        value: row.value,
+        provenance: row.provenance,
+        isPrimary: row.isPrimary,
+        observedAt: iso(row.observedAt),
+        createdAt: iso(row.createdAt),
+        updatedAt: iso(row.updatedAt)
+      })),
       frontedByTargetId: target.frontedByTargetId,
       frontedByTargetName: frontingNode?.name ?? null,
       domainCount: domains.length,
@@ -3225,6 +3297,75 @@ export const decommissionHostingTarget = createServerFn({ method: 'POST' })
       actorUserId: session.user.id
     });
     return { id: row.id };
+  });
+
+// ---------------------------------------------------------------------------
+// Typed hosting-target addresses (loxep-bub) — declare/classify/setPrimary/
+// remove, all admin-gated per this file's own read/write rule. The DNS
+// materializer's own input never widens through any of these: only
+// `declareHostingTargetAddress` can produce a `kind: 'wan'` +
+// `operator_declared` row, and `classifyHostingTargetAddress` can never
+// change a row's PROVENANCE — see `@loxep/infrastructure`'s
+// `host-addresses.ts` module doc for the structural quarantine this
+// preserves.
+// ---------------------------------------------------------------------------
+
+export const declareHostingTargetAddress = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      hostingTargetId: z.uuid(),
+      kind: z.enum(['wan', 'lan', 'tailnet', 'other']),
+      family: z.enum(['v4', 'v6']),
+      value: z.string().trim().min(1),
+      isPrimary: z.boolean().optional()
+    })
+  )
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getHostAddressesService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const { hostingTargetId, ...rest } = data;
+    const row = await getHostAddressesService().declare(hostingTargetId, {
+      ...rest,
+      actorUserId: session.user.id
+    });
+    return { id: row.id };
+  });
+
+export const classifyHostingTargetAddress = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      id: z.uuid(),
+      kind: z.enum(['wan', 'lan', 'tailnet', 'other'])
+    })
+  )
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getHostAddressesService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const row = await getHostAddressesService().classify(data.id, {
+      kind: data.kind,
+      actorUserId: session.user.id
+    });
+    return { id: row.id };
+  });
+
+export const setPrimaryHostingTargetAddress = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getHostAddressesService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const row = await getHostAddressesService().setPrimary(data.id, {
+      actorUserId: session.user.id
+    });
+    return { id: row.id };
+  });
+
+export const removeHostingTargetAddress = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ deleted: true }> => {
+    const { requireAdmin, getHostAddressesService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    await getHostAddressesService().remove(data.id, { actorUserId: session.user.id });
+    return { deleted: true };
   });
 
 /**

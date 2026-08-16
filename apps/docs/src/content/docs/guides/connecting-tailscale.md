@@ -88,6 +88,14 @@ You are reading this guide because you are about to have a `100.x.y.z` (or `fd7a
 
 The reason is simple: a tailnet address only answers for devices already on that tailnet. Publishing it as an A/AAAA record produces a name that resolves to an address the public internet cannot reach — an outage that looks exactly like ordinary DNS propagation lag, which is the hardest kind to diagnose because everything *looks* like it is about to start working. If a host is reachable only over Tailscale, its hosting target's address field should stay empty (or hold whatever public address fronts it); the tailnet address's place is the private-network read this integration is building toward, never a DNS record.
 
+## The estate browser: the whole tailnet in one page
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of the WHOLE tailnet, in a single `listDevices()` call: every device, whether it is already linked to a hosting target, already ignored, or neither. This is broader than the fleet page's own candidates panel, which shows only the unlinked remainder — an estate page is the whole connection, laptops and phones included.
+
+Each device row shows its MagicDNS name, hostname, OS, online/offline, last-seen, authorized status, and its tailnet addresses — rendered as plain text, never a clickable or copyable field, for the same reason [A tailnet address is never a DNS address](#a-tailnet-address-is-never-a-dns-address) explains above. A row already linked to a hosting target says so and links to it. An unlinked row offers the same **Link**, **Declare**, and **Ignore** actions the fleet page's candidates panel already offers — this page mounts those exact actions rather than duplicating them, so linking a device works identically no matter which page you started from.
+
+**This page never talks to Tailscale beyond the one read.** Link/Declare/Ignore write only to Loxep's own database (which hosting target a device corresponds to, or that you have chosen to ignore it) — nothing here authorizes, removes, or reconfigures anything on the tailnet itself.
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -98,4 +106,5 @@ The reason is simple: a tailnet address only answers for devices already on that
 ## Related
 
 - [Fleet Observability Design](../../architecture/fleet-observability-design/) — the tier disposition for Tailscale and its sibling fleet-companion integrations.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above.
 - [Connecting Termix](../connecting-termix/) — the SSH-host companion, read the same way.

@@ -75,6 +75,14 @@ Beszel sends its own alerts through Shoutrrr, which includes native ntfy support
 
 Deliberately **do not** route Beszel alerts through Loxep. Loxep runs on a machine that Beszel may be monitoring; inserting it as a relay means the alert most worth receiving — the one about the machine that just went down — is the one that would not arrive.
 
+## The estate browser: every system on the hub, not only what you have attached
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of the WHOLE hub, in exactly two calls: hub health, then every system the read-only user can see. Nothing here is stored; each section is stamped with the moment it was read, on every open.
+
+Each system row shows its name, host, port, status (Beszel's own string, exactly as it reports it), when it was last updated, and how many accounts it is shared with. A row already attached to a hosting target says so and links to it; an unattached row offers an **Attach** button that opens the same operator-confirmed picker described in [Attaching a system to a host](#attaching-a-system-to-a-host) above, entered from the system's own row instead of the fleet page.
+
+**This page never becomes a metrics dashboard.** There is no drill-in, no per-system detail read, and never a CPU or memory chart — Beszel already does that well, and this page's whole job is showing you what exists, not what it is doing right now.
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -87,4 +95,5 @@ Deliberately **do not** route Beszel alerts through Loxep. Loxep runs on a machi
 ## Related
 
 - [Fleet Observability Design](../../architecture/fleet-observability-design/) — why Beszel is read-only, and what Loxep is forbidden to store.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above.
 - [Connecting Dockhand](../connecting-dockhand/) — the container-management companion, which has a narrower but non-empty write surface.

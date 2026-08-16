@@ -50,6 +50,25 @@
  * same "one-word edit now; a migration plus data repair later" reasoning
  * `caa` and `proxy_resource` already used on this same column.
  *
+ * Typed multi-address model (`0029_host_addresses`, loxep-bub) — the ONE
+ * existing-table alteration this file's own header otherwise disclaims:
+ *
+ *   host_addresses
+ *
+ * `hosting_targets.address_v4`/`address_v6` meant exactly one thing —
+ * *the* DNS-publishable WAN address — and could not model a LAN IP, a
+ * Tailscale address, or anything provider-observed. Both columns are DROPPED
+ * (pre-release; a clean cut, not a deprecation) and every existing value is
+ * backfilled into `host_addresses` rows with `kind = 'wan'`,
+ * `provenance = 'operator_declared'`. See {@link hostAddresses}'s own doc for
+ * the shape, and `hostingTargets`' doc for how `hosting_targets_addressable_check`
+ * — the one CHECK that read the dropped columns — is RE-EXPRESSED as a
+ * service-level invariant in `@loxep/infrastructure`'s target and address
+ * services now that a target's address lives in a child table a `CHECK`
+ * cannot query across. `hosting_targets_tunnel_client_check` never read
+ * either address column and survives this migration verbatim — it is named
+ * here only because the next reader will otherwise assume both CHECKs moved.
+ *
 
  * **No existing table gains a column** — the design's own rule. `connections`,
  * `application_secrets`, `monitor_targets`, `audit_events`, and every
@@ -510,12 +529,37 @@ export function mailboxSecretKey(mailboxId: string): string {
  * here because the next reader will assume the constraint covers it. It does
  * not.
  *
- * `inet`, not `text`: PostgreSQL validates and normalizes it, and refuses the
- * malformed value that would otherwise become a published record.
- *
  * `proxy_connection_id` is milestone-3 territory (driving a reverse-proxy or
  * tunnel API). The column ships now because a nullable unused column is
  * cheaper than an `ALTER` later — the design's own reasoning.
+ *
+ * ## Addresses live in {@link hostAddresses}, not here (loxep-bub)
+ *
+ * This table shipped with `address_v4`/`address_v6` (`inet`, validated and
+ * normalized by PostgreSQL) meaning exactly one thing: *the* DNS-publishable
+ * WAN address. `0029_host_addresses` DROPS both columns — pre-release, a
+ * clean cut — because that single-pair shape could not model a LAN address,
+ * a Tailscale address, or a provider-observed one, and "one target, one
+ * address" was never true even for milestone 1 (a tunnel client's own
+ * address, when it had one, was the origin's — never published, and already
+ * a second, unlabeled kind of address this table had no column for).
+ *
+ * `hosting_targets_addressable_check` — *"a target that is not deliberately
+ * address-less must be resolvable to something: its own address, or a
+ * fronting node's"* — read `address_v4`/`address_v6` directly and cannot
+ * survive as a `CHECK`: PostgreSQL constraints do not query another table.
+ * It is RE-EXPRESSED as a service-level invariant in
+ * `@loxep/infrastructure`'s `targets.ts` (checked when a target is created
+ * with inline WAN addresses) and `host-addresses.ts` (checked before a
+ * removal or a reclassification would leave a non-`none`, non-fronted target
+ * with no operator-declared `wan` row) — enforcing the SAME rule this CHECK
+ * did, "addressable" narrowed to `kind = 'wan' AND provenance =
+ * 'operator_declared'` because that pair was always WAN-semantic, never
+ * LAN/tailnet-semantic.
+ *
+ * `hosting_targets_tunnel_client_check` (below) never read either address
+ * column and needs no re-expression — named here only so the next reader
+ * does not assume both moved together.
  */
 export const hostingTargets = pgTable(
   "hosting_targets",
@@ -527,8 +571,6 @@ export const hostingTargets = pgTable(
     /** A denormalized note (`hetzner`, `ovh`, ...). No provider adapter. */
     provider: text("provider"),
     region: text("region"),
-    addressV4: inet("address_v4"),
-    addressV6: inet("address_v6"),
     frontedByTargetId: uuid("fronted_by_target_id"),
     proxyConnectionId: uuid("proxy_connection_id").references(
       () => connections.id,
@@ -569,17 +611,196 @@ export const hostingTargets = pgTable(
       "hosting_targets_tunnel_client_check",
       sql`(${table.controlSurface} = 'tunnel_client') = (${table.frontedByTargetId} is not null)`,
     ),
-    // A target that is not deliberately address-less must be resolvable to
-    // something: its own address, or a fronting node's.
-    check(
-      "hosting_targets_addressable_check",
-      sql`${table.controlSurface} = 'none' or ${table.addressV4} is not null or ${table.addressV6} is not null or ${table.frontedByTargetId} is not null`,
-    ),
+    // `hosting_targets_addressable_check` USED to live here — "a target that
+    // is not deliberately address-less must be resolvable to something: its
+    // own address, or a fronting node's." It read `address_v4`/`address_v6`
+    // directly and cannot survive as a `CHECK` now that an address lives in
+    // {@link hostAddresses}, a child table a `CHECK` cannot query. See this
+    // table's own doc comment above for where the rule now lives.
 
     // The resolution walk.
     index("hosting_targets_fronted_by_target_id_idx")
       .on(table.frontedByTargetId)
       .where(sql`${table.frontedByTargetId} is not null`),
+  ],
+);
+
+/* ------------------------------------------------------- host addresses --- */
+
+/**
+ * `hosting_targets.address_v4`/`address_v6` meant exactly one thing: *the*
+ * DNS-publishable WAN address. This table (loxep-bub, `0029_host_addresses`)
+ * replaces that single pair with a typed, multi-row model: a target may carry
+ * any number of addresses, each with its own `kind` (which network it lives
+ * on), `family` (v4/v6), and `provenance` (who asserted it, and when).
+ *
+ * ```text
+ * kind      what it means
+ * wan       a publicly-routable address — the ONLY kind the DNS materializer
+ *           may ever read, and only when provenance is 'operator_declared'
+ * lan       a private-network address on the operator's own LAN
+ * tailnet   a Tailscale tailnet address (CGNAT v4 / ULA v6 range)
+ * other     provider-observed and not yet classified into one of the above
+ *
+ * provenance                 meaning
+ * operator_declared           an admin typed it in; the ONLY provenance the
+ *                              materializer trusts, and the only one `declare()`
+ *                              ever writes
+ * observed:<provider>         a sync wrote it (`observed:tailscale`,
+ *                              `observed:dockhand`, `observed:dockhand.public_ip`
+ *                              when one provider surfaces more than one address
+ *                              slot for the same kind/family) — never advances
+ *                              to `operator_declared` on its own; `classify()`
+ *                              may change `kind`, never `provenance`
+ * ```
+ *
+ * ## The structural quarantine (this is the whole point)
+ *
+ * The DNS materializer's `HostingTargetNode.addressV4`/`addressV6` pair is
+ * built by `@loxep/infrastructure`'s `wanAddressPair()` (`host-addresses.ts`),
+ * a PURE filter over `kind = 'wan' AND provenance = 'operator_declared'`
+ * rows only. A `tailnet` row — however it got here, observed or manually
+ * mis-declared — cannot reach a materialized DNS record, by construction,
+ * because the filter that builds the materializer's input never reads it.
+ * `tailnet-address.ts`'s CGNAT/ULA publish-guard remains as defense in
+ * depth for the one case this filter cannot catch: an operator hand-typing a
+ * private-range VALUE into a `wan`-kind, `operator_declared` row.
+ *
+ * ## Observer upsert is idempotent per sweep, keyed by `(target, kind,
+ * family, provenance)`
+ *
+ * Re-running a Tailscale or Dockhand sweep must REFRESH the same row (a new
+ * `observed_at`, a possibly-changed `value`), never accumulate a duplicate —
+ * `host_addresses_observed_slot_uq` is the partial unique that makes that an
+ * upsert rather than an insert-and-hope. `operator_declared` rows are
+ * EXEMPT from that uniqueness: an operator may declare more than one WAN
+ * address of the same family (a failover pair), differentiated only by
+ * `host_addresses_kind_family_value_uq`'s literal-value uniqueness.
+ *
+ * ## `is_primary` is per `(target, kind, family)`, not per `(target, kind)`
+ *
+ * A `wan` target commonly needs BOTH a primary v4 row and a primary v6 row
+ * live at once — `resolveHostingAddress` wants an address pair, not a single
+ * winner — so the partial unique index scopes "at most one primary" to the
+ * family too.
+ *
+ * ## `value` is `inet`, exactly like the columns it replaces
+ *
+ * PostgreSQL validates and normalizes it, refusing the malformed value that
+ * would otherwise become a published record — the same reasoning
+ * `hosting_targets.address_v4`/`address_v6` gave for the same column type.
+ * `host_addresses_family_matches_value_check` uses PostgreSQL's own
+ * `family(inet)` function so `family = 'v4'`/`'v6'` can never silently
+ * disagree with what `value` actually is.
+ *
+ * ## Re-expressing `hosting_targets_addressable_check`
+ *
+ * The original CHECK is gone (a `CHECK` cannot query another table); the
+ * SAME rule — "addressable" narrowed to `kind = 'wan' AND provenance =
+ * 'operator_declared'`, because that pair was always WAN-semantic — is
+ * enforced in `@loxep/infrastructure`: `targets.ts`'s `create()` refuses a
+ * non-`none`, non-fronted target with no inline WAN address, and
+ * `host-addresses.ts`'s `remove()`/`classify()` refuse to leave a target
+ * with zero WAN-declared rows unless it is `none` or fronted.
+ */
+export const HOST_ADDRESS_KINDS = ["wan", "lan", "tailnet", "other"] as const;
+export type HostAddressKind = (typeof HOST_ADDRESS_KINDS)[number];
+
+export const HOST_ADDRESS_FAMILIES = ["v4", "v6"] as const;
+export type HostAddressFamily = (typeof HOST_ADDRESS_FAMILIES)[number];
+
+/** The one provenance value `declare()` ever writes; the materializer's gate. */
+export const HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE = "operator_declared";
+
+/** `observed:<provider>`, or `observed:<provider>.<field>` — see the table doc. */
+export function observedProvenance(provider: string): string {
+  return `observed:${provider}`;
+}
+
+/** `audit_events.resource_type` for this table. */
+export const HOST_ADDRESS_RESOURCE_TYPE = "host_address";
+
+export const hostAddresses = pgTable(
+  "host_addresses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    hostingTargetId: uuid("hosting_target_id")
+      .notNull()
+      .references(() => hostingTargets.id, { onDelete: "cascade" }),
+    /** Closed set: see {@link HOST_ADDRESS_KINDS}. */
+    kind: text("kind").notNull(),
+    /** Closed set: see {@link HOST_ADDRESS_FAMILIES}. */
+    family: text("family").notNull(),
+    value: inet("value").notNull(),
+    /** `'operator_declared'` or `'observed:<provider>[.<field>]'`. */
+    provenance: text("provenance").notNull(),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    /** The observer's clock. `NULL` for `operator_declared`; required otherwise. */
+    observedAt: timestamp("observed_at", { withTimezone: true }),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // Prevents a literal duplicate value under the same slot; does NOT limit
+    // how many operator-declared rows of one (kind, family) may exist.
+    unique("host_addresses_kind_family_value_uq").on(
+      table.hostingTargetId,
+      table.kind,
+      table.family,
+      table.value,
+    ),
+
+    // The observer upsert key. Scoped OFF `operator_declared` — see the
+    // table doc's "Observer upsert" section.
+    uniqueIndex("host_addresses_observed_slot_uq")
+      .on(table.hostingTargetId, table.kind, table.family, table.provenance)
+      .where(sql`${table.provenance} <> 'operator_declared'`),
+
+    // "At most one primary" per (target, kind, family) — not per (target,
+    // kind); see the table doc's "is_primary" section.
+    uniqueIndex("host_addresses_primary_uq")
+      .on(table.hostingTargetId, table.kind, table.family)
+      .where(sql`${table.isPrimary}`),
+
+    check(
+      "host_addresses_kind_check",
+      sql`${table.kind} in ('wan', 'lan', 'tailnet', 'other')`,
+    ),
+    check(
+      "host_addresses_family_check",
+      sql`${table.family} in ('v4', 'v6')`,
+    ),
+    // PostgreSQL's own `family(inet)` (4 or 6) rather than trusting the
+    // caller's `family` column to agree with what `value` actually is.
+    check(
+      "host_addresses_family_matches_value_check",
+      sql`(${table.family} = 'v4' and family(${table.value}) = 4) or (${table.family} = 'v6' and family(${table.value}) = 6)`,
+    ),
+    check(
+      "host_addresses_provenance_check",
+      sql`${table.provenance} = 'operator_declared' or ${table.provenance} like 'observed:%'`,
+    ),
+    // The observer clock: present if and only if this row was observed.
+    check(
+      "host_addresses_observed_at_check",
+      sql`(${table.provenance} <> 'operator_declared') = (${table.observedAt} is not null)`,
+    ),
+
+    index("host_addresses_hosting_target_id_idx").on(table.hostingTargetId),
+    // The materializer's own read pattern, named so an `EXPLAIN` on the
+    // structural-quarantine path is legible.
+    index("host_addresses_wan_declared_idx")
+      .on(table.hostingTargetId)
+      .where(
+        sql`${table.kind} = 'wan' and ${table.provenance} = 'operator_declared'`,
+      ),
   ],
 );
 

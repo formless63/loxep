@@ -51,6 +51,16 @@ Termix publishes no schema for its host-inventory responses, so those fields are
 
 **Per-session rows (owner-approved 2026-08-15, loxep-4ah).** A linked host's Fleet detail page shows an "Active sessions" panel listing every open session on that host: who it belongs to (your own, or shared to you by another Termix user — shown by their Termix username), whether it is currently connected, its permission level, and its age. This is a deliberate choice, not the previous "count only" design: **the owner's ruling is that Termix is meant to be used by people who trust one another, and the more visibility Loxep can give into who is on which host, the better** — "who is logged in where" is treated as ordinary fleet observability here, not a surveillance surface to redact. The panel is a LIVE, request-scoped read exactly like the containers panel Dockhand connections show: nothing about an individual session is ever stored in Loxep's own database, no history, no "who was on this box last week" — only the count (in the companion-tools row above) is refreshed on the regular five-minute sweep and briefly held in `integration_health`. If you would rather Termix session identity not appear in Loxep at all, do not link that host — an unlinked host's sessions are never read anywhere, including the count.
 
+## The estate browser: every host and every session, instance-wide
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of the WHOLE Termix instance, in two calls. Nothing here is stored; each section is stamped with the moment it was read, on every open.
+
+**Hosts.** Every SSH host Termix knows about, instance-wide — not only the ones you have linked to a hosting target. A row already linked says so and links to its fleet page; this section offers no action of its own, it exists purely so you can see the whole inventory in one place.
+
+**Active sessions.** Every open session across every host, instance-wide — the same expansion the per-host Fleet detail panel already made deliberately (see the owner's 2026-08-15 ruling above), extended instance-wide by a second, explicit owner grant (2026-08-16): who is connected (your own session, or another Termix user's, shown by their username), which host, whether it is currently connected, permission level, and age. This is a materially broader view than the per-host panel — "who is logged into anything, anywhere" rather than "who is logged into this one machine" — and it exists because the owner decided that broader visibility is exactly what this integration is for among people who trust one another, the same reasoning that licensed the per-host panel in the first place.
+
+Both sections are the SAME live reads the per-host panel and the fleet page's attach picker already make — nothing here talks to Termix any differently, and nothing here writes to it at all.
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -63,4 +73,5 @@ Termix publishes no schema for its host-inventory responses, so those fields are
 ## Related
 
 - [Fleet Observability Design](../../architecture/fleet-observability-design/) — the tier disposition for Termix and its sibling fleet-companion integrations.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above, and the §8.6 record of the instance-wide sessions grant.
 - [Connecting Tailscale](../connecting-tailscale/) — the private-network companion, read the same way.

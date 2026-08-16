@@ -62,6 +62,22 @@
  * wildcard**, so a mail provider's CNAMEs coexist with a wildcard address
  * record with no special handling at all. It is a test rather than a code
  * path, because DNS resolution already works that way.
+ *
+ * ## `HostingTargetNode.addressV4`/`addressV6` come from `host_addresses` now (loxep-bub)
+ *
+ * This module's signature is UNCHANGED — it still resolves a pair of already-
+ * resolved address strings, and every test above still constructs a
+ * `HostingTargetNode` fixture directly. What changed is who builds that pair:
+ * `host-addresses.ts`'s `wanAddressPair()` is the ONLY function in this
+ * package that reads `hosting_targets`' child `host_addresses` rows to
+ * produce it, and it reads exactly `kind = 'wan' AND provenance =
+ * 'operator_declared'` — nothing else. A `tailnet`/`lan`/`other` row, or an
+ * OBSERVED `wan` row, structurally cannot reach `resolveHostingAddress`
+ * through that builder no matter what is stored; see
+ * `test/host-addresses.test.ts`'s "structural quarantine" cases for the
+ * proof. The CGNAT/ULA publish-guard below stays as defense in depth for the
+ * one case the builder cannot catch: a private-range VALUE hand-typed into a
+ * `wan`-kind, `operator_declared` row.
  */
 import { MaterializationError } from "./errors.ts";
 import { tailnetAddressKind } from "./tailnet-address.ts";

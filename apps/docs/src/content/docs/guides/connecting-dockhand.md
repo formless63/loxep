@@ -95,6 +95,14 @@ Two behaviours to know about:
 
 TLS material and Hawser tokens are **write-only**: Loxep can send them when you register or update a host, and can never read them back. Everywhere a certificate or token would appear, Loxep records only whether one is configured — so a private key cannot end up in a log, a diff, or an error message.
 
+## The estate browser: every environment on this instance, read-only
+
+`/infrastructure/estate/$connectionId` — reached from **Settings → Connections**' row action (**Open estate**) or **Infrastructure → Estates** — is a live, read-only view of every environment (host) this Dockhand instance manages, instance-wide, in one read. Each row shows the same cross-reference "What the sweep discovers" describes above; a row already linked to a hosting target links out to that target's fleet page, and an unmatched row offers **Adopt as hosting target** — the exact write the `/infrastructure/overview` "Dockhand hosts Loxep doesn't track" card already makes, recording Loxep's own fleet fact without contacting Dockhand.
+
+Expand an environment's **View containers** action to drill into its live containers and stacks — the same two reads the per-host **Containers** panel on a linked hosting target's fleet page already makes, but reachable for every environment on this page, including one you have not attached to a hosting target yet.
+
+**This page never starts, stops, restarts, execs into, or otherwise controls a container or a stack, and there is no button anywhere that implies it could — not even a disabled one.** Nothing here registers or updates a host either; that stays on the fleet page's own "Container host registration" panel, described above.
+
 ## When it does not work
 
 | Symptom | Usual cause |
@@ -106,4 +114,5 @@ TLS material and Hawser tokens are **write-only**: Loxep can send them when you 
 ## Related
 
 - [Fleet Observability Design](../../architecture/fleet-observability-design/) — the host-registration carve-out, and the container verbs Loxep is forbidden to call.
+- [Estate Browsers Design](../../architecture/estate-browsers-design/) — the pattern behind the estate browser section above, and why it stays read-only.
 - [Connecting Beszel](../connecting-beszel/) — the metrics companion, which is read-only with no exceptions.

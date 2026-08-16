@@ -78,8 +78,8 @@ async function insertDomain(): Promise<{ id: string; name: string }> {
 
 async function insertHostingTarget(): Promise<{ id: string }> {
   const row = await handle.pool.query<{ id: string }>(
-    `insert into hosting_targets (name, control_surface, address_v4, proxy_connection_id)
-     values ($1, 'direct_reverse_proxy', '203.0.113.5', $2)
+    `insert into hosting_targets (name, control_surface, proxy_connection_id)
+     values ($1, 'direct_reverse_proxy', $2)
      returning id`,
     [nextName("target"), pangolinConnectionId],
   );

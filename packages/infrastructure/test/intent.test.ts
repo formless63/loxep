@@ -114,8 +114,14 @@ describe("hosting targets", () => {
       addressV4: "203.0.113.7/32",
     });
     // PostgreSQL accepts and normalizes the netmask form; the host part is
-    // what the materializer publishes either way.
-    expect(row.addressV4?.startsWith("203.0.113.7")).toBe(true);
+    // what the materializer publishes either way. The value now lives in
+    // `host_addresses`, written by `create()`'s inline-address convenience.
+    const address = await handle.pool.query<{ value: string }>(
+      `select value::text as value from host_addresses
+         where hosting_target_id = $1 and kind = 'wan' and family = 'v4'`,
+      [row.id],
+    );
+    expect(address.rows[0]?.value.startsWith("203.0.113.7")).toBe(true);
 
     // The whole reason the column is inet rather than text: PostgreSQL
     // refuses the malformed value that would otherwise become a published,

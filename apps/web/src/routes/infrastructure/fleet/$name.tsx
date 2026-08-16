@@ -23,6 +23,7 @@ import { toastError } from '@/lib/errors';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import CompanionLinksPanel from '@/features/infrastructure/components/companion-links-panel';
 import ContainerHostRegistrationPanel from '@/features/infrastructure/components/container-host-registration-panel';
+import HostAddressesCard from '@/features/infrastructure/components/host-addresses-card';
 import DockhandContainersPanel from '@/features/infrastructure/components/dockhand-containers-panel';
 import TermixSessionsPanel from '@/features/infrastructure/components/termix-sessions-panel';
 import HostingTargetTokensPanel from '@/features/infrastructure/components/hosting-target-tokens-panel';
@@ -255,6 +256,15 @@ function FleetDetailData({ name }: { name: string }) {
           )}
         </CardContent>
       </Card>
+
+      {/* loxep-bub: the typed multi-address model's own card — durable home,
+          not gated on any existing address (a target with none still gets
+          the "Declare address" affordance), same as the panels below. */}
+      <HostAddressesCard
+        hostingTargetId={data.id}
+        hostingTargetName={data.name}
+        addresses={data.addresses}
+      />
 
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <HostingTargetTokensPanel

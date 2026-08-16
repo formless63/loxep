@@ -17,8 +17,12 @@
  */
 import { createAuditService } from "@loxep/domain";
 import type { LoxepDb } from "@loxep/db";
-import { hostingTargets } from "@loxep/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE,
+  hostAddresses,
+  hostingTargets,
+} from "@loxep/db/schema";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   InfrastructureNotFoundError,
@@ -142,7 +146,24 @@ export function createHostingTargetsService(options: {
         { frontedByTargetId, itsFrontingNode: node.frontedByTargetId },
       );
     }
-    if (node.addressV4 === null && node.addressV6 === null) {
+    // Was `node.addressV4 === null && node.addressV6 === null` — that pair
+    // is gone (loxep-bub). Re-expressed against `host_addresses`: a fronting
+    // node must carry at least one operator-declared WAN row, the same
+    // WAN-only semantic `address_v4`/`address_v6` always carried.
+    const wanRows = await executor
+      .select({ id: hostAddresses.id })
+      .from(hostAddresses)
+      .where(
+        and(
+          eq(hostAddresses.hostingTargetId, frontedByTargetId),
+          eq(hostAddresses.kind, "wan"),
+          eq(
+            hostAddresses.provenance,
+            HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE,
+          ),
+        ),
+      );
+    if (wanRows.length === 0) {
       // Caught here rather than at materialization, where the diagnostic would
       // arrive during a sweep instead of at the edit that caused it.
       throw new InfrastructureValidationError(
@@ -157,8 +178,25 @@ export function createHostingTargetsService(options: {
       const parsed = createSchema.parse(input);
 
       return db.transaction(async (tx) => {
-        if (parsed.frontedByTargetId !== null && parsed.frontedByTargetId !== undefined) {
-          await assertFrontingNodeIsTerminal(tx, parsed.frontedByTargetId);
+        const hasFrontingNode =
+          parsed.frontedByTargetId !== null && parsed.frontedByTargetId !== undefined;
+        if (hasFrontingNode) {
+          await assertFrontingNodeIsTerminal(tx, parsed.frontedByTargetId as string);
+        }
+
+        // `hosting_targets_addressable_check`, re-expressed (loxep-bub): a
+        // `CHECK` cannot query `host_addresses`, so the DB no longer refuses
+        // this at INSERT time — it is enforced here, synchronously, before
+        // either row is written, so the failure lands at the same edit that
+        // caused it rather than at the next materialize/sync run.
+        const hasInlineWanAddress =
+          (parsed.addressV4 !== null && parsed.addressV4 !== undefined) ||
+          (parsed.addressV6 !== null && parsed.addressV6 !== undefined);
+        if (parsed.controlSurface !== "none" && !hasFrontingNode && !hasInlineWanAddress) {
+          throw new InfrastructureValidationError(
+            `hosting target "${parsed.name}" needs an operator-declared WAN address (or a fronting node, or control_surface 'none')`,
+            { name: parsed.name, controlSurface: parsed.controlSurface },
+          );
         }
 
         const rows = await tx
@@ -168,8 +206,6 @@ export function createHostingTargetsService(options: {
             controlSurface: parsed.controlSurface,
             provider: parsed.provider ?? null,
             region: parsed.region ?? null,
-            addressV4: parsed.addressV4 ?? null,
-            addressV6: parsed.addressV6 ?? null,
             frontedByTargetId: parsed.frontedByTargetId ?? null,
             proxyConnectionId: parsed.proxyConnectionId ?? null,
             externalSiteId: parsed.externalSiteId ?? null,
@@ -180,6 +216,34 @@ export function createHostingTargetsService(options: {
         const row = rows[0];
         if (row === undefined) {
           throw new Error("hosting target insert returned no row");
+        }
+
+        // The create dialog's (and this service's) `addressV4`/`addressV6`
+        // convenience fields write `wan`/`operator_declared`/primary rows in
+        // the SAME transaction — declaring more addresses (LAN, tailnet, a
+        // second WAN address) is `host-addresses.ts`'s `declare()`, a
+        // separate, later action.
+        if (parsed.addressV4 !== null && parsed.addressV4 !== undefined) {
+          await tx.insert(hostAddresses).values({
+            hostingTargetId: row.id,
+            kind: "wan",
+            family: "v4",
+            value: parsed.addressV4,
+            provenance: HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE,
+            isPrimary: true,
+            createdByUserId: parsed.createdByUserId ?? null,
+          });
+        }
+        if (parsed.addressV6 !== null && parsed.addressV6 !== undefined) {
+          await tx.insert(hostAddresses).values({
+            hostingTargetId: row.id,
+            kind: "wan",
+            family: "v6",
+            value: parsed.addressV6,
+            provenance: HOST_ADDRESS_OPERATOR_DECLARED_PROVENANCE,
+            isPrimary: true,
+            createdByUserId: parsed.createdByUserId ?? null,
+          });
         }
 
         await createAuditService({ db: tx }).append({

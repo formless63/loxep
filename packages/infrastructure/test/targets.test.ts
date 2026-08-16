@@ -102,3 +102,103 @@ describe("updateProxyConnection", () => {
     expect(events.rows).toHaveLength(1);
   });
 });
+
+describe("create — the re-expressed hosting_targets_addressable_check (loxep-bub)", () => {
+  it("refuses a non-'none', non-fronted target with no inline WAN address", async () => {
+    await expect(
+      service.create({ name: nextName(), controlSurface: "direct_reverse_proxy" }),
+    ).rejects.toThrow(/needs an operator-declared WAN address/);
+  });
+
+  it("allows control_surface 'none' with no address", async () => {
+    await expect(
+      service.create({ name: nextName(), controlSurface: "none" }),
+    ).resolves.toMatchObject({ controlSurface: "none" });
+  });
+
+  it("writes the inline addressV4/addressV6 as wan/operator_declared/primary host_addresses rows", async () => {
+    const target = await service.create({
+      name: nextName(),
+      controlSurface: "direct_reverse_proxy",
+      addressV4: "203.0.113.15",
+      addressV6: "2001:db8::15",
+    });
+    const rows = await handle.pool.query<{
+      kind: string;
+      family: string;
+      value: string;
+      provenance: string;
+      is_primary: boolean;
+    }>(
+      `select kind, family, value::text as value, provenance, is_primary
+         from host_addresses where hosting_target_id = $1 order by family`,
+      [target.id],
+    );
+    expect(rows.rows).toEqual([
+      expect.objectContaining({
+        kind: "wan",
+        family: "v4",
+        provenance: "operator_declared",
+        is_primary: true,
+      }),
+      expect.objectContaining({
+        kind: "wan",
+        family: "v6",
+        provenance: "operator_declared",
+        is_primary: true,
+      }),
+    ]);
+  });
+});
+
+describe("assertFrontingNodeIsTerminal — re-expressed against host_addresses", () => {
+  it("refuses a fronting node with no WAN-declared address", async () => {
+    const bareNode = await service.create({ name: nextName(), controlSurface: "none" });
+    await expect(
+      service.create({
+        name: nextName(),
+        controlSurface: "tunnel_client",
+        frontedByTargetId: bareNode.id,
+      }),
+    ).rejects.toThrow(/has no address and cannot front another target/);
+  });
+
+  it("accepts a fronting node whose only address is a LATER-declared WAN row (not just inline at create)", async () => {
+    const bareNode = await service.create({ name: nextName(), controlSurface: "none" });
+    // Declared through the address service, not the create() convenience
+    // fields — proving assertFrontingNodeIsTerminal reads host_addresses
+    // directly rather than some cached copy from create().
+    const { createHostAddressesService } = await import("../src/index.ts");
+    await createHostAddressesService({ db: handle.db }).declare(bareNode.id, {
+      kind: "wan",
+      family: "v4",
+      value: "203.0.113.16",
+    });
+
+    await expect(
+      service.create({
+        name: nextName(),
+        controlSurface: "tunnel_client",
+        frontedByTargetId: bareNode.id,
+      }),
+    ).resolves.toMatchObject({ controlSurface: "tunnel_client" });
+  });
+
+  it("still refuses a LAN-only fronting node — LAN never satisfies the WAN-only rule", async () => {
+    const bareNode = await service.create({ name: nextName(), controlSurface: "none" });
+    const { createHostAddressesService } = await import("../src/index.ts");
+    await createHostAddressesService({ db: handle.db }).declare(bareNode.id, {
+      kind: "lan",
+      family: "v4",
+      value: "192.0.2.16",
+    });
+
+    await expect(
+      service.create({
+        name: nextName(),
+        controlSurface: "tunnel_client",
+        frontedByTargetId: bareNode.id,
+      }),
+    ).rejects.toThrow(/has no address and cannot front another target/);
+  });
+});

@@ -80,8 +80,8 @@ function nextName(prefix: string): string {
 async function insertHostingTarget(): Promise<string> {
   const n = nextName("target");
   const row = await handle.pool.query<{ id: string }>(
-    `insert into hosting_targets (name, control_surface, address_v4)
-     values ($1, 'direct_reverse_proxy', '203.0.113.5')
+    `insert into hosting_targets (name, control_surface)
+     values ($1, 'direct_reverse_proxy')
      returning id`,
     [n],
   );

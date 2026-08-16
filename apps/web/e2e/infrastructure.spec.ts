@@ -91,6 +91,20 @@ test('creates a hosting target with no fronting node, then shows it with an empt
   await expect(page.getByText('No companion tool linked yet')).toBeVisible();
   await expect(page.getByText('None yet.')).toBeVisible(); // "Domains pointing here (0)"
 
+  // loxep-bub: the typed multi-address card. The dialog's "IPv4 address"
+  // convenience field writes a wan/operator_declared/primary host_addresses
+  // row through the same transaction as create() — this asserts that row
+  // renders on the card, not just that the target has SOME address.
+  const addressesCard = page
+    .locator('[data-slot="card"]')
+    .filter({ has: page.getByText('Addresses', { exact: true }) });
+  // The kind badge AND the row's reclassify select both show "WAN" — scoped
+  // to the badge specifically so the assertion stays single-element.
+  await expect(addressesCard.locator('[data-slot="badge"]', { hasText: 'WAN' })).toBeVisible();
+  await expect(addressesCard.getByText('203.0.113.77', { exact: true })).toBeVisible();
+  await expect(addressesCard.getByText('Declared', { exact: true })).toBeVisible();
+  await expect(addressesCard.getByText('primary', { exact: true })).toBeVisible();
+
   // loxep-y64 slice 3: the operator-confirmed attach picker over Beszel's
   // discovery sweep. The e2e harness has no live Beszel hub (no fleet
   // credentials exist on this box — see that bead's report), so nothing has
@@ -463,4 +477,202 @@ test("the connections row action opens a Purelymail connection's estate page", a
   await expect(estateMain.getByText('Domains', { exact: true })).toBeVisible();
   await expect(estateMain.getByText('Mailboxes', { exact: true })).toBeVisible();
   await expect(estateMain.getByText('Routing rules', { exact: true })).toBeVisible();
+});
+
+/**
+ * The Tailscale estate browser (loxep-47o.6) — same Rule N1 path as
+ * Cloudflare/Purelymail's tests above, to the same connection-identity
+ * HEADER. Uses the default OAuth-client credential shape (this form's own
+ * default `mode`) so the fixture needs no radio click. The Tailnet section
+ * makes a REAL `listDevices()` call against this fake-credential fixture and
+ * is expected to render its own error state — this suite's established
+ * "never depend on a live provider call's outcome or timing" discipline
+ * (see the Cloudflare test's own module doc above), so only the section
+ * TITLE is asserted, never a specific device row or error message.
+ */
+test("the connections row action opens a Tailscale connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Tailscale estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Tailscale tailnet' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Tailnet name *').fill(name);
+  await connectionDialog.getByLabel('OAuth client ID *').fill(`ts_client_e2e_${runId}`);
+  await connectionDialog.getByLabel('OAuth client secret *').fill(`ts_secret_e2e_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect tailnet' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Tailscale', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Tailnet', { exact: true })).toBeVisible();
+});
+
+/**
+ * The Beszel estate browser (loxep-47o.7) — same Rule N1 path, to the same
+ * connection-identity HEADER. Both sections (Hub, Systems) make REAL
+ * provider calls against this fake-credential fixture and are expected to
+ * render their own error/blocked state — only the section TITLES are
+ * asserted, matching every other estate e2e test's own discipline.
+ */
+test("the connections row action opens a Beszel connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Beszel estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Beszel hub' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Hub name *').fill(name);
+  await connectionDialog.getByLabel('Hub base URL *').fill('https://beszel.example.com');
+  await connectionDialog.getByLabel('Email *').fill(`beszel-readonly-${runId}@example.com`);
+  await connectionDialog.getByLabel('Password *').fill(`bs_e2e_estate_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect hub' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Beszel', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Hub', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Systems', { exact: true })).toBeVisible();
+});
+
+/**
+ * The Termix estate browser (loxep-47o.7) — same Rule N1 path, to the same
+ * connection-identity HEADER. Both sections (Hosts, Active sessions) make
+ * REAL provider calls against this fake-credential fixture and are expected
+ * to render their own error state — only the section TITLES are asserted.
+ * The Sessions section ships instance-wide per the owner's 5b ruling
+ * (2026-08-16) — see `termix-estate-functions.ts`'s module doc.
+ */
+test("the connections row action opens a Termix connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Termix estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Termix instance' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Instance name *').fill(name);
+  await connectionDialog.getByLabel('Instance URL *').fill('https://termix.example.com');
+  await connectionDialog.getByLabel('Username *').fill(`termix-readonly-${runId}`);
+  await connectionDialog.getByLabel('Password *').fill(`tx_e2e_estate_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect instance' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Termix', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Hosts', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Active sessions', { exact: true })).toBeVisible();
+});
+
+/**
+ * The Dockhand estate browser (loxep-47o.4, READ-ONLY per its own title) —
+ * same Rule N1 path, to the same connection-identity HEADER. The
+ * Environments section makes a REAL `listHosts` call against this
+ * fake-credential fixture and is expected to render its own error/blocked
+ * state — only the section TITLE is asserted, matching every other estate
+ * e2e test's own discipline. No lifecycle control of any kind is asserted
+ * ABSENT here — this file has no live Dockhand host to render a container
+ * row for in the first place, so `forbidden-verbs.test.ts` (the adapter's
+ * own exported-surface assertion) is the binding proof, not this spec.
+ */
+test("the connections row action opens a Dockhand connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Dockhand estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Dockhand instance' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Instance name *').fill(name);
+  await connectionDialog.getByLabel('Instance URL *').fill('https://dockhand.example.com');
+  await connectionDialog.getByLabel('Username *').fill(`dockhand-readonly-${runId}`);
+  await connectionDialog.getByLabel('Password *').fill(`dh_e2e_estate_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect instance' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Dockhand', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Environments', { exact: true })).toBeVisible();
+  // Rule 13, absolute: no lifecycle control of any kind renders anywhere on
+  // this page — not even a disabled one.
+  await expect(
+    estateMain.getByRole('button', { name: /restart|stop|start|kill|exec/i })
+  ).toHaveCount(0);
+});
+
+/**
+ * The Gatus estate browser (loxep-47o.5) — same Rule N1 path, to the same
+ * connection-identity HEADER. Instance/Endpoints make REAL provider calls
+ * against this fake-credential fixture (no username/password filled, so the
+ * connection carries no `gatus_credentials` row — the 'open' posture leg)
+ * and are expected to render their own error/blocked state — only the
+ * section TITLES are asserted. The mandatory heartbeat-quarantine exclusion
+ * (loxep-1au Binding Rule 1) has its own unit-tested proof in
+ * `gatus-estate-functions.test.ts`; this harness has no live Gatus to
+ * exercise it end to end against.
+ */
+test("the connections row action opens a Gatus connection's estate page", async ({ page }) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const name = `E2E Gatus estate ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Gatus instance' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Instance name *').fill(name);
+  await connectionDialog.getByLabel('Instance URL *').fill('https://status.example.com');
+  await connectionDialog.getByRole('button', { name: 'Connect instance' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.getByRole('textbox', { name: 'Account' }).fill(name);
+  const row = page.getByRole('row').filter({ hasText: name });
+  await expect(row).toBeVisible();
+  await row.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('menuitem', { name: 'Open estate' }).click();
+
+  await page.waitForURL('**/infrastructure/estate/**');
+  const estateMain = page.getByRole('main');
+  await expect(page.getByRole('heading', { name: 'Estate' })).toBeVisible();
+  await expect(estateMain.getByText(name, { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Gatus', { exact: true }).first()).toBeVisible();
+  await expect(estateMain.getByText('Instance', { exact: true })).toBeVisible();
+  await expect(estateMain.getByText('Endpoints', { exact: true })).toBeVisible();
 });

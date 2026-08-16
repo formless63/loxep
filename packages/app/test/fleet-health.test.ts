@@ -36,6 +36,10 @@ import type { TailscaleAdapter } from "@loxep/integration-tailscale";
 import { TermixAdapterError } from "@loxep/integration-termix";
 import type { TermixAdapter } from "@loxep/integration-termix";
 import { PangolinAdapterError } from "@loxep/integration-pangolin";
+import {
+  createHostAddressesService,
+  createHostingTargetsService,
+} from "@loxep/infrastructure";
 import { createFleetHealthSubjectRegistry } from "../src/fleet-health.ts";
 import type { FleetHealthServices } from "../src/fleet-health.ts";
 import { BeszelCredentialsMissingError } from "../src/fleet.ts";
@@ -535,6 +539,132 @@ describe("createFleetHealthSubjectRegistry", () => {
       const outcome = await registry.connection?.probe(handle.db, connection.id);
       expect(outcome?.status).toBe("failing");
       expect(outcome?.detail).toEqual({ kind: "auth" });
+    });
+  });
+
+  describe("dockhand discovery + host address projection (loxep-bub)", () => {
+    function dockhandHost(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        externalHostId: "env-1",
+        name: "dockhand-target",
+        connectionType: "direct",
+        host: "192.0.2.5",
+        port: 2375,
+        labels: [],
+        publicIp: "203.0.113.20",
+        hawserConfigured: false,
+        hawserLastSeen: null,
+        updatedAt: null,
+        ...overrides,
+      };
+    }
+
+    function discoveryServices(hosts: Record<string, unknown>[]): FleetHealthServices {
+      return fakeServices({
+        getDockhandAdapterForConnection: async (id) => ({
+          connectionId: id,
+          sourceAccountKey: "dockhand:test",
+          adapter: {
+            capabilities: () => ({
+              provider: "dockhand",
+              readOnly: false,
+              authMode: "session",
+              unauthenticatedHealthProbe: false,
+            }),
+            probeSession: async () => ({ authenticationEnabled: true, authenticated: true }),
+            listHosts: async () => hosts,
+          } as unknown as DockhandAdapter,
+          minIntervalSeconds: 300,
+        }),
+      });
+    }
+
+    async function dockhandConnection(label: string): Promise<Connection> {
+      return createFleetConnection("dockhand", label, {
+        dockhand: { baseUrl: "https://dockhand.example.test" },
+      });
+    }
+
+    it("lands host/publicIp as kind='other' with distinct provenance, for a name-joined target", async () => {
+      const hostingTargets = createHostingTargetsService({ db: handle.db });
+      const hostAddresses = createHostAddressesService({ db: handle.db });
+      const targetName = `dockhand-name-join-${Date.now()}`;
+      const target = await hostingTargets.create({
+        name: targetName,
+        controlSurface: "none",
+      });
+
+      const connection = await dockhandConnection("host-addresses-name-join");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          dockhandHost({
+            externalHostId: "env-name-join",
+            name: targetName,
+            host: "192.0.2.6",
+            publicIp: "203.0.113.21",
+          }),
+        ]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const rows = await hostAddresses.listForTarget(target.id);
+      const other = rows.filter((row) => row.kind === "other");
+      expect(other).toHaveLength(2);
+      expect(new Set(other.map((row) => row.provenance))).toEqual(
+        new Set(["observed:dockhand", "observed:dockhand.public_ip"]),
+      );
+      expect(other.find((row) => row.provenance === "observed:dockhand")?.value).toBe(
+        "192.0.2.6",
+      );
+      expect(
+        other.find((row) => row.provenance === "observed:dockhand.public_ip")?.value,
+      ).toBe("203.0.113.21");
+      // Never auto-classified to 'wan', however public-looking the value —
+      // an operator's classify() decides that.
+      expect(other.every((row) => row.kind !== "wan")).toBe(true);
+    });
+
+    it("skips a host field that is not a valid IP literal (e.g. a hostname)", async () => {
+      const hostingTargets = createHostingTargetsService({ db: handle.db });
+      const hostAddresses = createHostAddressesService({ db: handle.db });
+      const targetName = `dockhand-hostname-${Date.now()}`;
+      const target = await hostingTargets.create({ name: targetName, controlSurface: "none" });
+
+      const connection = await dockhandConnection("host-addresses-hostname");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          dockhandHost({
+            externalHostId: "env-hostname",
+            name: targetName,
+            host: "dockhand-daemon.internal.example",
+            publicIp: null,
+          }),
+        ]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const rows = await hostAddresses.listForTarget(target.id);
+      expect(rows.filter((row) => row.kind === "other")).toHaveLength(0);
+    });
+
+    it("writes nothing to host_addresses for an environment with no matching hosting target", async () => {
+      const before = await handle.pool.query<{ count: string }>(
+        `select count(*)::text as count from host_addresses where provenance like 'observed:dockhand%'`,
+      );
+      const connection = await dockhandConnection("host-addresses-unmatched");
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          dockhandHost({ externalHostId: "env-unmatched", name: `no-such-target-${Date.now()}` }),
+        ]),
+      );
+      // Must not throw even though there is no linked hosting target at all.
+      await expect(
+        registry.connection?.probe(handle.db, connection.id),
+      ).resolves.toBeDefined();
+      const after = await handle.pool.query<{ count: string }>(
+        `select count(*)::text as count from host_addresses where provenance like 'observed:dockhand%'`,
+      );
+      expect(after.rows[0]?.count).toBe(before.rows[0]?.count);
     });
   });
 
@@ -1686,6 +1816,71 @@ describe("createFleetHealthSubjectRegistry", () => {
 
       const candidates = await registry.external_resource?.listCandidates(handle.db);
       expect(candidates?.map((candidate) => candidate.subjectId)).not.toContain(resource!.id);
+    });
+
+    it("refreshes tailnet host_addresses rows for a linked device — never hosting_targets.address_v4/v6 (loxep-bub)", async () => {
+      const connection = await tailscaleDiscoveryConnection("discovery-host-addresses");
+      const hostingTargets = createHostingTargetsService({ db: handle.db });
+      const hostAddresses = createHostAddressesService({ db: handle.db });
+      const target = await hostingTargets.create({
+        name: `tailscale-linked-${Date.now()}`,
+        controlSurface: "none",
+      });
+
+      const resourceLinks = createResourceLinksService({ db: handle.db });
+      const preRegistered = await resourceLinks.upsertExternalResource({
+        provider: "tailscale",
+        externalType: "device",
+        externalId: "node-host-addresses",
+        connectionId: connection.id,
+        url: "https://login.tailscale.com/admin/machines/node-host-addresses",
+        title: "placeholder",
+      });
+      await resourceLinks.attachLink({
+        externalResourceId: preRegistered.id,
+        resourceType: "hosting_target",
+        resourceId: target.id,
+        purpose: "private_network",
+      });
+
+      const registry = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          device({
+            externalDeviceId: "node-host-addresses",
+            addresses: ["198.51.100.2", "fd7a:115c:a1e0::2"],
+          }),
+        ]),
+      );
+      await registry.connection?.probe(handle.db, connection.id);
+
+      const rows = await hostAddresses.listForTarget(target.id);
+      const tailnet = rows.filter((row) => row.kind === "tailnet");
+      expect(tailnet).toHaveLength(2);
+      expect(new Set(tailnet.map((row) => row.family))).toEqual(new Set(["v4", "v6"]));
+      expect(tailnet.every((row) => row.provenance === "observed:tailscale")).toBe(true);
+      expect(tailnet.find((row) => row.family === "v4")?.value).toBe("198.51.100.2");
+
+      // A second sweep with a CHANGED address refreshes the same rows rather
+      // than accumulating duplicates.
+      const registryAgain = createFleetHealthSubjectRegistry(
+        discoveryServices([
+          device({
+            externalDeviceId: "node-host-addresses",
+            addresses: ["198.51.100.3", "fd7a:115c:a1e0::2"],
+          }),
+        ]),
+      );
+      await registryAgain.connection?.probe(handle.db, connection.id);
+      const rowsAfter = await hostAddresses.listForTarget(target.id);
+      const tailnetAfter = rowsAfter.filter((row) => row.kind === "tailnet");
+      expect(tailnetAfter).toHaveLength(2);
+      expect(tailnetAfter.find((row) => row.family === "v4")?.value).toBe("198.51.100.3");
+
+      // The columns this table used to write are gone; confirm the sync never
+      // reaches for them under any other name either.
+      const reread = await hostingTargets.get(target.id);
+      expect(reread).not.toHaveProperty("addressV4");
+      expect(reread).not.toHaveProperty("addressV6");
     });
   });
 
