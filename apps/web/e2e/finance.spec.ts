@@ -89,6 +89,61 @@ test('a recorded expense offers void-and-re-record, never an edit affordance', a
 });
 
 /**
+ * Void-and-promote (loxep-ytu; `flipping-lifecycle-design.md`'s open
+ * question 2): the OTHER correction path alongside void-and-re-record above,
+ * for the case where a recorded expense turns out to have bought goods for
+ * resale. "Promote to acquisition" opens the SAME acquisition-lot picker the
+ * document-review panel uses (create-new-or-attach), then a reason-collecting
+ * confirm dialog; on success the expense is voided AND `acquisition_cost_id`
+ * is stamped in the same write, visible on the expense-detail page's
+ * "Voided and promoted to a lot's cost" alert with a "View the lot" link.
+ */
+test('a recorded expense offers promote-to-acquisition, voiding it and creating a lot cost', async ({
+  page
+}) => {
+  const promotePayeeName = `E2E Promote Payee ${runId}`;
+  const promoteCategory = `e2e-promote-${runId}`;
+  const lotTitle = `E2E Promote Lot ${runId}`;
+
+  await page.goto('/finance/expenses');
+  await page.getByRole('button', { name: 'New expense' }).first().click();
+  const createDialog = page.getByRole('dialog');
+  await createDialog.getByLabel('Amount *').fill('89.00');
+  await createDialog.getByLabel('Category *').fill(promoteCategory);
+  await createDialog.getByLabel('Payee (free text)').fill(promotePayeeName);
+  await createDialog.getByRole('button', { name: 'Save' }).click();
+  await expect(createDialog).toBeHidden();
+
+  const row = tableRow(page, promotePayeeName);
+  await row.getByRole('link').first().click();
+  await page.waitForURL('**/finance/expenses/*');
+
+  await page.getByRole('button', { name: /Promote to acquisition/ }).click();
+  const lotPickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose a lot' });
+  await expect(lotPickerDialog).toBeVisible();
+  await lotPickerDialog.getByRole('tab', { name: 'Create a new draft' }).click();
+  await lotPickerDialog.getByLabel('Title *').fill(lotTitle);
+  await lotPickerDialog.getByRole('button', { name: /Create & attach/ }).click();
+  await expect(lotPickerDialog).toBeHidden();
+
+  const promoteDialog = page.getByRole('dialog').filter({ hasText: 'Promote' });
+  await expect(promoteDialog).toBeVisible();
+  await promoteDialog.getByLabel('Reason *').fill(`e2e promotion ${runId}`);
+  await promoteDialog.getByRole('button', { name: 'Promote to acquisition cost' }).click();
+  await expect(promoteDialog).toBeHidden();
+
+  // Voided, never deleted — the same posture void-and-re-record takes.
+  await expect(page.getByText('Void', { exact: true })).toBeVisible();
+  await expect(page.getByText("Voided and promoted to a lot's cost")).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View the lot' })).toBeVisible();
+
+  // No stray "Void & re-record"/"Promote to acquisition" affordance survives
+  // on an already-void row — both are gated on status === 'recorded'.
+  await expect(page.getByRole('button', { name: /Void & re-record/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Promote to acquisition/ })).toHaveCount(0);
+});
+
+/**
  * The Invoice Ninja estate browser (loxep-47o.8) — the FIRST estate page
  * outside `/infrastructure`, so this is also the FIRST end-to-end proof that
  * Rule P1's workspace parameter actually routes to `/finance` rather than

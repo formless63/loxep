@@ -14,7 +14,7 @@ import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { CandidateDto } from '@/server/documents-functions';
 import {
-  CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS,
+  ACQUISITION_LOT_DISPOSITIONS,
   dispositionLabel,
   dispositionOptions
 } from '@/features/documents/constants';
@@ -127,6 +127,21 @@ export function createColumns(
               </Link>
             );
           }
+          // `inventory_item` (loxep-ytu) — `confirmCandidatesAsIntake`'s
+          // target: an `inventory_intake`-dispositioned line becomes an
+          // ACTUAL stock row, not a cost row, so it links to the item
+          // itself rather than to its lot.
+          if (row.original.targetKind === 'inventory_item' && row.original.targetId) {
+            return (
+              <Link
+                to='/inventory/stock/$id'
+                params={{ id: row.original.targetId }}
+                className='inline-flex hover:underline'
+              >
+                {badge}
+              </Link>
+            );
+          }
           return badge;
         }
         return (
@@ -140,13 +155,13 @@ export function createColumns(
             <SelectContent>
               {dispositionOptions.map((option) => {
                 // `acquisition_cost`/`inventory_intake` open the acquisition-
-                // lot picker (loxep-cd3.6, M6) rather than confirming inline
-                // here — the hint says so instead of leaving the choice
-                // unexplained. Every other option either confirms via the
-                // panel's "Confirm as expense" action or is a terminal,
-                // no-confirm-step disposition (personal/not_mine/duplicate/
-                // discarded/pending), so it gets no hint.
-                const opensLotPicker = CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(option.value);
+                // lot picker (loxep-cd3.6, M6; loxep-ytu) rather than
+                // confirming inline here — the hint says so instead of
+                // leaving the choice unexplained. Every other option either
+                // confirms via the panel's "Confirm as expense" action or is
+                // a terminal, no-confirm-step disposition (personal/
+                // not_mine/duplicate/discarded/pending), so it gets no hint.
+                const opensLotPicker = ACQUISITION_LOT_DISPOSITIONS.has(option.value);
                 return (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}

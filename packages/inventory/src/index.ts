@@ -134,11 +134,17 @@ export type {
   LandedCostGroup,
 } from "./acquisitions.ts";
 
-export { createAcquisitionConfirmService } from "./confirm.ts";
+export {
+  createAcquisitionConfirmService,
+  createIntakeConfirmService,
+} from "./confirm.ts";
 export type {
   AcquisitionConfirmService,
   ConfirmCandidatesAsAcquisitionInput,
   ConfirmCandidatesAsAcquisitionResult,
+  ConfirmCandidatesAsIntakeInput,
+  ConfirmCandidatesAsIntakeResult,
+  IntakeConfirmService,
 } from "./confirm.ts";
 
 export {

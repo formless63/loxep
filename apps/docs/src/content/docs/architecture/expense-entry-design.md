@@ -653,32 +653,32 @@ This is the requirement most likely to be implemented wrongly, because the obvio
 
 If an expense line could be promoted to inventory, the same dollar would be deducted once as an expense and again as COGS at sale, and every per-item contribution figure would be computed against a basis the business had already expensed. That is the specific failure the seam exists to prevent.
 
-So the flow for a mixed receipt — three items to flip, plus packing tape, plus tax — is **one document, two records**:
+So the flow for a mixed receipt — three items to flip, plus packing tape, plus tax — is **one document, three records** (loxep-ytu split the acquisition side in two: money stays `confirmCandidatesAsAcquisition`'s, physical stock became its own function):
 
 ```text
-                       receipt.jpg
-                            |
-                      one media_object
-                            |
-                      one documents row
-                            |
-                    line candidates (5)
-                    /                 \
-      disposition 'expense'        disposition 'acquisition_cost'
-      or 'supplies'                or 'inventory_intake'
-              |                             |
-   confirmCandidatesAsExpense     confirmCandidatesAsAcquisition
-              |                             |
-      expenses + expense_lines      acquisitions + acquisition_costs
-              |                             |
-   media_links(expense, 'receipt')  media_links(acquisition, 'invoice')
-              \                             /
-               the SAME media object, two links
+                              receipt.jpg
+                                   |
+                             one media_object
+                                   |
+                             one documents row
+                                   |
+                        line candidates (5)
+                    /              |                \
+   disposition 'expense'  disposition            disposition
+   or 'supplies'          'acquisition_cost'      'inventory_intake'
+          |                       |                      |
+confirmCandidatesAsExpense  confirmCandidatesAsAcquisition confirmCandidatesAsIntake
+          |                       |                      |
+ expenses + expense_lines   acquisitions + acquisition_costs   acquisitions + inventory_items
+          |                       |                      |
+media_links(expense,'receipt') media_links(acquisition,'invoice')  media_links(acquisition,'invoice')
+          \                       |                      /
+                    the SAME media object, up to three links
                — which media_links was built for, and
                  whose own comment names this exact case
 ```
 
-**Status (M6, loxep-cd3.6): `confirmCandidatesAsAcquisition` is IMPLEMENTED**, closing the piece of Phase 9's M4 that was blocked on an acquisition-lot picker — see the milestone list below for the shape and what it left out. `confirmCandidatesAsIntake` (candidates becoming actual `inventory_items`, not cost rows) remains unbuilt.
+**Status (M6, loxep-cd3.6): `confirmCandidatesAsAcquisition` is IMPLEMENTED**, closing the piece of Phase 9's M4 that was blocked on an acquisition-lot picker — see the milestone list below for the shape. **Status (loxep-ytu): `confirmCandidatesAsIntake` is also IMPLEMENTED** — candidates dispositioned `inventory_intake` now become an ACTUAL `inventory_items` row (physical stock) rather than a cost row; `acquisition_cost` stays `confirmCandidatesAsAcquisition`'s alone. See the milestone list below for the shape.
 
 The weaker connection also stays available and is not the same thing: an expense line's cost can be *attributed* to a lot without being capitalized into its basis, through `expense_allocations.acquisition_id`. Gas to drive to the auction is the canonical case. That is business context, not cost basis, and Phase 9 already said so.
 
@@ -770,11 +770,16 @@ command palette          NO. Deliberately out: a global search over receipt text
 And the branch that does not come back to this page:
 
 ```text
-   a candidate dispositioned 'acquisition_cost' or 'inventory_intake'
-        |
-   confirmCandidatesAsAcquisition  (TO BE BUILT)
-        |
-   acquisitions + acquisition_costs -> landed cost -> inventory_items
+   a candidate dispositioned            a candidate dispositioned
+   'acquisition_cost'                   'inventory_intake'
+        |                                     |
+   confirmCandidatesAsAcquisition        confirmCandidatesAsIntake
+   (IMPLEMENTED, loxep-cd3.6)            (IMPLEMENTED, loxep-ytu)
+        |                                     |
+   acquisitions + acquisition_costs      acquisitions + inventory_items
+        |                                     |
+   (contributes to the lot's landed-cost pool; allocateCosts
+    spreads it across the lot's unlocked items on request)
 ```
 
 ### Reconciling the two flows, which is the crux of the ask
@@ -811,7 +816,7 @@ expense_lines                     @loxep/accounting        — it is expense dat
 confirmCandidatesAsExpense        @loxep/accounting        — moved DOWN from apps/web,
                                                              see below
 confirmCandidatesAsAcquisition    @loxep/inventory         — IMPLEMENTED (loxep-cd3.6)
-confirmCandidatesAsIntake         @loxep/inventory         — still unbuilt
+confirmCandidatesAsIntake         @loxep/inventory         — IMPLEMENTED (loxep-ytu)
 counterparty_contacts columns     @loxep/counterparties    — existing service
 the OCR backend adapter           @loxep/documents         — it is a registered
                                                              ReceiptParser and nothing
@@ -944,7 +949,7 @@ Recorded for a human to resolve; this document does not fix them.
 
 1. **There is no ADR governing the Documents domain.** The never-auto-commit rule — arguably the strongest invariant in the codebase, with a test written specifically to prove it — lives only in an architecture design document's section 2b and in schema module comments. Every comparable rule (integration boundaries, order payload retention, notifiable events) has an ADR. *If this design's OCR tiers are accepted, the parse/confirm boundary is about to be crossed by machine-generated candidates for the first time, and that is the moment the rule should become an ADR of its own (take the next free number at the time — 0024 was claimed while this design was being written) rather than a section reference.*
 
-2. **`expenses.acquisition_cost_id` still has no writer.** Phase 9's OQ2 recommended reading it as a void-and-promote supersession pointer and Phase 5's milestone 4 gave it a reader, but nothing writes it. M6 (loxep-cd3.6) built the acquisition confirm path this note names but deliberately did NOT take on the void-and-promote writer in the same pass (it has no promote path from an already-recorded expense; scoped out to keep the milestone to "receipt lines to inventory") — so the contradiction survives another pass, and closing it remains a follow-up.
+2. **RESOLVED (loxep-ytu).** `expenses.acquisition_cost_id` now has its writer: `@loxep/accounting`'s `ExpensesService.promoteToAcquisitionCost` — `voidExpense`'s own state transition (`recorded`/`draft` → `void`, kept as evidence, never mutated in place) with `acquisition_cost_id` stamped in the SAME statement. The web layer (`apps/web/src/server/expense-functions.ts`'s `promoteExpenseToAcquisitionCost`) creates the `acquisition_costs` row FIRST via `@loxep/inventory`'s `AcquisitionsService.addCost` (SEQUENTIAL calls, not one shared transaction — the same posture `createAcquisitionFromMarketItem` already documents for a cross-package write), then calls the accounting-side promote. The expense-detail page's "Promote to acquisition" button reuses `AcquisitionLotPickerDialog` (the same create-new-or-attach-existing lot picker the document-review panel uses) chained into a reason-collecting confirm dialog, mirroring `VoidExpenseDialog`'s own two-step chaining pattern. No new posting is invented: voiding makes the `expense` source fact ineligible (the next posting-engine sweep reverses whatever it already posted) and the new `acquisition_costs` row is a fresh `acquisition_cost` source fact the same sweep posts under the existing `acquisition_cost_capitalized` rule — see `source-facts.ts`'s `readAcquisitionCost`, whose `superseded_expense_id` join already made this promotion visible from the ledger side, for the first time with a real writer behind it.
 
 3. **Phase 9 section 1 says "no schema change is required for expense capture", and this design adds four migrations.** That statement was scoped to its own milestone and is true of it; read as a permanent rule it forbids exactly the work the owner has now asked for. This is the same conflation Phase 9 itself recorded about Phase 4's "no existing table gains a column", and the wording deserves the same fix in both places.
 
@@ -1224,15 +1229,148 @@ M6  Lines to inventory                IMPLEMENTED (loxep-cd3.6). no migration.
 
                                       NOT built this pass, both flagged rather than
                                       silently skipped: confirmCandidatesAsIntake (the
-                                      candidate -> `inventory_items` path — turning a
-                                      confirmed acquisition_costs line into an actual,
-                                      physical stock row — as distinct from the cost-row
-                                      write this milestone ships; the existing manual
-                                      "add item to this lot" + intake-review flow remains
-                                      the only way to mint inventory_items today) and
+                                      candidate -> `inventory_items` path, as distinct
+                                      from the cost-row write this milestone ships) and
                                       expenses.acquisition_cost_id's void-and-promote
                                       writer (still the contradiction section 4 recorded:
-                                      a shipped FK with no writer anywhere).
+                                      a shipped FK with no writer anywhere). Both landed
+                                      in M7 below (loxep-ytu).
+
+M7  Epic tail: intake +               IMPLEMENTED (loxep-ytu). no migration.
+    void-and-promote                  Both pieces M6 deliberately deferred.
+
+                                      confirmCandidatesAsIntake, in the SAME
+                                      packages/inventory/src/confirm.ts as M6's
+                                      confirmCandidatesAsAcquisition (a shared
+                                      resolveAcquisitionTarget helper factors their
+                                      identical create-new-or-attach-existing lot
+                                      resolution — the one refactor this pass made to
+                                      M6's own function, behavior-preserving and
+                                      covered by its unchanged test suite). Splits what
+                                      M6 had folded together: CONFIRMABLE_AS_ACQUISITION
+                                      _DISPOSITIONS narrows to {'acquisition_cost'} (a
+                                      MONEY fact — freight, tax, a lump-sum lot price —
+                                      unchanged, still an acquisition_costs row); the new
+                                      CONFIRMABLE_AS_INTAKE_DISPOSITIONS = {
+                                      'inventory_intake'} routes to
+                                      confirmCandidatesAsIntake, which mints an ACTUAL
+                                      inventory_items row per confirmed candidate via
+                                      @loxep/inventory's own ItemsService.create — never
+                                      a raw INSERT, so a confirmed intake item gets the
+                                      identical item-code generation, attribution
+                                      resolution, and `receipt` movement (what actually
+                                      sets quantity_on_hand) any other intake producer
+                                      gets, landing in status='intake' same as the
+                                      manual "add item to lot" form and
+                                      createAcquisitionFromMarketItem both produce, so
+                                      completeIntakeReview remains the one, deliberate,
+                                      human-decided exit. Field mapping: description ->
+                                      label, quantity -> quantity (defaults to 1 when
+                                      absent or non-positive), line_amount ->
+                                      acquisitionCostAmount (seeded directly — NOT paired
+                                      with an acquisition_costs row, because that would
+                                      double the dollar the next time
+                                      AcquisitionsService.allocateCosts spreads the lot's
+                                      cost pool across its items; this mirrors the
+                                      ALREADY-SHIPPED createAcquisitionFromMarketItem
+                                      precedent for "known cost carried to item at
+                                      intake" rather than inventing a new one). The
+                                      candidate stamps target_kind='inventory_item',
+                                      target_id=<the item> — the fourth,
+                                      previously-unused member of
+                                      document_line_candidates.target_kind's CHECK,
+                                      reserved since migration 0017 and never written
+                                      until this pass. conditionCode/locationId are
+                                      batch-level inputs (one dialog value applies to
+                                      every item a single confirm call mints, since a
+                                      receipt line carries no per-line condition/
+                                      location of its own and this milestone ships no
+                                      migration to add one) — a real but minor UX
+                                      limitation for a batch whose items genuinely
+                                      differ, flagged rather than papered over. The
+                                      review panel's "Confirm to a lot" card now runs
+                                      TWO independent actions against the chosen lot —
+                                      "Confirm N as acquisition cost" and "Confirm N as
+                                      intake" — alongside the existing "Confirm as
+                                      expense" action, so a mixed receipt (three items to
+                                      flip, packing tape, tax) is one document, three
+                                      records. candidates-table/columns.tsx gained a
+                                      target_kind='inventory_item' link-out to
+                                      /inventory/stock/$id.
+
+                                      expenses.acquisition_cost_id's void-and-promote
+                                      writer: @loxep/accounting's ExpensesService gained
+                                      promoteToAcquisitionCost — a DELIBERATELY SEPARATE
+                                      method from voidExpense (not an optional parameter
+                                      on it), with the identical reason-required,
+                                      posted-refuses, already-void-refuses discipline,
+                                      PLUS acquisition_cost_id stamped in the SAME
+                                      UPDATE statement. Audited as its own action
+                                      (accounting.expense.promoted_to_acquisition_cost)
+                                      rather than folded into accounting.expense.voided.
+                                      The cross-package write (accounting needs a real
+                                      acquisition_costs.id; @loxep/accounting must not
+                                      depend on @loxep/inventory, mirroring the seam
+                                      @loxep/documents keeps toward both) is orchestrated
+                                      at apps/web's server-function layer
+                                      (promoteExpenseToAcquisitionCost,
+                                      expense-functions.ts), SEQUENTIAL calls rather than
+                                      one shared transaction — the same posture
+                                      createAcquisitionFromMarketItem already documents
+                                      and takes for exactly this kind of cross-package
+                                      write, accepting a recoverable partial-failure
+                                      state (an orphaned acquisition cost with no expense
+                                      pointing at it) over reaching into two
+                                      independently-transactional service factories'
+                                      internals. No new ledger posting is invented: the
+                                      void makes the `expense` source fact ineligible
+                                      (the next posting-engine sweep reverses whatever it
+                                      already posted) and the new acquisition_costs row
+                                      is a fresh `acquisition_cost` source fact the SAME
+                                      sweep posts under the existing
+                                      acquisition_cost_capitalized rule —
+                                      source-facts.ts's readAcquisitionCost, whose
+                                      superseded_expense_id join already made this
+                                      promotion visible from the ledger side, now has a
+                                      real writer behind it. The expense-detail page's
+                                      existing acquisitionCostId Alert (previously a
+                                      "arriving in a later milestone" placeholder) is
+                                      wired for real; a new "Promote to acquisition"
+                                      button sits beside "Void & re-record", opening the
+                                      SAME AcquisitionLotPickerDialog the document-review
+                                      panel uses (create-new or attach-existing, identity
+                                      resolution only, no write) chained into a
+                                      reason-collecting confirm dialog — mirroring
+                                      VoidExpenseDialog's own two-step onVoided ->
+                                      QuickExpenseDialog chain.
+
+                                      Tests: packages/inventory/test/confirm.test.ts
+                                      gained a full confirmCandidatesAsIntake describe
+                                      block mirroring M6's own coverage (actor
+                                      requirement, create-new/attach-existing, evidence
+                                      attach, cancelled-lot refusal, idempotent
+                                      double-confirm, partial-reopen, skip rules) plus
+                                      intake-specific assertions (quantity defaults,
+                                      batch conditionCode, no paired acquisition_costs
+                                      row, target_kind='inventory_item'); one existing M6
+                                      test's fixture disposition was corrected from
+                                      'inventory_intake' to 'acquisition_cost' now that
+                                      the two routes split (behavior-preserving — that
+                                      test is about the acquisition-cost path).
+                                      packages/accounting/test/expenses.test.ts gained a
+                                      promoteToAcquisitionCost describe block (happy
+                                      path with the audit-event assertion, no-reason
+                                      refusal, already-void refusal, and confirming the
+                                      guard checks posted/void only — a draft promotes
+                                      too). packages/accounting: 297 passed (was 293).
+                                      packages/inventory: 181 passed (was 171).
+                                      packages/documents: 112 passed, unchanged. apps/web
+                                      typecheck/lint/format:check clean.
+
+                                      No PDF-overlay work: `document-preview.tsx` and
+                                      pdfjs-dist are untouched by this pass — that
+                                      decision belongs to a separate ruling, not this
+                                      milestone.
 ```
 
 M1 and M2 are independent of each other and of the OCR question entirely, which is what makes this design cheap to start and safe to stop.

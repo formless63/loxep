@@ -20,6 +20,13 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
 import { DocumentPreview, type DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -28,13 +35,17 @@ import { useAppForm } from '@/lib/form';
 import {
   confirmLinesAsAcquisition,
   confirmLinesAsExpense,
+  confirmLinesAsIntake,
   discardDocument,
   setLineDisposition
 } from '@/server/documents-functions';
 import { documentQuery } from '@/features/documents/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
+import { inventoryLocationsQuery } from '@/features/inventory/api/queries';
+import { itemConditionOptions } from '@/features/inventory/constants';
 import {
-  CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS,
+  ACQUISITION_LOT_DISPOSITIONS,
+  CONFIRMABLE_AS_INTAKE_DISPOSITIONS,
   CONFIRMABLE_DISPOSITIONS,
   documentStatusLabel,
   documentStatusTone
@@ -48,6 +59,8 @@ import ManualLineForm from './manual-line-form';
 import CandidatesTable from './candidates-table';
 import AcquisitionLotPickerDialog from './acquisition-lot-picker';
 import type { AcquisitionLotTarget } from './acquisition-lot-picker';
+
+const NO_LOCATION_VALUE = '__no_location__';
 
 const confirmSchema = z.object({
   category: z.string().trim().min(1, 'Category is required'),
@@ -65,18 +78,23 @@ const confirmSchema = z.object({
 /**
  * One document's review screen: side-by-side receipt image (when uploaded)
  * and its staged/transcribed candidate lines on the right, a disposition per
- * line, and TWO independent batch confirm actions — "Confirm as expense"
- * (`expense`/`supplies` lines) and "Confirm as acquisition"
- * (`acquisition_cost`/`inventory_intake` lines, loxep-cd3.6, M6). A mixed
- * receipt (three items to flip, plus tape, plus tax) runs BOTH actions
- * against the same document — that is the "one document, two records" rule
- * (`expense-entry-design.md` section 4), not a single call that mixes
- * dispositions: each confirm is homogeneous to its own target.
+ * line, and THREE independent batch confirm actions — "Confirm as expense"
+ * (`expense`/`supplies` lines), "Confirm as acquisition cost"
+ * (`acquisition_cost` lines, loxep-cd3.6, M6), and "Confirm as intake"
+ * (`inventory_intake` lines, loxep-ytu). A mixed receipt (three items to
+ * flip, plus tape, plus tax) runs the expense action for the tape AND the
+ * acquisition-cost action for the tax AND the intake action for the three
+ * items — that is the "one document, two records" rule
+ * (`expense-entry-design.md` section 4) extended to three, not a single call
+ * that mixes dispositions: each confirm is homogeneous to its own target.
+ * `acquisition_cost` becomes an `acquisition_costs` row (a money fact);
+ * `inventory_intake` becomes an ACTUAL `inventory_items` row (physical
+ * stock) — never a cost row, per `@loxep/inventory`'s `confirm.ts` top doc.
  *
  * Dispositioning a line as `acquisition_cost`/`inventory_intake` opens the
- * acquisition-lot picker so the operator resolves WHICH lot the cost belongs
+ * acquisition-lot picker so the operator resolves WHICH lot the line belongs
  * to before confirming — existing open lots plus a create-new-draft inline
- * form.
+ * form. Both the cost and intake actions target the SAME chosen lot.
  */
 export default function DocumentReviewPanel({ documentId }: { documentId: string }) {
   const queryClient = useQueryClient();
@@ -85,9 +103,12 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
   const [acquisitionTarget, setAcquisitionTarget] = React.useState<AcquisitionLotTarget | null>(
     null
   );
+  const [intakeConditionCode, setIntakeConditionCode] = React.useState('unknown');
+  const [intakeLocationId, setIntakeLocationId] = React.useState(NO_LOCATION_VALUE);
 
   const { data: document, isPending, isError, refetch } = useQuery(documentQuery(documentId));
   const { data: entities } = useQuery(entitiesQuery);
+  const { data: locations } = useQuery(inventoryLocationsQuery);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['documents'] });
@@ -159,6 +180,36 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
     onError: (error) => toastError(error, 'Could not confirm the selected lines')
   });
 
+  const intakeConfirmMutation = useMutation({
+    mutationFn: (input: {
+      candidateIds: string[];
+      acquisitionId: string;
+      conditionCode: string;
+      locationId: string | null;
+    }) =>
+      confirmLinesAsIntake({
+        data: {
+          documentId,
+          candidateIds: input.candidateIds,
+          acquisitionId: input.acquisitionId,
+          defaultCurrency: document?.currency ?? 'USD',
+          conditionCode: input.conditionCode as never,
+          locationId: input.locationId
+        }
+      }),
+    onSuccess: (result) => {
+      if (result.acquisitionId === null) {
+        toast.error('Nothing confirmable — every selected line was already resolved');
+      } else {
+        toast.success(
+          `Confirmed ${result.itemCount} item(s) onto ${result.acquisitionReferenceCode}`
+        );
+      }
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Could not confirm the selected lines')
+  });
+
   const discardMutation = useMutation({
     mutationFn: (reason: string | null) => discardDocument({ data: { documentId, reason } }),
     onSuccess: () => {
@@ -222,10 +273,23 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
     (c) => c.confirmedAt === null && CONFIRMABLE_DISPOSITIONS.has(c.disposition as never)
   ).length;
   const readyAcquisitionCandidates = document.candidates.filter(
-    (c) =>
-      c.confirmedAt === null && CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(c.disposition as never)
+    (c) => c.confirmedAt === null && ACQUISITION_LOT_DISPOSITIONS.has(c.disposition as never)
   );
-  const readyAcquisitionCount = readyAcquisitionCandidates.length;
+  const readyIntakeCandidates = readyAcquisitionCandidates.filter((c) =>
+    CONFIRMABLE_AS_INTAKE_DISPOSITIONS.has(c.disposition as never)
+  );
+  const readyAcquisitionCostCandidates = readyAcquisitionCandidates.filter(
+    (c) => !CONFIRMABLE_AS_INTAKE_DISPOSITIONS.has(c.disposition as never)
+  );
+  const readyAcquisitionCount = readyAcquisitionCostCandidates.length;
+  const readyIntakeCount = readyIntakeCandidates.length;
+  const locationOptions = [
+    { value: NO_LOCATION_VALUE, label: 'Unassigned' },
+    ...(locations ?? []).map((location) => ({
+      value: location.id,
+      label: `${location.code} — ${location.name}`
+    }))
+  ];
 
   // The highlight overlay (loxep-cd3.5, M5) — the SAME `<DocumentPreview>`
   // overlay mode the evidence pane uses (`expense-entry-design.md`'s "the
@@ -257,7 +321,7 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
     // inventory — once a target lot is chosen it stays chosen for the rest
     // of this review session, so later lines with the same disposition just
     // join the same "Confirm as acquisition" batch below.
-    if (CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS.has(disposition as never) && !acquisitionTarget) {
+    if (ACQUISITION_LOT_DISPOSITIONS.has(disposition as never) && !acquisitionTarget) {
       setLotPickerOpen(true);
     }
   }
@@ -382,13 +446,13 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
             </form.AppForm>
           </form>
 
-          {readyAcquisitionCount > 0 && (
+          {(readyAcquisitionCount > 0 || readyIntakeCount > 0) && (
             <div className='space-y-3 rounded-md border p-4'>
-              <p className='text-sm font-medium'>Confirm as acquisition</p>
+              <p className='text-sm font-medium'>Confirm to a lot</p>
               <p className='text-muted-foreground text-xs'>
-                Applies to every unconfirmed line currently dispositioned "Cost of a lot" or "Stock
-                (inventory)" — {readyAcquisitionCount} right now. Money that bought goods for resale
-                becomes an acquisition and its cost components, never an expense.
+                Money that bought goods for resale becomes an acquisition — never an expense. "Cost
+                of a lot" lines become cost components; "Stock (inventory)" lines become actual
+                items. Both target the same lot, confirmed with two separate actions.
               </p>
               {acquisitionTarget ? (
                 <div className='flex flex-wrap items-center gap-2 text-sm'>
@@ -415,19 +479,78 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
                   Choose a lot
                 </Button>
               )}
-              <Button
-                type='button'
-                disabled={!acquisitionTarget || acquisitionConfirmMutation.isPending}
-                onClick={() => {
-                  if (!acquisitionTarget) return;
-                  acquisitionConfirmMutation.mutate({
-                    candidateIds: readyAcquisitionCandidates.map((c) => c.id),
-                    acquisitionId: acquisitionTarget.id
-                  });
-                }}
-              >
-                Confirm {readyAcquisitionCount} as acquisition
-              </Button>
+
+              {readyAcquisitionCount > 0 && (
+                <div className='space-y-2 border-t pt-3'>
+                  <p className='text-muted-foreground text-xs'>
+                    {readyAcquisitionCount} line(s) dispositioned "Cost of a lot".
+                  </p>
+                  <Button
+                    type='button'
+                    disabled={!acquisitionTarget || acquisitionConfirmMutation.isPending}
+                    onClick={() => {
+                      if (!acquisitionTarget) return;
+                      acquisitionConfirmMutation.mutate({
+                        candidateIds: readyAcquisitionCostCandidates.map((c) => c.id),
+                        acquisitionId: acquisitionTarget.id
+                      });
+                    }}
+                  >
+                    Confirm {readyAcquisitionCount} as acquisition cost
+                  </Button>
+                </div>
+              )}
+
+              {readyIntakeCount > 0 && (
+                <div className='space-y-3 border-t pt-3'>
+                  <p className='text-muted-foreground text-xs'>
+                    {readyIntakeCount} line(s) dispositioned "Stock (inventory)" — becomes physical
+                    stock, in `intake` status, same as any other item. Condition and location apply
+                    to every item this confirms.
+                  </p>
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                    <Select value={intakeConditionCode} onValueChange={setIntakeConditionCode}>
+                      <SelectTrigger size='sm'>
+                        <SelectValue placeholder='Condition' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {itemConditionOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={intakeLocationId} onValueChange={setIntakeLocationId}>
+                      <SelectTrigger size='sm'>
+                        <SelectValue placeholder='Location' />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {locationOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    type='button'
+                    disabled={!acquisitionTarget || intakeConfirmMutation.isPending}
+                    onClick={() => {
+                      if (!acquisitionTarget) return;
+                      intakeConfirmMutation.mutate({
+                        candidateIds: readyIntakeCandidates.map((c) => c.id),
+                        acquisitionId: acquisitionTarget.id,
+                        conditionCode: intakeConditionCode,
+                        locationId: intakeLocationId === NO_LOCATION_VALUE ? null : intakeLocationId
+                      });
+                    }}
+                  >
+                    Confirm {readyIntakeCount} as intake
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </div>

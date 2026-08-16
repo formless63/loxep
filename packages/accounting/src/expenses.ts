@@ -357,6 +357,56 @@ export interface ExpensesService {
     requestId?: string | null;
   }) => Promise<ExpenseRow>;
   /**
+   * The void-and-promote writer for `expenses.acquisition_cost_id`
+   * (loxep-ytu; `flipping-lifecycle-design.md`'s open question 2, and the
+   * matching contradiction note in `expense-entry-design.md`). An operator
+   * recorded plain spend that turns out to have bought goods for resale —
+   * the acquisition seam (`flipping-lifecycle-design.md`, "the acquisition
+   * seam: when an expense is really a purchase") says the corrected fact is
+   * an acquisition and its cost row, NEVER a rewritten `expenses` row, so
+   * this is `voidExpense`'s OWN state transition (`recorded` → `void`, kept
+   * as evidence, never mutated in place, never deleted) with ONE addition:
+   * `acquisition_cost_id` is stamped onto the SAME row, in the SAME
+   * statement, recording where the voided expense's value went.
+   *
+   * The caller (`@/server/expense-functions.ts`'s
+   * `promoteExpenseToAcquisitionCost`) creates the `acquisition_costs` row
+   * FIRST, via `@loxep/inventory`'s `AcquisitionsService.addCost` — this
+   * package does not and must not depend on `@loxep/inventory` (the same
+   * seam-inversion posture `@loxep/documents` keeps toward `@loxep/accounting`
+   * and `@loxep/inventory`), so `acquisitionCostId` arrives here as an
+   * opaque, already-valid id, not something this function resolves itself.
+   *
+   * Deliberately a SEPARATE method from `voidExpense` rather than an
+   * optional parameter on it: `voidExpense` is exercised by the shipped
+   * void-and-re-record e2e flow and this method's own audit action
+   * (`accounting.expense.promoted_to_acquisition_cost`) names a materially
+   * different fact than a plain void (`accounting.expense.voided`) — kept
+   * distinguishable in the audit log rather than folded into one action with
+   * a sometimes-present field.
+   *
+   * Refuses exactly where `voidExpense` refuses (`posted` — a posted fact is
+   * corrected by a reversing ledger entry, not by voiding the source) PLUS
+   * an already-`void` row (promotion is the SAME action as voiding, never a
+   * follow-up on a row already voided for some other reason — a second
+   * `acquisition_cost_id` write on an already-frozen row would be silently
+   * rewriting evidence). No new posting is invented: voiding makes the
+   * `expense` source fact ineligible (the next posting-engine sweep reverses
+   * whatever it already posted) and the new `acquisition_costs` row is a
+   * fresh, as-yet-unposted `acquisition_cost` source fact the SAME sweep
+   * picks up under the existing `acquisition_cost_capitalized` rule — see
+   * `source-facts.ts`'s `readAcquisitionCost` for the reader that already
+   * makes this promotion visible from the ledger side via
+   * `superseded_expense_id`.
+   */
+  promoteToAcquisitionCost: (input: {
+    expenseId: string;
+    acquisitionCostId: string;
+    reason: string;
+    actorUserId?: string | null;
+    requestId?: string | null;
+  }) => Promise<ExpenseRow>;
+  /**
    * Explicit, audited bulk re-attribution. Rewrites only rows whose
    * `entity_attribution_source` is `installation_default` or `unattributed`;
    * a `manual` row is never touched.
@@ -942,6 +992,58 @@ export function createExpensesService(options: {
           after: { status: after.status },
           requestId: input.requestId ?? null,
           metadata: { reason, referenceCode: before.referenceCode },
+        });
+        return after;
+      });
+    },
+
+    promoteToAcquisitionCost: async (input) => {
+      const reason = input.reason.trim();
+      if (reason.length === 0) {
+        throw new AccountingValidationError(
+          "promoting an expense to an acquisition cost requires a reason: the row is kept " +
+            "rather than deleted precisely so that the record of the mistake survives, and a " +
+            "promotion with no reason keeps the row and loses the point",
+        );
+      }
+      return db.transaction(async (tx) => {
+        const before = await loadExpense(tx, input.expenseId);
+        if (before.status === POSTED_STATUS) {
+          throw new ExpenseNotEditableError(
+            `expense "${before.referenceCode}" is posted; a posted fact is corrected by a ` +
+              "reversing entry in the ledger, not by voiding the source. Only a posting engine " +
+              "sets this status, so nothing in this milestone can reach it.",
+          );
+        }
+        if (before.status === "void") {
+          throw new ExpenseNotEditableError(
+            `expense "${before.referenceCode}" is already void; promotion happens in the same ` +
+              "action as voiding, not as a follow-up on a row already voided for some other " +
+              "reason — a voided row is frozen evidence and its acquisition_cost_id is not a " +
+              "field a later edit rewrites",
+          );
+        }
+        await tx.execute(
+          `update expenses
+              set status = 'void',
+                  acquisition_cost_id = ${uuidLiteral(input.acquisitionCostId)},
+                  updated_at = now()
+            where id = ${uuidLiteral(before.id)}`,
+        );
+        const after = await loadExpense(tx, before.id);
+        await createAuditService({ db: tx }).append({
+          actorUserId: input.actorUserId ?? null,
+          action: "accounting.expense.promoted_to_acquisition_cost",
+          resourceType: "expense",
+          resourceId: before.id,
+          before: { status: before.status, amount: before.amount },
+          after: { status: after.status, acquisitionCostId: after.acquisitionCostId },
+          requestId: input.requestId ?? null,
+          metadata: {
+            reason,
+            referenceCode: before.referenceCode,
+            acquisitionCostId: input.acquisitionCostId,
+          },
         });
         return after;
       });

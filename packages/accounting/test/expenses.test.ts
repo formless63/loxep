@@ -37,6 +37,7 @@ describe("expenses service", () => {
   let entityId: string;
   let otherEntityId: string;
   let acquisitionId: string;
+  let acquisitionCostId: string;
   let actorId: string;
   let payeeCounterpartyId: string;
 
@@ -45,8 +46,10 @@ describe("expenses service", () => {
     expenses = createExpensesService({ db: scratch.handle.db });
     entityId = await seedEntity(scratch, "Loxep LLC");
     otherEntityId = await seedEntity(scratch, "Side Hustle", "sole_proprietorship");
-    acquisitionId = (await seedAcquisition(scratch, "ACQ-2026-8001"))
-      .acquisitionId;
+    ({ acquisitionId, acquisitionCostId } = await seedAcquisition(
+      scratch,
+      "ACQ-2026-8001",
+    ));
     actorId = await seedUser(scratch, "acct_actor");
     payeeCounterpartyId = await seedCounterparty(
       scratch,
@@ -483,6 +486,78 @@ describe("expenses service", () => {
       await expect(
         expenses.voidExpense({ expenseId: expense.id, reason: "   " }),
       ).rejects.toThrow(AccountingValidationError);
+    });
+  });
+
+  describe("promoteToAcquisitionCost (void-and-promote, loxep-ytu)", () => {
+    it("voids the expense and stamps acquisition_cost_id in the same write", async () => {
+      const { expense } = await expenses.create(base);
+      await expenses.submit({ expenseId: expense.id });
+      const promoted = await expenses.promoteToAcquisitionCost({
+        expenseId: expense.id,
+        acquisitionCostId,
+        reason: "this was actually goods for resale, not a plain expense",
+        actorUserId: actorId,
+      });
+      expect(promoted.status).toBe("void");
+      expect(promoted.acquisitionCostId).toBe(acquisitionCostId);
+      // Row retained, not deleted, and the reload agrees with the return value.
+      const reloaded = await expenses.get(expense.id);
+      expect(reloaded.status).toBe("void");
+      expect(reloaded.acquisitionCostId).toBe(acquisitionCostId);
+
+      const events = await auditEventsFor(
+        scratch,
+        "accounting.expense.promoted_to_acquisition_cost",
+      );
+      const event = events.find((row) => row.resourceId === expense.id);
+      expect(event?.metadata).toMatchObject({
+        referenceCode: expense.referenceCode,
+        acquisitionCostId,
+      });
+    });
+
+    it("refuses with no reason, and leaves the expense untouched", async () => {
+      const { expense } = await expenses.create(base);
+      await expenses.submit({ expenseId: expense.id });
+      await expect(
+        expenses.promoteToAcquisitionCost({
+          expenseId: expense.id,
+          acquisitionCostId,
+          reason: "   ",
+        }),
+      ).rejects.toThrow(AccountingValidationError);
+      expect((await expenses.get(expense.id)).status).toBe("recorded");
+    });
+
+    it("refuses to promote an already-void expense — promotion is not a follow-up edit", async () => {
+      const { expense } = await expenses.create(base);
+      await expenses.submit({ expenseId: expense.id });
+      await expenses.voidExpense({
+        expenseId: expense.id,
+        reason: "recorded in error",
+        actorUserId: actorId,
+      });
+      await expect(
+        expenses.promoteToAcquisitionCost({
+          expenseId: expense.id,
+          acquisitionCostId,
+          reason: "actually this was for resale",
+          actorUserId: actorId,
+        }),
+      ).rejects.toThrow(ExpenseNotEditableError);
+    });
+
+    it("promotes a draft expense too — recorded is not a precondition, only posted and void are refused", async () => {
+      const { expense } = await expenses.create(base);
+      const promoted = await expenses.promoteToAcquisitionCost({
+        expenseId: expense.id,
+        acquisitionCostId,
+        reason: "caught this before submitting — it was a lot purchase",
+        actorUserId: actorId,
+      });
+      expect(promoted.status).toBe("void");
+      expect(promoted.acquisitionCostId).toBe(acquisitionCostId);
     });
   });
 

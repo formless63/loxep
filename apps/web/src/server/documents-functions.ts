@@ -661,4 +661,84 @@ export const confirmLinesAsAcquisition = createServerFn({ method: 'POST' })
     };
   });
 
+// ---------------------------------------------------------------------------
+// Confirm as intake (loxep-ytu) — the `inventory_intake`-disposition sibling
+// of `confirmLinesAsAcquisition` above, wrapping `@loxep/inventory`'s
+// `confirmCandidatesAsIntake`. A candidate dispositioned `inventory_intake`
+// becomes an ACTUAL `inventory_items` row (physical stock), never an
+// `acquisition_costs` row — see that package's `confirm.ts` top doc for why
+// the two dispositions now route to different tables.
+// ---------------------------------------------------------------------------
+
+export interface ConfirmLinesAsIntakeResultDto {
+  /** `null` only when every candidate in the batch was skipped and no `acquisitionId` was given — nothing was written. */
+  acquisitionId: string | null;
+  acquisitionReferenceCode: string | null;
+  itemCount: number;
+  skipped: number;
+}
+
+const CONDITION_CODE_VALUES = [
+  'new_sealed',
+  'new_open_box',
+  'like_new',
+  'very_good',
+  'good',
+  'acceptable',
+  'for_parts',
+  'damaged',
+  'unknown'
+] as const;
+
+export const confirmLinesAsIntake = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      documentId: uuid,
+      candidateIds: z.array(uuid).min(1),
+      /** Attach to this ALREADY-existing acquisition (the lot picker's "attach" branch) instead of creating one. */
+      acquisitionId: uuid.nullish(),
+      /** Required to create a new acquisition — ignored when `acquisitionId` is given. */
+      title: z.string().trim().min(1).nullish(),
+      sourceKind: z.string().trim().min(1).nullish(),
+      vendorName: z.string().trim().min(1).nullish(),
+      currency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/)
+        .nullish(),
+      defaultCurrency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/)
+        .default('USD'),
+      /** Applies to every item this batch mints — see `@loxep/inventory`'s `confirm.ts` for why this is batch-level, not per-line. */
+      conditionCode: z.enum(CONDITION_CODE_VALUES).default('unknown'),
+      locationId: uuid.nullish()
+    })
+  )
+  .handler(async ({ data }): Promise<ConfirmLinesAsIntakeResultDto> => {
+    const { requireSession, getIntakeConfirmService } = await import('@/server/admin');
+    const session = await requireSession();
+    const confirmService = await getIntakeConfirmService();
+    const result = await confirmService.confirmCandidatesAsIntake({
+      documentId: data.documentId,
+      candidateIds: data.candidateIds,
+      actorUserId: session.user.id,
+      ...(data.acquisitionId ? { acquisitionId: data.acquisitionId } : {}),
+      ...(data.title ? { title: data.title } : {}),
+      ...(data.sourceKind ? { sourceKind: data.sourceKind } : {}),
+      vendorName: data.vendorName ?? null,
+      ...(data.currency ? { currency: data.currency } : {}),
+      defaultCurrency: data.defaultCurrency,
+      conditionCode: data.conditionCode,
+      locationId: data.locationId ?? null
+    });
+    return {
+      acquisitionId: result.acquisition?.id ?? null,
+      acquisitionReferenceCode: result.acquisition?.referenceCode ?? null,
+      itemCount: result.items.length,
+      skipped: result.skipped
+    };
+  });
+
 export { DOCUMENT_STATUS_VALUES, LINE_DISPOSITION_VALUES };

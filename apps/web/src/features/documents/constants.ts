@@ -61,15 +61,37 @@ export const CONFIRMABLE_DISPOSITIONS = new Set<LineDisposition>(['expense', 'su
 /**
  * Dispositions `confirmLinesAsAcquisition`/`@loxep/inventory`'s
  * `confirmCandidatesAsAcquisition` can confirm (loxep-cd3.6, M6) — writes an
- * `acquisitions` + `acquisition_costs` row, NEVER an `expenses` row (the
- * acquisition seam, `flipping-lifecycle-design.md`). Picking one of these in
- * the review panel opens the acquisition-lot picker
- * (`@/features/documents/components/acquisition-lot-picker.tsx`) — the piece
- * Phase 9's M4 flagged as the specific gap blocking this.
+ * `acquisitions` + `acquisition_costs` row (a MONEY fact: freight, tax, a
+ * lump-sum lot price), NEVER an `expenses` row (the acquisition seam,
+ * `flipping-lifecycle-design.md`). `inventory_intake` moved OUT to
+ * {@link CONFIRMABLE_AS_INTAKE_DISPOSITIONS} below (loxep-ytu) — a candidate
+ * dispositioned "Stock (inventory)" becomes an actual `inventory_items` row,
+ * not a cost row.
  */
 export const CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS = new Set<LineDisposition>([
-  'acquisition_cost',
-  'inventory_intake'
+  'acquisition_cost'
+]);
+
+/**
+ * Dispositions `confirmLinesAsIntake`/`@loxep/inventory`'s
+ * `confirmCandidatesAsIntake` can confirm (loxep-ytu) — writes an
+ * `acquisitions` (new or existing) + `inventory_items` row: physical stock,
+ * never a cost row and never an `expenses` row.
+ */
+export const CONFIRMABLE_AS_INTAKE_DISPOSITIONS = new Set<LineDisposition>(['inventory_intake']);
+
+/**
+ * Either acquisition-side disposition — the union that opens the
+ * acquisition-lot picker
+ * (`@/features/documents/components/acquisition-lot-picker.tsx`, the piece
+ * Phase 9's M4 flagged as the specific gap blocking both of these) and gets
+ * the "opens the lot picker" hint in the disposition `Select`. A mixed
+ * receipt runs BOTH batch confirm actions against the SAME lot — each stays
+ * homogeneous to its own target.
+ */
+export const ACQUISITION_LOT_DISPOSITIONS = new Set<LineDisposition>([
+  ...CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS,
+  ...CONFIRMABLE_AS_INTAKE_DISPOSITIONS
 ]);
 
 export type DocumentStatus =

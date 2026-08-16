@@ -838,6 +838,118 @@ export const voidExpense = createServerFn({ method: 'POST' })
   });
 
 // ---------------------------------------------------------------------------
+// Promote to acquisition cost — the void-and-promote writer for
+// `expenses.acquisition_cost_id` (loxep-ytu; `flipping-lifecycle-design.md`'s
+// open question 2). An operator recorded plain spend that turns out to have
+// bought goods for resale: the acquisition seam says the corrected fact is
+// an acquisition and its cost row, so this voids the expense (the SAME
+// `voidExpense` state transition, never an edit-in-place) and stamps
+// `acquisition_cost_id` onto it in the same write, recording where the
+// value went.
+//
+// SEQUENTIAL calls, not one shared database transaction — the SAME posture
+// `createAcquisitionFromMarketItem` (`@/server/inventory-functions.ts`)
+// already documents and takes for a cross-package write: composing
+// `@loxep/inventory`'s and `@loxep/accounting`'s independently-transactional
+// service factories under one externally-supplied transaction is not a
+// shape their APIs support without reaching into their internals. A failure
+// partway leaves a recoverable state (an acquisition cost with no expense
+// pointing at it) rather than corrupted data — never a half-written row.
+// ---------------------------------------------------------------------------
+
+const promoteExpenseToAcquisitionCostInput = z.strictObject({
+  expenseId: z.uuid(),
+  reason: z.string().trim().min(1),
+  /** Attach to this ALREADY-existing acquisition (the lot picker's "attach" branch) instead of creating one. */
+  acquisitionId: z.uuid().nullish(),
+  /** Required to create a new acquisition — ignored when `acquisitionId` is given. */
+  title: z.string().trim().min(1).nullish(),
+  sourceKind: z.string().trim().min(1).nullish(),
+  vendorName: z.string().trim().min(1).nullish(),
+  currency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/)
+    .nullish()
+});
+
+export interface PromoteExpenseToAcquisitionCostResultDto {
+  status: string;
+  acquisitionId: string;
+  acquisitionReferenceCode: string;
+  acquisitionCostId: string;
+}
+
+export const promoteExpenseToAcquisitionCost = createServerFn({ method: 'POST' })
+  .inputValidator(promoteExpenseToAcquisitionCostInput)
+  .handler(async ({ data }): Promise<PromoteExpenseToAcquisitionCostResultDto> => {
+    const { requireSession, getExpensesService, getAcquisitionsService } =
+      await import('@/server/admin');
+    const session = await requireSession();
+    const expensesService = getExpensesService();
+    const acquisitionsService = await getAcquisitionsService();
+
+    const expense = await expensesService.get(data.expenseId);
+
+    let acquisition;
+    if (data.acquisitionId) {
+      acquisition = await acquisitionsService.get(data.acquisitionId);
+      if (acquisition.status === 'cancelled') {
+        throw new Error(
+          `cannot promote into "${acquisition.referenceCode}": it is cancelled. Pick a ` +
+            'different lot, or create a new draft.'
+        );
+      }
+    } else {
+      if (!data.title) {
+        throw new Error(
+          'promoting an expense requires acquisitionId or title (title creates a new lot)'
+        );
+      }
+      acquisition = await acquisitionsService.create({
+        title: data.title,
+        sourceKind: (data.sourceKind ?? 'other') as never,
+        currency: data.currency ?? expense.currency,
+        vendorName: data.vendorName ?? expense.payeeName ?? null,
+        economicEntityId: expense.economicEntityId,
+        acquiredAt: new Date(`${expense.expenseDate}T00:00:00.000Z`),
+        createdByUserId: session.user.id
+      });
+    }
+
+    const cost = await acquisitionsService.addCost({
+      acquisitionId: acquisition.id,
+      costType: 'goods',
+      costClass: 'goods',
+      amount: expense.amount,
+      capitalize: true,
+      description: expense.notes ?? expense.category,
+      // The cost row is denominated in the EXPENSE's own currency, not the
+      // lot's: acquisition_costs carries per-row currency precisely so a
+      // foreign-currency cost stays honestly labelled, and allocateCosts
+      // already segregates it from the lot-currency pool.
+      currency: expense.currency,
+      vendorName: expense.payeeName,
+      incurredAt: new Date(`${expense.expenseDate}T00:00:00.000Z`),
+      createdByUserId: session.user.id
+    });
+
+    const after = await expensesService.promoteToAcquisitionCost({
+      expenseId: data.expenseId,
+      acquisitionCostId: cost.id,
+      reason: data.reason,
+      actorUserId: session.user.id
+    });
+
+    return {
+      status: after.status,
+      acquisitionId: acquisition.id,
+      acquisitionReferenceCode: acquisition.referenceCode,
+      acquisitionCostId: cost.id
+    };
+  });
+
+// ---------------------------------------------------------------------------
 // Receipts — detach only; attach happens through the binary upload route
 // (`routes/api.expenses.receipt.ts`), mirroring the avatar upload split.
 // ---------------------------------------------------------------------------

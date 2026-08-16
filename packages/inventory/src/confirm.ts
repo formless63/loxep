@@ -8,6 +8,41 @@
  * candidate dispositioned `acquisition_cost`/`inventory_intake` had nowhere
  * to go.
  *
+ * This module also ships `confirmCandidatesAsIntake` (loxep-ytu, the tail of
+ * this same epic) — the sibling that turns an `inventory_intake`-dispositioned
+ * candidate into an ACTUAL `inventory_items` row, physical stock, rather than
+ * a money fact. Before this pass, `CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS`
+ * routed BOTH `acquisition_cost` and `inventory_intake` through
+ * `confirmCandidatesAsAcquisition`, treating an intake line as nothing more
+ * than another cost row — which made `document_line_candidates`'s own
+ * `target_kind` CHECK constraint's fourth member, `'inventory_item'`, dead
+ * schema: reserved since migration 0017, never written. `inventory_intake`
+ * is now EXCLUSIVELY `confirmCandidatesAsIntake`'s to confirm; a document's
+ * "3 x shelving unit, $89 each" line becomes one `inventory_items` row with
+ * `quantity = 3` — matching the design's connective field table exactly
+ * (`inventory_items.quantity` ← candidate `quantity`) — while an
+ * `acquisition_cost`-dispositioned line (freight, tax, a lump-sum lot price
+ * the operator does not want itemized) still becomes an `acquisition_costs`
+ * row via `confirmCandidatesAsAcquisition`. Both can appear on one receipt
+ * and both target the SAME lot; each confirm stays homogeneous to its own
+ * target, matching this file's own "mixing forbidden per batch" discipline.
+ *
+ * `confirmCandidatesAsIntake` does NOT also write an `acquisition_costs` row
+ * for the item's own price — it seeds `inventory_items.acquisition_cost_amount`
+ * directly from the candidate's `line_amount`, mirroring the ALREADY-SHIPPED
+ * `createAcquisitionFromMarketItem` precedent (`apps/web/src/server/
+ * inventory-functions.ts`: `goodsCostAmount` → `itemsService.create`'s
+ * `acquisitionCostAmount`, no paired cost row). Writing both would double the
+ * dollar the next time `AcquisitionsService.allocateCosts` runs: that engine
+ * spreads a lot's `acquisition_costs` pool across every unlocked item, so an
+ * item that already carries its own price directly must not ALSO have that
+ * same price sitting in the pool waiting to be spread across it (and its
+ * lot-mates) a second time. `acquisitionCostAmount` seeded here is therefore
+ * provisional in exactly the way the manual "add item to intake" form's own
+ * same-named field already is — the operator-facing precedent, not a new
+ * one — and `allocateCosts` remains the one authority that reconciles it
+ * against whatever the lot's OTHER (non-item-scoped) costs turn out to be.
+ *
  * ## The seam this function is not allowed to loosen
  *
  * `flipping-lifecycle-design.md`'s "acquisition seam": money that bought
@@ -15,8 +50,9 @@
  * NEVER an `expenses` row — otherwise the same dollar is deducted once as an
  * expense and again as COGS at sale. A candidate dispositioned
  * `acquisition_cost` or `inventory_intake` therefore never reaches
- * `@loxep/accounting`; it reaches here, and becomes a capitalized cost row
- * against a lot, new or existing.
+ * `@loxep/accounting`; it reaches here, and becomes either a capitalized cost
+ * row against a lot (`acquisition_cost`) or an actual stock row
+ * (`inventory_intake`), new lot or existing.
  *
  * ## Why this file duplicates the candidate-stamp/counter/event plumbing
  *
@@ -86,14 +122,17 @@ import {
   createAcquisitionsService,
   type AcquisitionCostRow,
   type AcquisitionRow,
+  type AcquisitionsService,
   type CreateAcquisitionInput,
 } from "./acquisitions.ts";
 import { isUniqueViolation } from "./codes.ts";
+import { compareDecimals } from "./decimal.ts";
 import {
   InventoryConflictError,
   InventoryNotFoundError,
   InventoryValidationError,
 } from "./errors.ts";
+import { createItemsService, type InventoryItemRow } from "./items.ts";
 import { textLiteral, uuidLiteral } from "./sql.ts";
 
 /**
@@ -112,11 +151,30 @@ import { textLiteral, uuidLiteral } from "./sql.ts";
 const ACQUISITION_MEDIA_RESOURCE_TYPE = "acquisition";
 const ACQUISITION_INVOICE_PURPOSE = "invoice";
 
-/** Candidate dispositions this confirm accepts — the sibling of `@loxep/accounting/confirm.ts`'s `CONFIRMABLE_DISPOSITIONS` for `expense`/`supplies`. */
-const CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS = new Set([
-  "acquisition_cost",
-  "inventory_intake",
-]);
+/**
+ * Candidate dispositions `confirmCandidatesAsAcquisition` accepts — the
+ * sibling of `@loxep/accounting/confirm.ts`'s `CONFIRMABLE_DISPOSITIONS` for
+ * `expense`/`supplies`. `inventory_intake` moved OUT to
+ * `CONFIRMABLE_AS_INTAKE_DISPOSITIONS` below (loxep-ytu) — see this module's
+ * top doc for why the two dispositions now route to different tables.
+ */
+const CONFIRMABLE_AS_ACQUISITION_DISPOSITIONS = new Set(["acquisition_cost"]);
+
+/** Candidate dispositions `confirmCandidatesAsIntake` accepts — physical stock, never a cost row. */
+const CONFIRMABLE_AS_INTAKE_DISPOSITIONS = new Set(["inventory_intake"]);
+
+/** `inventory_items.condition_code` — closed, `CHECK`ed (`@loxep/db/schema/inventory.ts`). Re-declared, matching this file's own "re-declare small unions" precedent rather than importing `items.ts`'s private `conditionCodes`. */
+const CONDITION_CODES = [
+  "new_sealed",
+  "new_open_box",
+  "like_new",
+  "very_good",
+  "good",
+  "acceptable",
+  "for_parts",
+  "damaged",
+  "unknown",
+] as const;
 
 const currencyCode = z
   .string()
@@ -160,15 +218,17 @@ export interface AcquisitionConfirmService {
 }
 
 /** Matches `@loxep/accounting/confirm.ts`'s own `parse` — a Zod failure surfaces as this package's own error type, not a raw `ZodError`. */
-function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
+function parse<T extends z.ZodType>(
+  schema: T,
+  input: unknown,
+  label = "confirm-candidates-as-acquisition",
+): z.output<T> {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
-    throw new InventoryValidationError(
-      `invalid confirm-candidates-as-acquisition input: ${issues}`,
-    );
+    throw new InventoryValidationError(`invalid ${label} input: ${issues}`);
   }
   return parsed.data;
 }
@@ -182,11 +242,21 @@ function dateFromCalendarDate(value: string): Date {
  * file duplicates" section. Idempotent the same way `confirmCandidatesAsExpense`
  * is: a candidate already confirmed (into ANY target) is unconfirmable here
  * and the caller counts it as skipped rather than re-stamping or erroring.
+ *
+ * `targetKind` is a parameter (not hardcoded `'acquisition'`) so both
+ * confirm functions in this module share one stamp helper:
+ * `confirmCandidatesAsAcquisition` stamps `'acquisition'` (an
+ * `acquisition_costs` row carries no `document_line_candidate_id` column, so
+ * the stamp points at the navigable acquisition instead — see that
+ * function's own doc), `confirmCandidatesAsIntake` stamps `'inventory_item'`
+ * directly at the record it created, since `inventory_items` needs no such
+ * workaround.
  */
 async function stampCandidateConfirmed(
   tx: LoxepDb,
   candidateId: string,
-  acquisitionId: string,
+  targetKind: string,
+  targetId: string,
   actorUserId: string,
   documentId: string,
   disposition: string,
@@ -195,8 +265,8 @@ async function stampCandidateConfirmed(
     `update document_line_candidates
         set confirmed_at = now(),
             confirmed_by_user_id = ${textLiteral(actorUserId)},
-            target_kind = 'acquisition',
-            target_id = ${uuidLiteral(acquisitionId)},
+            target_kind = ${textLiteral(targetKind)},
+            target_id = ${uuidLiteral(targetId)},
             updated_at = now()
       where id = ${uuidLiteral(candidateId)}`,
   );
@@ -205,7 +275,7 @@ async function stampCandidateConfirmed(
     action: "documents.candidate.confirmed",
     resourceType: "document_line_candidate",
     resourceId: candidateId,
-    after: { targetKind: "acquisition", targetId: acquisitionId },
+    after: { targetKind, targetId },
     metadata: { documentId, disposition },
   });
 }
@@ -330,6 +400,74 @@ async function attachAcquisitionMedia(
   });
 }
 
+/**
+ * The lot picker's two branches, shared by BOTH confirm functions in this
+ * module (`confirmCandidatesAsAcquisition` and `confirmCandidatesAsIntake`):
+ * `acquisitionId` given → attach to that ALREADY-existing acquisition (must
+ * not be `cancelled`); omitted → CREATE a new draft acquisition, defaulting
+ * `vendorName`/`currency`/`acquiredAt` from the source document exactly as
+ * `confirmCandidatesAsExpense` defaults an expense's payee/currency/date
+ * from it. Extracted once both functions needed the identical branch rather
+ * than duplicated a second time within this one file (cross-PACKAGE
+ * duplication is this module's deliberate stance per the top doc;
+ * within-file duplication is not the same tradeoff).
+ */
+async function resolveAcquisitionTarget(
+  acquisitionsService: AcquisitionsService,
+  value: {
+    acquisitionId?: string;
+    title?: string;
+    sourceKind?: string;
+    vendorName?: string | null;
+    currency?: string;
+    defaultCurrency: string;
+    economicEntityId?: string | null;
+    acquiredAt?: string;
+    notes?: string | null;
+    actorUserId: string;
+  },
+  documentRow: {
+    currency: string | null;
+    documentDate: string | null;
+    counterpartyName: string | null;
+    economicEntityId: string | null;
+  },
+): Promise<AcquisitionRow> {
+  if (value.acquisitionId !== undefined) {
+    const acquisition = await acquisitionsService.get(value.acquisitionId);
+    if (acquisition.status === "cancelled") {
+      throw new InventoryConflictError(
+        `cannot confirm candidates into "${acquisition.referenceCode}": it is cancelled. ` +
+          "Pick a different lot, or create a new draft.",
+      );
+    }
+    return acquisition;
+  }
+  if (value.title === undefined) {
+    throw new InventoryValidationError(
+      "confirming candidates into an acquisition requires a title to create a new one " +
+        "(omit it only when passing an existing acquisitionId)",
+    );
+  }
+  return acquisitionsService.create({
+    title: value.title,
+    // Validated against the real enum inside `create` — a bad value throws
+    // `InventoryValidationError` from there with a clear message; this file
+    // does not re-declare the enum a third time.
+    sourceKind: (value.sourceKind ?? "other") as CreateAcquisitionInput["sourceKind"],
+    currency: value.currency ?? documentRow.currency ?? value.defaultCurrency,
+    vendorName: value.vendorName ?? documentRow.counterpartyName ?? null,
+    economicEntityId: value.economicEntityId ?? documentRow.economicEntityId ?? null,
+    ...(value.acquiredAt !== undefined
+      ? { acquiredAt: dateFromCalendarDate(value.acquiredAt) }
+      : documentRow.documentDate !== null
+        ? { acquiredAt: dateFromCalendarDate(documentRow.documentDate) }
+        : {}),
+    notes: value.notes ?? null,
+    createdByUserId: value.actorUserId,
+  });
+}
+
 export function createAcquisitionConfirmService(options: {
   db: LoxepDb;
 }): AcquisitionConfirmService {
@@ -398,40 +536,7 @@ export function createAcquisitionConfirmService(options: {
           return { acquisition: null, costs: [], skipped };
         }
 
-        let acquisition: AcquisitionRow;
-        if (value.acquisitionId !== undefined) {
-          acquisition = await acquisitionsService.get(value.acquisitionId);
-          if (acquisition.status === "cancelled") {
-            throw new InventoryConflictError(
-              `cannot confirm candidates into "${acquisition.referenceCode}": it is cancelled. ` +
-                "Pick a different lot, or create a new draft.",
-            );
-          }
-        } else {
-          if (value.title === undefined) {
-            throw new InventoryValidationError(
-              "confirmCandidatesAsAcquisition: title is required to create a new acquisition " +
-                "(omit it only when passing an existing acquisitionId)",
-            );
-          }
-          acquisition = await acquisitionsService.create({
-            title: value.title,
-            // Validated against the real enum inside `create` — a bad value
-            // throws `InventoryValidationError` from there with a clear
-            // message; this file does not re-declare the enum a third time.
-            sourceKind: (value.sourceKind ?? "other") as CreateAcquisitionInput["sourceKind"],
-            currency: value.currency ?? documentRow.currency ?? value.defaultCurrency,
-            vendorName: value.vendorName ?? documentRow.counterpartyName ?? null,
-            economicEntityId: value.economicEntityId ?? documentRow.economicEntityId ?? null,
-            ...(value.acquiredAt !== undefined
-              ? { acquiredAt: dateFromCalendarDate(value.acquiredAt) }
-              : documentRow.documentDate !== null
-                ? { acquiredAt: dateFromCalendarDate(documentRow.documentDate) }
-                : {}),
-            notes: value.notes ?? null,
-            createdByUserId: value.actorUserId,
-          });
-        }
+        const acquisition = await resolveAcquisitionTarget(acquisitionsService, value, documentRow);
 
         const costs: AcquisitionCostRow[] = [];
         for (const candidate of confirmable) {
@@ -479,6 +584,7 @@ export function createAcquisitionConfirmService(options: {
           await stampCandidateConfirmed(
             tx,
             candidate.id,
+            "acquisition",
             acquisition.id,
             value.actorUserId,
             value.documentId,
@@ -490,6 +596,240 @@ export function createAcquisitionConfirmService(options: {
         await emitDocumentConfirmed(tx, value.documentId);
 
         return { acquisition, costs, skipped };
+      });
+    },
+  };
+}
+
+/* ------------------------------------------------------ confirm as intake */
+
+const intakeInputSchema = z.strictObject({
+  documentId: z.uuid(),
+  candidateIds: z.array(z.uuid()).min(1),
+  actorUserId: z.string().min(1),
+  requestId: z.string().min(1).nullish(),
+
+  /** When given, attach to this ALREADY-existing acquisition instead of creating one — the lot picker's "attach to an existing open lot" branch. */
+  acquisitionId: z.uuid().optional(),
+
+  /** Required to CREATE a new acquisition (ignored when `acquisitionId` is given). */
+  title: z.string().trim().min(1).optional(),
+  sourceKind: z.string().trim().min(1).optional(),
+  vendorName: z.string().trim().min(1).nullish(),
+  currency: currencyCode.optional(),
+  defaultCurrency: currencyCode.default("USD"),
+  economicEntityId: z.uuid().nullish(),
+  acquiredAt: calendarDate.optional(),
+  notes: z.string().trim().min(1).nullish(),
+
+  /**
+   * Applies to EVERY item this call mints — a receipt line has no per-line
+   * condition/location of its own (`document_line_candidates` carries no such
+   * columns, and this milestone ships no migration to add them). A batch
+   * whose items genuinely differ in condition or location confirms in
+   * separate calls, one per condition/location — a real but minor UX
+   * limitation, not a silent misrecording.
+   */
+  conditionCode: z.enum(CONDITION_CODES).default("unknown"),
+  locationId: z.uuid().nullish(),
+});
+export type ConfirmCandidatesAsIntakeInput = z.input<typeof intakeInputSchema>;
+
+export interface ConfirmCandidatesAsIntakeResult {
+  /** `null` only when attaching to nothing new AND every candidate was skipped — nothing was written. */
+  acquisition: AcquisitionRow | null;
+  items: InventoryItemRow[];
+  skipped: number;
+}
+
+export interface IntakeConfirmService {
+  confirmCandidatesAsIntake: (
+    input: ConfirmCandidatesAsIntakeInput,
+  ) => Promise<ConfirmCandidatesAsIntakeResult>;
+}
+
+/**
+ * `confirmCandidatesAsIntake` (loxep-ytu) — a candidate dispositioned
+ * `inventory_intake` becomes an ACTUAL `inventory_items` row: physical
+ * stock, not a cost row (that is `confirmCandidatesAsAcquisition`'s path,
+ * for `acquisition_cost`-dispositioned lines — see this module's top doc for
+ * why the two dispositions now diverge). Mirrors
+ * `confirmCandidatesAsAcquisition`'s shape and discipline exactly: one
+ * transaction, a required non-null `actorUserId`, the SAME
+ * create-new-or-attach-existing lot resolution
+ * (`resolveAcquisitionTarget`), the SAME document-evidence attach
+ * (`purpose = 'invoice'` on the acquisition — an item-level
+ * `purpose = 'supporting_document'` attach is a genuinely open UI question,
+ * not built here), the SAME candidate-stamp/counter/notify plumbing.
+ *
+ * Item creation itself goes through `@loxep/inventory`'s own
+ * `ItemsService.create` — never a raw `INSERT` — so a confirmed intake item
+ * gets exactly the same item-code generation, attribution resolution, and
+ * `receipt` movement (which is what actually puts it `quantity_on_hand`) any
+ * other intake gets. It lands in `status = 'intake'`, the same starting
+ * state `IntakeForm`'s manual "add item to lot" and
+ * `createAcquisitionFromMarketItem`'s "I bought this" both produce — leaving
+ * `completeIntakeReview` as the one, deliberate, human-decided exit, exactly
+ * as designed for every OTHER intake producer.
+ */
+export function createIntakeConfirmService(options: {
+  db: LoxepDb;
+}): IntakeConfirmService {
+  const { db } = options;
+
+  return {
+    confirmCandidatesAsIntake: async (input) => {
+      const value = parse(intakeInputSchema, input, "confirm-candidates-as-intake");
+
+      return db.transaction(async (tx) => {
+        const acquisitionsService = createAcquisitionsService({ db: tx });
+        const itemsService = createItemsService({ db: tx });
+
+        const documentRow = await tx.query.documents.findFirst({
+          where: (table, { eq }) => eq(table.id, value.documentId),
+          columns: {
+            currency: true,
+            documentDate: true,
+            mediaObjectId: true,
+            counterpartyName: true,
+            economicEntityId: true,
+          },
+        });
+        if (documentRow === undefined) {
+          throw new InventoryNotFoundError(`unknown document "${value.documentId}"`);
+        }
+
+        const confirmable: {
+          id: string;
+          description: string;
+          quantity: string | null;
+          lineAmount: string;
+          lineDate: string | null;
+          disposition: string;
+        }[] = [];
+        let skipped = 0;
+
+        for (const candidateId of value.candidateIds) {
+          const candidate = await tx.query.documentLineCandidates.findFirst({
+            where: (table, { eq }) => eq(table.id, candidateId),
+          });
+          if (candidate === undefined || candidate.documentId !== value.documentId) {
+            skipped += 1;
+            continue;
+          }
+          if (candidate.confirmedAt !== null) {
+            skipped += 1;
+            continue;
+          }
+          if (!CONFIRMABLE_AS_INTAKE_DISPOSITIONS.has(candidate.disposition)) {
+            skipped += 1;
+            continue;
+          }
+          // `inventory_items.label` is `not null` — an intake line with no
+          // description is not a nameable physical thing yet.
+          if (candidate.description === null) {
+            skipped += 1;
+            continue;
+          }
+          if (candidate.lineAmount === null) {
+            skipped += 1;
+            continue;
+          }
+          confirmable.push({
+            id: candidate.id,
+            description: candidate.description,
+            quantity: candidate.quantity,
+            lineAmount: candidate.lineAmount,
+            lineDate: candidate.lineDate,
+            disposition: candidate.disposition,
+          });
+        }
+
+        if (confirmable.length === 0 && value.acquisitionId === undefined) {
+          return { acquisition: null, items: [], skipped };
+        }
+
+        const acquisition = await resolveAcquisitionTarget(acquisitionsService, value, documentRow);
+
+        const items: InventoryItemRow[] = [];
+        for (const candidate of confirmable) {
+          // A candidate line's `quantity` is optional and, if present, must
+          // be positive (`ItemsService.create`'s own `positiveDecimal`
+          // refinement would otherwise throw) — a bad or absent value
+          // defaults to one unit rather than failing the whole batch, the
+          // same "count is fixed by the document, but not every document is
+          // clean" posture `unit_amount`'s own nullability already takes.
+          const quantity =
+            candidate.quantity !== null && compareDecimals(candidate.quantity, "0") > 0
+              ? candidate.quantity
+              : "1";
+          const item = await itemsService.create({
+            label: candidate.description,
+            currency: acquisition.currency,
+            acquisitionId: acquisition.id,
+            locationId: value.locationId ?? null,
+            conditionCode: value.conditionCode,
+            quantity,
+            // This item's own price, seeded directly — NOT a paired
+            // `acquisition_costs` row. See this module's top doc for why
+            // writing both would double-count the next time
+            // `allocateCosts` runs.
+            acquisitionCostAmount: candidate.lineAmount,
+            ...(candidate.lineDate !== null
+              ? { acquiredAt: dateFromCalendarDate(candidate.lineDate) }
+              : {}),
+            createdByUserId: value.actorUserId,
+          });
+          items.push(item);
+        }
+
+        if (items.length > 0) {
+          await createAuditService({ db: tx }).append({
+            actorUserId: value.actorUserId,
+            action: "inventory.acquisition.items_confirmed_from_candidates",
+            resourceType: "acquisition",
+            resourceId: acquisition.id,
+            after: { itemCount: items.length, candidateIds: confirmable.map((c) => c.id) },
+            requestId: value.requestId ?? null,
+            metadata: { referenceCode: acquisition.referenceCode, documentId: value.documentId },
+          });
+        }
+
+        // The document's own evidence file (if any) attaches to the
+        // acquisition every candidate confirmed out of it lands on — the
+        // SAME `confirmCandidatesAsAcquisition`/loxep-4mg precedent. A
+        // per-item `purpose = 'supporting_document'` attach
+        // (flipping-lifecycle-design.md, "Where a receipt attaches when the
+        // spend was a purchase") is a genuinely open UI question, not built
+        // here.
+        if (documentRow.mediaObjectId !== null) {
+          await attachAcquisitionMedia(
+            tx,
+            acquisition.id,
+            documentRow.mediaObjectId,
+            value.actorUserId,
+          );
+        }
+
+        for (let i = 0; i < confirmable.length; i += 1) {
+          const candidate = confirmable[i];
+          const item = items[i];
+          if (candidate === undefined || item === undefined) continue;
+          await stampCandidateConfirmed(
+            tx,
+            candidate.id,
+            "inventory_item",
+            item.id,
+            value.actorUserId,
+            value.documentId,
+            candidate.disposition,
+          );
+        }
+
+        await recomputeDocumentCounters(tx, value.documentId, value.actorUserId);
+        await emitDocumentConfirmed(tx, value.documentId);
+
+        return { acquisition, items, skipped };
       });
     },
   };

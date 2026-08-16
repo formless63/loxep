@@ -19,7 +19,11 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { formatDate, formatMoney } from '@/lib/format';
-import { submitExpense, voidExpense } from '@/server/expense-functions';
+import {
+  promoteExpenseToAcquisitionCost,
+  submitExpense,
+  voidExpense
+} from '@/server/expense-functions';
 import { linkExpensePayee } from '@/server/trading-partner-functions';
 import { expenseQuery } from '@/features/finance/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
@@ -38,6 +42,9 @@ import {
   expenseStatusTone,
   paymentMethodLabel
 } from '@/features/finance/constants';
+import AcquisitionLotPickerDialog, {
+  type AcquisitionLotTarget
+} from '@/features/documents/components/acquisition-lot-picker';
 
 const voidSchema = z.object({
   reason: z.string().trim().min(1, 'A reason is required')
@@ -115,6 +122,112 @@ function VoidExpenseDialog({
             </Button>
             <form.AppForm>
               <form.SubmitButton variant='destructive'>Void expense</form.SubmitButton>
+            </form.AppForm>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const promoteSchema = z.object({
+  reason: z.string().trim().min(1, 'A reason is required')
+});
+
+/**
+ * "Promote to acquisition cost" (loxep-ytu; `flipping-lifecycle-design.md`'s
+ * open question 2) — the void-and-promote correction path alongside
+ * `VoidExpenseDialog`'s plain void-and-re-record above: the operator
+ * realizes a recorded expense was really money spent on goods for resale.
+ * TWO steps, chained exactly like `VoidExpenseDialog`'s own `onVoided` ->
+ * `QuickExpenseDialog` chain: choosing a lot first (the SAME
+ * `AcquisitionLotPickerDialog` the document-review panel uses — create-new
+ * or attach-existing, resolving an identity only, no write), THEN this
+ * dialog's own reason field, which is what actually submits.
+ */
+function PromoteToAcquisitionDialog({
+  open,
+  onOpenChange,
+  expenseId,
+  referenceCode,
+  target,
+  onPromoted
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expenseId: string;
+  referenceCode: string;
+  target: AcquisitionLotTarget;
+  onPromoted: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (reason: string) =>
+      promoteExpenseToAcquisitionCost({
+        data: { expenseId, reason, acquisitionId: target.id }
+      }),
+    onSuccess: (result) => {
+      toast.success(`${referenceCode} promoted onto ${result.acquisitionReferenceCode}`);
+      void queryClient.invalidateQueries({ queryKey: ['finance'] });
+      void queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      onOpenChange(false);
+      onPromoted();
+    },
+    onError: (error) => toastError(error, 'Failed to promote expense')
+  });
+
+  const form = useAppForm({
+    defaultValues: { reason: '' },
+    validators: { onSubmit: promoteSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value.reason);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className='sm:max-w-[420px]'>
+        <DialogHeader>
+          <DialogTitle>
+            Promote {referenceCode} to {target.referenceCode}
+          </DialogTitle>
+          <DialogDescription>
+            Voids this expense and records its value as a capitalized cost on {target.title}. The
+            row is kept as evidence, never deleted — this is the acquisition seam's correction path
+            for spend that turns out to have bought goods for resale.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className='space-y-6'
+          onSubmit={(event) => {
+            event.preventDefault();
+            form.handleSubmit();
+          }}
+        >
+          <FieldGroup>
+            <form.AppField
+              name='reason'
+              children={(field) => (
+                <field.TextareaField
+                  label='Reason'
+                  required
+                  placeholder='e.g. this was actually a lot of goods to resell'
+                />
+              )}
+            />
+          </FieldGroup>
+          <div className='flex justify-end gap-2'>
+            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <form.AppForm>
+              <form.SubmitButton variant='destructive'>
+                Promote to acquisition cost
+              </form.SubmitButton>
             </form.AppForm>
           </div>
         </form>
@@ -233,6 +346,9 @@ export default function ExpenseDetail({
   const [reRecordPrefill, setReRecordPrefill] = React.useState<QuickExpensePrefill | undefined>(
     undefined
   );
+  const [promoteLotPickerOpen, setPromoteLotPickerOpen] = React.useState(false);
+  const [promoteTarget, setPromoteTarget] = React.useState<AcquisitionLotTarget | null>(null);
+  const [promoteOpen, setPromoteOpen] = React.useState(false);
 
   const submitMutation = useMutation({
     mutationFn: () => submitExpense({ data: { expenseId } }),
@@ -284,10 +400,23 @@ export default function ExpenseDetail({
               </Button>
             )}
             {data.status === 'recorded' && (
-              <Button size='sm' variant='outline' onClick={() => setVoidOpen(true)}>
-                <Icons.circleX />
-                Void &amp; re-record
-              </Button>
+              <>
+                <Button size='sm' variant='outline' onClick={() => setVoidOpen(true)}>
+                  <Icons.circleX />
+                  Void &amp; re-record
+                </Button>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  onClick={() => {
+                    setPromoteTarget(null);
+                    setPromoteLotPickerOpen(true);
+                  }}
+                >
+                  <Icons.product />
+                  Promote to acquisition
+                </Button>
+              </>
             )}
           </div>
         </CardHeader>
@@ -337,12 +466,11 @@ export default function ExpenseDetail({
       {data.acquisitionCostId !== null && (
         <Alert>
           <Icons.info />
-          <AlertTitle>Linked to a lot's cost</AlertTitle>
+          <AlertTitle>Voided and promoted to a lot's cost</AlertTitle>
           <AlertDescription>
-            This expense carries an <code>acquisition_cost_id</code>. Promoting spend to an
-            acquisition (goods bought for resale become cost basis, never an expense) is the
-            acquisition seam — the /inventory workspace's intake flow, arriving in a later
-            milestone.
+            This expense was voided and its value was re-recorded as a capitalized acquisition cost
+            — the acquisition seam's correction path for spend that turned out to have bought goods
+            for resale.
             {data.acquisitionId !== null && (
               <>
                 {' '}
@@ -408,6 +536,30 @@ export default function ExpenseDetail({
           onOpenChange={setReRecordOpen}
           entities={entities}
           prefill={reRecordPrefill}
+        />
+      )}
+
+      <AcquisitionLotPickerDialog
+        open={promoteLotPickerOpen}
+        onOpenChange={setPromoteLotPickerOpen}
+        onSelected={(target) => {
+          setPromoteTarget(target);
+          setPromoteOpen(true);
+        }}
+        defaultTitle={data.payeeCounterpartyDisplayName ?? data.payeeName ?? undefined}
+        defaultVendorName={data.payeeCounterpartyDisplayName ?? data.payeeName}
+        defaultCurrency={data.currency}
+      />
+      {promoteTarget && (
+        <PromoteToAcquisitionDialog
+          open={promoteOpen}
+          onOpenChange={setPromoteOpen}
+          expenseId={expenseId}
+          referenceCode={data.referenceCode}
+          target={promoteTarget}
+          onPromoted={() => {
+            setPromoteTarget(null);
+          }}
         />
       )}
     </div>

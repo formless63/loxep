@@ -90,6 +90,7 @@ import type {
   AcquisitionConfirmService,
   AcquisitionsService,
   AllocationsService,
+  IntakeConfirmService,
   InventoryMediaService,
   ItemsService,
   LocationsService,
@@ -149,6 +150,8 @@ interface AdminRegistry {
   acquisitionsServicePromise?: Promise<AcquisitionsService>;
   /** `confirmCandidatesAsAcquisition` (loxep-cd3.6, M6) — depends only on `db`, so it is built lazily behind {@link getInventoryModule} the same way `acquisitionsServicePromise` above is; no `MediaService` needed (it writes `media_links` directly, mirroring `getInventoryMediaService`'s own reasoning). */
   acquisitionConfirmServicePromise?: Promise<AcquisitionConfirmService>;
+  /** `confirmCandidatesAsIntake` (loxep-ytu) — the `inventory_intake`-disposition sibling of `acquisitionConfirmServicePromise` above; same lazy construction, same reasoning. */
+  intakeConfirmServicePromise?: Promise<IntakeConfirmService>;
   locationsServicePromise?: Promise<LocationsService>;
   movementsServicePromise?: Promise<MovementsService>;
   /** Reservations + depletion-on-fulfillment (`/commerce` manual sale recording, loxep-dgf.6). */
@@ -1078,6 +1081,23 @@ export function getAcquisitionConfirmService(): Promise<AcquisitionConfirmServic
     return inventory.createAcquisitionConfirmService({ db: registry.handle.db });
   })();
   return registry.acquisitionConfirmServicePromise;
+}
+
+/**
+ * `confirmCandidatesAsIntake` (loxep-ytu) — the acquisition-side counterpart
+ * to {@link getAcquisitionConfirmService}: candidates dispositioned
+ * `inventory_intake` become an ACTUAL `inventory_items` row (physical
+ * stock), never an `acquisition_costs` row — see `@loxep/inventory`'s
+ * `confirm.ts` top doc for why the two dispositions now route to different
+ * tables.
+ */
+export function getIntakeConfirmService(): Promise<IntakeConfirmService> {
+  const registry = getAdminServices();
+  registry.intakeConfirmServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createIntakeConfirmService({ db: registry.handle.db });
+  })();
+  return registry.intakeConfirmServicePromise;
 }
 
 /** Locations service (`/inventory/locations`) — the location tree. */
