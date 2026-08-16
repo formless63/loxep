@@ -2,7 +2,9 @@
 title: Connecting Pangolin
 ---
 
-[Pangolin](https://docs.pangolin.net) is a self-hosted reverse-proxy and tunnel identity provider — the access layer in front of a self-hosted estate, including (in a typical installation) Loxep itself. **This connection is milestone 1 of a longer design: read-only, with no exceptions.** `@loxep/integration-pangolin` has no write verb of any kind today — not a configuration flag, not an admin toggle. It reads orgs, sites, resources, targets, access rules, and org domains, and nothing it does can change what Pangolin protects.
+[Pangolin](https://docs.pangolin.net) is a self-hosted reverse-proxy and tunnel identity provider — the access layer in front of a self-hosted estate, including (in a typical installation) Loxep itself. This connection reads orgs, sites, resources, targets, access rules, and org domains from milestone 1 on. From milestone 4 (`loxep-acj.4`) it can also **create** a Pangolin resource, add a target, or add an access rule — three additive, non-idempotent writes, ledgered so a crash never double-creates one. Nothing in this connection can ever delete or disable anything at Pangolin: there is no delete verb anywhere in `@loxep/integration-pangolin`, permanently, and retirement (a future milestone) means disabling a rule, never removing it.
+
+**Every write stays refused until an admin explicitly allows it, per connection.** A fresh connection — and every connection created before milestone 4 — starts `read_only`: Loxep can read this instance but cannot create anything at it, structurally, regardless of what the API key itself is scoped to. See [Writes](#writes-milestone-4) below before granting write actions to the key.
 
 :::caution[This is not the URL you sign in to]
 Pangolin runs its **Integration API** as a completely separate server from the dashboard — its own port (conventionally `3003`), under the path prefix `/v1`, gated by the instance's own `flags.enable_integration_api` setting. A self-hosted operator must add a dedicated reverse-proxy route for this API before anything outside the Pangolin container can reach it — Pangolin's own documentation recommends a dedicated subdomain, e.g. `https://api.your-domain.com`. **Pasting the Pangolin dashboard's own URL into this connection will save successfully and then fail on first use.** This is the single most common first-attempt failure for this integration, and it is exactly what a milestone-1 live reconnaissance run against a real instance confirmed.
@@ -20,11 +22,11 @@ Pangolin runs its **Integration API** as a completely separate server from the d
 1. Sign in to the Pangolin dashboard and open the organization you want Loxep to read.
 2. Go to **API Keys** and create a new key.
 3. Choose **Organization** scope, not **Root**. An organization-scoped key can only ever read the one org it was issued for — narrower is safer, and this milestone never needs more than one org per connection. A root key (self-hosted only, cross-org) works too if you would rather Loxep discover every org on the instance, but it is a broader credential than this milestone needs.
-4. Grant read actions only: `listOrgs`, `listSites`, `getSite`, `listResources`, `getResource`, `listTargets`, `listResourceRules`, `listOrgDomains`, and their single-item equivalents. Nothing here needs a create/update/delete action, ever — granting one today buys nothing and just widens the credential ahead of a future milestone that will ask for it deliberately, with its own re-consent.
+4. Grant read actions: `listOrgs`, `listSites`, `getSite`, `listResources`, `getResource`, `listTargets`, `listResourceRules`, `listOrgDomains`, and their single-item equivalents. If you intend to ever click **Apply** on a proxy resource in Loxep (see [Writes](#writes-milestone-4) below), additionally grant `createResource`, `createTarget`, and `createResourceRule` — never `deleteResource`, `deleteTarget`, `deleteResourceRule`, `updateResource`, `updateTarget`, or any action naming a site, user, role, org, identity provider, or API key. Loxep never calls those, on this key or any other, so granting them widens the credential for nothing.
 5. Pangolin shows the key **once**, as two parts: a key id and a key secret. Copy both before leaving the page.
 
-:::note[The scope you grant doesn't change what Loxep can do]
-This milestone's adapter has no member that could issue a write, regardless of what the key is scoped to. A broader key is a future-widening risk, not a present one — but it is still worth granting only reads, because the next milestone that adds a write verb will need its own owner ruling before it can use a broader scope productively.
+:::note[Granting the write actions does not, by itself, let Loxep write]
+The key's scope and Loxep's own per-connection write policy are two independent gates — Pangolin's granular action list is real scope-limiting Loxep cannot enforce on its own (Purelymail's admin token has no such scoping at all, which is why that connection's safety has to come from policy alone), but Loxep's own policy still defaults every connection to `read_only` regardless of what the key can do. Both must agree before Apply does anything but block. See [Writes](#writes-milestone-4).
 :::
 
 ## In Loxep
@@ -41,15 +43,35 @@ Fill in:
 
 Save. The instance URL and organization id are kept as ordinary connection configuration and stay visible; the key secret is stored application-encrypted and is never displayed again.
 
-## What milestone 1 reads
+## What Loxep reads
 
-Orgs, sites, resources, targets, access rules, and org domains — the whole read surface the design document defines for this milestone, and nothing more. Milestone 1 does not yet wire a scheduled poll or a fleet-page panel; the adapter exists and is connectable, and the next milestones (`loxep-acj.2` and later) build the reconciler that turns these reads into a rendered chain (domain → DNS record → Pangolin resource → hosting target) and, eventually and only after an explicit owner ruling, the write path.
+Orgs, sites, resources, targets, access rules, and org domains — the whole read surface the design document defines. `/infrastructure/domains/$name` renders the chain (domain → DNS record → Pangolin resource → hosting target); `/infrastructure/fleet/$name` renders the same chain grouped by hosting target instead. Both pages also show "Pangolin knows about N resources Loxep does not" whenever the instance holds a resource nothing in Loxep declared — information, never something Loxep will touch.
 
-**Loxep never manages the Pangolin dashboard's own resource, and never manages the resource that fronts Loxep itself.** That rule is designed in from the start (see the design document's write-risk model) even though milestone 1 cannot write at all — it is the shape every later milestone inherits.
+**Loxep never manages the Pangolin dashboard's own resource, and never manages the resource that fronts Loxep itself.** That rule is designed in from the start (see the design document's write-risk model) and holds however permissive this connection's write policy is set — it is not a setting an admin can turn off.
 
-## Read-only, and why that matters more here than for any other provider
+## Why writes here are different from every other provider
 
-Every other integration Loxep connects to has a bad day when something goes wrong: a wrong DNS record breaks a name, a wrong mailbox costs money. Pangolin is different — it is the identity proxy in front of the estate, so a bad write here can remove your own way back in, including into Loxep itself if Pangolin fronts it. That is why this milestone ships read-only with no exception, and why the write milestones that follow require an explicit owner decision before any of them ship (see [the design document's write-risk model](../../architecture/pangolin-chain-design/#the-write-risk-model)).
+Every other integration Loxep connects to has a bad day when something goes wrong: a wrong DNS record breaks a name, a wrong mailbox costs money. Pangolin is different — it is the identity proxy in front of the estate, so a bad write here can remove your own way back in, including into Loxep itself if Pangolin fronts it. That is why Loxep's writes here go through TWO independent gates rather than one: an admin flip per connection (below), and a pure, unconditional self-lockout check that no flip can bypass (see [the design document's write-risk model](../../architecture/pangolin-chain-design/#the-write-risk-model) for the full six binding rules).
+
+## Writes (milestone 4)
+
+Every connection is **read-only by default** — a fresh install, and every connection created before this milestone, cannot create anything at Pangolin no matter what the API key is scoped to. An admin turns this on **per connection**, on `/settings/connections`, by raising that connection's write-authorization tier from `read_only` to at least `additive`. Flipping it is audited (an `audit_events` row, in the same transaction as the flip) and admin-only, matching the rest of Loxep's admin-only write model.
+
+Once a connection is `additive` or higher, an admin can click **Apply** on a domain's proxy-resources panel (`/infrastructure/domains/$name`). This is a **typed confirmation** — the primary action stays disabled until you type the domain's name — and it applies every resource, target, and rule that domain declares but Pangolin does not have yet:
+
+- a new Pangolin resource, if the domain declares one Pangolin doesn't have (`PUT /org/{orgId}/resource`);
+- a new target on an existing resource, once a later milestone adds a way to declare one;
+- a new access rule on an existing resource (`PUT /resource/{resourceId}/rule`) — the owner's own named use case, for example a `PATH`-matched bypass rule that lets Loxep reach a companion tool's API through Pangolin without solving SSO for it.
+
+**Every one of these is additive.** Apply never disables, updates, or removes anything that already exists — there is no verb in `@loxep/integration-pangolin` that could, and the closed operation union `@loxep/infrastructure` plans against has no member for one either. If the domain's declared state would also require changing something that already exists (moving a target, changing a rule's value), that operation is recorded as **skipped, not applied** — this milestone does not implement it yet, regardless of how permissive the connection's policy is.
+
+A write policy below `additive` does not make Apply fail — it makes the run come back **`partial`**, with a step explicitly marked `blocked` naming the exact flip that would unblock it, never a silent no-op and never treated as a failure. The self-lockout check runs independently of the policy tier and refuses on its own if the resource in question turns out to front Loxep itself or the Pangolin dashboard's own resource.
+
+**Every create is non-idempotent, and Pangolin has no upsert anywhere in this API.** Loxep never blindly retries a create it isn't sure went through; it re-reads Pangolin and matches on the object's own identity (its full domain, its `(siteId, ip, port)`, its `(action, match, value, priority)`) before deciding whether the object exists.
+
+:::caution[The first real write should target something you can afford to be wrong about]
+The design's own rule: point Loxep's very first apply on a live instance at a throwaway resource on a throwaway subdomain, created for the purpose, with you watching — never a resource you actually need.
+:::
 
 ## When it does not work
 

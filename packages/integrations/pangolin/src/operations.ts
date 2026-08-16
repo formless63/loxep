@@ -36,16 +36,29 @@
  * cross-org; an org-scoped key answers this route with an `auth`-shaped
  * rejection, which is expected and not a bug to work around.
  *
- * ## Read-only by construction, structurally
+ * ## Read-only through M1/M2, tier-1 writes from M4
  *
- * M1 ships **no write verb of any kind** — not configuration, not policy:
- * the operation union this milestone's port would need does not exist yet,
- * and this adapter's own exported surface has no member named after a write
- * verb. {@link PANGOLIN_ALLOWED_NON_GET_PATHS} is empty on purpose (compare
- * Tailscale's single OAuth-token-exchange exception): Pangolin's bearer
- * token needs no separate exchange, so there is no exception to carve out.
- * `test/boundary.test.ts` asserts every request this adapter makes is a
- * `GET`.
+ * M1/M2 shipped no write verb of any kind. M4 (`loxep-acj.4`) adds exactly
+ * four — the tier-1 set the Pangolin chain design names, plus the
+ * disable/enable verb the retirement half of `add-then-retire` needs at the
+ * adapter level (the ORCHESTRATION of retirement stays gated to a later
+ * milestone; see `adapter.ts`'s module doc) — and not one path more.
+ * {@link PANGOLIN_ALLOWED_WRITE_SHAPES} now names exactly those four; every
+ * other path stays GET-only, structurally, the same way Tailscale's single
+ * OAuth-token-exchange exception is the ONLY carve-out in that adapter.
+ * `test/boundary.test.ts` asserts the traffic never exceeds this exact set
+ * and that DELETE is never possible — dockhand's forbidden-verbs shape,
+ * applied here.
+ *
+ * ## THE VERB CONVENTION IS INVERTED — read this before touching a method below
+ *
+ * `PUT` creates. `POST` updates. That is backwards from the usual REST
+ * convention, and the design document calls it "the single most likely
+ * source of a wrong-verb bug in this adapter." `createResource`,
+ * `addTarget`, and `createRule` are all `PUT`. `updateRuleEnabled` — the
+ * only update this milestone ships — is `POST`. There is still no `DELETE`
+ * anywhere in this file, and there never will be one: retirement is
+ * `enabled: false`, not deletion (the design's verdict 3).
  */
 
 /**
@@ -102,6 +115,30 @@ export function pangolinRulesPath(resourceId: string): string {
   return `${pangolinResourcePath(resourceId)}/rules`;
 }
 
+/** `PUT` — create. Canonical (`/resource/...`), matching every read path above. */
+export function pangolinCreateResourcePath(orgId: string): string {
+  return `${pangolinOrgPath(orgId)}/resource`;
+}
+
+/** `PUT` — create. */
+export function pangolinCreateTargetPath(resourceId: string): string {
+  return `${pangolinResourcePath(resourceId)}/target`;
+}
+
+/** `PUT` — create. */
+export function pangolinCreateRulePath(resourceId: string): string {
+  return `${pangolinResourcePath(resourceId)}/rule`;
+}
+
+/**
+ * `POST` — update. The one member of {@link PANGOLIN_ALLOWED_WRITE_SHAPES}
+ * that is not a create. Singular `/rule/{ruleId}`, NOT `/rules/{ruleId}` —
+ * verified against the endpoint table's `POST /resource/{resourceId}/rule/{ruleId}`.
+ */
+export function pangolinRulePath(resourceId: string, ruleId: string): string {
+  return `${pangolinResourcePath(resourceId)}/rule/${encodeURIComponent(ruleId)}`;
+}
+
 export function pangolinDomainsPath(orgId: string): string {
   return `${pangolinOrgPath(orgId)}/domains`;
 }
@@ -110,7 +147,12 @@ export function pangolinDomainDnsRecordsPath(orgId: string, domainId: string): s
   return `${pangolinOrgPath(orgId)}/domain/${encodeURIComponent(domainId)}/dns-records`;
 }
 
-/** The path prefixes this adapter may ever request. Every one is GET-only. */
+/**
+ * The path prefixes this adapter may ever request, GET or otherwise. Every
+ * write path this milestone adds falls under `/org/` (the org-scoped
+ * resource create) or `/resource/` (target/rule create, rule-enabled
+ * update) — both already listed, so no prefix changes for M4.
+ */
 export const PANGOLIN_ALLOWED_PATH_PREFIXES = [
   `${PANGOLIN_API_PREFIX}/orgs`,
   `${PANGOLIN_API_PREFIX}/org/`,
@@ -119,9 +161,51 @@ export const PANGOLIN_ALLOWED_PATH_PREFIXES = [
 ] as const;
 
 /**
- * Deliberately empty. M1 issues no write verb anywhere, so there is no path
- * this adapter may reach with a method other than `GET` — unlike Tailscale's
- * single OAuth-exchange exception, Pangolin's bearer token needs no
- * exchange call.
+ * One non-GET write SHAPE this adapter may issue. A literal prefix list (the
+ * pattern every sibling adapter's `_ALLOWED_NON_GET_*` constant uses) does
+ * not fit here: `orgId`/`resourceId`/`ruleId` are path SEGMENTS embedded
+ * before a fixed keyword (`/org/{orgId}/resource`), not a suffix appended
+ * after a fixed prefix the way Dockhand's `/api/environments/{id}` is. Each
+ * shape is therefore a `{method, pattern}` pair rather than a string, and
+ * {@link PANGOLIN_ALLOWED_WRITE_SHAPES} is the enumerable, testable list —
+ * exactly four entries, matching the four write methods this milestone
+ * exports and no more.
  */
-export const PANGOLIN_ALLOWED_NON_GET_PATHS: readonly string[] = [];
+export interface PangolinWriteShape {
+  method: "PUT" | "POST";
+  /** Loxep's own operation label, matching the adapter method that issues it. */
+  label: string;
+  pattern: RegExp;
+}
+
+export const PANGOLIN_ALLOWED_WRITE_SHAPES: readonly PangolinWriteShape[] = [
+  {
+    method: "PUT",
+    label: "resource.create",
+    pattern: /^\/v1\/org\/[^/]+\/resource$/,
+  },
+  {
+    method: "PUT",
+    label: "target.create",
+    pattern: /^\/v1\/resource\/[^/]+\/target$/,
+  },
+  {
+    method: "PUT",
+    label: "rule.create",
+    pattern: /^\/v1\/resource\/[^/]+\/rule$/,
+  },
+  {
+    // The only update this milestone ships, and the only POST among the
+    // four — the inverted-verb-convention warning made concrete.
+    method: "POST",
+    label: "rule.update_enabled",
+    pattern: /^\/v1\/resource\/[^/]+\/rule\/[^/]+$/,
+  },
+] as const;
+
+/** `true` for exactly the four shapes above; `false` for every DELETE, always. */
+export function isAllowedPangolinWrite(method: string, path: string): boolean {
+  return PANGOLIN_ALLOWED_WRITE_SHAPES.some(
+    (shape) => shape.method === method && shape.pattern.test(path),
+  );
+}

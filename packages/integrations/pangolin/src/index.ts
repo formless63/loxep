@@ -21,6 +21,8 @@ export type {
   PangolinAdapterCredentials,
   PangolinAdapterStats,
   PangolinCapabilities,
+  PangolinCreateResourcePayload,
+  PangolinCreateTargetPayload,
   PangolinDomainDnsRecordFact,
   PangolinDomainFact,
   PangolinFetch,
@@ -28,6 +30,7 @@ export type {
   PangolinProbeFact,
   PangolinResourceFact,
   PangolinRuleFact,
+  PangolinRulePayload,
   PangolinSiteFact,
   PangolinTargetFact,
 } from "./adapter.ts";
@@ -51,9 +54,13 @@ export {
 export type { PangolinEnvelope, PangolinErrorContext, PangolinErrorKind } from "./errors.ts";
 
 export {
-  PANGOLIN_ALLOWED_NON_GET_PATHS,
   PANGOLIN_ALLOWED_PATH_PREFIXES,
+  PANGOLIN_ALLOWED_WRITE_SHAPES,
   PANGOLIN_API_PREFIX,
+  isAllowedPangolinWrite,
+  pangolinCreateResourcePath,
+  pangolinCreateRulePath,
+  pangolinCreateTargetPath,
   pangolinDomainDnsRecordsPath,
   pangolinDomainsPath,
   pangolinOrgPath,
@@ -61,11 +68,13 @@ export {
   pangolinOrgsPath,
   pangolinResourcePath,
   pangolinResourcesPath,
+  pangolinRulePath,
   pangolinRulesPath,
   pangolinSitePath,
   pangolinSitesPath,
   pangolinTargetsPath,
 } from "./operations.ts";
+export type { PangolinWriteShape } from "./operations.ts";
 
 export {
   PANGOLIN_SUGGESTED_CAPACITY,
@@ -85,6 +94,7 @@ export {
   redactPangolinRule,
   redactPangolinSite,
   redactPangolinSiteCreate,
+  redactPangolinTarget,
 } from "./redact.ts";
 export type { RedactedSummary } from "./redact.ts";
 

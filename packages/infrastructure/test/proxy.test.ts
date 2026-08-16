@@ -1,18 +1,22 @@
 /**
  * `proxy.ts` against real PostgreSQL: `reconcile` (the whole read -> diff ->
  * record flow, including the self-retiring identity write-back), the
- * `reconcileDomain` fan-out, and the CHECK-MODE-ONLY refusal that is this
- * milestone's headline constraint.
- *
- * `apply()` is never called anywhere in this suite — there is no code path in
- * `proxy.ts` that calls it. Every test drives a stub `ProxyProviderPort`.
+ * `reconcileDomain` fan-out, and — from M4 (`loxep-acj.4`) — the tier-1
+ * apply leg: the write-authorization gate, the ledgered create/read-back
+ * flow, and the tier-2-not-implemented skip. M2's own headline test ("no
+ * sweep can reach an apply") still passes, in its M4-evolved form: a
+ * `'poll'`-triggered apply is still refused before any provider call, and an
+ * apply with no resolved write authorization still cannot reach
+ * `provider.apply()`.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import {
+  InfrastructureValidationError,
   ProviderCallError,
   ProxyWritePolicyError,
+  WritePolicyError,
   createProxyResourcesService,
 } from "../src/index.ts";
 import type {
@@ -20,6 +24,7 @@ import type {
   ProxyOperation,
   ProxyProviderPort,
   ProxyResourcesService,
+  ProxyWriteAuthorizationContext,
 } from "../src/index.ts";
 import { createScratchDb, dropScratchDb, scratchDbName, silentLogger } from "./helpers.ts";
 
@@ -133,6 +138,38 @@ async function readProxyResource(
   return { externalResourceId: row.external_resource_id };
 }
 
+async function readSteps(
+  runId: string | null,
+): Promise<Array<{ step: string; status: string; error_code: string | null; error_detail: string | null }>> {
+  if (runId === null) return [];
+  const result = await handle.pool.query<{
+    step: string;
+    status: string;
+    error_code: string | null;
+    error_detail: string | null;
+  }>(
+    `select step, status, error_code, error_detail from reconcile_run_steps where run_id = $1 order by sequence`,
+    [runId],
+  );
+  return result.rows;
+}
+
+async function insertPendingOperation(input: {
+  idempotencyKey: string;
+  operation: string;
+  runId?: string | null;
+}): Promise<void> {
+  await handle.pool.query(
+    `insert into provider_operations (idempotency_key, provider, operation, status, run_id)
+     values ($1, 'pangolin', $2, 'pending', $3)`,
+    [input.idempotencyKey, input.operation, input.runId ?? null],
+  );
+}
+
+function additivePolicy(connectionId: string, overrides: Partial<ProxyWriteAuthorizationContext> = {}): ProxyWriteAuthorizationContext {
+  return { connectionId, policyTier: "additive", actorIsAdmin: true, ...overrides };
+}
+
 class StubProxyProviderError extends Error {
   readonly kind: string;
   constructor(kind: string, message: string) {
@@ -143,7 +180,13 @@ class StubProxyProviderError extends Error {
 
 function createStubProvider(options: {
   observed?: ObservedProxyResource[];
+  /** When set, call N of `read()` returns `observedSequence[N]` (clamped to the last entry) instead of the static `observed`. */
+  observedSequence?: ObservedProxyResource[][];
   failReadOnce?: { kind: string; message: string };
+  /** Fails every `apply()` call with this error, rather than synthesizing a result. */
+  failApply?: { kind: string; message: string };
+  /** Overrides the id `apply()`'s synthesized result carries, per kind. */
+  nextIds?: { externalResourceId?: string; externalTargetId?: string; externalRuleId?: string };
 } = {}): ProxyProviderPort & { readCallCount: number; applyCallCount: number } {
   let readCallCount = 0;
   let applyCallCount = 0;
@@ -156,16 +199,45 @@ function createStubProvider(options: {
       return applyCallCount;
     },
     async read() {
+      const thisCall = readCallCount;
       readCallCount += 1;
       if (failReadOnce !== undefined) {
         const failure = failReadOnce;
         failReadOnce = undefined;
         throw new StubProxyProviderError(failure.kind, failure.message);
       }
+      if (options.observedSequence !== undefined) {
+        const sequence = options.observedSequence;
+        return sequence[thisCall] ?? sequence[sequence.length - 1] ?? [];
+      }
       return options.observed ?? [];
     },
     async apply(operation: ProxyOperation) {
       applyCallCount += 1;
+      if (options.failApply !== undefined) {
+        throw new StubProxyProviderError(options.failApply.kind, options.failApply.message);
+      }
+      if (operation.kind === "create-resource") {
+        return {
+          kind: operation.kind,
+          status: "applied" as const,
+          externalResourceId: options.nextIds?.externalResourceId ?? "created-resource-1",
+        };
+      }
+      if (operation.kind === "create-target") {
+        return {
+          kind: operation.kind,
+          status: "applied" as const,
+          externalTargetId: options.nextIds?.externalTargetId ?? "created-target-1",
+        };
+      }
+      if (operation.kind === "create-rule") {
+        return {
+          kind: operation.kind,
+          status: "applied" as const,
+          externalRuleId: options.nextIds?.externalRuleId ?? "created-rule-1",
+        };
+      }
       return { kind: operation.kind, status: "applied" as const };
     },
     capabilities() {
@@ -207,13 +279,13 @@ function observedResource(
   };
 }
 
-describe("check-mode-only refusal", () => {
+describe("write-authorization gate — M2's headline constraint, M4-evolved", () => {
   let service: ProxyResourcesService;
   beforeAll(() => {
     service = createProxyResourcesService({ db: handle.db });
   });
 
-  it("reconcile() refuses mode: 'apply' before any provider call", async () => {
+  it("reconcile() refuses a 'poll'-triggered apply before any provider call — the M4-specific, stricter-than-M3 gate", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     const resource = await insertProxyResource({
@@ -225,16 +297,17 @@ describe("check-mode-only refusal", () => {
     await expect(
       service.reconcile(resource.id, {
         mode: "apply",
-        trigger: "manual",
+        trigger: "poll",
         provider,
         orgId: "home-lab",
+        writeAuthorization: additivePolicy(pangolinConnectionId),
       }),
     ).rejects.toThrow(ProxyWritePolicyError);
     expect(provider.readCallCount).toBe(0);
     expect(provider.applyCallCount).toBe(0);
   });
 
-  it("reconcileDomain() refuses mode: 'apply' before resolving any provider", async () => {
+  it("reconcileDomain() refuses a 'poll'-triggered apply before resolving any provider", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     await insertProxyResource({ domainId: domain.id, hostingTargetId: target.id });
@@ -243,7 +316,7 @@ describe("check-mode-only refusal", () => {
     await expect(
       service.reconcileDomain(domain.id, {
         mode: "apply",
-        trigger: "manual",
+        trigger: "poll",
         resolveProvider: async () => {
           resolveCalls += 1;
           return null;
@@ -253,7 +326,63 @@ describe("check-mode-only refusal", () => {
     expect(resolveCalls).toBe(0);
   });
 
-  it("never has a code path that reaches provider.apply()", async () => {
+  it("throws when mode:'apply' would apply a tier-1 op but no writeAuthorization was resolved — a caller bug, not a policy refusal", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+    });
+    // observed: [] -> the planner emits a create-resource op, so the
+    // writeAuthorization check is actually reached (an empty plan would
+    // never need it).
+    const provider = createStubProvider({ observed: [] });
+
+    await expect(
+      service.reconcile(resource.id, {
+        mode: "apply",
+        trigger: "manual",
+        provider,
+        orgId: "home-lab",
+      }),
+    ).rejects.toThrow(InfrastructureValidationError);
+    expect(provider.applyCallCount).toBe(0);
+  });
+
+  it("a 'read_only' policy tier blocks the apply — recorded as 'blocked', run finishes 'partial', never reaches provider.apply()", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+    });
+    const provider = createStubProvider({ observed: [] });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: { connectionId: pangolinConnectionId, policyTier: "read_only", actorIsAdmin: true },
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.appliedCount).toBe(0);
+    expect(provider.applyCallCount).toBe(0);
+
+    const steps = await readSteps(result.runId);
+    const blocked = steps.find((s) => s.status === "blocked");
+    expect(blocked?.error_code).toBe("write_policy");
+    expect(blocked?.error_detail).toContain("additive");
+
+    const run = await handle.pool.query<{ status: string }>(
+      `select status from reconcile_runs where id = $1`,
+      [result.runId],
+    );
+    expect(run.rows[0]?.status).toBe("partial");
+  });
+
+  it("never has a code path that reaches provider.apply() in check mode", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
     const resource = await insertProxyResource({
@@ -272,6 +401,304 @@ describe("check-mode-only refusal", () => {
     });
     expect(result.status).toBe("succeeded");
     expect(provider.applyCallCount).toBe(0);
+  });
+});
+
+describe("apply leg (M4, loxep-acj.4) — tier-1 writes, ledgered", () => {
+  let service: ProxyResourcesService;
+  beforeAll(() => {
+    service = createProxyResourcesService({ db: handle.db });
+  });
+
+  it("createResource: applies, ledgers, and self-retires the external id", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: null,
+    });
+    const provider = createStubProvider({ observed: [], nextIds: { externalResourceId: "999" } });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(1);
+    expect(provider.applyCallCount).toBe(1);
+    expect((await readProxyResource(resource.id)).externalResourceId).toBe("999");
+
+    const key = `pangolin:resource.create:${resource.id}`;
+    const op = await handle.pool.query<{ status: string }>(
+      `select status from provider_operations where idempotency_key = $1`,
+      [key],
+    );
+    expect(op.rows[0]?.status).toBe("succeeded");
+  });
+
+  it("createRule: applies with the full payload and ledgers by the intent row's own id", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: "42",
+    });
+    await insertRule({ proxyResourceId: resource.id, value: "203.0.113.9/32", priority: 5 });
+    const provider = createStubProvider({
+      observed: [observedResource({ externalResourceId: "42", fullDomain: `api.${domain.name}`, rules: [] })],
+      nextIds: { externalRuleId: "555" },
+    });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "intent_change",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(1);
+    expect(provider.applyCallCount).toBe(1);
+
+    const rows = await handle.pool.query<{ idempotency_key: string; status: string }>(
+      `select idempotency_key, status from provider_operations where operation = 'rule.create'`,
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0]?.status).toBe("succeeded");
+    // Keyed by the proxy_resource_rules row's OWN id — recomputable by the
+    // caller, never by the rule's provider-assigned id (unknown pre-create).
+    expect(rows.rows[0]?.idempotency_key).toMatch(/^pangolin:rule\.create:[0-9a-f-]{36}$/);
+  });
+
+  it("createRule is NOT idempotent from the provider's own perspective — the ledger is what prevents a re-run from double-creating", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: "42",
+    });
+    await insertRule({ proxyResourceId: resource.id, value: "203.0.113.10/32", priority: 6 });
+    // The provider read NEVER reflects the create (a static stub, or a slow
+    // read replica) — the realistic case where a naive re-run would
+    // otherwise double-create.
+    const provider = createStubProvider({
+      observed: [observedResource({ externalResourceId: "42", fullDomain: `api.${domain.name}`, rules: [] })],
+    });
+
+    const first = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+    const second = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(first.appliedCount).toBe(1);
+    // The SAME operation is planned again (the stub's observed set never
+    // changed), but the ledger short-circuits it — never a second create.
+    expect(second.operationCount).toBe(1);
+    expect(second.appliedCount).toBe(0);
+    expect(provider.applyCallCount).toBe(1);
+
+    const steps = await readSteps(second.runId);
+    expect(steps.some((s) => s.step === "apply.create-rule" && (s.status === "succeeded"))).toBe(true);
+  });
+
+  it("a stuck 'pending' ledger row resolves by READING THE PROVIDER BACK, never by re-calling apply() — the ledger's ideal case", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: null,
+    });
+    const fullDomain = `api.${domain.name}`;
+    await insertPendingOperation({
+      idempotencyKey: `pangolin:resource.create:${resource.id}`,
+      operation: "resource.create",
+    });
+    // The FIRST read (the diff step) sees nothing yet — matching the
+    // situation that produced the stuck 'pending' row in the first place —
+    // so the planner still emits a create-resource op and `ledger.begin()`
+    // finds it already `pending`. The SECOND read (inside the read-back
+    // resolution itself) is where the prior crashed attempt's actual result
+    // becomes visible.
+    const provider = createStubProvider({
+      observedSequence: [[], [observedResource({ externalResourceId: "777", fullDomain, subdomain: "api" })]],
+    });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.applyCallCount).toBe(0);
+    expect((await readProxyResource(resource.id)).externalResourceId).toBe("777");
+
+    const op = await handle.pool.query<{ status: string; attempts: number }>(
+      `select status, attempts from provider_operations where idempotency_key = $1`,
+      [`pangolin:resource.create:${resource.id}`],
+    );
+    expect(op.rows[0]?.status).toBe("succeeded");
+    expect(op.rows[0]?.attempts).toBe(2);
+  });
+
+  it("a stuck 'pending' row that read-back cannot find resolves to 'failed', safe to retry next run", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: null,
+    });
+    await insertPendingOperation({
+      idempotencyKey: `pangolin:resource.create:${resource.id}`,
+      operation: "resource.create",
+    });
+    const provider = createStubProvider({ observed: [] });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.appliedCount).toBe(0);
+    expect(provider.applyCallCount).toBe(0);
+
+    const op = await handle.pool.query<{ status: string }>(
+      `select status from provider_operations where idempotency_key = $1`,
+      [`pangolin:resource.create:${resource.id}`],
+    );
+    expect(op.rows[0]?.status).toBe("failed");
+  });
+
+  it("a tier-2 update-rule present in the plan is skipped, not applied — the run finishes 'partial'", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: "42",
+    });
+    await insertRule({ proxyResourceId: resource.id, value: "203.0.113.7/32", priority: 100 });
+    // Observed carries the SAME rule at a DIFFERENT priority -> update-rule
+    // (tier 2), which M4 ships no adapter verb for.
+    const provider = createStubProvider({
+      observed: [
+        observedResource({
+          externalResourceId: "42",
+          fullDomain: `api.${domain.name}`,
+          rules: [
+            { externalRuleId: "1", action: "ACCEPT", match: "CIDR", value: "203.0.113.7/32", priority: 1, enabled: true },
+          ],
+        }),
+      ],
+    });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId),
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.appliedCount).toBe(0);
+    expect(provider.applyCallCount).toBe(0);
+
+    const steps = await readSteps(result.runId);
+    const skipped = steps.find((s) => s.step === "apply.tier2-not-implemented");
+    expect(skipped?.status).toBe("skipped");
+  });
+
+  it("refuses to apply a create-rule against a resource whose fullDomain fronts Loxep itself — the self-lockout preflight", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      subdomain: "api",
+      externalResourceId: "42",
+    });
+    const fullDomain = `api.${domain.name}`;
+    // A desired rule that Pangolin does not have yet -> a create-rule op is
+    // planned, which is what makes the lockout preflight reachable at all
+    // (an empty plan never calls it).
+    await insertRule({ proxyResourceId: resource.id, value: "203.0.113.7/32", priority: 1 });
+    const provider = createStubProvider({
+      observed: [observedResource({ externalResourceId: "42", fullDomain, rules: [] })],
+    });
+
+    const result = await service.reconcile(resource.id, {
+      mode: "apply",
+      trigger: "manual",
+      provider,
+      orgId: "home-lab",
+      writeAuthorization: additivePolicy(pangolinConnectionId, { loxepSelfHosts: [fullDomain] }),
+    });
+
+    expect(result.status).toBe("partial");
+    expect(provider.applyCallCount).toBe(0);
+    const steps = await readSteps(result.runId);
+    const blocked = steps.find((s) => s.status === "blocked");
+    expect(blocked?.error_detail).toContain("fronts Loxep itself");
+  });
+
+  it("classifies a genuine provider failure as ProviderCallError and records a failed run, distinctly from a policy block", async () => {
+    const domain = await insertDomain();
+    const target = await insertHostingTarget({ proxyConnectionId: pangolinConnectionId });
+    const resource = await insertProxyResource({
+      domainId: domain.id,
+      hostingTargetId: target.id,
+      externalResourceId: null,
+    });
+    const provider = createStubProvider({
+      observed: [],
+      failApply: { kind: "provider_unavailable", message: "pangolin is down" },
+    });
+
+    await expect(
+      service.reconcile(resource.id, {
+        mode: "apply",
+        trigger: "manual",
+        provider,
+        orgId: "home-lab",
+        writeAuthorization: additivePolicy(pangolinConnectionId),
+      }),
+    ).rejects.toThrow(ProviderCallError);
+
+    const runs = await service.listRuns(resource.id);
+    expect(runs.some((run) => run.status === "failed")).toBe(true);
+
+    const op = await handle.pool.query<{ status: string }>(
+      `select status from provider_operations where idempotency_key = $1`,
+      [`pangolin:resource.create:${resource.id}`],
+    );
+    expect(op.rows[0]?.status).toBe("failed");
   });
 });
 
@@ -457,6 +884,7 @@ describe("reconcileDomain()", () => {
         status: "skipped",
         mode: "check",
         operationCount: 0,
+        appliedCount: 0,
         unmatchedObservedCount: 0,
       },
     ]);

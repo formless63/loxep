@@ -149,8 +149,9 @@ function DomainDetailData({ name }: { name: string }) {
       </div>
       {/* loxep-acj.2 (Pangolin chain design M2): the chain's third link —
           domain -> Cloudflare record (above, in "Desired records") ->
-          Pangolin resource -> hosting target. Read-only; check-mode only. */}
-      <ProxyChainPanel resources={data.proxyResources} />
+          Pangolin resource -> hosting target. loxep-acj.4 (M4) adds the
+          admin-only Apply action for this domain's declared resources. */}
+      <ProxyChainPanel domainId={data.id} domainName={data.name} resources={data.proxyResources} />
     </div>
   );
 }

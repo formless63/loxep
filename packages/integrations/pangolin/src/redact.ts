@@ -84,15 +84,42 @@ export function redactPangolinResource(resource: unknown): RedactedSummary {
   };
 }
 
-/** A rule record -> a summary. `value` (a CIDR/IP/path/etc.) IS allow-listed — it is the rule, not a secret. */
+/**
+ * A rule record -> a summary. `value` (a CIDR/IP/path/etc.) IS allow-listed
+ * — it is the rule, not a secret, and M4 (`loxep-acj.4`) makes its inclusion
+ * load-bearing rather than cosmetic: a `reconcile_run_steps` reader auditing
+ * an ACCEPT rule this milestone created needs to see WHICH address or path
+ * it grants, not just that a rule exists.
+ */
 export function redactPangolinRule(rule: unknown): RedactedSummary {
   const record = (rule ?? {}) as Record<string, unknown>;
   return {
     ruleId: numeric(record["ruleId"]),
     action: scalar(record["action"]),
     match: scalar(record["match"]),
+    value: scalar(record["value"]),
     priority: numeric(record["priority"]),
     enabled: boolOrNull(record["enabled"]),
+  };
+}
+
+/**
+ * A target record -> a summary. No secret material ever lives on a target
+ * (that is a resource-level concern), so this is a plain scalar allow-list —
+ * added in M4 (`loxep-acj.4`) alongside `addTarget`, following the same
+ * "the redactor ships with the code that could need it" discipline as every
+ * other one in this file.
+ */
+export function redactPangolinTarget(target: unknown): RedactedSummary {
+  const record = (target ?? {}) as Record<string, unknown>;
+  return {
+    targetId: numeric(record["targetId"]),
+    siteId: numeric(record["siteId"]),
+    ip: scalar(record["ip"]),
+    port: numeric(record["port"]),
+    method: scalar(record["method"]),
+    enabled: boolOrNull(record["enabled"]),
+    priority: numeric(record["priority"]),
   };
 }
 

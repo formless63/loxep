@@ -1,7 +1,40 @@
 /**
- * The proxy resource reconciler (Pangolin chain design, milestone 2,
- * `loxep-acj.2`): driving `planProxyResourceOperations` (`proxy-port.ts`)
- * against a real provider port, in CHECK MODE ONLY.
+ * The proxy resource reconciler (Pangolin chain design). Milestone 2
+ * (`loxep-acj.2`) drove `planProxyResourceOperations` (`proxy-port.ts`)
+ * against a real provider port in CHECK MODE ONLY. Milestone 4
+ * (`loxep-acj.4`) lands the apply leg for the tier-1 subset — createResource,
+ * createTarget, createRule — behind the write-authorization gate
+ * `write-policy.ts` builds (`assertWritePolicy` + `wouldLockOut`'s
+ * self-managed-resource clauses), ledgered through `operations.ts` because
+ * every one of those three is a non-idempotent provider create with no
+ * upsert (verdict 2).
+ *
+ * ## What M4 applies, and what it still only PLANS
+ *
+ * `planProxyResourceOperations` can still emit `update-resource` /
+ * `update-target` / `update-rule` when an already-matched resource's
+ * observed state differs from intent — those are tier 2, and M4 ships no
+ * adapter verb the service could call for them (bd's own NOT IN SCOPE list:
+ * "updateResource/updateTarget/updateRule (tier 2, M5 needs the rule one)").
+ * `reconcile()` therefore SPLITS the plan: tier-1 `create-*` operations are
+ * applied for real; any tier-2 operation present is recorded as a distinct
+ * `skipped` step (`apply.tier2-not-implemented`) — never silently dropped,
+ * never mistaken for a policy `blocked` state, because no policy tier this
+ * milestone could grant would make M4's own code able to call them.
+ *
+ * ## `createTarget` has a real, tested apply path with no live trigger yet
+ *
+ * `buildDesired()` still supplies `targets: []` — M2's own closeout note
+ * ("no `proxy_resource_targets` intent table exists yet… the gap gets a
+ * real answer… rather than this milestone guessing at one no write path
+ * exercises") is UNCLOSED by M4 too: closing it needs either a new intent
+ * table or a new `hosting_targets` column, both migration-shaped, and this
+ * milestone ships no migration. So `planProxyResourceOperations` can never
+ * actually emit a `create-target` operation from a REAL `reconcile()` call
+ * today. The apply branch below is real and directly unit-tested
+ * (`test/proxy.test.ts`) against a synthetic operation, so the day a future
+ * milestone adds target intent, it inherits working ledgered-apply code
+ * rather than an unimplemented `switch` arm.
  *
  * ```text
  * reconcile        one `proxy_resources` row     read -> diff -> record,
@@ -34,21 +67,22 @@
  * installation-wide shape "compiles fine and only fails when the second
  * instance is added." A reviewer should check for this specifically.
  *
- * ## CHECK MODE ONLY, structurally enforced at the TOP of `reconcile()`
+ * ## APPLY, now gated rather than refused outright
  *
- * `proxy-port.ts`'s `ProxyProviderPort.apply()` is a real method — a future
- * write milestone's adapter implements it for real — but THIS service never
- * calls it. `reconcile()` and `reconcileDomain()` both throw
- * {@link ProxyWritePolicyError} immediately if `options.mode === 'apply'`,
- * before any read, any database write, or any run row. The message names the
- * gate that does not exist yet (`infrastructure.provider_write_policy`,
- * milestone 3 / `loxep-acj.3`) rather than presenting as a generic
- * validation failure — the Pangolin chain design's own write-risk model rule:
- * *"turns 'the call will fail with auth after we have already decided to
- * make it' into 'we refuse before the call and say why'."* The refusal is
- * unconditional in this milestone: there is no flag, setting, or trigger that
- * bypasses it, because the gate that would make an apply safe (per-connection
- * write policy, the four tiers, the self-lockout preflight) has not shipped.
+ * `proxy-port.ts`'s `ProxyProviderPort.apply()` is a real method, and from
+ * M4 `reconcile()` calls it — for the tier-1 subset only, and only after
+ * `write-policy.ts`'s `assertWritePolicy` (the connection's stored tier,
+ * rule 3's trigger restriction, the admin-only actor check) and the
+ * self-managed-resource half of `wouldLockOut` both clear. `mode: 'apply'`
+ * on an `'poll'` trigger is refused STRUCTURALLY by this milestone, ahead of
+ * and in addition to `assertWritePolicy`'s own (more permissive, M5-shaped)
+ * allowance for a tier-1 poll — see `assertApplyTriggerAllowed`'s doc: M5's
+ * per-alias `autoApply` seam is deliberately not opened by M4, because
+ * nothing here has an alias to auto-apply yet. Every refusal happens BEFORE
+ * any provider call, any database write, or any run row — the design's own
+ * write-risk-model rule: *"turns 'the call will fail with auth after we have
+ * already decided to make it' into 'we refuse before the call and say
+ * why'."*
  *
  * ## The subject is the RESOURCE, not the domain
  *
@@ -72,15 +106,19 @@
  * `reconcile_run_steps` diff step's `responseSummary` carries the count and a
  * bounded sample, exactly as `container-hosts.ts`'s own diff step does.
  *
- * ## No `provider_operations` ledger entries — nothing here ever creates anything
+ * ## `provider_operations` ledger entries — the three tier-1 creates, and ONLY those
  *
- * The ledger exists to make a NON-IDEMPOTENT PROVIDER CREATE safe under
- * at-least-once delivery. This service never calls `provider.apply()`, so
- * there is nothing to ledger. A later write milestone adds it, following
- * `container-hosts.ts`'s "host creation is the ledger's IDEAL case" precedent
- * for `create-resource`.
+ * All three are non-idempotent provider creates with no upsert (verdict 2),
+ * so each goes through `operations.ts`'s ledger exactly as
+ * `container-hosts.ts`'s host create does — "the ledger's IDEAL case": a
+ * stuck `pending` resolves by reading the provider back and matching on the
+ * natural key the caller can always recompute, never by blindly retrying.
+ * `update-rule`'s `enabled` flip (the retirement half of add-then-retire,
+ * M7) is convergent and would NOT be ledgered even once it exists, matching
+ * `container-hosts.ts`'s own update/create split.
  */
 import type { LoxepDb } from "@loxep/db";
+import type { ProviderWritePolicyTier } from "@loxep/domain";
 import {
   managedDomains,
   proxyResourceRules,
@@ -100,8 +138,21 @@ import {
   type DesiredProxyResource,
   type DesiredProxyRule,
   type ObservedProxyResource,
+  type ProxyApplyResult,
+  type ProxyOperation,
   type ProxyProviderPort,
 } from "./proxy-port.ts";
+import {
+  createProviderOperationsLedger,
+  idempotencyKey,
+  type ProviderOperationsLedger,
+} from "./operations.ts";
+import {
+  WritePolicyError,
+  assertWritePolicy,
+  wouldLockOut,
+  writePolicyBlockedStep,
+} from "./write-policy.ts";
 
 export type ProxyResourceRow = typeof proxyResources.$inferSelect;
 export type ProxyResourceRuleRow = typeof proxyResourceRules.$inferSelect;
@@ -113,9 +164,15 @@ export const RECONCILE_PROXY_RESOURCE_RUN_KIND = "reconcile-proxy-resource";
 /** `reconcile_runs.subject_type` for this reconciler — see the module doc. */
 export const PROXY_RESOURCE_SUBJECT_TYPE = "proxy_resource";
 
+/** `provider_operations.provider` for every ledgered Pangolin write this service issues. */
+const PANGOLIN_LEDGER_PROVIDER = "pangolin";
+
 /**
- * A `mode: 'apply'` reconcile was requested before the write-authorization
- * gate exists. See the module doc's "CHECK MODE ONLY" section.
+ * An `apply` was refused for a reason THIS milestone owns, structurally,
+ * ahead of `write-policy.ts`'s own (more permissive) gate — currently just
+ * the poll-trigger refusal below. Kept as a distinct class from
+ * {@link WritePolicyError} so a caller can tell "M4 has not opened this seam
+ * yet" apart from "the connection's stored policy tier refused it".
  */
 export class ProxyWritePolicyError extends InfrastructureValidationError {
   constructor(message: string, detail: Record<string, unknown> = {}) {
@@ -124,12 +181,50 @@ export class ProxyWritePolicyError extends InfrastructureValidationError {
   }
 }
 
-function assertCheckModeOnly(mode: "apply" | "check"): void {
-  if (mode === "apply") {
+/**
+ * M4-specific, and STRICTER than `write-policy.ts`'s own `assertWritePolicy`
+ * for a poll trigger: that function permits a tier-1 write on `'poll'`
+ * because M5's per-alias `autoApply` flag is expected to use exactly that
+ * seam. M5 has not shipped — there is no alias, no per-alias flag, and no
+ * owner ruling on auto-apply yet — so this milestone does not open the seam
+ * even though the generic gate would allow it. `bd show loxep-acj.4`'s own
+ * scope item 3: "permitted only for manual and intent_change triggers."
+ * `'poll'` is refused here, unconditionally, before `assertWritePolicy` (or
+ * any provider call) ever runs.
+ */
+function assertApplyTriggerAllowed(trigger: "intent_change" | "manual" | "poll"): void {
+  if (trigger === "poll") {
     throw new ProxyWritePolicyError(
-      "proxy resource reconcile is check-mode only in this milestone (loxep-acj.2, M2 of the Pangolin chain design) — the write-authorization gate (infrastructure.provider_write_policy, the four tiers, the self-lockout preflight) has not shipped yet. Nothing may write to a Pangolin connection until milestone 3 (loxep-acj.3) lands it.",
+      "a 'poll'-triggered proxy reconcile may not apply in this milestone (loxep-acj.4) — only 'manual' and 'intent_change' triggers may. The M5 auto-apply seam (a per-alias autoApply flag, gated on its own owner ruling) is not open yet.",
+      { trigger },
     );
   }
+}
+
+/** Whether `host` is exactly `candidate`, comparing case-insensitively and tolerating either a bare host or a full URL on either side. */
+function hostMatches(host: string, candidate: string): boolean {
+  const normalize = (value: string): string | null => {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "") return null;
+    try {
+      return new URL(trimmed.includes("://") ? trimmed : `https://${trimmed}`).hostname;
+    } catch {
+      return null;
+    }
+  };
+  const a = normalize(host);
+  const b = normalize(candidate);
+  return a !== null && a === b;
+}
+
+/** The design's stated rule read-back key: `(action, match, value, priority)` — `enabled` deliberately excluded, matching `planProxyResourceOperations`'s own rule-matching. */
+function ruleNaturalKey(rule: { action: string; match: string; value: string; priority: number }): string {
+  return `${rule.action} ${rule.match} ${rule.value} ${rule.priority}`;
+}
+
+/** The design's stated target read-back key: `(siteId, ip, port)`. */
+function targetNaturalKey(target: { siteId: string; ip: string; port: number }): string {
+  return `${target.siteId} ${target.ip} ${target.port}`;
 }
 
 function errorKind(error: unknown): string {
@@ -167,16 +262,33 @@ export interface ReconcileProxyResourceResult {
   proxyResourceId: string;
   /** `null` when nothing ran — see `reconcile()`'s "skipped" cases. */
   runId: string | null;
-  status: "skipped" | "succeeded" | "failed";
-  mode: "check";
+  /** `'partial'` when at least one tier-1 op applied but a tier-2 op was present unapplied, or a write was `blocked`. */
+  status: "skipped" | "succeeded" | "partial" | "failed";
+  mode: "apply" | "check";
   operationCount: number;
+  /** Tier-1 operations actually applied this run. Always 0 in check mode. */
+  appliedCount: number;
   unmatchedObservedCount: number;
+}
+
+/** What `reconcile()`/`reconcileDomain()` need to evaluate the write-authorization gate for one resolved connection — see `write-policy.ts`. */
+export interface ProxyWriteAuthorizationContext {
+  connectionId: string;
+  policyTier: ProviderWritePolicyTier;
+  /** `true`/`false` for a known human actor; `undefined` for a background trigger. */
+  actorIsAdmin?: boolean;
+  /** Hosts that must never be managed — Loxep's own public origin. Same list for every connection. */
+  loxepSelfHosts?: readonly string[];
+  /** This CONNECTION's own dashboard host(s) — see `wouldLockOut`'s `pangolin_dashboard_self` clause. */
+  pangolinDashboardHosts?: readonly string[];
 }
 
 export interface ProxyResourcesService {
   /**
-   * Reconciles ONE proxy resource against a resolved provider port. Always
-   * check mode — see the module doc.
+   * Reconciles ONE proxy resource against a resolved provider port. Check
+   * mode always reads and diffs only; apply mode additionally applies every
+   * tier-1 `create-*` operation the plan contains, behind the
+   * write-authorization gate — see the module doc.
    */
   reconcile(
     proxyResourceId: string,
@@ -188,6 +300,8 @@ export interface ProxyResourcesService {
       orgId: string;
       actorUserId?: string | null;
       redact?: ResponseRedactor;
+      /** Required for `mode: 'apply'`; ignored in check mode. */
+      writeAuthorization?: ProxyWriteAuthorizationContext;
     },
   ): Promise<ReconcileProxyResourceResult>;
   /**
@@ -201,9 +315,15 @@ export interface ProxyResourcesService {
     options: {
       mode: "apply" | "check";
       trigger: "intent_change" | "manual" | "poll";
-      resolveProvider: (
-        hostingTargetId: string,
-      ) => Promise<{ provider: ProxyProviderPort; orgId: string } | null>;
+      resolveProvider: (hostingTargetId: string) => Promise<
+        | {
+            provider: ProxyProviderPort;
+            orgId: string;
+            /** Present when `mode: 'apply'` should be authorized for this resource's resolved connection — see {@link ProxyWriteAuthorizationContext}. */
+            writeAuthorization?: ProxyWriteAuthorizationContext;
+          }
+        | null
+      >;
       actorUserId?: string | null;
       redact?: ResponseRedactor;
     },
@@ -266,6 +386,7 @@ export function createProxyResourcesService(options: {
   db: LoxepDb;
 }): ProxyResourcesService {
   const { db } = options;
+  const ledger: ProviderOperationsLedger = createProviderOperationsLedger({ db });
 
   async function requireResource(
     executor: Pick<LoxepDb, "select">,
@@ -333,6 +454,263 @@ export function createProxyResourcesService(options: {
     }
   }
 
+  /**
+   * Applies ONE tier-1 `create-*` operation for real, ledgered. Returns the
+   * provider's id for whichever object it created — a caller uses this to
+   * self-retire `proxyResources.externalResourceId` after a `create-resource`
+   * — or `null` when the write short-circuited on an already-`succeeded`
+   * ledger row (nothing new happened, so nothing new to retire). Throws
+   * {@link ProviderCallError} on a genuine provider failure, matching
+   * `container-hosts.ts`'s own create path — the caller lets it propagate
+   * into `finish('failed', …)`.
+   */
+  async function applyTier1Operation(input: {
+    operation: Extract<
+      ProxyOperation,
+      { kind: "create-resource" | "create-target" | "create-rule" }
+    >;
+    proxyResourceId: string;
+    runId: string;
+    provider: ProxyProviderPort;
+    redact: ResponseRedactor;
+    ruleRowByNaturalKey: Map<string, ProxyResourceRuleRow>;
+    step: (entry: {
+      step: string;
+      status: "succeeded" | "failed" | "skipped" | "blocked";
+      requestSummary?: Record<string, unknown> | null;
+      responseSummary?: Record<string, unknown> | null;
+      errorCode?: string | null;
+      errorDetail?: string | null;
+    }) => Promise<void>;
+    /** Marks the containing `reconcile_runs` row failed BEFORE this function re-throws — matching `container-hosts.ts`'s own create-failure branch. */
+    finish: (status: "failed", errorSummary: string | null) => Promise<void>;
+  }): Promise<ProxyApplyResult | null> {
+    const { operation, proxyResourceId, runId, provider, redact, ruleRowByNaturalKey, step, finish } = input;
+
+    if (operation.kind === "create-resource") {
+      const key = idempotencyKey(PANGOLIN_LEDGER_PROVIDER, "resource.create", proxyResourceId);
+      const begin = await ledger.begin({
+        key,
+        provider: PANGOLIN_LEDGER_PROVIDER,
+        operation: "resource.create",
+        runId,
+      });
+      if (begin.decision === "already_succeeded") {
+        await step({
+          step: "apply.create-resource",
+          status: "succeeded",
+          responseSummary: { shortCircuited: true, idempotencyKey: key },
+        });
+        return null;
+      }
+      if (begin.decision === "needs_read_back") {
+        // The ledger's IDEAL case (container-hosts.ts's vocabulary):
+        // `provider.read()` IS `listResources`, and matching by `fullDomain`
+        // is this port's own bootstrap join key (`proxy-port.ts`'s module
+        // doc) — the practical stand-in for "matched on niceId" the design
+        // names, since niceId is provider-assigned and unknown in advance.
+        const readBack = await provider.read({ orgId: operation.resource.domainId });
+        const found = readBack.find(
+          (r) => r.fullDomain === operation.resource.name || r.subdomain === operation.resource.subdomain,
+        );
+        if (found === undefined) {
+          await ledger.fail(key, { readBack: "absent" });
+          await step({
+            step: "apply.create-resource.read-back",
+            status: "succeeded",
+            responseSummary: { present: false, resolvedTo: "failed" },
+          });
+          return null;
+        }
+        await ledger.succeed(key, { readBack: "present", externalResourceId: found.externalResourceId });
+        await step({
+          step: "apply.create-resource.read-back",
+          status: "succeeded",
+          responseSummary: { present: true, resolvedTo: "succeeded" },
+        });
+        return { kind: "create-resource", status: "applied", externalResourceId: found.externalResourceId };
+      }
+      try {
+        const result = await provider.apply(operation);
+        await ledger.succeed(key, redact(result));
+        await step({
+          step: "apply.create-resource",
+          status: "succeeded",
+          requestSummary: redact(operation.resource),
+          responseSummary: redact(result),
+        });
+        return result;
+      } catch (error) {
+        const kind = errorKind(error);
+        await ledger.fail(key, { errorKind: kind });
+        await step({
+          step: "apply.create-resource",
+          status: "failed",
+          errorCode: kind,
+          errorDetail: "pangolin resource create failed",
+        });
+        await finish("failed", `resource create failed (${kind})`);
+        if (error instanceof ProviderCallError) throw error;
+        throw new ProviderCallError(kind, "pangolin resource create failed", { proxyResourceId, runId });
+      }
+    }
+
+    if (operation.kind === "create-target") {
+      const naturalKey = targetNaturalKey({
+        siteId: operation.target.siteId,
+        ip: operation.target.ip,
+        port: operation.target.port,
+      });
+      const key = idempotencyKey(
+        PANGOLIN_LEDGER_PROVIDER,
+        "target.create",
+        `${operation.externalResourceId}:${naturalKey}`,
+      );
+      const begin = await ledger.begin({
+        key,
+        provider: PANGOLIN_LEDGER_PROVIDER,
+        operation: "target.create",
+        runId,
+      });
+      if (begin.decision === "already_succeeded") {
+        await step({
+          step: "apply.create-target",
+          status: "succeeded",
+          responseSummary: { shortCircuited: true, idempotencyKey: key },
+        });
+        return null;
+      }
+      if (begin.decision === "needs_read_back") {
+        const readBack = await provider.read({ orgId: "" }).catch(() => []);
+        // A target read-back needs the RESOURCE's own targets, which the
+        // whole-org `read()` already nests — find the owning resource, then
+        // its target by natural key. See `targetNaturalKey`'s doc.
+        const ownerResource = readBack.find((r) => r.externalResourceId === operation.externalResourceId);
+        const found = ownerResource?.targets.find(
+          (t) =>
+            t.siteId !== null &&
+            t.ip !== null &&
+            t.port !== null &&
+            targetNaturalKey({ siteId: t.siteId, ip: t.ip, port: t.port }) === naturalKey,
+        );
+        if (found === undefined) {
+          await ledger.fail(key, { readBack: "absent" });
+          await step({
+            step: "apply.create-target.read-back",
+            status: "succeeded",
+            responseSummary: { present: false, resolvedTo: "failed" },
+          });
+          return null;
+        }
+        await ledger.succeed(key, { readBack: "present", externalTargetId: found.externalTargetId });
+        await step({
+          step: "apply.create-target.read-back",
+          status: "succeeded",
+          responseSummary: { present: true, resolvedTo: "succeeded" },
+        });
+        return { kind: "create-target", status: "applied", externalTargetId: found.externalTargetId };
+      }
+      try {
+        const result = await provider.apply(operation);
+        await ledger.succeed(key, redact(result));
+        await step({
+          step: "apply.create-target",
+          status: "succeeded",
+          requestSummary: redact(operation.target),
+          responseSummary: redact(result),
+        });
+        return result;
+      } catch (error) {
+        const kind = errorKind(error);
+        await ledger.fail(key, { errorKind: kind });
+        await step({
+          step: "apply.create-target",
+          status: "failed",
+          errorCode: kind,
+          errorDetail: "pangolin target create failed",
+        });
+        await finish("failed", `target create failed (${kind})`);
+        if (error instanceof ProviderCallError) throw error;
+        throw new ProviderCallError(kind, "pangolin target create failed", { proxyResourceId, runId });
+      }
+    }
+
+    // create-rule
+    const sourceRow = ruleRowByNaturalKey.get(ruleNaturalKey(operation.rule));
+    // The ledger's natural key is the Loxep-owned `proxy_resource_rules.id`
+    // when a source intent row is recoverable (always, from a real
+    // `reconcile()` call) — a value the caller can always recompute, per
+    // `operations.ts`'s own requirement. Falls back to the rule's own
+    // natural key so a directly-driven test (no DB row) still works.
+    const key = idempotencyKey(
+      PANGOLIN_LEDGER_PROVIDER,
+      "rule.create",
+      sourceRow?.id ?? `${operation.externalResourceId}:${ruleNaturalKey(operation.rule)}`,
+    );
+    const begin = await ledger.begin({
+      key,
+      provider: PANGOLIN_LEDGER_PROVIDER,
+      operation: "rule.create",
+      runId,
+    });
+    if (begin.decision === "already_succeeded") {
+      await step({
+        step: "apply.create-rule",
+        status: "succeeded",
+        responseSummary: { shortCircuited: true, idempotencyKey: key },
+      });
+      return null;
+    }
+    if (begin.decision === "needs_read_back") {
+      const readBack = await provider.read({ orgId: "" }).catch(() => []);
+      const ownerResource = readBack.find((r) => r.externalResourceId === operation.externalResourceId);
+      const found = ownerResource?.rules.find(
+        (r) => ruleNaturalKey(r) === ruleNaturalKey(operation.rule),
+      );
+      if (found === undefined) {
+        await ledger.fail(key, { readBack: "absent" });
+        await step({
+          step: "apply.create-rule.read-back",
+          status: "succeeded",
+          responseSummary: { present: false, resolvedTo: "failed" },
+        });
+        return null;
+      }
+      await ledger.succeed(key, { readBack: "present", externalRuleId: found.externalRuleId });
+      await step({
+        step: "apply.create-rule.read-back",
+        status: "succeeded",
+        responseSummary: { present: true, resolvedTo: "succeeded" },
+      });
+      return { kind: "create-rule", status: "applied", externalRuleId: found.externalRuleId };
+    }
+    try {
+      const result = await provider.apply(operation);
+      await ledger.succeed(key, redact(result));
+      await step({
+        step: "apply.create-rule",
+        status: "succeeded",
+        // `value` (a CIDR/IP/path/etc.) is deliberately included — it is
+        // the rule, not a secret (`redactPangolinRule`'s own doc).
+        requestSummary: redact(operation.rule),
+        responseSummary: redact(result),
+      });
+      return result;
+    } catch (error) {
+      const kind = errorKind(error);
+      await ledger.fail(key, { errorKind: kind });
+      await step({
+        step: "apply.create-rule",
+        status: "failed",
+        errorCode: kind,
+        errorDetail: "pangolin rule create failed",
+      });
+      await finish("failed", `rule create failed (${kind})`);
+      if (error instanceof ProviderCallError) throw error;
+      throw new ProviderCallError(kind, "pangolin rule create failed", { proxyResourceId, runId });
+    }
+  }
+
   async function reconcile(
     proxyResourceId: string,
     reconcileOptions: {
@@ -342,15 +720,24 @@ export function createProxyResourcesService(options: {
       orgId: string;
       actorUserId?: string | null;
       redact?: ResponseRedactor;
+      writeAuthorization?: ProxyWriteAuthorizationContext;
     },
   ): Promise<ReconcileProxyResourceResult> {
-    assertCheckModeOnly(reconcileOptions.mode);
+    // M4-specific and stricter than `assertWritePolicy`'s own trigger rule —
+    // see `assertApplyTriggerAllowed`'s doc. Checked before any read, any DB
+    // write, or any run row, matching M2's own "refuse before the call"
+    // discipline.
+    if (reconcileOptions.mode === "apply") {
+      assertApplyTriggerAllowed(reconcileOptions.trigger);
+    }
     const redact = reconcileOptions.redact ?? defaultProxyRedactor;
 
     const resource = await requireResource(db, proxyResourceId);
     const rules = await loadRules(db, proxyResourceId);
     const domainName = await requireDomainName(db, resource.domainId);
     const desired = buildDesired(resource, domainName, rules);
+    const ruleRowByNaturalKey = new Map<string, ProxyResourceRuleRow>();
+    for (const row of rules) ruleRowByNaturalKey.set(ruleNaturalKey(row), row);
 
     const runRows = await db
       .insert(reconcileRuns)
@@ -358,7 +745,7 @@ export function createProxyResourcesService(options: {
         kind: RECONCILE_PROXY_RESOURCE_RUN_KIND,
         subjectType: PROXY_RESOURCE_SUBJECT_TYPE,
         subjectId: proxyResourceId,
-        mode: "check",
+        mode: reconcileOptions.mode,
         trigger: reconcileOptions.trigger,
         actorUserId: reconcileOptions.actorUserId ?? null,
       })
@@ -369,7 +756,7 @@ export function createProxyResourcesService(options: {
     let sequence = 0;
     const step = async (entry: {
       step: string;
-      status: "succeeded" | "failed" | "skipped";
+      status: "succeeded" | "failed" | "skipped" | "blocked";
       requestSummary?: Record<string, unknown> | null;
       responseSummary?: Record<string, unknown> | null;
       errorCode?: string | null;
@@ -388,7 +775,7 @@ export function createProxyResourcesService(options: {
       });
     };
     const finish = async (
-      status: "succeeded" | "failed",
+      status: "succeeded" | "failed" | "partial",
       errorSummary: string | null,
     ): Promise<void> => {
       await db
@@ -457,16 +844,142 @@ export function createProxyResourcesService(options: {
       }
     }
 
-    // Check mode only, structurally — see the module doc.
-    await step({ step: "apply.skipped-check-mode", status: "skipped" });
+    let appliedCount = 0;
+    let runStatus: "succeeded" | "partial" = "succeeded";
 
-    await finish("succeeded", null);
+    if (reconcileOptions.mode !== "apply") {
+      await step({ step: "apply.skipped-check-mode", status: "skipped" });
+    } else {
+      const tier1Operations = plan.operations.filter(
+        (
+          op,
+        ): op is Extract<
+          ProxyOperation,
+          { kind: "create-resource" | "create-target" | "create-rule" }
+        > => op.kind === "create-resource" || op.kind === "create-target" || op.kind === "create-rule",
+      );
+      const tier2Operations = plan.operations.filter(
+        (op) => !tier1Operations.includes(op as (typeof tier1Operations)[number]),
+      );
+
+      if (tier2Operations.length > 0) {
+        runStatus = "partial";
+        await step({
+          step: "apply.tier2-not-implemented",
+          status: "skipped",
+          responseSummary: {
+            count: tier2Operations.length,
+            kinds: [...new Set(tier2Operations.map((op) => op.kind))],
+          },
+        });
+      }
+
+      if (tier1Operations.length === 0) {
+        await step({ step: "apply.none", status: "skipped" });
+      } else {
+        const writeAuthorization = reconcileOptions.writeAuthorization;
+        if (writeAuthorization === undefined) {
+          throw new InfrastructureValidationError(
+            "proxy resource apply requires a resolved writeAuthorization (policy tier, connection id) — the caller must resolve the connection's write policy before requesting mode: 'apply'",
+            { proxyResourceId },
+          );
+        }
+
+        let refusal: WritePolicyError | null = null;
+        try {
+          assertWritePolicy({
+            mode: "apply",
+            trigger: reconcileOptions.trigger,
+            policyTier: writeAuthorization.policyTier,
+            operationTier: 1,
+            actorIsAdmin: writeAuthorization.actorIsAdmin,
+            unblockHint:
+              `allow tier-1 (additive) writes for connection ${writeAuthorization.connectionId} — ` +
+              "flip infrastructure.provider_write_policy to at least 'additive' for this connection " +
+              "to create Pangolin objects here",
+          });
+        } catch (error) {
+          if (error instanceof WritePolicyError) refusal = error;
+          else throw error;
+        }
+
+        if (refusal === null) {
+          // Tier 1 is purely additive: only wouldLockOut's two SELF-MANAGED
+          // -RESOURCE clauses apply at this tier — see the module doc's
+          // "APPLY, now gated" section for why `no_operator_access` and
+          // `retires_only_live_alias_rule` are deliberately ignored here.
+          const observedSelf = observed.find(
+            (r) => r.externalResourceId === desired.externalResourceId,
+          );
+          const lockoutReason = wouldLockOut({
+            resource: {
+              fullDomain: desired.fullDomain,
+              isPangolinDashboard: (writeAuthorization.pangolinDashboardHosts ?? []).some((h) =>
+                hostMatches(desired.fullDomain, h),
+              ),
+              isLoxepSelf: (writeAuthorization.loxepSelfHosts ?? []).some((h) =>
+                hostMatches(desired.fullDomain, h),
+              ),
+            },
+            resultingRules: (observedSelf?.rules ?? []).map((r) => ({
+              action: r.action,
+              match: r.match,
+              value: r.value,
+              enabled: r.enabled,
+              aliasName: null,
+            })),
+            operatorContext: { currentAddresses: [], heldAuthMethods: [] },
+          });
+          if (lockoutReason === "loxep_self" || lockoutReason === "pangolin_dashboard_self") {
+            refusal = new WritePolicyError(
+              lockoutReason === "loxep_self"
+                ? "refused: this resource fronts Loxep itself — manage it from the Pangolin dashboard directly, out of band"
+                : "refused: this is the Pangolin dashboard's own resource — Loxep never manages it",
+              "write_policy",
+              { reason: lockoutReason, fullDomain: desired.fullDomain },
+            );
+          }
+        }
+
+        if (refusal !== null) {
+          runStatus = "partial";
+          const blocked = writePolicyBlockedStep(refusal);
+          await step({ step: "apply.blocked", ...blocked });
+        } else {
+          let createdResourceId: string | null = null;
+          for (const operation of tier1Operations) {
+            const result = await applyTier1Operation({
+              operation,
+              proxyResourceId,
+              runId: run.id,
+              provider: reconcileOptions.provider,
+              redact,
+              ruleRowByNaturalKey,
+              step,
+              finish,
+            });
+            if (result !== null) {
+              appliedCount += 1;
+              if (result.kind === "create-resource" && result.externalResourceId !== undefined) {
+                createdResourceId = result.externalResourceId;
+              }
+            }
+          }
+          if (createdResourceId !== null && createdResourceId !== resource.externalResourceId) {
+            await selfRetireIdentity(proxyResourceId, createdResourceId);
+          }
+        }
+      }
+    }
+
+    await finish(runStatus, null);
     return {
       proxyResourceId,
       runId: run.id,
-      status: "succeeded",
-      mode: "check",
+      status: runStatus,
+      mode: reconcileOptions.mode,
       operationCount: plan.operations.length,
+      appliedCount,
       unmatchedObservedCount: plan.unmatchedObserved.length,
     };
   }
@@ -476,14 +989,21 @@ export function createProxyResourcesService(options: {
     domainOptions: {
       mode: "apply" | "check";
       trigger: "intent_change" | "manual" | "poll";
-      resolveProvider: (
-        hostingTargetId: string,
-      ) => Promise<{ provider: ProxyProviderPort; orgId: string } | null>;
+      resolveProvider: (hostingTargetId: string) => Promise<
+        | {
+            provider: ProxyProviderPort;
+            orgId: string;
+            writeAuthorization?: ProxyWriteAuthorizationContext;
+          }
+        | null
+      >;
       actorUserId?: string | null;
       redact?: ResponseRedactor;
     },
   ): Promise<ReconcileProxyResourceResult[]> {
-    assertCheckModeOnly(domainOptions.mode);
+    if (domainOptions.mode === "apply") {
+      assertApplyTriggerAllowed(domainOptions.trigger);
+    }
 
     const resources = await db
       .select()
@@ -501,8 +1021,9 @@ export function createProxyResourcesService(options: {
           proxyResourceId: resource.id,
           runId: null,
           status: "skipped",
-          mode: "check",
+          mode: domainOptions.mode,
           operationCount: 0,
+          appliedCount: 0,
           unmatchedObservedCount: 0,
         });
         continue;
@@ -515,6 +1036,9 @@ export function createProxyResourcesService(options: {
         actorUserId: domainOptions.actorUserId ?? null,
         ...(domainOptions.redact !== undefined
           ? { redact: domainOptions.redact }
+          : {}),
+        ...(resolved.writeAuthorization !== undefined
+          ? { writeAuthorization: resolved.writeAuthorization }
           : {}),
       });
       results.push(result);

@@ -1,15 +1,31 @@
 /**
- * The Pangolin READ adapter — milestone 1 of `loxep-acj`
- * (`apps/docs/.../architecture/pangolin-chain-design.md`). ADR-0009: no
- * Pangolin response type is exported from this package. Everything crossing
- * this boundary is a Loxep-owned fact.
+ * The Pangolin adapter — read surface from milestone 1 of `loxep-acj`
+ * (`apps/docs/.../architecture/pangolin-chain-design.md`), tier-1 writes
+ * from milestone 4 (`loxep-acj.4`). ADR-0009: no Pangolin response type is
+ * exported from this package. Everything crossing this boundary is a
+ * Loxep-owned fact.
  *
- * **This milestone issues NO write verb anywhere, structurally.** There is
- * no operation union to widen and no configuration flag that unlocks a
- * write — the exported surface has no member named after a write verb, and
- * `operations.ts`'s `PANGOLIN_ALLOWED_NON_GET_PATHS` is empty.
- * `test/boundary.test.ts` asserts every request this adapter makes is a
- * `GET`.
+ * ## The four writes, and nothing else
+ *
+ * `createResource`, `addTarget`, `createRule` (all `PUT` — tier 1,
+ * additive, non-idempotent, no upsert) and `updateRuleEnabled` (`POST` —
+ * the disable/enable verb `add-then-retire`'s retirement half needs; ships
+ * at the adapter level now, but the ORCHESTRATION of retirement — the
+ * typed confirmation, the self-lockout preflight, the decision to actually
+ * call this method from a reconcile — is gated to a later milestone per an
+ * owner ruling not yet made, exactly as `container-hosts.ts`'s own closed
+ * operation union gates a widening). There is still no `deleteResource`,
+ * `deleteTarget`, `deleteRule`, `deleteSite`, or `deleteOrg` anywhere in
+ * this file, and there will never be one — see the design's verdict 3 and
+ * rule 5. `operations.ts`'s `PANGOLIN_ALLOWED_WRITE_SHAPES` is the closed,
+ * enumerable set `test/boundary.test.ts` holds this adapter to.
+ *
+ * ## Every write is a `PUT` except one — and that is backwards on purpose
+ *
+ * `PUT` creates, `POST` updates. `updateRuleEnabled` is the one `POST`.
+ * Get this backwards and a "create" silently updates something that
+ * already existed, or an "update" call 404s — see `operations.ts`'s own
+ * warning at the top of the file.
  *
  * ## Auth
  *
@@ -77,22 +93,21 @@
  * route above. `error` is a **boolean flag**, never a code string — see
  * `errors.ts` for the full classification and the HTTP-200-is-not-success
  * warning this shares with `@loxep/integration-purelymail`.
- *
- * ## Verb convention (irrelevant to M1, documented per the design's request)
- *
- * `PUT` creates, `POST` updates — the inversion of the usual REST
- * convention. M1 issues neither.
  */
 import { z } from "zod";
 import {
-  PANGOLIN_ALLOWED_NON_GET_PATHS,
   PANGOLIN_ALLOWED_PATH_PREFIXES,
+  isAllowedPangolinWrite,
+  pangolinCreateResourcePath,
+  pangolinCreateRulePath,
+  pangolinCreateTargetPath,
   pangolinDomainDnsRecordsPath,
   pangolinDomainsPath,
   pangolinOrgSitePath,
   pangolinOrgsPath,
   pangolinResourcePath,
   pangolinResourcesPath,
+  pangolinRulePath,
   pangolinRulesPath,
   pangolinSitePath,
   pangolinSitesPath,
@@ -249,7 +264,8 @@ export interface PangolinDomainDnsRecordFact {
  */
 export interface PangolinCapabilities {
   provider: "pangolin";
-  readOnly: true;
+  /** `false` from M4 (`loxep-acj.4`): this adapter can issue the four tier-1/POST writes named on {@link PangolinAdapter}. Whether it MAY is a separate, per-connection question — `infrastructure.provider_write_policy` (`@loxep/infrastructure`'s `write-policy.ts`), never this field. */
+  readOnly: boolean;
   /** Resource-policy bulk rule endpoint — Cloud/Enterprise-licence-gated, per the design document's citation. `false` for a self-hosted build. */
   bulkRuleSet: boolean;
   /** Constant `false` — no provider alias/IP-group primitive exists (design document's resolved open question 4). */
@@ -277,6 +293,47 @@ export interface PangolinAdapterStats {
   rateBudget: RateBudgetStats;
 }
 
+/**
+ * The create/add payload for a public resource. `subdomain: null` is an apex
+ * resource. Everything else the API accepts (`http`/`protocol`) is the
+ * deprecated pre-`mode` pair and this adapter never sends it.
+ */
+export interface PangolinCreateResourcePayload {
+  name: string;
+  domainId: string;
+  subdomain: string | null;
+  mode: string;
+  proxyPort?: number | null;
+  ssl?: boolean;
+  enabled?: boolean;
+}
+
+/** The create/add payload for a target. `siteId` accepts either representation `listSites` returns. */
+export interface PangolinCreateTargetPayload {
+  siteId: string | number;
+  ip: string;
+  port: number;
+  method?: string | null;
+  enabled?: boolean;
+  path?: string | null;
+  pathMatchType?: string | null;
+  priority?: number;
+}
+
+/**
+ * The create payload for a rule, and ALSO the shape `updateRuleEnabled` must
+ * send in full — the design's binding rule: `priority` is required on every
+ * rule write, and an update that omits it silently reorders evaluation. Never
+ * send a partial rule payload to either verb.
+ */
+export interface PangolinRulePayload {
+  action: string;
+  match: string;
+  value: string;
+  priority: number;
+  enabled: boolean;
+}
+
 export interface PangolinAdapter {
   probe(): Promise<PangolinProbeFact>;
   listOrgs(): Promise<PangolinOrgFact[]>;
@@ -291,6 +348,49 @@ export interface PangolinAdapter {
   /** A client-side filter over `listDomains` — no dedicated "find by name" endpoint exists in source. */
   findDomainByBaseName(orgId: string, baseDomain: string): Promise<PangolinDomainFact | null>;
   listDomainDnsRecords(orgId: string, domainId: string): Promise<PangolinDomainDnsRecordFact[]>;
+  /**
+   * TIER 1, additive. `PUT /org/{orgId}/resource`. NON-IDEMPOTENT — no
+   * upsert exists anywhere in this API, so a caller MUST ledger this through
+   * `provider_operations` (`@loxep/infrastructure`'s `proxy.ts`) rather than
+   * retry it blindly. Read-back resolution: `listResources` matched on
+   * `niceId`.
+   */
+  createResource(
+    orgId: string,
+    payload: PangolinCreateResourcePayload,
+  ): Promise<PangolinResourceFact>;
+  /**
+   * TIER 1, additive. `PUT /resource/{resourceId}/target`. NON-IDEMPOTENT.
+   * Read-back resolution: `listTargets` matched on `(siteId, ip, port)`.
+   */
+  addTarget(
+    resourceId: string,
+    payload: PangolinCreateTargetPayload,
+  ): Promise<PangolinTargetFact>;
+  /**
+   * TIER 1, additive, and the owner's headline use case. `PUT
+   * /resource/{resourceId}/rule`. NON-IDEMPOTENT — a `PUT` here always
+   * inserts. Read-back resolution: `listRules` matched on
+   * `(action, match, value, priority)`.
+   */
+  createRule(
+    resourceId: string,
+    payload: PangolinRulePayload,
+  ): Promise<PangolinRuleFact>;
+  /**
+   * The disable/enable verb `add-then-retire`'s retirement half needs.
+   * `POST /resource/{resourceId}/rule/{ruleId}` — the one `POST` among the
+   * four writes, and the one place a wrong-verb bug would be invisible
+   * until it silently 404s or updates the wrong thing. `payload` must carry
+   * the rule's FULL comparable set (never only `enabled`) — see
+   * {@link PangolinRulePayload}'s doc. Convergent, not ledgered: an update
+   * is not a non-idempotent create.
+   */
+  updateRuleEnabled(
+    resourceId: string,
+    ruleId: string,
+    payload: PangolinRulePayload,
+  ): Promise<PangolinRuleFact>;
   capabilities(): PangolinCapabilities;
   stats(): PangolinAdapterStats;
 }
@@ -564,31 +664,61 @@ export function createPangolinAdapter(input: CreatePangolinAdapterInput): Pangol
 
   const authorization = `Bearer ${credentials.apiKeyId}.${credentials.apiKeySecret}`;
 
-  const request = async (path: string, operation: string): Promise<unknown> => {
+  /**
+   * The one generic call function every request in this adapter goes
+   * through — reads AND writes. `method` defaults to `GET`; a write passes
+   * `PUT`/`POST` plus a `body`, and the guard below checks it against
+   * `operations.ts`'s closed {@link PANGOLIN_ALLOWED_WRITE_SHAPES} rather
+   * than the read-only path-prefix list, so an undeclared write shape fails
+   * HERE — never at the provider, and never by accident through a future
+   * edit to a read method.
+   */
+  const request = async (
+    path: string,
+    operation: string,
+    init: { method?: "GET" | "PUT" | "POST"; body?: unknown } = {},
+  ): Promise<unknown> => {
+    const method = init.method ?? "GET";
     const context: PangolinErrorContext = { operation, path };
 
-    // Belt-and-suspenders, mirroring every sibling adapter: unreachable
-    // through the exported surface (there is no member that could build an
-    // undeclared path), but it exists so a future edit adding one fails
-    // here rather than at the provider.
-    const allowed = PANGOLIN_ALLOWED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
-    if (!allowed && !PANGOLIN_ALLOWED_NON_GET_PATHS.includes(path)) {
+    if (method === "GET") {
+      // Belt-and-suspenders, mirroring every sibling adapter: unreachable
+      // through the exported surface (there is no member that could build
+      // an undeclared path), but it exists so a future edit adding one
+      // fails here rather than at the provider.
+      const allowed = PANGOLIN_ALLOWED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix));
+      if (!allowed) {
+        throw new PangolinAdapterError(
+          "invalid_request",
+          "Pangolin adapter refused a request to an undeclared path",
+          { operation, path },
+        );
+      }
+    } else if (!isAllowedPangolinWrite(method, path)) {
+      // Unreachable through the exported surface — there is no member that
+      // could build a write outside the four declared shapes, and DELETE is
+      // not a shape at all. Exists so a future edit fails here rather than
+      // at Pangolin.
       throw new PangolinAdapterError(
         "invalid_request",
-        "Pangolin adapter refused a request to an undeclared path",
-        { operation, path },
+        "Pangolin adapter refused a write outside the four declared tier-1/POST shapes",
+        { operation, path, method },
       );
     }
 
     await rateBudget.acquire(1);
 
     const url = `${config.baseUrl}${path}`;
+    const headers: Record<string, string> = { accept: "application/json", authorization };
+    if (init.body !== undefined) headers["content-type"] = "application/json";
+
     let response: Response;
     try {
       response = await fetchImpl(url, {
-        method: "GET",
-        headers: { accept: "application/json", authorization },
+        method,
+        headers,
         signal: AbortSignal.timeout(config.timeoutMs),
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
       });
     } catch (error) {
       throw normalizePangolinError(error, context);
@@ -824,10 +954,110 @@ export function createPangolinAdapter(input: CreatePangolinAdapterInput): Pangol
       return facts;
     },
 
+    async createResource(orgId: string, payload: PangolinCreateResourcePayload) {
+      const path = pangolinCreateResourcePath(orgId);
+      const body = await request(path, "resource.create", {
+        method: "PUT",
+        body: {
+          name: payload.name,
+          domainId: payload.domainId,
+          subdomain: payload.subdomain,
+          mode: payload.mode,
+          ...(payload.proxyPort !== undefined ? { proxyPort: payload.proxyPort } : {}),
+          ...(payload.ssl !== undefined ? { ssl: payload.ssl } : {}),
+          ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {}),
+        },
+      });
+      const fact = toResourceFact(body);
+      if (fact === null) {
+        throw new PangolinAdapterError(
+          "provider_unavailable",
+          "Pangolin created a resource but returned no readable record",
+          { operation: "resource.create", path },
+        );
+      }
+      return fact;
+    },
+
+    async addTarget(resourceId: string, payload: PangolinCreateTargetPayload) {
+      const path = pangolinCreateTargetPath(resourceId);
+      const body = await request(path, "target.create", {
+        method: "PUT",
+        body: {
+          siteId:
+            typeof payload.siteId === "number"
+              ? payload.siteId
+              : (toNumberOrNull(payload.siteId) ?? payload.siteId),
+          ip: payload.ip,
+          port: payload.port,
+          ...(payload.method !== undefined ? { method: payload.method } : {}),
+          ...(payload.enabled !== undefined ? { enabled: payload.enabled } : {}),
+          ...(payload.path !== undefined ? { path: payload.path } : {}),
+          ...(payload.pathMatchType !== undefined ? { pathMatchType: payload.pathMatchType } : {}),
+          ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+        },
+      });
+      const fact = toTargetFact(body);
+      if (fact === null) {
+        throw new PangolinAdapterError(
+          "provider_unavailable",
+          "Pangolin created a target but returned no readable record",
+          { operation: "target.create", path },
+        );
+      }
+      return fact;
+    },
+
+    async createRule(resourceId: string, payload: PangolinRulePayload) {
+      const path = pangolinCreateRulePath(resourceId);
+      const body = await request(path, "rule.create", {
+        method: "PUT",
+        body: {
+          action: payload.action,
+          match: payload.match,
+          value: payload.value,
+          priority: payload.priority,
+          enabled: payload.enabled,
+        },
+      });
+      const fact = toRuleFact(body);
+      if (fact === null) {
+        throw new PangolinAdapterError(
+          "provider_unavailable",
+          "Pangolin created a rule but returned no readable record",
+          { operation: "rule.create", path },
+        );
+      }
+      return fact;
+    },
+
+    async updateRuleEnabled(resourceId: string, ruleId: string, payload: PangolinRulePayload) {
+      const path = pangolinRulePath(resourceId, ruleId);
+      const body = await request(path, "rule.update_enabled", {
+        method: "POST",
+        body: {
+          action: payload.action,
+          match: payload.match,
+          value: payload.value,
+          priority: payload.priority,
+          enabled: payload.enabled,
+        },
+      });
+      const fact = toRuleFact(body);
+      if (fact === null) {
+        throw new PangolinAdapterError(
+          "provider_unavailable",
+          "Pangolin updated a rule but returned no readable record",
+          { operation: "rule.update_enabled", path },
+        );
+      }
+      return fact;
+    },
+
     capabilities() {
       return {
         provider: "pangolin",
-        readOnly: true,
+        readOnly: false,
         bulkRuleSet: false,
         ruleAliases: false,
         ruleDisable: true,

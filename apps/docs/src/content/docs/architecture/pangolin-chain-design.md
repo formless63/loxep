@@ -8,7 +8,7 @@ This document designs the **last provider in the Phase 7 chain** and the **templ
 
 This is also the first integration in Loxep whose writes can **lock the owner out of their own services**. A wrong bypass rule, a deleted resource, or a rule update that replaces a working address with a wrong one removes the operator's own access to the estate — including, in this installation, access to Loxep itself. The [write-authorization model](#the-write-risk-model) is therefore the load-bearing part of this design, not the adapter surface, and it is flagged **OWNER-REVIEW-CRITICAL**. Nothing about milestone 1 touches this section: M1 has no write verb at all.
 
-**Implementation status, updated 2026-08-15 (`loxep-acj.2`, M2 shipped on top of M1):** `@loxep/integration-pangolin` (M1) ships the read surface, the five-kind taxonomy, the rate budget, the credential bundle (`pangolin_credentials` in `@loxep/domain`), the redactors, a catalog entry + guided form + connecting guide, and a live reconnaissance run (see the closeout note below). M2 lands the reserved contract into `packages/infrastructure/src/tasks.ts` for real: `proxy-port.ts` (the `ProxyProviderPort` + pure planner), `proxy.ts` (`infrastructure.sync-proxy-resource`'s service, CHECK MODE ONLY), migration `0027` (`proxy_resources`/`proxy_resource_rules`, and `reconcile_runs.subject_type` widened to include `proxy_resource`), and `packages/app`'s composition-root wiring (`pangolin.ts`'s per-connection adapter factory, `infrastructure-proxy.ts`'s `proxyProviderPortFromPangolinAdapter` + task registration in `registry.ts`). `hosting_targets.proxy_connection_id` (nullable since migration `0012`) now drives the provider resolution for real; `hosting_targets.external_site_id` is exposed on the same fleet-detail panel that links a connection. Fleet detail (`/infrastructure/fleet/$name`) and domain detail (`/infrastructure/domains/$name`) render the chain. Nothing writes to Pangolin: the M1 adapter has no write verb at all, and `proxy.ts`'s `reconcile()`/`reconcileDomain()` both throw `ProxyWritePolicyError` before any provider call if `mode: 'apply'` is ever requested — the write-authorization gate (M3, `loxep-acj.3`) has not shipped. Children are filed under `loxep-acj`.
+**Implementation status, updated 2026-08-16 (`loxep-acj.4`, M4 shipped on top of M3 — see the M4 closeout note below):** `@loxep/integration-pangolin` (M1) ships the read surface, the five-kind taxonomy, the rate budget, the credential bundle (`pangolin_credentials` in `@loxep/domain`), the redactors, a catalog entry + guided form + connecting guide, and a live reconnaissance run (see the closeout note below). M2 lands the reserved contract into `packages/infrastructure/src/tasks.ts` for real: `proxy-port.ts` (the `ProxyProviderPort` + pure planner), `proxy.ts` (`infrastructure.sync-proxy-resource`'s service, CHECK MODE ONLY), migration `0027` (`proxy_resources`/`proxy_resource_rules`, and `reconcile_runs.subject_type` widened to include `proxy_resource`), and `packages/app`'s composition-root wiring (`pangolin.ts`'s per-connection adapter factory, `infrastructure-proxy.ts`'s `proxyProviderPortFromPangolinAdapter` + task registration in `registry.ts`). `hosting_targets.proxy_connection_id` (nullable since migration `0012`) now drives the provider resolution for real; `hosting_targets.external_site_id` is exposed on the same fleet-detail panel that links a connection. Fleet detail (`/infrastructure/fleet/$name`) and domain detail (`/infrastructure/domains/$name`) render the chain. M3 builds the write-authorization GATE, not a Pangolin write verb: `infrastructure.provider_write_policy` (a registered setting, four ordinal tiers, `@loxep/domain`'s `provider-write-policy.ts`), `write-policy.ts`'s `assertWritePolicy` + `wouldLockOut` self-lockout preflight, a `'blocked'` reconcile step state wired into Cloudflare's and Purelymail's own apply paths (`sync.ts`/`mail-sync.ts`), the admin-only flip with its audit event (`apps/web`'s `setConnectionWritePolicy`), and the typed-confirmation dialog primitive (unused until M4). M4 wires `write-policy.ts` into `proxy.ts`'s real apply leg: `@loxep/integration-pangolin` gains `createResource`/`addTarget`/`createRule` (PUT, tier 1) and `updateRuleEnabled` (POST, adapter-level only), each behind `operations.ts`'s`provider_operations` ledger; `reconcile()` applies the tier-1 subset of a plan for real (behind `assertWritePolicy` + `wouldLockOut`'s self-managed-resource clauses) and records any tier-2 operation as skipped rather than applied, since M4 ships no tier-2 verb; `apps/web` gained an admin-only, typed-confirmed Apply action on the domain-detail proxy panel. Children are filed under `loxep-acj`.
 
 :::note[M1 closeout — read this before M2]
 Milestone 1's live reconnaissance (2026-08-15, against the owner's real instance, read-only) found the standalone Integration API server's port is **not reachable from the build/CI network on any path tried** — not the public origin, not any of five plausible dedicated-subdomain guesses, not a confirmed direct Tailscale connection to the actual Pangolin host. One genuine live confirmation did land: the dashboard's own sibling `/api/v1` route (session-cookie-gated, sharing the same response-wrapper code) answered `HTTP 401` with `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` — live proof of the envelope shape this design predicted from documentation, even though the bearer-authenticated Integration API surface itself remains unverified against a live read. `test/live-pangolin.test.ts` records this as a `not_found` classification (an HTTP 404 from the dashboard's own catch-all route) rather than crashing, and is written to start exercising real reads with no code change once the operator's instance has a working reverse-proxy route for the Integration API's port. Two source-verified corrections against this document's original endpoint table are folded in below: the canonical resource path is `/resource` (not `/public-resource`, which is a registered alias), and every list endpoint except DNS records nests its array under a named key plus a `pagination` object rather than answering a bare array. M2 should re-run the live suite as its own first step, once reachability is fixed, before building the reconciler on top of unverified read shapes.
@@ -16,6 +16,14 @@ Milestone 1's live reconnaissance (2026-08-15, against the owner's real instance
 
 :::note[M2 closeout — read this before M3]
 The Integration API's reachability had not changed as of M2's implementation (2026-08-15): still unreachable from this build network, so M2's own live-verification attempt was not re-run — re-running `test/live-pangolin.test.ts` (`LOXEP_LIVE_TESTS=pangolin`) remains the correct first step once the operator adds the missing reverse-proxy route, and it needs no code change to start reporting real counts. Every M2 test (`packages/infrastructure/test/proxy-port.test.ts`, `proxy.test.ts`, `targets.test.ts`; `packages/app/test/infrastructure-proxy.test.ts`) drives a fake `ProxyProviderPort` or a stub `PangolinAdapter` — noted honestly rather than silently, per this design's own opening instruction. One structural choice worth recording for M3: `proxy_resources`/`proxy_resource_rules` carry no target-intent table (`ObservedProxyTarget`/`DesiredProxyTarget` exist in the port's type surface and are exhaustively planner-tested, but `proxy.ts`'s real `buildDesired()` always supplies an empty `targets: []` this milestone) — a resource's origin is expressed once, as `proxy_resources.hosting_target_id`, and Pangolin's own per-target `{siteId, ip, port}` shape has no Loxep-side intent column yet. M3 (or whichever milestone first needs to CREATE a target) is where that gap gets a real answer — a computed target from `hosting_targets`' own address plus a new port column, or a dedicated intent table — rather than this milestone guessing at one no write path exercises. `hosting_targets.proxy_connection_id`/`external_site_id` are now editable in-app (`/infrastructure/fleet/$name`'s new "Proxy connection" panel, `HostingTargetsService.updateProxyConnection`) — the one write this milestone ships anywhere, and it edits Loxep's own row, never Pangolin.
+:::
+
+:::note[M4 closeout — verified against fakes only, read this before the first live write]
+Milestone 4's whole write leg — the adapter's four verbs, `proxy.ts`'s ledgered apply, `write-policy.ts`'s gate, the `apps/web` Apply action — was built and exhaustively tested against fake providers and a scratch database (`packages/integrations/pangolin`, `packages/infrastructure`, `packages/app` suites), never against a live Pangolin instance: the owner's connection stayed `read_only` throughout this session by deliberate policy (`owner-credential-constraints` memory, 2026-08-15 — the owner's key is full-scope but that instance does not host loxep.com, and the owner was not present to watch a first write), and no code path here was ever exercised with `LOXEP_LIVE_TESTS` against a real create. The **FIRST WRITE PROTOCOL** (a throwaway resource on a throwaway subdomain, created for the purpose, with the owner watching) is therefore still ahead of this design, not behind it, and `loxep-acj.4` stays open on exactly that basis.
+
+Two structural gaps carried over from M2, unclosed by design (not migration-shaped work this milestone was authorized to do): `buildDesired()` still supplies `targets: []`, so `createTarget`'s ledgered-apply code is real and unit-tested but cannot fire from a live `reconcile()` call until a future milestone gives `hosting_targets` a target-intent path; and `updateRuleEnabled` ships at the adapter level only — nothing in `@loxep/infrastructure` or `apps/web` calls it, because the retirement half of add-then-retire (the typed confirmation, the self-lockout preflight, the decision to actually disable something) is M7's scope, gated on an owner ruling open question 2 has not yet answered.
+
+One coordination note worth recording for future concurrent milestones: `write-policy.ts` and `@loxep/domain`'s `provider-write-policy.ts` were built by the M3 (`loxep-acj.3`) session CONCURRENTLY, in the same working tree, while M4 was already in progress. M4 had authored its own placeholder gate (a binary `connections.config.writePolicy` flag) to stay unblocked; M3's real four-tier contract landed and superseded it before M4's own apply leg ever called it, so zero rework was needed once the real module appeared — evidence the documented seam (`assertWritePolicy`'s signature, `wouldLockOut`'s pure predicate) was specified precisely enough for two concurrent sessions to meet in the middle without a merge conflict in behavior, only in which file owned the code.
 :::
 
 ## What already exists, and what this design may not re-invent
@@ -287,7 +295,7 @@ interface PangolinCapabilities {
 
 ### Writes — the minimal set, each with its risk note
 
-Nothing here ships before [milestone 3](#milestones-sequenced-by-write-risk) has built the gate.
+The tier-1 rows below (`createResource`, `createTarget`, `createRule`) shipped in milestone 4, behind the gate milestone 3 built. `updateRuleEnabled` (a rename of the `updateRule` row below, since the shipped version is used ONLY for the `enabled` flip — see the design's own verdict 3) shipped at the adapter level in milestone 4 too; nothing above the adapter calls it yet. The tier-2 rows (`updateResource`, `updateTarget`) remain unimplemented anywhere.
 
 ```text
 createResource(orgId, payload)          TIER 1  additive
@@ -716,22 +724,81 @@ M2  INTENT + CHECK-MODE RECONCILER      SHIPPED 2026-08-15, loxep-acj.2
     network (M1's finding, unchanged), so every M2 test drives a fake
     ProxyProviderPort — noted honestly rather than silently.
 
-M3  THE WRITE-AUTHORIZATION MODEL      *** OWNER RULING REQUIRED ***
-    infrastructure.provider_write_policy (per connection, default
-    read_only), the admin flip with its audit event, the four tiers, the
-    self-lockout preflight, the typed-confirmation primitive, and the
-    'blocked' step state. Applied to Cloudflare and Purelymail too, since
-    both of the owner's current credentials are read-only by policy.
-    Ships with no Pangolin write verb — this milestone builds the gate,
-    not the thing behind it.
+M3  THE WRITE-AUTHORIZATION MODEL      SHIPPED 2026-08-16, loxep-acj.3
+    Owner ruling recorded 2026-08-15 (pangolin-credential-constraints
+    memory): writes admin-only in Loxep; retirement is disable-not-delete
+    CONFIRMED; dynamic-IP alias updates MAY auto-apply. Open questions 1
+    and 3 resolve on that ruling — see below.
+    infrastructure.provider_write_policy (@loxep/domain's
+    provider-write-policy.ts + settings-defaults.ts) is a REGISTERED
+    SETTING keyed by connection id, value one of the FOUR tier names
+    (read_only default / additive / access_affecting / lockout_class) —
+    an ordinal, not the two-value read_only/allow flag this milestone's
+    own scope text first sketched, because the owner's auto-apply ruling
+    needs a policy tier that permits ONLY scoped (tier-1, additive)
+    unattended writes, which a binary switch cannot express. The
+    admin-only flip (apps/web's setConnectionWritePolicy) is audited via
+    SettingsService.set's own transaction — no bespoke audit code.
+    write-policy.ts (@loxep/infrastructure) ships assertWritePolicy (the
+    generalized form of M2's unconditional assertCheckModeOnly: mode
+    apply requires policyRank >= operationTier, a 'sweep'/'poll' trigger
+    may never apply tier >= 2 regardless of policy, and a known non-admin
+    actor always refuses) and wouldLockOut, the self-lockout preflight — a
+    PURE predicate over the resulting rule set with no policy parameter
+    at all, so it is never bypassable by raising a connection's tier. It
+    refuses on: the resource fronts Loxep itself; the resource is the
+    Pangolin dashboard's own; the resulting rules grant the operator
+    neither a matching address rule nor an auth method they hold; the
+    operation retires the only live rule referencing an alias.
+    A 'blocked' reconcile_run_steps status ships (no migration needed —
+    the column is untyped text) and is wired into TWO real apply paths
+    today, not only Pangolin's future one: packages/infrastructure's
+    sync.ts (Cloudflare DNS) and mail-sync.ts (Purelymail), both
+    optionally gated by a `connectionId` constructor option the
+    composition root now supplies
+    (infrastructure-poll-executor.ts/infrastructure-mail.ts) — the
+    cross-provider half of rule 1, giving both of the owner's read-only-
+    by-policy credentials their honest early 'blocked' instead of a
+    provider auth failure after the fact. proxy.ts's own M2 refusal is
+    untouched by this milestone (concurrent M4 work owns wiring
+    write-policy.ts into it).
+    The typed-confirmation dialog (apps/web/src/components/ui/
+    typed-confirmation-dialog.tsx) ships as a shared primitive — primary
+    action disabled until the operator's typed input exactly matches the
+    resource's own name. Nothing calls it yet; M4's tier-3 writes are its
+    first consumer. No e2e render-check was added this milestone (the
+    harness needs Docker + a production build, outside this session's
+    scope) — a fast-follow, or M4 can cover it once real usage exists.
+    The connections table (/settings/connections) gets an admin-only
+    "Write policy" column (hidden by default, one toggle away in the View
+    menu — pending re-verification of the table's 1440px no-scroll
+    layout with a ninth column), shown only for the three providers this
+    policy is actually wired to check today (Cloudflare, Purelymail,
+    Pangolin); every other provider reads "not applicable" rather than a
+    control that would silently do nothing.
 
-M4  TIER-1 PANGOLIN WRITES             gate: M3 shipped + owner flips the
-                                             connection to 'allow'
-    create resource, add target, ADD rule. The first real payoff is
-    loxep-v29: bypass rules scoped to the API path prefixes Loxep's
-    Dockhand and Termix adapters use, applied across resources in one
-    action instead of one dashboard visit each.
-    First write targets a throwaway resource, with the owner watching.
+M4  TIER-1 PANGOLIN WRITES             SHIPPED 2026-08-16, loxep-acj.4
+                                        (against fakes only — see the M4
+                                        closeout note)
+    create resource, add target, ADD rule, PLUS updateRuleEnabled at the
+    adapter level (the disable/enable verb add-then-retire's retirement
+    half needs; its ORCHESTRATION stays gated to a later milestone). Each
+    is ledgered through provider_operations, non-idempotent with no
+    upsert, read-back resolvable. proxy.ts applies the tier-1 subset for
+    real behind write-policy.ts's assertWritePolicy + the self-managed-
+    resource half of wouldLockOut; any tier-2 operation in a plan is
+    recorded as skipped, not applied, regardless of policy tier — M4
+    ships no tier-2 verb. apps/web gained an admin-only, typed-confirmed
+    Apply action per domain.
+    The payoff loxep-v29 named — bypass rules scoped to the API path
+    prefixes Loxep's Dockhand and Termix adapters use, applied across
+    resources in one action instead of one dashboard visit each — is now
+    MECHANICALLY POSSIBLE but not yet exercised: loxep-v29 itself closed
+    2026-08-14 via the owner's manual Pangolin-dashboard bypass, before
+    this milestone existed, so nothing here needed to re-do that fix; see
+    its notes for what M4 adds for a similar future situation.
+    First write STILL targets a throwaway resource, with the owner
+    watching — not attempted this session (see the closeout note).
 
 M5  DYNAMIC-IP ALIASES                 gate: M4 + owner ruling on auto-apply
     infrastructure.ip_aliases, the manual and DNS detectors, alias
@@ -770,25 +837,11 @@ M1 and M2 can ship against the owner's live instance today with no ruling and no
 
 Each item is a genuinely unresolved decision with a recommendation, not a placeholder. **A recommendation is not an answer.** Items marked **OWNER-REVIEW-CRITICAL** are unrecoverable once real provider state exists, or can remove the owner's own access, and must be answered before the milestone that depends on them starts.
 
-1. **OWNER-REVIEW-CRITICAL — Is the four-tier write-authorization model the right shape, and is a per-connection stored write policy defaulting to `read_only` acceptable?**
+1. ~~**OWNER-REVIEW-CRITICAL — Is the four-tier write-authorization model the right shape, and is a per-connection stored write policy defaulting to `read_only` acceptable?**~~ **RESOLVED by owner ruling, 2026-08-15** (`pangolin-credential-constraints` memory): yes, adopted for Cloudflare and Purelymail at the same time, not only for Pangolin — writes are admin-only in Loxep, and no out-of-band bootstrap-env/CLI requirement was added on top of the stored flag. M3 (`loxep-acj.3`) ships it as a REGISTERED SETTING (`infrastructure.provider_write_policy`, `@loxep/domain`'s `provider-write-policy.ts`) rather than the two-value `read_only`/`allow` flag this section originally sketched: the ruling's auto-apply allowance (open question 3, also resolved below) needs a policy tier that can permit ONLY scoped, tier-1 unattended writes, which a binary switch cannot express — see `additive`, the third of four ordinal tiers (`read_only` / `additive` / `access_affecting` / `lockout_class`).
 
-   *Recommendation:* yes, and adopt it for Cloudflare and Purelymail at the same time rather than only for Pangolin. Both of the owner's current credentials are broad and ruled read-only by policy rather than by scope; a stored flag is the only place that policy can actually live, and it converts "the write will fail with `auth` after we decided to make it" into "we refused before the call and told you which flip unblocks it".
+2. ~~**OWNER-REVIEW-CRITICAL — May Loxep retire a rule at all, given that retirement is now `enabled: false` rather than a delete?**~~ **RESOLVED by owner ruling, 2026-08-15**: retirement = disable, never delete, CONFIRMED — permitted at M7, behind the typed confirmation and the preflight, never from a sweep, per this section's own recommendation. Loxep still never issues `DELETE` to Pangolin, in any milestone.
 
-   *The owner must confirm:* whether a stored flag is enough, or whether write authorization should additionally require something out-of-band (a bootstrap env var, a CLI action) so that a compromised admin session cannot enable writes to the access proxy. The design's own view is that an env var here would violate the configuration rule that only bootstrap/pre-DB facts are env vars — but the blast radius is unusual enough to be worth asking.
-
-2. **OWNER-REVIEW-CRITICAL — May Loxep retire a rule at all, given that retirement is now `enabled: false` rather than a delete?**
-
-   The research narrowed this question considerably. Pangolin's rule update carries an `enabled` boolean, so there is no unrecoverable form of retirement to rule on — only a reversible one. **The design's answer is that Loxep never issues `DELETE` to Pangolin, ever**, and that stands whichever way this question goes.
-
-   *Recommendation:* permit disable-retirement at M7, behind the typed confirmation and the preflight, never from a sweep. The alternative — Loxep only ever *adds* rules and the operator disables superseded ones in the dashboard — is genuinely viable, costs only that stale disabled-able rules accumulate, and is the safer default if the owner would rather Loxep's blast radius stayed strictly additive.
-
-   *The owner must confirm:* which they want. Shipping a retirement verb "because add-then-retire is incomplete without one" is exactly the reasoning `ContainerHostOperation`'s closed union exists to prevent — and an accumulating pile of superfluous ACCEPT rules is itself a security smell, so neither answer is free.
-
-3. **OWNER-REVIEW-CRITICAL — May a dynamic-IP alias change auto-apply?**
-
-   *Recommendation:* ship `autoApply: false` and leave it off. Permit it, if at all, only for `add` operations, only for a detector-backed alias, and never for retirement — so the worst case of a bad detection is a superfluous rule rather than a lost route in. Notify either way.
-
-   *The owner must confirm:* whether one-click at 4am is acceptable, or whether the convenience is worth the class of failure where Loxep silently rewrites an access rule from a value it inferred.
+3. ~~**OWNER-REVIEW-CRITICAL — May a dynamic-IP alias change auto-apply?**~~ **RESOLVED by owner ruling, 2026-08-15**: dynamic-IP alias updates MAY auto-apply (owner rationale: a stale IP rule is itself the lockout — still ledgered and notified either way). Not built by M3 or M5's own PROVISIONAL default — M3's obligation was to ship a write-policy model able to express the SCOPED permission this needs (the `additive` tier, permitted only for `add` operations, never retirement — see open question 1's resolution), which it does; M5 (`loxep-acj.5`) still owns the detector, the fan-out, and whatever default `autoApply` actually ships with.
 
 4. ~~**Does Pangolin have an alias primitive?**~~ **RESOLVED by research, 2026-08-15: no, and it is not coming.** The "Aliases" feature is a client-side DNS name for private-resource destinations and is not referenceable from a rule; the shared-IP-set pull request ([#1248](https://github.com/fosrl/pangolin/pull/1248)) was closed unmerged; the maintainer's answer to the rule-groups request was that resource policies cover it, and those are Cloud/Enterprise only. Loxep's own named alias is therefore the missing primitive, not a convenience, and the fan-out is Loxep's to own. Re-verify at M1 in case a release changes this.
 

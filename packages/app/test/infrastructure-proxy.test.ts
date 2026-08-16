@@ -27,8 +27,11 @@
  * 3. **`hosting_targets.proxy_connection_id` drives the provider
  *    resolution** — `null` when unset (recorded as `skipped`, never a
  *    failure), a real connection when set.
- * 4. **A stray `mode: 'apply'` in the job payload fails the job loudly**,
- *    through the real worker, rather than being silently downgraded.
+ * 4. **A stray `mode: 'apply'` in the job payload against a `read_only`
+ *    (default) connection is refused by the write-authorization gate and
+ *    recorded as a 'blocked' step — never silently downgraded to check
+ *    mode, and never a job FAILURE either (M4, `loxep-acj.4`; "blocked" is
+ *    a first-class state per the design's rule 2).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
@@ -92,9 +95,18 @@ beforeAll(async () => {
         async listRules() {
           return [];
         },
+        async createResource(_orgId: string, payload: { name: string }) {
+          return { resourceId: 1, niceId: "stub-resource", name: payload.name } as never;
+        },
+        async addTarget() {
+          return { targetId: 1 } as never;
+        },
+        async createRule() {
+          return { ruleId: 1 } as never;
+        },
         capabilities: () => ({
           provider: "pangolin" as const,
-          readOnly: true as const,
+          readOnly: false as const,
           bulkRuleSet: false,
           ruleAliases: false as const,
           ruleDisable: true,
@@ -212,19 +224,59 @@ describe("the structural port re-declaration", () => {
     expect(typeof port.capabilities).toBe("function");
   });
 
-  it("apply() throws — no write verb exists in the milestone-1 adapter", async () => {
+  it("apply() dispatches create-resource to the REAL adapter, from M4 (loxep-acj.4)", async () => {
+    const adapter = createPangolinAdapter({
+      config: { baseUrl: "https://pangolin.test", orgId: "home-lab" },
+      credentials: { apiKeyId: "fake-id", apiKeySecret: "fake-secret" },
+      fetchImpl: async (_url, init) => {
+        expect(init.method).toBe("PUT");
+        return new Response(
+          JSON.stringify({
+            data: { resourceId: 42, niceId: "dockhand", fullDomain: "dockhand.example.com" },
+            success: true,
+            error: false,
+            message: "",
+            status: 200,
+          }),
+          { status: 200 },
+        );
+      },
+    });
+    const port = proxyProviderPortFromPangolinAdapter(adapter, "home-lab");
+    const result = await port.apply({
+      kind: "create-resource",
+      resource: { name: "x", domainId: "1", subdomain: null, mode: "http" },
+    });
+    expect(result).toEqual({ kind: "create-resource", status: "applied", externalResourceId: "42" });
+  });
+
+  it("apply() refuses create-resource with no resolvable orgId, rather than guessing", async () => {
     const adapter = createPangolinAdapter({
       config: { baseUrl: "https://pangolin.test" },
       credentials: { apiKeyId: "fake-id", apiKeySecret: "fake-secret" },
       fetchImpl: async () => new Response("{}", { status: 200 }),
     });
+    // No orgId passed — the `apps/web`/`@loxep/app` composition root always
+    // supplies one when it is known; this is the defensive fallback.
     const port = proxyProviderPortFromPangolinAdapter(adapter);
     await expect(
       port.apply({
         kind: "create-resource",
         resource: { name: "x", domainId: "1", subdomain: null, mode: "http" },
       }),
-    ).rejects.toThrow(/no write verb/);
+    ).rejects.toThrow(/orgId/);
+  });
+
+  it("apply() refuses a tier-2 update-* operation — not implemented in this milestone", async () => {
+    const adapter = createPangolinAdapter({
+      config: { baseUrl: "https://pangolin.test", orgId: "home-lab" },
+      credentials: { apiKeyId: "fake-id", apiKeySecret: "fake-secret" },
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+    const port = proxyProviderPortFromPangolinAdapter(adapter, "home-lab");
+    await expect(
+      port.apply({ kind: "update-resource", externalResourceId: "1", resource: { enabled: false } }),
+    ).rejects.toThrow(/tier 2/);
   });
 });
 
@@ -286,28 +338,42 @@ describe("infrastructure.sync-proxy-resource, end to end", () => {
     );
   });
 
-  it("fails the job loudly on a stray mode: 'apply' payload, rather than silently downgrading it", async () => {
+  it("a stray mode: 'apply' payload against a read_only (default) connection completes the job but blocks the write — never a silent skip, never a failure", async () => {
     const domain = await insertDomain();
     const target = await insertHostingTarget(pangolinConnectionId);
-    await insertProxyResource(domain.id, target.id);
+    const resource = await insertProxyResource(domain.id, target.id);
 
-    const job = await addJob(handle.pool, tasks.syncProxyResourceTask, {
+    // Nothing has flipped `infrastructure.provider_write_policy` for this
+    // connection — the default is `read_only`, so the write-authorization
+    // gate refuses the tier-1 apply. That refusal is recorded as a
+    // 'blocked' step and a 'partial' run; the JOB ITSELF still succeeds —
+    // "blocked" is a first-class state, never a failure (the design's rule
+    // 2), which is why this test no longer expects the job to fail.
+    await addJob(handle.pool, tasks.syncProxyResourceTask, {
       domainId: domain.id,
       mode: "apply",
     });
 
-    const failed = await waitFor(
+    const run = await waitFor(
       async () => {
-        const row = await handle.pool.query<{ last_error: string | null }>(
-          `select last_error from graphile_worker.jobs
-             where id = $1 and attempts >= 1 and locked_at is null`,
-          [job.id],
+        const row = await handle.pool.query<{ id: string; status: string }>(
+          `select id, status from reconcile_runs
+             where subject_type = 'proxy_resource' and subject_id = $1
+             order by started_at desc limit 1`,
+          [resource.id],
         );
-        return row.rows[0];
+        return row.rows[0]?.status === "running" ? undefined : row.rows[0];
       },
-      { timeoutMs: 30_000, label: `job ${job.id} to fail at least once` },
+      { timeoutMs: 30_000, label: `proxy resource reconcile run for ${resource.id}` },
     );
-    expect(failed?.last_error ?? "").toMatch(/check-mode only/);
+    expect(run?.status).toBe("partial");
+
+    const steps = await handle.pool.query<{ status: string; error_code: string | null }>(
+      `select status, error_code from reconcile_run_steps where run_id = $1`,
+      [run?.id],
+    );
+    const blocked = steps.rows.find((s) => s.status === "blocked");
+    expect(blocked?.error_code).toBe("write_policy");
   });
 });
 

@@ -40,7 +40,8 @@ import type {
   HealthSource,
   HealthStatus,
   HostDiagnosisInput,
-  HostDiagnosisResult
+  HostDiagnosisResult,
+  ProviderWritePolicyTier
 } from '@loxep/domain';
 import type { DbHandle } from '@loxep/db';
 
@@ -722,9 +723,12 @@ export interface ProxyResourceRuleDto {
 /**
  * One `proxy_resources` row — the chain's third link, rendered on both the
  * domain detail page (grouped by domain) and the fleet detail page (grouped
- * by hosting target). Milestone 2 (loxep-acj.2) is CHECK MODE ONLY, so
- * `lastRun`/`unmatchedObservedCount` are the whole read model: there is no
- * "apply" action anywhere on this DTO.
+ * by hosting target). Milestone 2 (loxep-acj.2) shipped CHECK MODE ONLY;
+ * milestone 4 (loxep-acj.4) adds the fields the Apply affordance needs to
+ * render honestly — `connectionId`/`writePolicyTier` — without adding a
+ * write action to THIS dto itself (the apply is per-DOMAIN, matching
+ * `SYNC_PROXY_RESOURCE_TASK`'s own payload granularity; see
+ * `requestProxyResourceDomainApply`).
  */
 export interface ProxyResourceChainDto {
   id: string;
@@ -753,6 +757,15 @@ export interface ProxyResourceChainDto {
    * rendered as zero, which would read as "checked, and found nothing").
    */
   unmatchedObservedCount: number | null;
+  /** This resource's hosting target's linked Pangolin connection, or `null` when unlinked. */
+  connectionId: string | null;
+  /**
+   * The connection's stored `infrastructure.provider_write_policy` tier —
+   * `null` when `connectionId` is `null`. Read fresh on every fetch (never
+   * cached client-side) so the Apply affordance's blocked/enabled state
+   * always reflects the CURRENT flip, not a stale one.
+   */
+  writePolicyTier: ProviderWritePolicyTier | null;
 }
 
 export interface ManagedDomainDetailDto extends ManagedDomainDto {
@@ -780,6 +793,26 @@ async function buildProxyResourceChainDtos(
   entries: ReadonlyArray<{ resource: ProxyResourceRow; rules: ProxyResourceRuleRow[] }>,
   names: { domainNameById: Map<string, string>; hostingTargetNameById: Map<string, string> }
 ): Promise<ProxyResourceChainDto[]> {
+  // The connection each entry's hosting target links to, plus that
+  // connection's stored write-policy tier — batched once for the whole
+  // list rather than per-row, matching `domainNameById`'s own precedent.
+  const hostingTargetIds = [...new Set(entries.map((e) => e.resource.hostingTargetId))];
+  const connectionIdByHostingTargetId = new Map<string, string | null>();
+  if (hostingTargetIds.length > 0) {
+    const rows = await handle.db.query.hostingTargets.findMany({
+      where: (table, { inArray }) => inArray(table.id, hostingTargetIds),
+      columns: { id: true, proxyConnectionId: true }
+    });
+    for (const row of rows) connectionIdByHostingTargetId.set(row.id, row.proxyConnectionId);
+  }
+  let writePolicies: Record<string, ProviderWritePolicyTier> = {};
+  const hasLinkedConnection = [...connectionIdByHostingTargetId.values()].some((id) => id !== null);
+  if (hasLinkedConnection) {
+    const { getAdminServices } = await import('@/server/admin');
+    const { providerWritePolicySetting } = await import('@loxep/domain');
+    writePolicies = await getAdminServices().settings.get(providerWritePolicySetting);
+  }
+
   const results: ProxyResourceChainDto[] = [];
   for (const { resource, rules } of entries) {
     const domainName = names.domainNameById.get(resource.domainId) ?? '';
@@ -803,6 +836,12 @@ async function buildProxyResourceChainDtos(
       const count = summary?.['unmatchedObservedCount'];
       unmatchedObservedCount = typeof count === 'number' ? count : null;
     }
+
+    const connectionId = connectionIdByHostingTargetId.get(resource.hostingTargetId) ?? null;
+    // Absent from the map is the setting's own documented default:
+    // 'read_only'. Never assume 'allow' from a missing key.
+    const writePolicyTier: ProviderWritePolicyTier | null =
+      connectionId === null ? null : (writePolicies[connectionId] ?? 'read_only');
 
     results.push({
       id: resource.id,
@@ -836,7 +875,9 @@ async function buildProxyResourceChainDtos(
               startedAt: iso(lastRunRow.startedAt),
               finishedAt: iso(lastRunRow.finishedAt)
             },
-      unmatchedObservedCount
+      unmatchedObservedCount,
+      connectionId,
+      writePolicyTier
     });
   }
   return results;
@@ -1102,6 +1143,50 @@ export const requestDomainResync = createServerFn({ method: 'POST' })
         infrastructure.SYNC_RECORDS_TASK,
         { domainId: data.domainId, mode: 'check', trigger: 'manual' },
         { jobKey: infrastructure.domainJobKey(infrastructure.SYNC_RECORDS_TASK, data.domainId) }
+      );
+    });
+    return { enqueued: true };
+  });
+
+/**
+ * The M4 (loxep-acj.4) apply affordance: enqueues `infrastructure.
+ * sync-proxy-resource` in `mode: 'apply'`, `trigger: 'manual'` for every
+ * declared `proxy_resources` row under one domain — the task's own payload
+ * granularity (`{domainId}`, no connection id, no per-resource targeting).
+ * Admin-only, matching the owner's ruling that writes are admin-only in
+ * Loxep. Does NOT await the reconcile — writes intent (a job) and returns,
+ * per Phase 7's own rule; the run's outcome (`succeeded`/`partial` with a
+ * `blocked` step/`failed`) shows up on the SAME panel that already polls
+ * `lastRun`, exactly like `requestDomainResync`'s own check-mode sibling.
+ *
+ * This does NOT flip the connection's write policy — that is a SEPARATE,
+ * per-connection admin control (`infrastructure.provider_write_policy`,
+ * `loxep-acj.3`'s own scope). A `read_only` connection still enqueues
+ * successfully here; the run simply comes back `partial` with a `blocked`
+ * step naming the exact flip that unblocks it — see
+ * `ProxyResourceChainDto.writePolicyTier`, which the client already has
+ * before ever clicking Apply, so the affordance can render its blocked
+ * state honestly up front rather than only after a failed attempt.
+ */
+export const requestProxyResourceDomainApply = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ domainId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const [{ requireAdmin, getAdminServices, getInfrastructureEnqueue }, infrastructure] =
+      await Promise.all([import('@/server/admin'), import('@loxep/infrastructure')]);
+    await requireAdmin();
+    const { handle } = getAdminServices();
+    const enqueue = getInfrastructureEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        infrastructure.SYNC_PROXY_RESOURCE_TASK,
+        { domainId: data.domainId, mode: 'apply', trigger: 'manual' },
+        {
+          jobKey: infrastructure.domainJobKey(
+            infrastructure.SYNC_PROXY_RESOURCE_TASK,
+            data.domainId
+          )
+        }
       );
     });
     return { enqueued: true };

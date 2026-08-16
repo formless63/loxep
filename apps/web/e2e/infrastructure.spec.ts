@@ -140,3 +140,57 @@ test('reconcile runs list shows the empty state', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Reconcile runs' })).toBeVisible();
   await expect(page.getByText('No reconcile runs yet')).toBeVisible();
 });
+
+/**
+ * The Pangolin chain design's M4 (loxep-acj.4) apply affordance, rendered.
+ *
+ * ## The honesty boundary this test draws, deliberately (matching
+ * `connections.spec.ts`'s own precedent for documenting a gap rather than
+ * faking it)
+ *
+ * `createStoreConnection` writes a Cloudflare account row with no live
+ * network call (the same "no live call" property `connections.spec.ts`'s
+ * WooCommerce fixture relies on), and `createManagedDomain` writes intent +
+ * enqueues without awaiting a provider — so this test CAN reach a real
+ * `/infrastructure/domains/$name` page with nothing faked. What it cannot
+ * reach is a `proxy_resources` row with real data: milestone 2
+ * (loxep-acj.2) shipped the chain's third link "visibility only" — there is
+ * NO UI anywhere that creates a `proxy_resources` row, so no e2e flow
+ * (however much connection/domain setup it does first) can ever populate
+ * one without a direct database write, which is not this suite's
+ * convention (`books.spec.ts`/`inventory.spec.ts`/`connections.spec.ts` all
+ * seed exclusively through the UI). So this is the affordance's
+ * MOST-CONSERVATIVE reachable state — "nothing declared, so nothing to
+ * apply" — proving the panel and its Apply control render correctly
+ * (no crash, no stray button) rather than the deeper
+ * `writePolicyTier: 'read_only'` blocked-alert variant, which needs data
+ * this harness has no path to create.
+ */
+test('a domain with no declared proxy resource shows the honest empty state and no Apply control', async ({
+  page
+}) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+  // A Cloudflare connection, so the "New domain" wizard has a DNS connection
+  // to pick — no live token validation happens (see the module doc above).
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Cloudflare account' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Account name *').fill(`E2E Cloudflare ${runId}`);
+  await connectionDialog.getByLabel('API token *').fill(`cf_e2e_token_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect account' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  const domainName = `e2e-proxy-${runId}.test`;
+  await page.goto('/infrastructure/domains/new');
+  await page.getByLabel('Domain name *').fill(domainName);
+  await page.getByRole('combobox', { name: /^DNS connection/ }).click();
+  await page.getByRole('option', { name: `E2E Cloudflare ${runId}` }).click();
+  await page.getByRole('button', { name: 'Declare domain' }).click();
+  await page.waitForURL('**/infrastructure/domains/**');
+
+  await expect(page.getByText('Proxy resources', { exact: true })).toBeVisible();
+  await expect(page.getByText('No proxy resource declared')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply' })).toHaveCount(0);
+});

@@ -1,14 +1,17 @@
 /**
  * `infrastructure.sync-proxy-resource` — composition-root wiring for the
- * Pangolin chain design's milestone 2 (`loxep-acj.2`). Lands the reserved
+ * Pangolin chain design. Milestone 2 (`loxep-acj.2`) landed the reserved
  * contract `@loxep/infrastructure/tasks.ts` has carried since Phase 7
- * milestone 3: this is the module `registry.ts`'s own doc comment named as
- * "follow-up work once [`@loxep/integration-pangolin`] lands."
+ * milestone 3, check-mode only. Milestone 4 (`loxep-acj.4`) wires the real
+ * apply leg: `proxyProviderPortFromPangolinAdapter`'s `apply()` now
+ * dispatches to the adapter's three tier-1 writes, and this module resolves
+ * the per-connection write-authorization context `proxy.ts` requires before
+ * it will attempt one.
  *
  * `@loxep/infrastructure`'s `proxy.ts` owns the whole read -> diff -> record
- * flow and takes no dependency on `@loxep/integration-pangolin`; this module
- * is the one place that holds both. Two things happen here that `proxy.ts`
- * cannot do for itself:
+ * (-> apply) flow and takes no dependency on `@loxep/integration-pangolin`;
+ * this module is the one place that holds both. Three things happen here
+ * that `proxy.ts` cannot do for itself:
  *
  *   1. resolve, for ONE `proxy_resources` row, WHICH Pangolin connection to
  *      reconcile against — read off that row's `hosting_target_id`'s own
@@ -19,17 +22,21 @@
  *      `services.getPangolinAdapterForConnection`) — next to
  *      `mailProviderPortFromPurelymailAdapter` in spirit: the same
  *      "structurally compatible by design, so this is a thin forward"
- *      pattern, applied to a port whose real adapter has NO write verb at
- *      all yet (see `proxyProviderPortFromPangolinAdapter`'s own doc).
+ *      pattern;
+ *   3. resolve that SAME connection's stored write-authorization tier
+ *      (`resolveProxyWriteAuthorization`, reading `@loxep/domain`'s
+ *      `infrastructure.provider_write_policy` setting) plus the two
+ *      self-managed-resource host lists `write-policy.ts`'s `wouldLockOut`
+ *      needs — `proxy.ts` never reads a setting or resolves a connection
+ *      itself, matching every other reconciler's "caller resolves, service
+ *      enforces" split.
  *
- * ## CHECK MODE ONLY — this file changes nothing about that
+ * ## `mode`/`trigger` are still passed straight through, unconditionally
  *
- * `proxy.ts`'s service refuses `mode: 'apply'` unconditionally this
- * milestone. This module does not try to work around that, override it, or
- * hide it — `payload.mode` is passed straight through, so a stray `apply`
- * request fails LOUDLY (a thrown `ProxyWritePolicyError`, a failed job) in
- * the executor's own process, rather than a task-level default silently
- * downgrading it and hiding a caller's mistake.
+ * `payload.mode` and `payload.trigger` reach `proxy.ts` untouched — a stray
+ * `apply` request still fails LOUDLY there (a thrown `ProxyWritePolicyError`
+ * for a `'poll'` trigger, a `'blocked'` step for a `read_only` policy tier)
+ * rather than a task-level default silently downgrading or approving it.
  *
  * ## No recurring poll-executor route in THIS milestone, and that is deliberate
  *
@@ -56,11 +63,15 @@ import {
 } from "@loxep/infrastructure";
 import type {
   ObservedProxyResource,
+  ProxyApplyResult,
+  ProxyOperation,
   ProxyProviderCapabilities,
   ProxyProviderPort,
+  ProxyWriteAuthorizationContext,
   ReconcileProxyResourceResult,
   ResponseRedactor,
 } from "@loxep/infrastructure";
+import { providerWritePolicySetting, resolveProviderWritePolicy } from "@loxep/domain";
 import type { PangolinAdapter } from "@loxep/integration-pangolin";
 import { z } from "zod";
 import type { AppServices } from "./services.ts";
@@ -68,14 +79,19 @@ import type { AppServices } from "./services.ts";
 /**
  * The slice of the real {@link PangolinAdapter} the port wrapper consumes —
  * the `fleet.ts` `ContainerHostAdapterLike` `Pick` precedent, applied here.
- * If the Pangolin adapter's `listResources`/`listTargets`/`listRules`/
- * `capabilities` drift from what `@loxep/infrastructure`'s port expects, the
- * wrapper below stops compiling and the assignability test in this
- * package's suite fails.
+ * If the Pangolin adapter's read OR write surface drifts from what
+ * `@loxep/infrastructure`'s port expects, the wrapper below stops compiling
+ * and the assignability test in this package's suite fails.
  */
 export type ProxyPangolinAdapterLike = Pick<
   PangolinAdapter,
-  "listResources" | "listTargets" | "listRules" | "capabilities"
+  | "listResources"
+  | "listTargets"
+  | "listRules"
+  | "capabilities"
+  | "createResource"
+  | "addTarget"
+  | "createRule"
 >;
 
 function toExternalId(value: number | string | null): string | null {
@@ -87,17 +103,19 @@ function toExternalId(value: number | string | null): string | null {
  * Adapt a {@link PangolinAdapter} to `@loxep/infrastructure`'s
  * `ProxyProviderPort`.
  *
- * ## `apply()` exists on the type and THROWS on every call
+ * ## `apply()` dispatches to the adapter's three tier-1 writes — and ONLY those
  *
- * `@loxep/integration-pangolin` shipped READ ONLY in milestone 1 — there is
- * no write verb anywhere in its exported surface, structurally, not as a
- * policy choice this wrapper enforces. `proxy.ts`'s service never calls
- * `apply()` in this milestone (`assertCheckModeOnly` refuses `mode:
- * 'apply'` before any provider call), so this member exists only to satisfy
- * the port's shape; calling it is a programming error in THIS milestone; a
- * later write milestone replaces this whole function's `apply` branch once
- * the adapter package grows write verbs and the write-authorization gate
- * (`loxep-acj.3`) exists to gate them.
+ * `orgId` is captured in this closure (resolved once, per connection, by
+ * `resolveProxyProviderForHostingTarget`) rather than threaded through
+ * `ProxyOperation` itself — the port's `create-resource` operation carries
+ * Pangolin's own `domainId` but no `orgId`, because `read(subject)` is the
+ * only member with a subject to take one from. `createResource` needs it
+ * anyway (`PUT /org/{orgId}/resource`), so this wrapper is where that gap
+ * closes. `update-resource`/`update-target`/`update-rule` throw a clear
+ * "not implemented this milestone" error: `proxy.ts`'s own service never
+ * applies a tier-2 operation in M4 (`loxep-acj.4` — bd's own NOT IN SCOPE
+ * list), so these branches exist only to satisfy the port's closed union,
+ * exactly the way `container-hosts.ts`'s own unreachable branches do.
  *
  * ## `read()` fans out per resource, exactly as the port's module doc predicts
  *
@@ -112,6 +130,8 @@ function toExternalId(value: number | string | null): string | null {
  */
 export function proxyProviderPortFromPangolinAdapter(
   adapter: ProxyPangolinAdapterLike,
+  /** Resolved once per connection — see this function's own doc for why `apply()` needs it and `ProxyOperation` cannot carry it. `null` when the connection has no resolvable org id; `apply()` refuses in that case rather than guessing. */
+  orgId: string | null = null,
 ): ProxyProviderPort {
   return {
     async read(subject): Promise<ObservedProxyResource[]> {
@@ -171,10 +191,47 @@ export function proxyProviderPortFromPangolinAdapter(
       }
       return observed;
     },
-    async apply() {
-      throw new Error(
-        "pangolin: no write verb exists in @loxep/integration-pangolin yet (milestone 1 shipped read-only) — proxy.ts's service should never reach this call in loxep-acj.2 (M2, check-mode only)",
-      );
+    async apply(operation: ProxyOperation): Promise<ProxyApplyResult> {
+      switch (operation.kind) {
+        case "create-resource": {
+          if (orgId === null) {
+            throw new Error(
+              "pangolin: createResource requires a resolvable orgId for this connection — none is configured",
+            );
+          }
+          const fact = await adapter.createResource(orgId, operation.resource);
+          return {
+            kind: "create-resource",
+            status: "applied",
+            externalResourceId: fact.resourceId === null ? undefined : String(fact.resourceId),
+          };
+        }
+        case "create-target": {
+          const fact = await adapter.addTarget(operation.externalResourceId, operation.target);
+          return {
+            kind: "create-target",
+            status: "applied",
+            externalTargetId: fact.targetId === null ? undefined : String(fact.targetId),
+          };
+        }
+        case "create-rule": {
+          const fact = await adapter.createRule(operation.externalResourceId, operation.rule);
+          return {
+            kind: "create-rule",
+            status: "applied",
+            externalRuleId: fact.ruleId === null ? undefined : String(fact.ruleId),
+          };
+        }
+        case "update-resource":
+        case "update-target":
+        case "update-rule":
+          // Tier 2 — no adapter verb this milestone calls; `proxy.ts` never
+          // reaches this branch (it skips tier-2 operations structurally).
+          // See this function's own doc.
+          throw new Error(
+            `pangolin: ${operation.kind} is tier 2 and not implemented in loxep-acj.4 (M4 ships tier-1 writes only) — proxy.ts's service should never reach this call`,
+          );
+      }
     },
     capabilities(): ProxyProviderCapabilities {
       const c = adapter.capabilities();
@@ -224,17 +281,58 @@ export const proxyResultRedactor: ResponseRedactor = (value) => {
 };
 
 /**
- * Resolves the `ProxyProviderPort` (plus the org id `read()` needs) implied
- * by one `hosting_targets` row's `proxy_connection_id`. `null` when the
- * target has no linked connection — `proxy.ts`'s `reconcileDomain` records
- * that as `skipped`, never a failure — or when the connection's config
- * carries no resolvable org id (a root-scoped key spanning several orgs; M2
- * has no per-resource org override, so it cannot pick one automatically).
+ * Resolves ONE connection's write-authorization context — the stored
+ * `infrastructure.provider_write_policy` tier plus the two host lists
+ * `wouldLockOut`'s self-managed-resource clauses compare a resource's
+ * `fullDomain` against.
+ *
+ * `pangolinDashboardHosts` uses the connection's own Integration-API base
+ * URL as its one entry — an honest approximation, not a guarantee: M1's own
+ * reconnaissance found the Integration API is typically a DIFFERENT
+ * subdomain from the dashboard the operator actually browses (`adapter.ts`'s
+ * "THE RECHABILITY FINDING"), so this comparison catches the case where an
+ * operator points a Pangolin connection's base URL at the same host their
+ * dashboard resource fronts, but not a dashboard hosted on a genuinely
+ * distinct subdomain. Closing that gap needs a dedicated "dashboard host"
+ * field this milestone does not add.
+ */
+export async function resolveProxyWriteAuthorization(
+  services: AppServices,
+  input: { connectionId: string; baseUrl: string; actorIsAdmin?: boolean },
+): Promise<ProxyWriteAuthorizationContext> {
+  const policies = await services.settings.get(providerWritePolicySetting);
+  const policyTier = resolveProviderWritePolicy(policies, input.connectionId);
+  return {
+    connectionId: input.connectionId,
+    policyTier,
+    ...(input.actorIsAdmin !== undefined ? { actorIsAdmin: input.actorIsAdmin } : {}),
+    loxepSelfHosts: services.config.publicOrigin !== undefined ? [services.config.publicOrigin] : [],
+    pangolinDashboardHosts: [input.baseUrl],
+  };
+}
+
+/**
+ * Resolves the `ProxyProviderPort` (plus the org id `read()` needs and the
+ * write-authorization context an apply requires) implied by one
+ * `hosting_targets` row's `proxy_connection_id`. `null` when the target has
+ * no linked connection — `proxy.ts`'s `reconcileDomain` records that as
+ * `skipped`, never a failure — or when the connection's config carries no
+ * resolvable org id (a root-scoped key spanning several orgs; no
+ * per-resource org override exists, so it cannot pick one automatically).
+ *
+ * `actorIsAdmin` should be `true` only when the caller KNOWS an admin
+ * session originated this apply (a `'manual'`-triggered apply enqueued by a
+ * `requireAdmin()`-gated server function) — `undefined` for every automated
+ * trigger, matching `write-policy.ts`'s own "no human actor attached"
+ * reading.
  */
 export async function resolveProxyProviderForHostingTarget(
   services: AppServices,
   hostingTargetId: string,
-): Promise<{ provider: ProxyProviderPort; orgId: string } | null> {
+  options: { actorIsAdmin?: boolean } = {},
+): Promise<
+  { provider: ProxyProviderPort; orgId: string; writeAuthorization: ProxyWriteAuthorizationContext } | null
+> {
   // `createHostingTargetsService(...).get()` rather than a raw drizzle
   // query — this package has no direct `drizzle-orm` dependency (it reaches
   // the database exclusively through `@loxep/domain`/`@loxep/infrastructure`
@@ -250,11 +348,20 @@ export async function resolveProxyProviderForHostingTarget(
   }
   if (target.proxyConnectionId === null) return null;
 
-  const { adapter, orgId } = await services.getPangolinAdapterForConnection(
+  const { adapter, orgId, connectionId, baseUrl } = await services.getPangolinAdapterForConnection(
     target.proxyConnectionId,
   );
   if (orgId === null) return null;
-  return { provider: proxyProviderPortFromPangolinAdapter(adapter), orgId };
+  const writeAuthorization = await resolveProxyWriteAuthorization(services, {
+    connectionId,
+    baseUrl,
+    ...(options.actorIsAdmin !== undefined ? { actorIsAdmin: options.actorIsAdmin } : {}),
+  });
+  return {
+    provider: proxyProviderPortFromPangolinAdapter(adapter, orgId),
+    orgId,
+    writeAuthorization,
+  };
 }
 
 const syncProxyResourcePayloadSchema = z.object({
@@ -278,14 +385,22 @@ export function createInfrastructureProxyTasks(options: {
     name: SYNC_PROXY_RESOURCE_TASK,
     payloadSchema: syncProxyResourcePayloadSchema,
     handler: async (payload, { logger }) => {
-      // `mode` is passed straight through — see the module doc's "CHECK MODE
-      // ONLY" section for why this executor never overrides it.
+      const trigger = payload.trigger ?? "manual";
+      // `mode`/`trigger` are passed straight through — see the module doc's
+      // "still passed straight through" section for why this executor never
+      // overrides either. `actorIsAdmin: true` only for `'manual'`: only an
+      // admin-gated server function may enqueue that trigger in the first
+      // place (`requestProxyResourceApply`, `apps/web`), so by the time this
+      // job runs, "admin-only" has already been enforced once; every other
+      // trigger has no human actor attached.
       const results: ReconcileProxyResourceResult[] =
         await proxyResources.reconcileDomain(payload.domainId, {
           mode: payload.mode ?? "check",
-          trigger: payload.trigger ?? "manual",
+          trigger,
           resolveProvider: (hostingTargetId) =>
-            resolveProxyProviderForHostingTarget(services, hostingTargetId),
+            resolveProxyProviderForHostingTarget(services, hostingTargetId, {
+              actorIsAdmin: trigger === "manual" ? true : undefined,
+            }),
           redact: proxyResultRedactor,
         });
 

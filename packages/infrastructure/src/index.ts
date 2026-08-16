@@ -417,5 +417,28 @@ export type {
   ProxyResourceRow,
   ProxyResourceRuleRow,
   ProxyResourcesService,
+  ProxyWriteAuthorizationContext,
   ReconcileProxyResourceResult,
 } from "./proxy.ts";
+
+/* ---------------------------- write authorization (Pangolin chain, loxep-acj.3) --- */
+
+export {
+  SelfLockoutError,
+  WritePolicyError,
+  assertWouldNotLockOut,
+  assertWritePolicy,
+  highestOperationTier,
+  proxyOperationTier,
+  wouldLockOut,
+  writePolicyBlockedStep,
+} from "./write-policy.ts";
+export type {
+  AssertWritePolicyInput,
+  LockoutCheckOperatorContext,
+  LockoutCheckRule,
+  WouldLockOutInput,
+  WouldLockOutReason,
+  WriteOperationTier,
+  WritePolicyBlockedReason,
+} from "./write-policy.ts";

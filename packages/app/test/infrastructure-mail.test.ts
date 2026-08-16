@@ -43,6 +43,7 @@ import { user } from "@loxep/db/schema";
 import { addJob, startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
 import { MONITOR_TARGET_TYPES } from "@loxep/market";
+import { providerWritePolicySetting } from "@loxep/domain";
 import {
   ENSURE_MAIL_DOMAIN_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
@@ -357,6 +358,18 @@ beforeAll(async () => {
     createdByUserId: "test-user",
   });
   mailConnectionId = mailConnection.id;
+
+  // Write-authorization gate (Pangolin chain design M3, loxep-acj.3): this
+  // connection defaults to read_only, and this suite tests the delegation/
+  // provisioning FLOW, not the gate itself (write-policy.ts and
+  // mail-sync.test.ts's own "write-authorization gate" describe block own
+  // that). Flip it once, admin-equivalent, so every test below exercises the
+  // flow exactly as it did before the gate existed.
+  await services.settings.set(
+    providerWritePolicySetting,
+    { [mailConnectionId]: "additive" },
+    {},
+  );
 
   domains = createManagedDomainsService({ db: handle.db });
   mail = createMailDomainsService({ db: handle.db });
