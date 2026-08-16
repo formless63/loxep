@@ -216,6 +216,19 @@ export {
   TERMIX_CONNECTION_PROVIDER,
   TERMIX_CREDENTIAL_TYPE,
   createTermixAdapterFactory,
+  // loxep-47o.6/loxep-47o.7: the Tailscale and Beszel estate browsers need a
+  // live adapter reachable from `apps/web/src/server/admin.ts`, the same
+  // re-export seam as Dockhand/Termix/Pangolin/Cloudflare/Purelymail above —
+  // `@loxep/app` is already the composition root that depends on
+  // `@loxep/integration-tailscale`/`@loxep/integration-beszel` directly, so
+  // `apps/web` takes no direct dependency of its own.
+  TAILSCALE_CONNECTION_PROVIDER,
+  TAILSCALE_CREDENTIAL_TYPE,
+  createTailscaleAdapterFactory,
+  // `BESZEL_CONNECTION_PROVIDER`/`BESZEL_CREDENTIAL_TYPE` are already
+  // exported above (Dockhand's containers-panel re-export block) — only the
+  // FACTORY is new here.
+  createBeszelAdapterFactory,
 } from "./fleet.ts";
 export type {
   ContainerHostAdapterLike,
@@ -223,6 +236,10 @@ export type {
   DockhandConnectionAdapter,
   TermixAdapterFactory,
   TermixConnectionAdapter,
+  TailscaleAdapterFactory,
+  TailscaleConnectionAdapter,
+  BeszelAdapterFactory,
+  BeszelConnectionAdapter,
 } from "./fleet.ts";
 // Re-exported so `apps/web` never needs its own `@loxep/integration-dockhand`
 // dependency just to normalize a pasted base URL into the origin
@@ -269,6 +286,27 @@ export {
   mailProviderPortFromPurelymailAdapter,
   purelymailResultRedactor,
 } from "./infrastructure-mail.ts";
+
+// loxep-47o.5 (Gatus estate browser): the same re-export shape as
+// Purelymail's above — `apps/web/src/server/admin.ts` needs a live READ
+// adapter for the per-connection estate page, loaded through this package
+// the same way. `fleet.ts`'s Gatus factory was previously reached only by
+// this package's own worker-side `services.ts` (`health.sweep`'s
+// discovery); this is its first re-export out to `apps/web`. No write-shaped
+// export added here — Gatus's own adapter has none (config is files-only).
+export {
+  GATUS_CONNECTION_PROVIDER,
+  GATUS_CREDENTIAL_TYPE,
+  createGatusAdapterFactory,
+} from "./fleet.ts";
+export type { GatusAdapterFactory, GatusConnectionAdapter } from "./fleet.ts";
+// Estate Browsers Design §3.7's mandatory exclusion: the Gatus estate page's
+// endpoint list must exclude `gatusPushSetting.endpointKey` and its five
+// derived fact keys in EVERY posture — `apps/web` reuses this SHARED
+// derivation rather than re-deriving it, so the estate page's quarantine can
+// never drift from what `gatus-push.ts` actually pushes to (fleet-health.ts's
+// own module doc on {@link gatusPushQuarantinedKeys}).
+export { gatusPushQuarantinedKeys } from "./fleet-health.ts";
 
 export {
   REVERB_ABSOLUTE_MIN_INTERVAL_SECONDS,

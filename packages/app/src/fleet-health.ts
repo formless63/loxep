@@ -144,11 +144,12 @@ import type { TailscaleDeviceFact } from "@loxep/integration-tailscale";
 import { TermixAdapterError, normalizeTermixBaseUrl } from "@loxep/integration-termix";
 import type { TermixAdapter, TermixHostFact } from "@loxep/integration-termix";
 import { PangolinAdapterError } from "@loxep/integration-pangolin";
-import { createContainerHostsService } from "@loxep/infrastructure";
+import { createContainerHostsService, createHostAddressesService } from "@loxep/infrastructure";
 import type {
   ContainerHostProviderPort,
   ContainerHostsService,
 } from "@loxep/infrastructure";
+import { isIP } from "node:net";
 import { AppConfigurationError } from "./errors.ts";
 import {
   BESZEL_CONNECTION_PROVIDER,
@@ -582,6 +583,7 @@ async function projectDockhandResources(
 
   const resourceLinks = createResourceLinksService({ db });
   const health = createHealthService({ db });
+  const hostAddresses = createHostAddressesService({ db });
   const checkedAt = new Date();
 
   for (const host of hosts) {
@@ -608,6 +610,7 @@ async function projectDockhandResources(
         },
       });
 
+      let linkedHostingTargetId: string | null = null;
       const alreadyLinked = await db.query.resourceLinks.findFirst({
         where: (table, { eq }) => eq(table.externalResourceId, resource.id),
       });
@@ -630,7 +633,10 @@ async function projectDockhandResources(
               purpose: "container_console",
             });
           }
+          linkedHostingTargetId = target.id;
         }
+      } else if (alreadyLinked.resourceType === "hosting_target") {
+        linkedHostingTargetId = alreadyLinked.resourceId;
       }
 
       await health.upsertHealth({
@@ -645,6 +651,39 @@ async function projectDockhandResources(
           hawserLastSeen: host.hawserLastSeen,
         },
       });
+
+      // loxep-bub: for a LINKED target, land Dockhand's `host`/`publicIp`
+      // fields as `kind = 'other'` — heuristically unclassified, per the
+      // design; an operator's `classify()` decides what they actually are.
+      // Only a field that parses as a real IP literal is eligible at all —
+      // `host` in particular is a CONNECTION address and is very often a
+      // hostname, which `host_addresses.value` (inet) cannot store. `host`
+      // and `publicIp` get distinct provenance strings
+      // (`observed:dockhand`/`observed:dockhand.public_ip`) so the two never
+      // collide under the observer upsert's one-row-per-slot key.
+      if (linkedHostingTargetId !== null) {
+        const candidates: Array<{ value: string | null; provider: string }> = [
+          { value: host.host, provider: DOCKHAND_CONNECTION_PROVIDER },
+          { value: host.publicIp, provider: `${DOCKHAND_CONNECTION_PROVIDER}.public_ip` },
+        ];
+        for (const candidate of candidates) {
+          if (candidate.value === null) continue;
+          const family = hostAddressFamilyOf(candidate.value);
+          if (family === null) continue;
+          try {
+            await hostAddresses.upsertObserved({
+              hostingTargetId: linkedHostingTargetId,
+              kind: "other",
+              family,
+              value: candidate.value,
+              provider: candidate.provider,
+            });
+          } catch {
+            // Same posture as the outer per-environment catch: one address
+            // write must not take the rest of discovery down.
+          }
+        }
+      }
     } catch {
       // One malformed/unreadable environment must not take discovery down
       // for the rest of the fleet — see `projectBeszelSystems`'s doc for the
@@ -880,7 +919,7 @@ interface GatusHeartbeatInput {
  * actually pushes to — the single source of truth for "which keys are
  * reserved" lives in `@loxep/domain`, not duplicated here.
  */
-function gatusPushQuarantinedKeys(pushConfig: {
+export function gatusPushQuarantinedKeys(pushConfig: {
   endpointKey: string | null;
   mode: "single" | "facts";
 }): string[] {
@@ -1374,6 +1413,24 @@ function tailscaleAdminConsoleDeviceUrl(nodeId: string): string {
 }
 
 /**
+ * Classify a candidate address string as `'v4'`/`'v6'`, or `null` when it is
+ * not a valid IP literal at all (loxep-bub) — Dockhand's `host` field in
+ * particular is a CONNECTION address that may be a hostname, so this is what
+ * decides whether a value is even eligible to become a `host_addresses` row
+ * (`value` is `inet`; a hostname would fail the column, not silently pass).
+ * `node:net`'s `isIP` rather than a hand-rolled parser, because
+ * `tailnet-address.ts` already owns the ONE piece of address-parsing this
+ * package hand-rolls (the CGNAT/ULA containment check) and a second parser
+ * here would just be a second thing to keep in sync.
+ */
+function hostAddressFamilyOf(value: string): "v4" | "v6" | null {
+  const version = isIP(value);
+  if (version === 4) return "v4";
+  if (version === 6) return "v6";
+  return null;
+}
+
+/**
  * Tailscale's per-device status mapping (loxep-50t §1.3) — a documented
  * judgment call, the same "one provider, one named vocabulary decision"
  * discipline `beszelSystemHealthStatus` above set:
@@ -1489,6 +1546,15 @@ async function projectTailscaleDevices(
             where: (table, { inArray }) => inArray(table.externalResourceId, resourceIds),
           });
     const linkedResourceIds = new Set(links.map((link) => link.externalResourceId));
+    // Every device is linked to at most one hosting target (resource_links'
+    // own uniqueness), so `resourceId` (text) → hosting_targets.id is a
+    // straight lookup, not a fan-out.
+    const hostingTargetIdByResourceId = new Map(
+      links
+        .filter((link) => link.resourceType === "hosting_target")
+        .map((link) => [link.externalResourceId, link.resourceId] as const),
+    );
+    const hostAddresses = createHostAddressesService({ db });
 
     for (const device of devices) {
       const resource = resourceByDeviceId.get(device.externalDeviceId);
@@ -1502,6 +1568,30 @@ async function projectTailscaleDevices(
         checkedAt,
         detail,
       });
+
+      // loxep-bub: refresh this device's `tailnet` host_addresses rows for
+      // its linked hosting target — the same `device.addresses` array the
+      // private-network row already reads from link metadata, now ALSO
+      // landing in the typed model. Still never `hosting_targets.address_v4`/
+      // `address_v6` — see this function's own doc and `tailnet-address.ts`.
+      const hostingTargetId = hostingTargetIdByResourceId.get(resource.id);
+      if (hostingTargetId === undefined) continue;
+      for (const address of device.addresses) {
+        const family = hostAddressFamilyOf(address);
+        if (family === null) continue;
+        try {
+          await hostAddresses.upsertObserved({
+            hostingTargetId,
+            kind: "tailnet",
+            family,
+            value: address,
+            provider: TAILSCALE_CONNECTION_PROVIDER,
+          });
+        } catch {
+          // One malformed/racing address write must not take the rest of
+          // discovery down — same posture as the per-device try/catch above.
+        }
+      }
     }
 
     for (const resource of allDeviceResources) {
