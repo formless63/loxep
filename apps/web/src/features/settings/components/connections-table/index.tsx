@@ -285,6 +285,20 @@ function ConnectionsDataTable({
     data: rows,
     columns,
     pageCount,
+    // Rows are identified by the connection's own id, not by their position
+    // (loxep-9iw). Without this, `row.id` is the row's INDEX in the current
+    // page, `DataTable` renders `<TableRow key={row.id}>`, and any change to
+    // the row set — the toolbar's 500ms-debounced text filter landing, a
+    // sort, a page change, a connections refetch that adds or removes a row —
+    // re-keys every row below the change. React then unmounts those rows'
+    // subtrees, taking `CellAction` with them: an open row dropdown, a
+    // half-answered delete/archive confirmation, or the Tailscale
+    // token-expiry dialog all vanish mid-interaction and never come back.
+    // The e2e symptom was an "Open estate" menuitem that resolved and then
+    // detached forever when the debounced filter navigation landed ~400ms
+    // after the menu was opened. A stable id makes that a move, not a
+    // remount.
+    getRowId: (connection) => connection.id,
     shallow: true,
     debounceMs: 500,
     initialState: {
