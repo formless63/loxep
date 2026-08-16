@@ -667,11 +667,11 @@ Each is a genuinely unresolved decision with a recommendation. **A recommendatio
 
    *The owner must confirm:* that a status timeline in `/infrastructure` is not expected.
 
-8. **One metrics adapter, or none?** Beszel and Netdata occupy the same slot; Netdata has the better API and no credential model.
+8. **RESOLVED 2026-08-14, by events — One metrics adapter, or none?** Beszel and Netdata occupied the same slot; Netdata had the better API and no credential model.
 
-   *Recommendation:* at most one, ever, and Beszel if any — it is [already the recommended companion](../../product/companion-services/#infrastructure-operations), it is MIT, and it has a real credential to store. Netdata stays tier 2 plus an optional embed.
+   *Recommendation:* at most one, ever, and Beszel if any — it is [already the recommended companion](../../product/companion-services/#infrastructure-operations), it is MIT, and it has a real credential to store.
 
-   *The owner must confirm:* which metrics tool the estate actually runs, since building the adapter for the other one is pure waste.
+   *How it resolved:* exactly per the recommendation. The estate runs Beszel; its tier-3 adapter shipped (milestone 5, `loxep-ovj.5`, on the owner's question-3 yes). Netdata did not stay "tier 2 plus an optional embed" — the stronger link-only ruling under question 10 removed it from the app entirely, so at-most-one is now structural rather than a restraint.
 
 9. **RESOLVED 2026-08-15 (loxep-4ah, owner ruling 6b) — Does Loxep publish its own health into Gatus, and which facts?** The `external-endpoints` push is the cheapest new capability in the phase.
 
@@ -679,9 +679,9 @@ Each is a genuinely unresolved decision with a recommendation. **A recommendatio
 
    *The owner confirmed:* both halves. "Yes, and first" shipped 2026-08-13 (milestone 2, loxep-ovj.2) — one push, one endpoint, no new table, the overall `integration_health` rollup. "Which facts" was answered 2026-08-15: widen it to the five-fact list this question named — worker backlog, order-sync freshness, notification delivery success, reconciler drift count, readiness — each published to its own Gatus `external-endpoints` entry, additive on top of the existing single-key shape via a new `mode: 'single' | 'facts'` setting field (PROVISIONAL default `'single'`, so every installation that has not opted in keeps EXACTLY the milestone 2 behavior). See the "OQ9 five-fact expansion" implementation-status paragraph above for what shipped, and the [gatus-health-push guide](../../guides/gatus-health-push/) for the operator-facing YAML.
 
-10. **Do link-only tools stay out of the integrations catalog?** This design says yes: a catalog card implies an account and a credential.
+10. **RESOLVED 2026-08-14, more strongly than asked — Do link-only tools stay out of the integrations catalog?** This design said yes: a catalog card implies an account and a credential.
 
-    *The owner must confirm:* nothing security-relevant; flagged because it is the kind of detail that gets decided silently and wrongly, producing a `/settings/integrations` page full of bookmarks.
+    *How it resolved:* the owner ruled past the question — *"if it doesn't integrate we don't mention it."* Cockpit, Netdata and Uptime Kuma are not merely out of the catalog; their registry entries and tier-2 probe wiring were removed from the app altogether (milestone 6, `loxep-ovj.6`, closed WON'T-DO), because the product was advertising three tools it could not read. The per-tool verdicts above stay as the recorded survey; the app no longer implies otherwise.
 
 ## Contradictions and tensions found in existing documentation
 
