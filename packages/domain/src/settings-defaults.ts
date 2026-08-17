@@ -444,10 +444,14 @@ export const documentsMediaLimitsSetting = defineSetting({
  * class) is "a SETTING, not a rewrite" per the design's own words — this
  * key is where that setting lives.
  *
- * Default stays `'manual'`: an installation upgrades into OCR by an
- * operator choosing it here, never implicitly on deploy — the same
- * degrade-to-today's-behaviour posture `documentsMediaLimitsSetting` and
- * every other opt-in capability in this file already follow. The schema
+ * Default is `'ocr_tesseract'` (OWNER RULING 2026-08-17, superseding M4's
+ * original opt-in `'manual'` default): the original caution guarded a
+ * runtime-weight tradeoff that the M4 addendum dissolved — the WASM engine
+ * and its traineddata ship inside the image regardless of this setting, so
+ * defaulting to "extraction on" costs a fresh installation nothing it has
+ * not already paid for, and the owner's ask is receipts that are searchable
+ * out of the box. `'manual'` remains one settings-write away for an
+ * installation that wants no automatic extraction. The schema
  * intentionally does NOT enumerate valid parser ids (unlike, say,
  * {@link inventoryDefaultSaleModeSetting}'s closed `saleMode` union) —
  * `@loxep/documents`' `ParserRegistry` is the source of truth for which ids
@@ -468,11 +472,10 @@ export const documentsParserIdSetting = defineSetting({
   }),
   description:
     "Which registered @loxep/documents ReceiptParser backend extracts text " +
-    "from newly uploaded receipts/invoices — 'manual' (no automatic " +
-    "extraction) until an operator opts into 'ocr_tesseract' (M4) or a " +
-    "future backend",
+    "from newly uploaded receipts/invoices — 'ocr_tesseract' by default " +
+    "(in-process WASM, M4); set 'manual' to disable automatic extraction",
   schemaVersion: 1,
-  defaultValue: { parserId: "manual" },
+  defaultValue: { parserId: "ocr_tesseract" },
 });
 
 /**

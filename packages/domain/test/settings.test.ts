@@ -502,10 +502,10 @@ describe("documents.media_limits setting (loxep-cd3.2, M2)", () => {
 });
 
 describe("documents.parser_id setting (loxep-cd3.4, M4)", () => {
-  it("defaults to the manual-assisted backend — an install upgrades into OCR explicitly", () => {
+  it("defaults to in-process OCR — owner ruling 2026-08-17; 'manual' remains one write away", () => {
     expect(documentsParserIdSetting.key).toBe("documents.parser_id");
     expect(documentsParserIdSetting.schemaVersion).toBe(1);
-    expect(documentsParserIdSetting.defaultValue).toEqual({ parserId: "manual" });
+    expect(documentsParserIdSetting.defaultValue).toEqual({ parserId: "ocr_tesseract" });
   });
 
   it("is registered", () => {
