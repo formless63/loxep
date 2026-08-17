@@ -33,11 +33,14 @@ const edgeTypes: EdgeTypes = { topology: TopologyEdgeLine };
 export function TopologyGraph({
   data,
   activeKinds,
-  textFilter
+  textFilter,
+  showObserved
 }: {
   data: InfrastructureTopologyDto;
   activeKinds: ReadonlySet<TopologyNodeKind>;
   textFilter: string;
+  /** Rule G7's "Show observed" toggle — gates `node.observed` nodes independently of the per-kind chips (`activeKinds`), since an observed node shares its `tool` kind with linked companion tools. */
+  showObserved: boolean;
 }) {
   const router = useRouter();
   const [focusedId, setFocusedId] = React.useState<string | null>(null);
@@ -48,11 +51,13 @@ export function TopologyGraph({
       data.nodes
         .filter(
           (node) =>
-            activeKinds.has(node.kind) && (query === '' || node.name.toLowerCase().includes(query))
+            activeKinds.has(node.kind) &&
+            (showObserved || !node.observed) &&
+            (query === '' || node.name.toLowerCase().includes(query))
         )
         .map((node) => node.id)
     );
-  }, [data.nodes, activeKinds, textFilter]);
+  }, [data.nodes, activeKinds, showObserved, textFilter]);
 
   const visibleEdges = React.useMemo(
     () =>

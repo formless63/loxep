@@ -49,7 +49,7 @@ export const purelymailRoutingRuleColumns: ColumnDef<
   },
   {
     id: 'loxep',
-    header: 'Loxep',
+    header: 'In Loxep',
     cell: ({ row }) =>
       row.original.loxep === null ? (
         <Badge variant='secondary'>no Loxep mailbox row</Badge>

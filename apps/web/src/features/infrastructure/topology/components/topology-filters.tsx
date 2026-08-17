@@ -14,12 +14,17 @@ export function TopologyFilters({
   activeKinds,
   onToggleKind,
   textFilter,
-  onTextFilterChange
+  onTextFilterChange,
+  showObserved,
+  onToggleShowObserved
 }: {
   activeKinds: ReadonlySet<TopologyNodeKind>;
   onToggleKind: (kind: TopologyNodeKind) => void;
   textFilter: string;
   onTextFilterChange: (value: string) => void;
+  /** Rule G7's own control, `loxep-2mr` — defaults ON at the page level; independent of the per-kind chips below. */
+  showObserved: boolean;
+  onToggleShowObserved: () => void;
 }) {
   return (
     <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
@@ -36,6 +41,16 @@ export function TopologyFilters({
             {TOPOLOGY_NODE_KIND_LABELS[kind]}
           </Toggle>
         ))}
+        <Toggle
+          size='sm'
+          variant='outline'
+          pressed={showObserved}
+          onPressedChange={onToggleShowObserved}
+          aria-label='Toggle observed resources'
+          className='border-dashed'
+        >
+          Show observed
+        </Toggle>
       </div>
       <div className='relative w-full sm:w-64'>
         <Icons.search className='pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground' />

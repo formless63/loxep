@@ -63,6 +63,21 @@
  * `computeFleetSignals`/`buildProxyResourceChainDtos` already use in
  * `infrastructure-functions.ts`. `fetchInfrastructureTopology` itself is a
  * thin DB-fetch-then-call wrapper, untested directly (same precedent).
+ *
+ * ## Rule G7: the observed layer (`loxep-2mr`, owner ruling 2026-08-17)
+ *
+ * Beyond the linked-only inventory above, this module also assembles one
+ * `tool`-kind node, `observed: true`, per UNLINKED `external_resources` row
+ * across the five discovery-writing providers (tailscale, dockhand, beszel,
+ * gatus, termix — `@loxep/domain`'s `FLEET_TOOL_PANEL_ORDER`) —
+ * `getResourceLinksService().listUnattachedByProvider(provider)`, the same
+ * accessor the attach picker (`fetchDiscoveredFleetResources`) and the
+ * tailnet candidates panel (`fetchUnmatchedTailscaleDevices`) already read.
+ * Tailscale rows dismissed via `tailscaleIgnoredDevicesSetting` are excluded
+ * — ignored means hidden here too. These nodes carry no edges (nothing links
+ * them — that is the whole point) and are visually distinguished by the
+ * `observed` flag alone, not a separate {@link TopologyNodeKind} — see the
+ * field's own doc comment for why a flag beat a sixth node kind.
  */
 import { createServerFn } from '@tanstack/react-start';
 import type { HealthStatus } from '@loxep/domain';
@@ -108,6 +123,23 @@ export interface TopologyNodeDto {
   badges: string[];
   /** Small facts the node card/tooltip renders — provider, region, mode, subdomain, connection status. Never a secret, never a raw payload (same discipline `integration_health.detail` itself is held to). */
   meta: Record<string, string | null>;
+  /**
+   * Rule G7's observed layer, `loxep-2mr`: true for a `tool`-kind node built
+   * from an `external_resources` row with NO `resource_links` row (a sweep
+   * recorded it, nobody claimed it). A flag on the existing `tool` kind, not
+   * a sixth {@link TopologyNodeKind} — an observed resource is structurally
+   * the SAME thing a linked companion tool is (an `external_resources` row
+   * from one of the same five discovery-writing providers), it just lacks
+   * the attachment; a new kind would force it into its own `TOPOLOGY_RANK_BY_
+   * KIND`/`TOPOLOGY_NODE_KIND_LABELS`/`TOPOLOGY_NODE_KIND_CHART_TOKEN` entry
+   * for no semantic gain, and would make the per-kind filter chip ("Companion
+   * tool") and the dedicated "Show observed" toggle (rule G7's own control,
+   * independent of the per-kind chips) fight over the same nodes. Always
+   * `false` for every other node — set explicitly at every construction site
+   * so a reviewer never has to wonder whether an omission means "false" or
+   * "forgot".
+   */
+  observed: boolean;
 }
 
 export interface TopologyEdgeDto {
@@ -184,6 +216,26 @@ export interface TopologyHealthRow {
   status: TopologyHealthStatus;
 }
 
+/**
+ * One UNLINKED `external_resources` row — rule G7's observed layer. Carries
+ * `url`/`metadata` (absent from {@link TopologyExternalResourceRow}, which
+ * only ever fed a linked `watched_by` edge and never needed them) because an
+ * isolated node has no edge sentence to lean on and must stand alone: the
+ * node's own tooltip is the only place these facts surface.
+ */
+export interface TopologyObservedResourceRow {
+  id: string;
+  provider: string;
+  externalType: string;
+  title: string | null;
+  connectionId: string | null;
+  /** The tailnet node id for a tailscale row — the ONLY provider whose ignore map exists, keyed by this field. `null` for every other provider's row. */
+  externalId: string | null;
+  /** Deep link to the provider's own UI — surfaced in `meta.url`, never used for `router.navigate` (that stays `href`, the internal Loxep surface). */
+  url: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface BuildTopologyInput {
   hostingTargets: TopologyHostingTargetRow[];
   hostAddresses: TopologyHostAddressRow[];
@@ -195,6 +247,19 @@ export interface BuildTopologyInput {
   externalResources: TopologyExternalResourceRow[];
   /** Pre-filtered to `resourceType = 'hosting_target'` by the caller. */
   resourceLinks: TopologyResourceLinkRow[];
+  /**
+   * Rule G7: every UNLINKED `external_resources` row across the five
+   * discovery-writing providers — UNFILTERED by ignore state (see
+   * {@link ignoredTailscaleExternalIds}, applied inside this pure builder so
+   * the "ignored means hidden here too" rule is testable with zero
+   * database). The observed layer is scoped to PERSISTED observations only
+   * (rule G2 stands: this module never calls a provider), so Pangolin —
+   * which writes no discovery row at all — is structurally absent and stays
+   * absent; the legend's own copy says so.
+   */
+  observedResources: TopologyObservedResourceRow[];
+  /** `tailscaleIgnoredDevicesSetting`'s own keys (tailnet node ids) — a tailscale observed row whose `externalId` is in this set is dropped entirely, never rendered even as a dashed node. */
+  ignoredTailscaleExternalIds: ReadonlySet<string>;
   health: TopologyHealthRow[];
   readAt: Date;
 }
@@ -213,6 +278,56 @@ function providerLabel(provider: string): string {
 
 function fullDomainName(domainName: string, subdomain: string | null): string {
   return subdomain === null ? domainName : `${subdomain}.${domainName}`;
+}
+
+/** Coerces one `external_resources.metadata` field into the flat string `meta` shape every node card reads — never a nested object, never a secret (same discipline `providerLabel`'s callers already hold `meta` to). */
+function metaString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return String(value);
+  if (Array.isArray(value)) {
+    const strings = value.filter((entry): entry is string => typeof entry === 'string');
+    return strings.length === 0 ? null : strings.join(', ');
+  }
+  return null;
+}
+
+/**
+ * Per-provider metadata keys worth a tooltip line for an observed resource —
+ * the survey's own field inventory (rule G7's design doc, verbatim): the
+ * fields each discovery sweep's own `upsertExternalResource` call is known
+ * to write into `metadata`. A provider outside this table (should not occur
+ * — the caller only ever passes rows from the five discovery-writing
+ * providers) simply carries no extra fields, never a crash.
+ */
+const OBSERVED_RESOURCE_METADATA_KEYS: Record<string, string[]> = {
+  tailscale: ['addresses', 'os', 'online', 'lastSeen', 'magicDnsName'],
+  dockhand: ['host', 'port', 'connectionType', 'publicIp'],
+  beszel: ['status', 'host', 'port'],
+  gatus: ['group', 'success'],
+  termix: ['host', 'status']
+};
+
+/** Builds an observed-resource node's `meta` — provider/externalType/url plus that provider's own tooltip-worthy fields (see {@link OBSERVED_RESOURCE_METADATA_KEYS}). */
+function observedResourceMeta(
+  resource: TopologyObservedResourceRow
+): Record<string, string | null> {
+  const meta: Record<string, string | null> = {
+    provider: providerLabel(resource.provider),
+    // The raw slug too, alongside the capitalized display form above — the
+    // node card's `BrandIcon` lookup (`integrationServiceForProvider`) keys
+    // off the exact slug, same as `connection` nodes' `meta.provider`
+    // (`loxep-pso`'s W5 fix); `tool`-kind linked nodes don't carry this today
+    // (no card wired an icon to them), so this is scoped to observed nodes
+    // only, per this wave's own ask.
+    providerSlug: resource.provider,
+    externalType: resource.externalType,
+    url: resource.url
+  };
+  for (const key of OBSERVED_RESOURCE_METADATA_KEYS[resource.provider] ?? []) {
+    meta[key] = metaString(resource.metadata[key]);
+  }
+  return meta;
 }
 
 function sortNodesByName(nodes: TopologyNodeDto[]): TopologyNodeDto[] {
@@ -246,6 +361,7 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
     status: healthFor('connection', connection.id),
     href: { to: '/settings/connections' },
     badges: [],
+    observed: false,
     // Raw provider slug (not `providerLabel`'s capitalized display form) —
     // matches `hosting_target`'s own `meta.provider` convention (line below,
     // `target.provider`) and is required for the node card's `BrandIcon`
@@ -262,6 +378,7 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
     status: healthFor('managed_domain', domain.id),
     href: { to: '/infrastructure/domains/$name', params: { name: domain.name } },
     badges: [],
+    observed: false,
     meta: {}
   }));
 
@@ -281,6 +398,7 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
           ? null
           : { to: '/infrastructure/domains/$name', params: { name: domainName } },
       badges: [],
+      observed: false,
       meta: { mode: resource.mode, subdomain: resource.subdomain }
     };
   });
@@ -296,6 +414,7 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
       badges: HOST_ADDRESS_BADGE_ORDER.filter((entry) => badgeSet.has(entry.kind)).map(
         (entry) => entry.label
       ),
+      observed: false,
       meta: { provider: target.provider, region: target.region }
     };
   });
@@ -310,16 +429,47 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
       status: healthFor('external_resource', resource.id),
       href,
       badges: [],
+      observed: false,
       meta: { provider: providerLabel(resource.provider), externalType: resource.externalType }
     };
   });
+
+  // Rule G7's observed layer: unlinked external_resources rows, `observed:
+  // true`, sharing the `tool` kind (see TopologyNodeDto.observed's own doc
+  // for why). Never has an edge — `watched_by` only ever iterates
+  // `input.resourceLinks`, which by construction has no row pointing at one
+  // of these ids. Ignored means hidden here too: a tailscale row whose
+  // externalId is in the ignore set is dropped before it ever becomes a node.
+  const observedResourceNodes: TopologyNodeDto[] = input.observedResources
+    .filter(
+      (resource) =>
+        resource.provider !== 'tailscale' ||
+        resource.externalId === null ||
+        !input.ignoredTailscaleExternalIds.has(resource.externalId)
+    )
+    .map((resource) => {
+      const href =
+        resource.connectionId === null
+          ? null
+          : estateHref(resource.provider, resource.connectionId);
+      return {
+        id: `tool:${resource.id}`,
+        kind: 'tool',
+        name: resource.title ?? `${providerLabel(resource.provider)} ${resource.externalType}`,
+        status: healthFor('external_resource', resource.id),
+        href,
+        badges: [],
+        observed: true,
+        meta: observedResourceMeta(resource)
+      };
+    });
 
   const nodes: TopologyNodeDto[] = [
     ...sortNodesByName(connectionNodes),
     ...sortNodesByName(domainNodes),
     ...sortNodesByName(proxyResourceNodes),
     ...sortNodesByName(hostingTargetNodes),
-    ...sortNodesByName(toolNodes)
+    ...sortNodesByName([...toolNodes, ...observedResourceNodes])
   ];
 
   const edges: TopologyEdgeDto[] = [];
@@ -441,10 +591,18 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
  */
 export const fetchInfrastructureTopology = createServerFn({ method: 'GET' }).handler(
   async (): Promise<InfrastructureTopologyDto> => {
-    const [{ requireSession, getAdminServices }, { INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS }] =
-      await Promise.all([import('@/server/admin'), import('@/features/estate/provider-registry')]);
+    const [
+      { requireSession, getAdminServices, getResourceLinksService },
+      { INFRASTRUCTURE_ESTATE_CATEGORY_PROVIDERS },
+      { FLEET_TOOL_PANEL_ORDER, tailscaleIgnoredDevicesSetting }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@/features/estate/provider-registry'),
+      import('@loxep/domain')
+    ]);
     await requireSession();
-    const { handle, connections, health } = getAdminServices();
+    const { handle, connections, health, settings } = getAdminServices();
+    const resourceLinks = getResourceLinksService();
     const readAt = new Date();
 
     const [
@@ -480,14 +638,25 @@ export const fetchInfrastructureTopology = createServerFn({ method: 'GET' }).han
     const externalResourceIds = [
       ...new Set(resourceLinkRows.map((link) => link.externalResourceId))
     ];
-    const [externalResourceRows, toolHealth] = await Promise.all([
-      externalResourceIds.length === 0
-        ? Promise.resolve([])
-        : handle.db.query.externalResources.findMany({
-            where: (table, { inArray }) => inArray(table.id, externalResourceIds)
-          }),
-      health.listHealth({ subjectType: 'external_resource' })
-    ]);
+    const [externalResourceRows, toolHealth, unattachedByProvider, ignoredTailscaleDevices] =
+      await Promise.all([
+        externalResourceIds.length === 0
+          ? Promise.resolve([])
+          : handle.db.query.externalResources.findMany({
+              where: (table, { inArray }) => inArray(table.id, externalResourceIds)
+            }),
+        health.listHealth({ subjectType: 'external_resource' }),
+        // Rule G7's observed layer: every UNLINKED external_resources row
+        // across the five discovery-writing providers — the same
+        // `listUnattachedByProvider` accessor the attach picker and the
+        // tailnet candidates panel already read.
+        Promise.all(
+          FLEET_TOOL_PANEL_ORDER.map((provider) => resourceLinks.listUnattachedByProvider(provider))
+        ),
+        settings.get(tailscaleIgnoredDevicesSetting)
+      ]);
+
+    const observedResourceRows = unattachedByProvider.flat();
 
     return buildInfrastructureTopology({
       hostingTargets: hostingTargetRows.map((row) => ({
@@ -533,6 +702,17 @@ export const fetchInfrastructureTopology = createServerFn({ method: 'GET' }).han
         resourceId: row.resourceId,
         resourceType: row.resourceType
       })),
+      observedResources: observedResourceRows.map((row) => ({
+        id: row.id,
+        provider: row.provider,
+        externalType: row.externalType,
+        title: row.title,
+        connectionId: row.connectionId,
+        externalId: row.externalId,
+        url: row.url,
+        metadata: row.metadata
+      })),
+      ignoredTailscaleExternalIds: new Set(Object.keys(ignoredTailscaleDevices)),
       health: [
         ...connectionHealth,
         ...hostingTargetHealth,

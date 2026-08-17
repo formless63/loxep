@@ -71,16 +71,16 @@ export function cloudflareZoneColumns(
     },
     {
       id: 'managed',
-      header: 'Managed by Loxep',
+      header: 'In Loxep',
       cell: ({ row }) => {
         const managed = row.original.managedDomain;
         if (managed === null) {
-          return <Badge variant='secondary'>Not declared</Badge>;
+          return <Badge variant='secondary'>Observed only</Badge>;
         }
         return (
           <Button size='sm' variant='link' className='h-auto p-0' asChild>
             <Link to='/infrastructure/domains/$name' params={{ name: managed.name }}>
-              <Icons.circleCheck className='mr-1 h-3.5 w-3.5' /> Managed by Loxep
+              <Icons.circleCheck className='mr-1 h-3.5 w-3.5' /> Declared
             </Link>
           </Button>
         );

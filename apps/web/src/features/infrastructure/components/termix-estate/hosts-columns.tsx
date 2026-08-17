@@ -52,11 +52,11 @@ export const termixHostsColumns: ColumnDef<DataTableFeatures, TermixEstateHostDt
   },
   {
     id: 'loxep',
-    header: '',
+    header: 'In Loxep',
     cell: ({ row }) => {
       const { linked } = row.original;
       if (linked === null) {
-        return <span className='text-muted-foreground text-sm'>Not linked</span>;
+        return <span className='text-muted-foreground text-sm'>Observed only</span>;
       }
       return (
         <Link

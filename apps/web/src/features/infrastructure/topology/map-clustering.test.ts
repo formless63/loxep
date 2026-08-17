@@ -15,6 +15,7 @@ function targetNode(overrides: Partial<TopologyNodeDto> & { id: string }): Topol
     status: null,
     href: { to: '/infrastructure/fleet/$name', params: { name: overrides.id } },
     badges: [],
+    observed: false,
     meta: { provider: null, region: null },
     ...overrides
   };
@@ -27,6 +28,7 @@ function toolNode(overrides: Partial<TopologyNodeDto> & { id: string }): Topolog
     status: null,
     href: null,
     badges: [],
+    observed: false,
     meta: {},
     ...overrides
   };
@@ -84,6 +86,7 @@ describe('clusterTopologyMap', () => {
         status: null,
         href: null,
         badges: [],
+        observed: false,
         meta: {}
       }
     ];

@@ -64,25 +64,64 @@ function connectionBrandIcon(dto: TopologyNodeDto) {
   );
 }
 
-/** Custom xyflow node renderer — a plain `bg-card`/`border` card, never a graph-specific palette (rule G5). */
+/**
+ * Rule G7's observed nodes carry the raw provider slug in `dto.meta.providerSlug`
+ * (`infrastructure-topology-functions.ts`'s `observedResourceMeta` — the same
+ * raw-slug convention `connectionBrandIcon` above already relies on for
+ * `connection` nodes). Linked `tool` nodes don't carry this key yet (out of
+ * this wave's scope), so they fall through to no mark, same as before.
+ */
+function observedResourceBrandIcon(dto: TopologyNodeDto) {
+  if (!dto.observed) return null;
+  const provider = dto.meta['providerSlug'];
+  if (provider === null || provider === undefined) return null;
+  const service = integrationServiceForProvider(provider);
+  if (service === null) return null;
+  return (
+    <BrandIcon
+      mark={PROVIDER_BRAND_ICONS[service.id]}
+      fallback={PROVIDER_BRAND_ICON_FALLBACKS[service.id]}
+      name={service.name}
+      size={16}
+      className='text-muted-foreground'
+    />
+  );
+}
+
+/** Custom xyflow node renderer — a plain `bg-card`/`border` card, never a graph-specific palette (rule G5). Rule G7's observed nodes render dashed/muted (`dto.observed`) — visually distinct, never a count badge (P15 stands; the "Observed" chip below is a state label, not a count). */
 export function TopologyNodeCard({ data }: NodeProps) {
   const { dto, dimmed, focused, onOpen } = data as unknown as TopologyNodeCardData;
   const tone = toneForStatus(dto.status);
   const statusLabel = dto.status === null ? 'No health data' : dto.status;
-  const brandIcon = connectionBrandIcon(dto);
+  const brandIcon = connectionBrandIcon(dto) ?? observedResourceBrandIcon(dto);
+  const providerUrl = dto.observed ? dto.meta['url'] : null;
 
   return (
     <div
       className={cn(
-        'w-64 rounded-lg border bg-card p-3 text-card-foreground shadow-sm transition-opacity',
-        focused ? 'border-primary ring-primary/40 ring-2' : 'border-border',
+        'w-64 rounded-lg border p-3 text-card-foreground shadow-sm transition-opacity',
+        dto.observed ? 'border-dashed bg-muted/40' : 'bg-card',
+        focused
+          ? 'border-primary ring-primary/40 ring-2'
+          : dto.observed
+            ? 'border-muted-foreground/40'
+            : 'border-border',
         dimmed && 'opacity-35'
       )}
     >
       <Handle type='target' position={Position.Left} className='!bg-border !border-none' />
       <Handle type='source' position={Position.Right} className='!bg-border !border-none' />
       <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground text-xs'>{TOPOLOGY_NODE_KIND_LABELS[dto.kind]}</span>
+        <div className='flex min-w-0 items-center gap-1.5'>
+          <span className='text-muted-foreground text-xs'>
+            {TOPOLOGY_NODE_KIND_LABELS[dto.kind]}
+          </span>
+          {dto.observed && (
+            <span className='rounded border border-dashed border-muted-foreground/50 px-1 py-0 text-[9px] text-muted-foreground'>
+              Observed
+            </span>
+          )}
+        </div>
         <StatusDot tone={tone} label={statusLabel} />
       </div>
       {dto.href ? (
@@ -103,6 +142,18 @@ export function TopologyNodeCard({ data }: NodeProps) {
           {brandIcon}
           {dto.name}
         </p>
+      )}
+      {providerUrl && (
+        <a
+          href={providerUrl}
+          target='_blank'
+          rel='noreferrer'
+          onClick={(event) => event.stopPropagation()}
+          className='mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground hover:text-primary hover:underline'
+        >
+          <Icons.externalLink className='size-3 shrink-0' />
+          Open at provider
+        </a>
       )}
       {dto.badges.length > 0 && (
         <div className='mt-2 flex flex-wrap gap-1'>

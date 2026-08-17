@@ -152,7 +152,7 @@ export function dockhandEnvironmentColumns(
     },
     {
       id: 'loxep',
-      header: 'Loxep',
+      header: 'In Loxep',
       cell: ({ row }) => <LoxepCell connectionId={connectionId} row={row.original} />
     },
     {

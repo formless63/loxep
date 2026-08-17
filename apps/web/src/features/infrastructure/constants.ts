@@ -83,10 +83,20 @@ export const DRIFT_KIND_LABELS: Record<string, string> = {
   unexpected: 'Unexpected at provider'
 };
 
+/**
+ * Rule P3b (`loxep-2mr`, owner ruling 2026-08-17): `unexpected` — a provider
+ * object Loxep never declared — is information, not an alarm ("exists at the
+ * provider, Loxep never declared it" is a fact, not drift to correct); it
+ * renders `secondary`, the same neutral tone `cloudflare-estate/record-
+ * columns.tsx`'s own cross-reference cell already uses for its identical
+ * `unexpected` state (that file was P3b's reference implementation — this
+ * mirrors it). `missing`/`modified` stay `warning`: both describe a
+ * Loxep-DECLARED record a reconciler may act on, which is what stays LOUD.
+ */
 export const DRIFT_KIND_TONE: Record<string, Tone> = {
   missing: 'warning',
   modified: 'warning',
-  unexpected: 'destructive'
+  unexpected: 'secondary'
 };
 
 /** `reconcile_runs.status`. */

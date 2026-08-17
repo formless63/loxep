@@ -99,7 +99,7 @@ export function cloudflareRecordColumns(
     {
       id: 'crossReference',
       accessorKey: 'crossReference',
-      header: 'Loxep state',
+      header: 'In Loxep',
       cell: ({ row }) => (
         <ToneBadge tone={CROSS_REFERENCE_TONE[row.original.crossReference]}>
           {CROSS_REFERENCE_LABEL[row.original.crossReference]}
@@ -107,7 +107,7 @@ export function cloudflareRecordColumns(
       ),
       enableColumnFilter: true,
       meta: {
-        label: 'Loxep state',
+        label: 'In Loxep',
         variant: 'multiSelect' as const,
         options: Object.entries(CROSS_REFERENCE_LABEL).map(([value, label]) => ({ value, label }))
       }

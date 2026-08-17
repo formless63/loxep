@@ -112,7 +112,7 @@ export default function UnmatchedTailscaleDevicesPanel() {
                 <Icons.circleCheck />
               </EmptyMedia>
               <EmptyTitle>Every discovered device is linked or ignored</EmptyTitle>
-              <EmptyDescription>Nothing needs review right now.</EmptyDescription>
+              <EmptyDescription>Nothing left to link right now.</EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : (

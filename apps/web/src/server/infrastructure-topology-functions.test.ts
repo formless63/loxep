@@ -23,6 +23,8 @@ function baseInput(overrides: Partial<BuildTopologyInput> = {}): BuildTopologyIn
     connections: [],
     externalResources: [],
     resourceLinks: [],
+    observedResources: [],
+    ignoredTailscaleExternalIds: new Set(),
     health: [],
     readAt: READ_AT,
     ...overrides
@@ -372,5 +374,143 @@ describe('buildInfrastructureTopology — edge assembly, one per design table ro
     );
     expect(dto.nodes.map((n) => n.id)).toEqual(['hosting_target:target-lonely']);
     expect(dto.edges).toEqual([]);
+  });
+});
+
+describe("buildInfrastructureTopology — rule G7's observed layer", () => {
+  test('an unlinked external_resources row becomes an observed tool node with no edges', () => {
+    const dto = buildInfrastructureTopology(
+      baseInput({
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-2',
+            connectionId: 'conn-beszel',
+            externalId: null,
+            url: 'https://beszel.example/systems/web-2',
+            metadata: { status: 'up', host: '10.0.0.5', port: '45876' }
+          }
+        ]
+      })
+    );
+    const node = dto.nodes.find((n) => n.id === 'tool:obs-1');
+    expect(node).toBeDefined();
+    expect(node!.kind).toBe('tool');
+    expect(node!.observed).toBe(true);
+    expect(node!.name).toBe('web-2');
+    expect(node!.meta['status']).toBe('up');
+    expect(node!.meta['host']).toBe('10.0.0.5');
+    expect(node!.meta['url']).toBe('https://beszel.example/systems/web-2');
+    expect(dto.edges).toEqual([]);
+  });
+
+  test('a declared/linked tool node is never marked observed', () => {
+    const dto = buildInfrastructureTopology(
+      baseInput({
+        hostingTargets: [
+          {
+            id: 'target-1',
+            name: 'origin-1',
+            provider: null,
+            region: null,
+            frontedByTargetId: null,
+            proxyConnectionId: null
+          }
+        ],
+        externalResources: [
+          {
+            id: 'ext-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-1',
+            connectionId: null
+          }
+        ],
+        resourceLinks: [
+          { externalResourceId: 'ext-1', resourceId: 'target-1', resourceType: 'hosting_target' }
+        ]
+      })
+    );
+    const node = dto.nodes.find((n) => n.id === 'tool:ext-1')!;
+    expect(node.observed).toBe(false);
+  });
+
+  test('a tailscale observed row whose externalId is in the ignore set is dropped entirely', () => {
+    const dto = buildInfrastructureTopology(
+      baseInput({
+        observedResources: [
+          {
+            id: 'obs-ignored',
+            provider: 'tailscale',
+            externalType: 'device',
+            title: 'laptop',
+            connectionId: null,
+            externalId: 'node-ignored',
+            url: 'https://login.tailscale.com/admin/machines/node-ignored',
+            metadata: {}
+          },
+          {
+            id: 'obs-visible',
+            provider: 'tailscale',
+            externalType: 'device',
+            title: 'server',
+            connectionId: null,
+            externalId: 'node-visible',
+            url: 'https://login.tailscale.com/admin/machines/node-visible',
+            metadata: {}
+          }
+        ],
+        ignoredTailscaleExternalIds: new Set(['node-ignored'])
+      })
+    );
+    expect(dto.nodes.map((n) => n.id)).toEqual(['tool:obs-visible']);
+  });
+
+  test('a non-tailscale observed row is never affected by ignoredTailscaleExternalIds', () => {
+    const dto = buildInfrastructureTopology(
+      baseInput({
+        observedResources: [
+          {
+            id: 'obs-dockhand',
+            provider: 'dockhand',
+            externalType: 'environment',
+            title: 'docker-host-1',
+            connectionId: null,
+            externalId: 'env-1',
+            url: 'https://dockhand.example/environments/env-1',
+            metadata: { host: '10.0.0.9' }
+          }
+        ],
+        // Would only ever match a tailscale row's externalId — irrelevant here.
+        ignoredTailscaleExternalIds: new Set(['env-1'])
+      })
+    );
+    expect(dto.nodes.map((n) => n.id)).toEqual(['tool:obs-dockhand']);
+  });
+
+  test("an observed node deep-links to the connection's estate page when one is known", () => {
+    const dto = buildInfrastructureTopology(
+      baseInput({
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'gatus',
+            externalType: 'endpoint',
+            title: null,
+            connectionId: 'conn-gatus',
+            externalId: null,
+            url: 'https://gatus.example/endpoints/1',
+            metadata: {}
+          }
+        ]
+      })
+    );
+    const node = dto.nodes.find((n) => n.id === 'tool:obs-1')!;
+    expect(node.href).toEqual({
+      to: '/infrastructure/estate/$connectionId',
+      params: { connectionId: 'conn-gatus' }
+    });
   });
 });

@@ -36,6 +36,10 @@ export function TopologyPageBody() {
     () => new Set(TOPOLOGY_NODE_KINDS)
   );
   const [textFilter, setTextFilter] = React.useState('');
+  // Rule G7, `loxep-2mr`: defaults ON — visibility is the default, hiding is
+  // the choice. Component state, matching `activeKinds`/`textFilter` above
+  // (this page carries no filter state in the URL to match).
+  const [showObserved, setShowObserved] = React.useState(true);
 
   const toggleKind = React.useCallback((kind: TopologyNodeKind) => {
     setActiveKinds((current) => {
@@ -46,13 +50,17 @@ export function TopologyPageBody() {
     });
   }, []);
 
+  const toggleShowObserved = React.useCallback(() => {
+    setShowObserved((current) => !current);
+  }, []);
+
   return (
     <InfrastructurePage
       title='Topology'
       description="A living map of what Loxep's own records say about your infrastructure — connections, domains, proxy resources, hosting targets, and the companion tools that watch them."
     >
       <div className='flex flex-col gap-3'>
-        <TopologyLegend data={data} />
+        <TopologyLegend data={data} showObserved={showObserved} />
         <Tabs defaultValue='graph'>
           <TabsList>
             <TabsTrigger value='graph'>Graph</TabsTrigger>
@@ -64,10 +72,17 @@ export function TopologyPageBody() {
               onToggleKind={toggleKind}
               textFilter={textFilter}
               onTextFilterChange={setTextFilter}
+              showObserved={showObserved}
+              onToggleShowObserved={toggleShowObserved}
             />
             <ClientOnly fallback={<GraphSkeleton />}>
               <React.Suspense fallback={<GraphSkeleton />}>
-                <TopologyGraph data={data} activeKinds={activeKinds} textFilter={textFilter} />
+                <TopologyGraph
+                  data={data}
+                  activeKinds={activeKinds}
+                  textFilter={textFilter}
+                  showObserved={showObserved}
+                />
               </React.Suspense>
             </ClientOnly>
           </TabsContent>

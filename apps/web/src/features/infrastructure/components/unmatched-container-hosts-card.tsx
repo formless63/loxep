@@ -55,9 +55,10 @@ export default function UnmatchedContainerHostsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className='text-base'>Dockhand hosts Loxep doesn&apos;t track</CardTitle>
+        <CardTitle className='text-base'>Observed Dockhand hosts</CardTitle>
         <CardDescription>
-          Registered at Dockhand, not attached to any hosting target — adopting creates one.
+          Registered at Dockhand, not yet attached to a hosting target — adopt one to start managing
+          it from Loxep.
         </CardDescription>
       </CardHeader>
       <CardContent>

@@ -33,7 +33,7 @@ function DnsChecksCell({ domain }: { domain: PurelymailEstateDomainDto }) {
 
 function LoxepDomainCell({ domain }: { domain: PurelymailEstateDomainDto }) {
   if (domain.loxep === null) {
-    return <span className='text-muted-foreground text-sm'>Not declared in Loxep</span>;
+    return <span className='text-muted-foreground text-sm'>Observed only</span>;
   }
   return (
     <div className='flex flex-wrap items-center gap-1'>
@@ -88,7 +88,7 @@ export function purelymailDomainColumns(
     },
     {
       id: 'loxep',
-      header: 'Loxep',
+      header: 'In Loxep',
       cell: ({ row }) =>
         row.original.loxep === null ? (
           <LoxepDomainCell domain={row.original} />

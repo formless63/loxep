@@ -26,7 +26,7 @@ export const purelymailMailboxColumns: ColumnDef<DataTableFeatures, PurelymailEs
     },
     {
       id: 'loxep',
-      header: 'Loxep',
+      header: 'In Loxep',
       cell: ({ row }) =>
         row.original.loxep === null ? (
           // The unique fact this section adds (design §3.2): a mailbox that

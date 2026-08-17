@@ -78,11 +78,11 @@ export function gatusEndpointColumns(
     },
     {
       id: 'loxep',
-      header: 'Loxep',
+      header: 'In Loxep',
       cell: ({ row }) => {
         const loxep = row.original.loxep;
         if (loxep === null) {
-          return <span className='text-muted-foreground text-sm'>Not linked</span>;
+          return <span className='text-muted-foreground text-sm'>Observed only</span>;
         }
         return (
           <Button size='sm' variant='link' className='h-auto p-0' asChild>

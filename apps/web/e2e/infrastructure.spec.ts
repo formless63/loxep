@@ -714,6 +714,12 @@ test('topology page renders the Graph/Map tabs, the legend stamp, and a connecti
   // records, never a live provider read.
   await expect(main.getByText("Assembled from Loxep's records", { exact: false })).toBeVisible();
 
+  // Rule G7's "Show observed" toggle — asserted present and on by default,
+  // never its count (this harness's fixtures may have zero observed rows).
+  const showObservedToggle = main.getByRole('button', { name: 'Toggle observed resources' });
+  await expect(showObservedToggle).toBeVisible();
+  await expect(showObservedToggle).toHaveAttribute('aria-pressed', 'true');
+
   // The seeded Cloudflare connection renders as a graph node.
   await expect(main.getByText(connectionName)).toBeVisible();
 
