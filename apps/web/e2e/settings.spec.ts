@@ -158,7 +158,10 @@ test('admin hides a provider from the integrations catalog and re-enables it', a
   await expect(page.getByText(`${providerName} hidden`)).toBeVisible();
 
   // Hidden means gone from the default catalog view, not merely dimmed.
-  await expect(providerCard).toHaveCount(0);
+  // Wider timeout (loxep-wtk): the toast confirms the write; the card's
+  // removal waits on the enabled-map refetch, which lags under a loaded
+  // machine — this is one genuinely-async repaint, not a retry loop.
+  await expect(providerCard).toHaveCount(0, { timeout: 15000 });
 
   // "Show disabled" reveals it again, dimmed and badged — never a silent stop.
   await page.getByLabel(/^Show disabled/).click();

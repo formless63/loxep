@@ -37,7 +37,7 @@ test('quick-entry records an expense that appears in the expenses table', async 
   await page.goto('/finance/expenses');
   await expect(page.getByRole('heading', { name: 'Expenses' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'New expense' }).first().click();
+  await page.getByRole('main').getByRole('button', { name: 'New expense' }).first().click();
 
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText('New expense')).toBeVisible();
@@ -106,7 +106,7 @@ test('a recorded expense offers promote-to-acquisition, voiding it and creating 
   const lotTitle = `E2E Promote Lot ${runId}`;
 
   await page.goto('/finance/expenses');
-  await page.getByRole('button', { name: 'New expense' }).first().click();
+  await page.getByRole('main').getByRole('button', { name: 'New expense' }).first().click();
   const createDialog = page.getByRole('dialog');
   await createDialog.getByLabel('Amount *').fill('89.00');
   await createDialog.getByLabel('Category *').fill(promoteCategory);

@@ -59,7 +59,9 @@ test('pinning a page from another workspace surfaces it on the dashboard Pinned 
   await expect(pinnedLink.getByText('Market')).toBeVisible();
 
   await pinnedLink.click();
-  await page.waitForURL('**/market/monitors');
+  // Trailing ** because the monitors table immediately writes its URL table
+  // state (?page=1...) on arrival — a bare glob never observes the naked URL.
+  await page.waitForURL('**/market/monitors**');
 
   // Clean up: unpin so this fixture does not leak into later runs sharing
   // the same browser storage state.
