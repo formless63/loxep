@@ -56,7 +56,13 @@ function attachmentStatusIcon(status: EvidenceAttachmentStatus) {
  * (`@/components/file-uploader.tsx`, react-dropzone 20.1.0) — the design's
  * explicit rule is that no new dropzone is written, only configured via
  * props (`multiple`, `maxFiles`, `accept`, `maxSize`), never edited in place.
+ * `compact` (added loxep-zk5) is one more such prop: once
+ * `attachments.length > 0` the dropzone collapses to a slim "Drop or click
+ * to add more" strip above the attachment list — the SAME full drag/click/
+ * keyboard target, just visually out of the way once it is no longer the
+ * only thing on the pane, so the reclaimed height goes to the preview below.
  *
+
  * Each dropped file posts IMMEDIATELY to the EXISTING
  * `POST /api/documents/upload` (`@/features/documents/api/upload.ts`'s
  * `uploadDocument`) — the same pipeline `/finance/import` uses, entered from
@@ -202,6 +208,7 @@ export default function EvidencePane({
         maxFiles={MAX_ATTACHMENTS}
         accept={ACCEPTED_ATTACHMENT_TYPES}
         maxSize={DEFAULT_MAX_ATTACHMENT_BYTES}
+        compact={attachments.length > 0}
       />
       {attachments.length > 0 && (
         <ul className='flex flex-col gap-1'>
@@ -268,7 +275,12 @@ export default function EvidencePane({
           mimeType={selected.mimeType ?? null}
           servingUrl={selected.servingUrl ?? null}
           alt={selected.originalFilename ?? selected.file.name}
-          className='min-h-64'
+          // loxep-zk5: the evidence pane is now the DOMINANT flexible pane
+          // (`new-expense-page.tsx`'s layout inversion) — a PDF/receipt
+          // needs to actually be readable at desktop widths, so this grew
+          // well past the old `min-h-64` (16rem) that made the owner's core
+          // complaint true.
+          className='min-h-[36rem]'
           overlay={
             overlayLines.length > 0
               ? {

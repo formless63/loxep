@@ -73,6 +73,29 @@ const EXPENSE_PAYMENT_METHOD_VALUES = [
 /** Mirrors `EXPENSE_LINE_KINDS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`) — duplicated as a literal list per this file's own precedent above. */
 const EXPENSE_LINE_KIND_VALUES = ['item', 'shipping', 'tax', 'fee', 'discount', 'other'] as const;
 
+/** Mirrors `EXPENSE_LINE_UNITS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`) — duplicated per this file's own precedent above. `null`/omitted is "no unit". */
+const EXPENSE_LINE_UNIT_VALUES = [
+  'each',
+  'pair',
+  'pack',
+  'box',
+  'case',
+  'lot',
+  'lb',
+  'oz',
+  'kg',
+  'g',
+  'ft',
+  'in',
+  'm',
+  'cm',
+  'sqft',
+  'hr',
+  'day',
+  'mi',
+  'km'
+] as const;
+
 /**
  * Excludes `posted` — still unreachable, but not because the engine is
  * missing. `@loxep/accounting`'s posting engine (`createPostingEngine` /
@@ -205,6 +228,27 @@ export const fetchExpenses = createServerFn({ method: 'GET' })
     }));
   });
 
+/**
+ * Distinct categories already used in this installation (expense entry v2,
+ * loxep-zk5) — feeds the category combobox on `/finance/expenses/new`
+ * alongside `SUGGESTED_EXPENSE_CATEGORIES`. One bounded query: `category`
+ * has no cardinality control (it is a genuinely open set, no `CHECK` — see
+ * `packages/db/src/schema/expenses.ts`'s own doc), but a real installation's
+ * distinct-category count stays small in practice, and this is read-only
+ * autocomplete data, not a page the operator waits on.
+ */
+export const fetchExpenseCategories = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<string[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const result = await handle.db.execute(
+      `select distinct category from expenses order by category`
+    );
+    return result.rows.map((row) => row['category'] as string);
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Detail
 // ---------------------------------------------------------------------------
@@ -263,6 +307,8 @@ export interface ExpenseLineDto {
   unitAmount: string | null;
   lineAmount: string;
   lineKind: string;
+  /** See `EXPENSE_LINE_UNIT_VALUES` above. `null` is the ordinary "no unit" case. */
+  unit: string | null;
   documentLineCandidateId: string | null;
   note: string | null;
 }
@@ -495,6 +541,7 @@ export const fetchExpense = createServerFn({ method: 'GET' })
         unitAmount: line.unitAmount,
         lineAmount: line.lineAmount,
         lineKind: line.lineKind,
+        unit: line.unit,
         documentLineCandidateId: line.documentLineCandidateId,
         note: line.note
       })),
@@ -603,7 +650,8 @@ const expenseLineInput = z.strictObject({
   quantity: decimalString.nullish(),
   unitAmount: decimalString.nullish(),
   lineAmount: decimalString,
-  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item')
+  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item'),
+  unit: z.enum(EXPENSE_LINE_UNIT_VALUES).nullish()
 });
 
 const createExpenseWithEvidenceInput = z.strictObject({
@@ -720,7 +768,8 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
               quantity: line.quantity ?? null,
               unitAmount: line.unitAmount ?? null,
               lineAmount: line.lineAmount,
-              lineKind: line.lineKind
+              lineKind: line.lineKind,
+              unit: line.unit ?? null
             })),
             1
           );
@@ -990,7 +1039,8 @@ const addExpenseLineInput = z.strictObject({
   quantity: decimalString.nullish(),
   unitAmount: decimalString.nullish(),
   lineAmount: decimalString,
-  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item')
+  lineKind: z.enum(EXPENSE_LINE_KIND_VALUES).default('item'),
+  unit: z.enum(EXPENSE_LINE_UNIT_VALUES).nullish()
 });
 
 export const addExpenseLine = createServerFn({ method: 'POST' })
@@ -1005,6 +1055,7 @@ export const addExpenseLine = createServerFn({ method: 'POST' })
       unitAmount: data.unitAmount ?? null,
       lineAmount: data.lineAmount,
       lineKind: data.lineKind,
+      unit: data.unit ?? null,
       actorUserId: session.user.id
     });
     return {
@@ -1015,6 +1066,7 @@ export const addExpenseLine = createServerFn({ method: 'POST' })
       unitAmount: line.unitAmount,
       lineAmount: line.lineAmount,
       lineKind: line.lineKind,
+      unit: line.unit,
       documentLineCandidateId: line.documentLineCandidateId,
       note: line.note
     };

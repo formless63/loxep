@@ -84,6 +84,20 @@ export interface FileUploaderProps extends React.HTMLAttributes<HTMLDivElement> 
    * @example disabled
    */
   disabled?: boolean;
+
+  /**
+   * Renders the dropzone as a slim single-line strip instead of the full
+   * illustrated drop target — for a caller that already lists accepted
+   * files elsewhere and wants the dropzone to stay a real, always-present,
+   * full-behavior drag target without dominating the layout once that list
+   * is non-empty (e.g. the finance evidence pane, loxep-zk5). Drag/click/
+   * keyboard behavior and every prop above are unchanged; only the
+   * illustration and secondary caption are dropped for a one-line label.
+   * @type boolean
+   * @default false
+   * @example compact
+   */
+  compact?: boolean;
 }
 
 export function FileUploader(props: FileUploaderProps) {
@@ -97,6 +111,7 @@ export function FileUploader(props: FileUploaderProps) {
     maxFiles = 1,
     multiple = false,
     disabled = false,
+    compact = false,
     className,
     ...dropzoneProps
   } = props;
@@ -174,7 +189,7 @@ export function FileUploader(props: FileUploaderProps) {
   const isDisabled = disabled || (files?.length ?? 0) >= maxFiles;
 
   return (
-    <div className='relative flex flex-col gap-6 overflow-hidden'>
+    <div className={cn('relative flex flex-col overflow-hidden', compact ? 'gap-2' : 'gap-6')}>
       <Dropzone
         onDrop={onDrop}
         accept={accept}
@@ -187,7 +202,8 @@ export function FileUploader(props: FileUploaderProps) {
           <div
             {...getRootProps()}
             className={cn(
-              'group border-muted-foreground/25 hover:bg-muted/25 relative grid h-52 w-full cursor-pointer place-items-center rounded-lg border-2 border-dashed px-5 py-2.5 text-center transition',
+              'group border-muted-foreground/25 hover:bg-muted/25 relative grid w-full cursor-pointer place-items-center rounded-lg border-2 border-dashed text-center transition',
+              compact ? 'h-10 px-3 py-1.5' : 'h-52 px-5 py-2.5',
               'ring-offset-background focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden',
               isDragActive && 'border-muted-foreground/50',
               isDisabled && 'pointer-events-none opacity-60',
@@ -196,7 +212,14 @@ export function FileUploader(props: FileUploaderProps) {
             {...dropzoneProps}
           >
             <input {...getInputProps()} />
-            {isDragActive ? (
+            {compact ? (
+              <div className='flex items-center justify-center gap-2'>
+                <Icons.upload className='text-muted-foreground size-4' aria-hidden='true' />
+                <p className='text-muted-foreground text-xs font-medium'>
+                  {isDragActive ? 'Drop to add' : 'Drop or click to add more'}
+                </p>
+              </div>
+            ) : isDragActive ? (
               <div className='flex flex-col items-center justify-center gap-4 sm:px-5'>
                 <div className='rounded-full border border-dashed p-3'>
                   <Icons.upload className='text-muted-foreground size-7' aria-hidden='true' />

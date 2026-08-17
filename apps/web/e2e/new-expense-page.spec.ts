@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
 import { runSeed } from './helpers/run-id';
 
@@ -21,6 +21,21 @@ import { runSeed } from './helpers/run-id';
 
 const runId = runSeed();
 const category = `e2e-new-expense-${runId}`;
+
+/**
+ * The creatable category combobox (loxep-zk5) replaced the old free-text
+ * `<input>` — every category this spec types is new, so this always takes
+ * the "Use "<text>"" create path, never an existing-option select. The
+ * trigger click is scoped (`main`, matching this file's own "overlapping
+ * accessible name elsewhere on the page" rule); the popover's own content
+ * (search input, options) renders in a portal outside that scope, so those
+ * two steps run against `page` regardless of `scope`.
+ */
+async function fillNewCategory(page: Page, scope: Page | Locator, category: string): Promise<void> {
+  await scope.getByRole('combobox', { name: /^Category/ }).click();
+  await page.getByPlaceholder('Search or type a new category…').fill(category);
+  await page.getByRole('option', { name: `Use "${category}"` }).click();
+}
 
 /**
  * Receipt/document upload writes a media object, which needs a registered
@@ -100,7 +115,7 @@ test('drop one file, preview it, and record the expense with evidence attached',
   // Minimum required fields; Date/Payment/Currency/Entity keep their
   // sensible defaults, exactly like the quick-entry dialog.
   await main.getByLabel('Amount *').fill('18.25');
-  await main.getByLabel('Category *').fill(category);
+  await fillNewCategory(page, main, category);
 
   await main.getByRole('button', { name: 'Record expense' }).click();
 
@@ -141,16 +156,25 @@ test('a two-line entry records BOTH expense_lines and renders them, with their t
   // over-transcription guard (`sum(|line_amount|) <= |expenses.amount|`)
   // refuses exceeding it, and equality is the fully-transcribed case.
   await main.getByLabel('Amount *').fill('30.00');
-  await main.getByLabel('Category *').fill(lineCategory);
+  await fillNewCategory(page, main, lineCategory);
 
   const addLineButton = main.getByRole('button', { name: 'Add line' });
   await addLineButton.click();
   await main.getByRole('textbox', { name: 'Line 1 description' }).fill(firstLineDescription);
-  await main.getByRole('textbox', { name: 'Line 1 amount' }).fill('20.00');
+  // FILL-TWO-DERIVE-THIRD (loxep-zk5): qty x unit price -> subtotal. Setting
+  // a unit alongside them exercises the unit select without affecting the
+  // arithmetic (unit is a display label, never part of the derivation).
+  await main.getByRole('textbox', { name: 'Line 1 quantity' }).fill('4');
+  await main.getByRole('combobox', { name: 'Line 1 unit' }).click();
+  await page.getByRole('option', { name: 'each' }).click();
+  await main.getByRole('textbox', { name: 'Line 1 unit price' }).fill('5.00');
+  // Never typed directly — this is the DERIVED field (4 x 5.00 = 20.00),
+  // computed client-side and formatted at the schema's own 6dp scale.
+  await expect(main.getByRole('textbox', { name: 'Line 1 subtotal' })).toHaveValue('20.000000');
 
   await addLineButton.click();
   await main.getByRole('textbox', { name: 'Line 2 description' }).fill(secondLineDescription);
-  await main.getByRole('textbox', { name: 'Line 2 amount' }).fill('10.00');
+  await main.getByRole('textbox', { name: 'Line 2 subtotal' }).fill('10.00');
 
   await main.getByRole('button', { name: 'Record expense' }).click();
 

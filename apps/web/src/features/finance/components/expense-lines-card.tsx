@@ -17,7 +17,13 @@ import { useAppForm } from '@/lib/form';
 import { formatMoney } from '@/lib/format';
 import { addExpenseLine, removeExpenseLine } from '@/server/expense-functions';
 import type { ExpenseLineDto, ExpenseLinesSummaryDto } from '@/server/expense-functions';
-import { expenseLineKindLabel, expenseLineKindOptions } from '@/features/finance/constants';
+import {
+  expenseLineKindLabel,
+  expenseLineKindOptions,
+  expenseLineUnitLabel,
+  expenseLineUnitOptions,
+  NO_UNIT_VALUE
+} from '@/features/finance/constants';
 
 const addLineSchema = z.object({
   description: z.string().trim(),
@@ -27,7 +33,8 @@ const addLineSchema = z.object({
     .string()
     .trim()
     .regex(/^-?\d+(\.\d{1,6})?$/, 'Enter an amount, e.g. 12.50'),
-  lineKind: z.enum(['item', 'shipping', 'tax', 'fee', 'discount', 'other'])
+  lineKind: z.enum(['item', 'shipping', 'tax', 'fee', 'discount', 'other']),
+  unit: z.string().trim()
 });
 
 /**
@@ -66,6 +73,7 @@ export default function ExpenseLinesCard({
       unitAmount: string;
       lineAmount: string;
       lineKind: string;
+      unit: string;
     }) =>
       addExpenseLine({
         data: {
@@ -74,7 +82,9 @@ export default function ExpenseLinesCard({
           quantity: input.quantity.trim() === '' ? null : input.quantity.trim(),
           unitAmount: input.unitAmount.trim() === '' ? null : input.unitAmount.trim(),
           lineAmount: input.lineAmount.trim(),
-          lineKind: input.lineKind as never
+          lineKind: input.lineKind as never,
+          unit:
+            input.unit === NO_UNIT_VALUE || input.unit.trim() === '' ? null : (input.unit as never)
         }
       }),
     onSuccess: () => {
@@ -100,7 +110,8 @@ export default function ExpenseLinesCard({
       quantity: '',
       unitAmount: '',
       lineAmount: '',
-      lineKind: 'item'
+      lineKind: 'item',
+      unit: NO_UNIT_VALUE
     } as z.infer<typeof addLineSchema>,
     validators: { onSubmit: addLineSchema },
     onSubmit: async ({ value }) => {
@@ -147,7 +158,9 @@ export default function ExpenseLinesCard({
                 <span className='font-medium'>{line.description ?? '—'}</span>
                 {line.quantity !== null && line.unitAmount !== null && (
                   <span className='text-muted-foreground'>
-                    {line.quantity} × {formatMoney(line.unitAmount, currency)}
+                    {line.quantity}
+                    {line.unit !== null && ` ${expenseLineUnitLabel(line.unit)}`} ×{' '}
+                    {formatMoney(line.unitAmount, currency)}
                   </span>
                 )}
                 <span className='tabular-nums'>{formatMoney(line.lineAmount, currency)}</span>
@@ -174,7 +187,7 @@ export default function ExpenseLinesCard({
 
       {editable && (
         <form
-          className='grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_5rem_6rem_6rem_8rem_auto]'
+          className='grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_5rem_6rem_6rem_6rem_8rem_auto]'
           onSubmit={(event) => {
             event.preventDefault();
             form.handleSubmit();
@@ -190,6 +203,12 @@ export default function ExpenseLinesCard({
             <form.AppField
               name='quantity'
               children={(field) => <field.TextField label='Quantity' placeholder='qty' />}
+            />
+            <form.AppField
+              name='unit'
+              children={(field) => (
+                <field.SelectField label='Unit' options={expenseLineUnitOptions} />
+              )}
             />
             <form.AppField
               name='unitAmount'

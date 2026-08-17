@@ -518,6 +518,40 @@ export const EXPENSE_LINE_KINDS = [
 export type ExpenseLineKind = (typeof EXPENSE_LINE_KINDS)[number];
 
 /**
+ * `expense_lines.unit` — closed, `CHECK`ed, nullable. A modest practical set
+ * covering count, weight, length, area, and time units a receipt line might
+ * carry; `null` means "no unit" (the ordinary case — most lines are a flat
+ * amount with no meaningful per-unit rate). Added migration 0031
+ * (`expense-entry-design.md` v2, loxep-zk5): the line editor's
+ * FILL-TWO-DERIVE-THIRD behavior (qty × unit price -> subtotal, and back)
+ * needs a unit label beside the rate, but the unit itself is never part of
+ * the arithmetic — it is a display label the operator picks, same house
+ * rule as `line_kind`: closed set, text + TS union, CHECK at the schema.
+ */
+export const EXPENSE_LINE_UNITS = [
+  "each",
+  "pair",
+  "pack",
+  "box",
+  "case",
+  "lot",
+  "lb",
+  "oz",
+  "kg",
+  "g",
+  "ft",
+  "in",
+  "m",
+  "cm",
+  "sqft",
+  "hr",
+  "day",
+  "mi",
+  "km",
+] as const;
+export type ExpenseLineUnit = (typeof EXPENSE_LINE_UNITS)[number];
+
+/**
  * A receipt line — WHAT WAS BOUGHT, not WHERE THE MONEY IS CHARGED.
  * `expense-entry-design.md` section 4 draws the distinction this table
  * exists to keep separate from `expense_allocations`: a line comes off the
@@ -572,6 +606,13 @@ export const expenseLines = pgTable(
     lineKind: text("line_kind").notNull().default("item"),
 
     /**
+     * Nullable — see {@link EXPENSE_LINE_UNITS}. Carried verbatim; never
+     * used in any persisted arithmetic (`lineAmount` is the number the
+     * server trusts, always typed or derived client-side before submit).
+     */
+    unit: text("unit"),
+
+    /**
      * A REAL foreign key with a partial unique index below — unlike
      * `document_line_candidates.target_kind`/`target_id`, which is a stamp
      * across four tables and cannot be one. The candidate still stamps
@@ -615,6 +656,10 @@ export const expenseLines = pgTable(
     check(
       "expense_lines_line_kind_check",
       sql`${table.lineKind} in ('item', 'shipping', 'tax', 'fee', 'discount', 'other')`,
+    ),
+    check(
+      "expense_lines_unit_check",
+      sql`${table.unit} is null or ${table.unit} in ('each', 'pair', 'pack', 'box', 'case', 'lot', 'lb', 'oz', 'kg', 'g', 'ft', 'in', 'm', 'cm', 'sqft', 'hr', 'day', 'mi', 'km')`,
     ),
 
     foreignKey({

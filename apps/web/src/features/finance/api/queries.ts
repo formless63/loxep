@@ -1,6 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import {
   fetchExpense,
+  fetchExpenseCategories,
   fetchExpenses,
   fetchMissingReceipts,
   fetchUnallocatedExpenses
@@ -40,6 +41,12 @@ export const expenseQuery = (id: string, q?: string | null) =>
     queryKey: ['finance', 'expense', id, q ?? null],
     queryFn: () => fetchExpense({ data: { id, q: q ?? null } })
   });
+
+/** Distinct categories already used in this installation — see `fetchExpenseCategories`'s own doc; feeds the category combobox alongside `SUGGESTED_EXPENSE_CATEGORIES`. */
+export const expenseCategoriesQuery = queryOptions({
+  queryKey: ['finance', 'expense-categories'],
+  queryFn: () => fetchExpenseCategories()
+});
 
 export const missingReceiptsQuery = queryOptions({
   queryKey: ['finance', 'missing-receipts'],

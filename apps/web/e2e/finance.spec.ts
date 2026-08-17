@@ -40,6 +40,17 @@ function tableRow(page: Page, text: string): Locator {
   return page.getByRole('row').filter({ hasText: text });
 }
 
+/**
+ * The creatable category combobox (loxep-zk5) replaced the old free-text
+ * `<input>` — every category this spec types is new, so this always takes
+ * the "Use "<text>"" create path, never an existing-option select.
+ */
+async function fillNewCategory(page: Page, category: string): Promise<void> {
+  await page.getByRole('combobox', { name: /^Category/ }).click();
+  await page.getByPlaceholder('Search or type a new category…').fill(category);
+  await page.getByRole('option', { name: `Use "${category}"` }).click();
+}
+
 test('recording an expense through the entry page appears in the expenses table', async ({
   page
 }) => {
@@ -51,7 +62,7 @@ test('recording an expense through the entry page appears in the expenses table'
   await expect(page.getByRole('heading', { name: 'New expense' })).toBeVisible();
 
   await page.getByLabel('Amount *').fill('42.50');
-  await page.getByLabel('Category *').fill(category);
+  await fillNewCategory(page, category);
   await page.getByLabel('Payee name').fill(payeeName);
   // Payment (card), currency (USD), and entity (Unattributed) all keep
   // their sensible defaults — see `NewExpensePage`.
@@ -104,7 +115,7 @@ test('void-and-re-record relocates the corrected fact to the entry page, prefill
   // `expenses.amount` is `numeric(20,6)` — the prefill carries the stored
   // six-decimal-scale string, not the table's 2-decimal display format.
   await expect(page.getByLabel('Amount *')).toHaveValue('42.500000');
-  await expect(page.getByLabel('Category *')).toHaveValue(category);
+  await expect(page.getByRole('combobox', { name: /^Category/ })).toHaveText(category);
   await expect(page.getByLabel('Payee name')).toHaveValue(payeeName);
 
   await page.getByRole('button', { name: 'Record expense' }).click();
@@ -139,7 +150,7 @@ test('a recorded expense offers promote-to-acquisition, voiding it and creating 
   await page.getByRole('main').getByRole('link', { name: 'New expense' }).first().click();
   await page.waitForURL('**/finance/expenses/new');
   await page.getByLabel('Amount *').fill('89.00');
-  await page.getByLabel('Category *').fill(promoteCategory);
+  await fillNewCategory(page, promoteCategory);
   await page.getByLabel('Payee name').fill(promotePayeeName);
   await page.getByRole('button', { name: 'Record expense' }).click();
   await expect(page.getByRole('button', { name: /Promote to acquisition/ })).toBeVisible();

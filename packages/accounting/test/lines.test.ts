@@ -169,4 +169,41 @@ describe("expense lines service", () => {
       }),
     ).rejects.toBeInstanceOf(AccountingNotFoundError);
   });
+
+  it("unit round-trips through addLine and setLines — null is the ordinary case (migration 0031, loxep-zk5)", async () => {
+    const { expense } = await expenses.create({ ...base, amount: "50.00", status: "draft" });
+
+    const withUnit = await lines.addLine({
+      expenseId: expense.id,
+      description: "Shelving unit",
+      quantity: "2",
+      unitAmount: "10.00",
+      lineAmount: "20.00",
+      unit: "each",
+      actorUserId: actorId,
+    });
+    expect(withUnit.unit).toBe("each");
+
+    const withoutUnit = await lines.addLine({
+      expenseId: expense.id,
+      description: "Flat fee",
+      lineAmount: "5.00",
+      actorUserId: actorId,
+    });
+    expect(withoutUnit.unit).toBeNull();
+
+    const [listed1, listed2] = await lines.listLines(expense.id);
+    expect(listed1?.unit).toBe("each");
+    expect(listed2?.unit).toBeNull();
+
+    const replaced = await lines.setLines({
+      expenseId: expense.id,
+      lines: [
+        { description: "Boxes", quantity: "3", lineAmount: "15.00", unit: "box" },
+        { description: "Loose fee", lineAmount: "5.00" },
+      ],
+      actorUserId: actorId,
+    });
+    expect(replaced.map((line) => line.unit)).toEqual(["box", null]);
+  });
 });

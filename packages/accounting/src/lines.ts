@@ -80,6 +80,35 @@ export const EXPENSE_LINE_KINDS = [
 ] as const;
 export type ExpenseLineKind = (typeof EXPENSE_LINE_KINDS)[number];
 
+/**
+ * `expense_lines.unit` — closed, `CHECK`ed at the schema (migration 0031).
+ * Re-declared here matching this file's own `EXPENSE_LINE_KINDS` precedent
+ * of owning its input unions rather than importing `@loxep/db/schema`'s.
+ * Carried verbatim, never used in any arithmetic this package performs.
+ */
+export const EXPENSE_LINE_UNITS = [
+  "each",
+  "pair",
+  "pack",
+  "box",
+  "case",
+  "lot",
+  "lb",
+  "oz",
+  "kg",
+  "g",
+  "ft",
+  "in",
+  "m",
+  "cm",
+  "sqft",
+  "hr",
+  "day",
+  "mi",
+  "km",
+] as const;
+export type ExpenseLineUnit = (typeof EXPENSE_LINE_UNITS)[number];
+
 /* ------------------------------------------------------------------ schemas */
 
 const decimalString = z
@@ -95,6 +124,8 @@ const lineInputSchema = z.strictObject({
   /** May be zero (a free line) or negative (a coupon). Never omitted — a line with no total is not evidence of anything. */
   lineAmount: decimalString,
   lineKind: z.enum(EXPENSE_LINE_KINDS).default("item"),
+  /** See {@link EXPENSE_LINE_UNITS}. `null`/omitted is the ordinary "no unit" case. */
+  unit: z.enum(EXPENSE_LINE_UNITS).nullish(),
   /**
    * Links this line back to the staged receipt row it was confirmed from —
    * `document_line_candidates.id`. `null`/omitted for a manually typed
@@ -164,6 +195,8 @@ export interface RawExpenseLineValues {
   unitAmount?: string | null;
   lineAmount: string;
   lineKind?: string;
+  /** See {@link EXPENSE_LINE_UNITS}. `null`/omitted is "no unit" — the confirm paths (`confirm.ts`) never set this; a candidate carries no unit. */
+  unit?: string | null;
   documentLineCandidateId?: string | null;
   note?: string | null;
 }
@@ -190,6 +223,7 @@ export async function insertExpenseLinesRaw(
     unitAmount: line.unitAmount ?? null,
     lineAmount: toMoneyString(line.lineAmount),
     lineKind: line.lineKind ?? "item",
+    unit: line.unit ?? null,
     documentLineCandidateId: line.documentLineCandidateId ?? null,
     note: line.note ?? null,
   }));

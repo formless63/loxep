@@ -9,12 +9,21 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Field, FieldError, FieldGroup } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { InfoButton } from '@/components/ui/info-button';
+import type { InfobarContent } from '@/components/ui/infobar';
 import type { DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -34,11 +43,20 @@ import {
   NO_TRADING_PARTNER_VALUE,
   PayeeComboboxField
 } from '@/features/finance/components/payee-combobox-field';
+import { CategoryComboboxField } from '@/features/finance/components/category-combobox-field';
 import {
+  expenseLineKindOptions,
+  expenseLineUnitOptions,
+  NO_UNIT_VALUE,
   paymentMethodOptions,
-  SUGGESTED_EXPENSE_CATEGORIES,
   UNATTRIBUTED_ENTITY_VALUE
 } from '@/features/finance/constants';
+import {
+  EMPTY_LINE_ITEM_DERIVE_STATE,
+  setLineItemField,
+  type LineItemDeriveKey,
+  type LineItemDeriveState
+} from '@/features/finance/lib/line-item-derive';
 
 const DEFAULT_CURRENCY = 'USD';
 
@@ -46,15 +64,23 @@ function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/** Mirrors `EXPENSE_LINE_KINDS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`) — duplicated as a literal list matching this file's own `paymentMethod` precedent below. */
+const LINE_KIND_VALUES = ['item', 'shipping', 'tax', 'fee', 'discount', 'other'] as const;
+type LineKindValue = (typeof LINE_KIND_VALUES)[number];
+
 /**
- * One row of the optional line-items editor (loxep-cd3.3, M3 —
- * `expense-entry-design.md` section 4). `lineAmount` is the only required
- * field, matching `expense_lines`' own schema — `quantity`/`unitAmount` are
- * informational and never derive it. Composed here, in the SAME form as the
- * expense itself, because the expense does not exist yet at compose time —
- * the part-out dialog's `children` array (`@/features/inventory/components/
- * part-out-dialog.tsx`) is the precedent for an in-form array of objects
- * over a parallel `useState` list.
+ * One row of the line-items editor v2 (loxep-zk5 — `expense-entry-design.md`
+ * v2 status note, section 4). `lineAmount` is the only field the SERVER
+ * requires, matching `expense_lines`' own schema; `quantity`/`unitAmount` are
+ * informational, but on THIS page they are kept internally consistent by the
+ * FILL-TWO-DERIVE-THIRD state machine (`@/features/finance/lib/line-item-derive.ts`)
+ * rather than left to drift, because a receipt line usually gives the
+ * operator two of the three and the third is arithmetic, not a second typing
+ * task. Composed here, in the SAME form as the expense itself, because the
+ * expense does not exist yet at compose time — the part-out dialog's
+ * `children` array (`@/features/inventory/components/part-out-dialog.tsx`)
+ * is the precedent for an in-form array of objects over a parallel
+ * `useState` list.
  */
 const lineItemSchema = z.object({
   description: z.string().trim(),
@@ -63,7 +89,10 @@ const lineItemSchema = z.object({
   lineAmount: z
     .string()
     .trim()
-    .regex(/^-?\d+(\.\d{1,6})?$/, 'Enter an amount, e.g. 12.50')
+    .regex(/^-?\d+(\.\d{1,6})?$/, 'Enter an amount, e.g. 12.50'),
+  lineKind: z.enum(LINE_KIND_VALUES),
+  /** {@link NO_UNIT_VALUE} (the select's own sentinel) or one of `EXPENSE_LINE_UNITS` — resolved to `null`/the value at submit. */
+  unit: z.string().trim()
 });
 
 const newExpenseSchema = z.object({
@@ -219,6 +248,47 @@ function UseLineMenu({
  * is happening; the void itself already happened before this page ever
  * mounts, and the voided row stays as evidence, unedited.
  */
+
+// ---------------------------------------------------------------------------
+// Density (loxep-zk5, D3): explanatory prose beyond one sentence moves behind
+// an `InfoButton` rather than sitting inline as a field description — the
+// page body states the one fact that matters, the info panel teaches the
+// rest. These three replace what were previously two-sentence
+// `field.TextField`/combobox `description` props.
+// ---------------------------------------------------------------------------
+
+const PAYEE_INFO: InfobarContent = {
+  title: 'Payee',
+  sections: [
+    {
+      title: 'Trading partner vs. free text',
+      description:
+        'Trading partners (vendor/payee roles) rank first in the picker. An empty selection writes the name field below alone — a thrift-store receipt from a shop with no name is still a real expense.'
+    }
+  ]
+};
+
+const PAYEE_NAME_INFO: InfobarContent = {
+  title: 'Payee name',
+  sections: [
+    {
+      title: 'Free text, and what a drop does',
+      description:
+        'Free text stays valid on its own. Dropping a detected receipt line here fills the field — that is pure UI convenience and confirms nothing in the database by itself.'
+    }
+  ]
+};
+
+const LINE_ITEMS_INFO: InfobarContent = {
+  title: 'Line items',
+  sections: [
+    {
+      title: 'Optional, and what it is not',
+      description:
+        'What was on the receipt, not where the money is charged — that split lives in allocations, a separate concept. A headline-only expense with no lines stays valid and complete.'
+    }
+  ]
+};
 export default function NewExpensePage({
   prefill,
   reRecordFrom
@@ -251,6 +321,14 @@ export default function NewExpensePage({
   const navigate = useNavigate();
   const [attachments, setAttachments] = React.useState<EvidenceAttachment[]>([]);
   const [pinnedLines, setPinnedLines] = React.useState<PinnedDocumentLine[]>([]);
+  // FILL-TWO-DERIVE-THIRD ownership tracking for each typed `lines[]` row's
+  // qty/unit-price/subtotal (loxep-zk5) — a parallel array kept in lockstep
+  // with `form`'s own `lines` array by every push/remove below. The three
+  // form fields (`quantity`/`unitAmount`/`lineAmount`) stay the values the
+  // server receives; this array only tracks WHICH of the three is currently
+  // computed, so the UI can mark it muted/italic and never clobber a value
+  // the operator typed. See `line-item-derive.ts`'s own doc for the rules.
+  const [lineDerive, setLineDerive] = React.useState<LineItemDeriveState[]>([]);
   const [hoveredLineId, setHoveredLineId] = React.useState<string | null>(null);
   // Mobile-only (M5) — which pane the sticky toggle currently shows below
   // `md`; irrelevant at `>=md`, where both panes render unconditionally.
@@ -309,7 +387,16 @@ export default function NewExpensePage({
             description: line.description.trim() === '' ? null : line.description.trim(),
             quantity: line.quantity.trim() === '' ? null : line.quantity.trim(),
             unitAmount: line.unitAmount.trim() === '' ? null : line.unitAmount.trim(),
-            lineAmount: line.lineAmount.trim()
+            lineAmount: line.lineAmount.trim(),
+            lineKind: line.lineKind,
+            // The select is UI-constrained to `EXPENSE_LINE_UNIT_VALUES` (or
+            // the sentinel resolved to `null` below) — matches this
+            // codebase's own `lineKind as never` precedent
+            // (`expense-lines-card.tsx`) for a client-owned union crossing
+            // into the server function's own narrower zod-inferred type.
+            unit: (line.unit === NO_UNIT_VALUE || line.unit.trim() === ''
+              ? null
+              : line.unit) as never
           })),
           droppedLines: pinnedLines.map((pinned) => ({
             documentId: pinned.documentId,
@@ -385,6 +472,36 @@ export default function NewExpensePage({
     }
   });
 
+  const LINE_DERIVE_FORM_FIELD: Record<
+    LineItemDeriveKey,
+    'quantity' | 'unitAmount' | 'lineAmount'
+  > = {
+    quantity: 'quantity',
+    unitPrice: 'unitAmount',
+    subtotal: 'lineAmount'
+  };
+
+  /**
+   * One qty/unit-price/subtotal field on line `index` was edited (including
+   * cleared to `''`) — routes the raw input through the pure state machine
+   * (`setLineItemField`) and mirrors ALL THREE of that row's numeric fields
+   * back into the form, so the derived field (if any) stays visible and
+   * `lineAmount` — the one number the server trusts — is always the current
+   * value the state machine computed, never a stale one.
+   */
+  function updateLineNumberField(index: number, key: LineItemDeriveKey, rawValue: string) {
+    const current = lineDerive[index] ?? EMPTY_LINE_ITEM_DERIVE_STATE;
+    const next = setLineItemField(current, key, rawValue);
+    setLineDerive((prev) => {
+      const copy = [...prev];
+      copy[index] = next;
+      return copy;
+    });
+    (['quantity', 'unitPrice', 'subtotal'] as const).forEach((k) => {
+      form.setFieldValue(`lines[${index}].${LINE_DERIVE_FORM_FIELD[k]}`, next[k].value);
+    });
+  }
+
   return (
     <div className='flex flex-col gap-4'>
       {reRecordFrom && sourceExpense && (
@@ -398,7 +515,17 @@ export default function NewExpensePage({
         </Alert>
       )}
       <DocumentLineDndProvider>
-        <div className='grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_360px]'>
+        {/*
+          loxep-zk5, layout inversion: the evidence/PDF preview is now the
+          DOMINANT flexible pane; the form is a fixed compact column at
+          desktop widths — the owner's own words are "kill the form's white
+          space" and "evidence becomes the dominant pane." `28rem` reads well
+          against the density-tightened field grid below (`gap-3`, compact
+          inputs); the row's DOM order is unchanged (form first, evidence
+          second) — only the two column WIDTHS invert versus the prior
+          `minmax(0,1fr)_360px`.
+        */}
+        <div className='grid grid-cols-1 gap-4 md:grid-cols-[28rem_minmax(0,1fr)] md:items-start'>
           <div className='bg-background sticky top-14 z-10 -mx-4 border-b px-4 py-2 md:hidden'>
             <ToggleGroup
               type='single'
@@ -418,56 +545,61 @@ export default function NewExpensePage({
             </ToggleGroup>
           </div>
           <Card className={cn(activePane !== 'form' && 'hidden md:flex')}>
-            <CardContent className='pt-6'>
+            <CardContent>
               <form
-                className='space-y-6'
+                className='space-y-4'
                 onSubmit={(event) => {
                   event.preventDefault();
                   void form.handleSubmit({ status: 'recorded' });
                 }}
               >
                 <FieldGroup>
-                  <form.Field name='payeeCounterpartyId'>
-                    {(field) => (
-                      <PayeeComboboxField
-                        label='Payee'
-                        name='payeeCounterpartyId'
-                        value={field.state.value}
-                        onChange={field.handleChange}
-                        onBlur={field.handleBlur}
-                        invalid={field.state.meta.isTouched && !field.state.meta.isValid}
-                        errors={field.state.meta.errors}
-                        economicEntityId={
-                          form.state.values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
-                            ? null
-                            : form.state.values.economicEntityId
-                        }
-                        onPayeeSelected={(payee) =>
-                          form.setFieldValue(
-                            'payeeName',
-                            payee?.displayName ?? form.state.values.payeeName
-                          )
-                        }
-                        description='Trading partners (vendor/payee roles) rank first. Empty selection writes the name below alone.'
+                  <div className='flex items-end gap-1'>
+                    <div className='flex-1'>
+                      <form.Field name='payeeCounterpartyId'>
+                        {(field) => (
+                          <PayeeComboboxField
+                            label='Payee'
+                            name='payeeCounterpartyId'
+                            value={field.state.value}
+                            onChange={field.handleChange}
+                            onBlur={field.handleBlur}
+                            invalid={field.state.meta.isTouched && !field.state.meta.isValid}
+                            errors={field.state.meta.errors}
+                            economicEntityId={
+                              form.state.values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE
+                                ? null
+                                : form.state.values.economicEntityId
+                            }
+                            onPayeeSelected={(payee) =>
+                              form.setFieldValue(
+                                'payeeName',
+                                payee?.displayName ?? form.state.values.payeeName
+                              )
+                            }
+                          />
+                        )}
+                      </form.Field>
+                    </div>
+                    <InfoButton content={PAYEE_INFO} className='mb-1 size-7' />
+                  </div>
+                  <div className='flex items-end gap-1'>
+                    <div className='flex-1'>
+                      <form.AppField
+                        name='payeeName'
+                        children={(field) => (
+                          <DocumentLineDropTarget
+                            id='field:payeeName'
+                            onDrop={(line) => field.handleChange(line.text)}
+                          >
+                            <field.TextField label='Payee name' placeholder='e.g. USPS' />
+                          </DocumentLineDropTarget>
+                        )}
                       />
-                    )}
-                  </form.Field>
-                  <form.AppField
-                    name='payeeName'
-                    children={(field) => (
-                      <DocumentLineDropTarget
-                        id='field:payeeName'
-                        onDrop={(line) => field.handleChange(line.text)}
-                      >
-                        <field.TextField
-                          label='Payee name'
-                          placeholder='e.g. USPS'
-                          description='Free text stays valid — a name-less receipt is a real expense. Drop a detected line here to fill it (pure UI — nothing is confirmed by a header-field drop).'
-                        />
-                      </DocumentLineDropTarget>
-                    )}
-                  />
-                  <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                    </div>
+                    <InfoButton content={PAYEE_NAME_INFO} className='mb-1 size-7' />
+                  </div>
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                     <form.AppField
                       name='expenseDate'
                       children={(field) => <field.TextField label='Date' required type='date' />}
@@ -496,41 +628,34 @@ export default function NewExpensePage({
                       )}
                     />
                   </div>
-                  <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                     <form.AppField
                       name='taxAmount'
                       children={(field) => (
                         <field.TextField label='Tax' inputMode='decimal' placeholder='0.00' />
                       )}
                     />
-                    <form.AppField
-                      name='category'
-                      children={(field) => (
+                    <form.Field name='category'>
+                      {(field) => (
                         <DocumentLineDropTarget
                           id='field:category'
                           onDrop={(line) => field.handleChange(line.text)}
                         >
-                          <div>
-                            <field.TextField
-                              label='Category'
-                              required
-                              list='new-expense-category-suggestions'
-                              placeholder='e.g. shipping_supplies'
-                              description='Your own vocabulary — an open set, not a fixed list.'
-                            />
-                            <datalist id='new-expense-category-suggestions'>
-                              {SUGGESTED_EXPENSE_CATEGORIES.map((category) => (
-                                <option key={category} value={category}>
-                                  {category}
-                                </option>
-                              ))}
-                            </datalist>
-                          </div>
+                          <CategoryComboboxField
+                            label='Category'
+                            name='category'
+                            required
+                            value={field.state.value}
+                            onChange={field.handleChange}
+                            onBlur={field.handleBlur}
+                            invalid={field.state.meta.isTouched && !field.state.meta.isValid}
+                            errors={field.state.meta.errors}
+                          />
                         </DocumentLineDropTarget>
                       )}
-                    />
+                    </form.Field>
                   </div>
-                  <div className='grid grid-cols-1 gap-6 sm:grid-cols-2'>
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                     <form.AppField
                       name='paymentMethod'
                       children={(field) => (
@@ -567,142 +692,231 @@ export default function NewExpensePage({
                     name='notes'
                     children={(field) => <field.TextareaField label='Notes' />}
                   />
-                  <div className='flex flex-col gap-3 rounded-md border p-4'>
-                    <div>
-                      <p className='text-sm font-medium'>Line items</p>
-                      <p className='text-muted-foreground text-xs'>
-                        Optional — what was on the receipt, not where the money is charged. A
-                        headline-only expense (no lines) stays valid.
-                      </p>
+                  <div className='flex flex-col gap-3 rounded-md border p-3'>
+                    <div className='flex items-center justify-between'>
+                      <p className='text-sm font-medium'>Line items — optional</p>
+                      <InfoButton content={LINE_ITEMS_INFO} className='size-6' />
                     </div>
                     <form.Field
                       name='lines'
                       mode='array'
                       children={(field) => (
                         <div className='flex flex-col gap-3'>
-                          {field.state.value.map((_, index) => (
-                            <div
-                              key={index}
-                              className='grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_5rem_6rem_6rem_auto]'
-                            >
-                              <form.Field
-                                name={`lines[${index}].description`}
-                                children={(subField) => (
-                                  <DocumentLineDropTarget
-                                    id={`field:lines.${index}.description`}
-                                    onDrop={(line) => subField.handleChange(line.text)}
-                                  >
-                                    <Field>
-                                      <Input
-                                        placeholder='e.g. Shelving unit'
-                                        value={subField.state.value}
-                                        onChange={(event) =>
-                                          subField.handleChange(event.target.value)
-                                        }
-                                        onBlur={subField.handleBlur}
-                                        aria-label={`Line ${index + 1} description`}
-                                      />
-                                    </Field>
-                                  </DocumentLineDropTarget>
-                                )}
-                              />
-                              <form.Field
-                                name={`lines[${index}].quantity`}
-                                children={(subField) => (
-                                  <Field>
-                                    <Input
-                                      inputMode='decimal'
-                                      placeholder='qty'
-                                      value={subField.state.value}
-                                      onChange={(event) =>
-                                        subField.handleChange(event.target.value)
-                                      }
-                                      onBlur={subField.handleBlur}
-                                      aria-label={`Line ${index + 1} quantity`}
-                                    />
-                                  </Field>
-                                )}
-                              />
-                              <form.Field
-                                name={`lines[${index}].unitAmount`}
-                                children={(subField) => (
-                                  <Field>
-                                    <Input
-                                      inputMode='decimal'
-                                      placeholder='unit'
-                                      value={subField.state.value}
-                                      onChange={(event) =>
-                                        subField.handleChange(event.target.value)
-                                      }
-                                      onBlur={subField.handleBlur}
-                                      aria-label={`Line ${index + 1} unit amount`}
-                                    />
-                                  </Field>
-                                )}
-                              />
-                              <form.Field
-                                name={`lines[${index}].lineAmount`}
-                                children={(subField) => {
-                                  const invalid =
-                                    subField.state.meta.isTouched && !subField.state.meta.isValid;
-                                  return (
-                                    <DocumentLineDropTarget
-                                      id={`field:lines.${index}.lineAmount`}
-                                      onDrop={(line) => {
-                                        const extracted = extractProvisionalAmount(line.text);
-                                        if (extracted === null) {
-                                          toast.error(
-                                            'No amount found in that line — type it manually.'
-                                          );
-                                          return;
-                                        }
-                                        subField.handleChange(extracted);
-                                      }}
-                                    >
-                                      <Field data-invalid={invalid}>
-                                        <Input
-                                          inputMode='decimal'
-                                          placeholder='0.00'
-                                          value={subField.state.value}
-                                          onChange={(event) =>
-                                            subField.handleChange(event.target.value)
-                                          }
-                                          onBlur={subField.handleBlur}
-                                          aria-label={`Line ${index + 1} amount`}
-                                          aria-invalid={invalid}
-                                        />
-                                        {invalid && (
-                                          <FieldError errors={subField.state.meta.errors} />
-                                        )}
-                                      </Field>
-                                    </DocumentLineDropTarget>
-                                  );
-                                }}
-                              />
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='icon'
-                                aria-label={`Remove line ${index + 1}`}
-                                onClick={() => field.removeValue(index)}
-                              >
-                                <Icons.close />
-                              </Button>
+                          {field.state.value.length > 0 && (
+                            <div className='text-muted-foreground grid grid-cols-4 gap-1.5 px-0.5 text-[0.65rem] uppercase'>
+                              <span>Qty</span>
+                              <span>Unit</span>
+                              <span>Unit price</span>
+                              <span>Subtotal</span>
                             </div>
-                          ))}
+                          )}
+                          {field.state.value.map((_, index) => {
+                            const rowDerive = lineDerive[index] ?? EMPTY_LINE_ITEM_DERIVE_STATE;
+                            return (
+                              <div
+                                key={index}
+                                className='flex flex-col gap-1.5 rounded-md border p-2'
+                              >
+                                <div className='flex items-end gap-1.5'>
+                                  <form.Field
+                                    name={`lines[${index}].lineKind`}
+                                    children={(subField) => (
+                                      <Select
+                                        value={subField.state.value}
+                                        onValueChange={(next) =>
+                                          subField.handleChange(next as LineKindValue)
+                                        }
+                                      >
+                                        <SelectTrigger
+                                          className='w-28 shrink-0'
+                                          aria-label={`Line ${index + 1} kind`}
+                                        >
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {expenseLineKindOptions.map((option) => (
+                                            <SelectItem key={option.value} value={option.value}>
+                                              {option.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  />
+                                  <form.Field
+                                    name={`lines[${index}].description`}
+                                    children={(subField) => (
+                                      <DocumentLineDropTarget
+                                        id={`field:lines.${index}.description`}
+                                        onDrop={(line) => subField.handleChange(line.text)}
+                                        className='flex-1'
+                                      >
+                                        <Field>
+                                          <Input
+                                            placeholder='e.g. Shelving unit'
+                                            value={subField.state.value}
+                                            onChange={(event) =>
+                                              subField.handleChange(event.target.value)
+                                            }
+                                            onBlur={subField.handleBlur}
+                                            aria-label={`Line ${index + 1} description`}
+                                          />
+                                        </Field>
+                                      </DocumentLineDropTarget>
+                                    )}
+                                  />
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    size='icon'
+                                    className='shrink-0'
+                                    aria-label={`Remove line ${index + 1}`}
+                                    onClick={() => {
+                                      field.removeValue(index);
+                                      setLineDerive((prev) => prev.filter((_, i) => i !== index));
+                                    }}
+                                  >
+                                    <Icons.close />
+                                  </Button>
+                                </div>
+                                <div className='grid grid-cols-4 items-start gap-1.5'>
+                                  <Field>
+                                    <Input
+                                      inputMode='decimal'
+                                      placeholder='0'
+                                      value={rowDerive.quantity.value}
+                                      onChange={(event) =>
+                                        updateLineNumberField(index, 'quantity', event.target.value)
+                                      }
+                                      aria-label={`Line ${index + 1} quantity`}
+                                      title={
+                                        rowDerive.quantity.owner === 'derived'
+                                          ? 'Derived from unit price and subtotal — edit to override'
+                                          : undefined
+                                      }
+                                      className={cn(
+                                        rowDerive.quantity.owner === 'derived' &&
+                                          'text-muted-foreground italic'
+                                      )}
+                                    />
+                                  </Field>
+                                  <form.Field
+                                    name={`lines[${index}].unit`}
+                                    children={(subField) => (
+                                      <Select
+                                        value={subField.state.value || NO_UNIT_VALUE}
+                                        onValueChange={(next) => subField.handleChange(next)}
+                                      >
+                                        <SelectTrigger aria-label={`Line ${index + 1} unit`}>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {expenseLineUnitOptions.map((option) => (
+                                            <SelectItem key={option.value} value={option.value}>
+                                              {option.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  />
+                                  <Field>
+                                    <Input
+                                      inputMode='decimal'
+                                      placeholder='0.00'
+                                      value={rowDerive.unitPrice.value}
+                                      onChange={(event) =>
+                                        updateLineNumberField(
+                                          index,
+                                          'unitPrice',
+                                          event.target.value
+                                        )
+                                      }
+                                      aria-label={`Line ${index + 1} unit price`}
+                                      title={
+                                        rowDerive.unitPrice.owner === 'derived'
+                                          ? 'Derived from quantity and subtotal — edit to override'
+                                          : undefined
+                                      }
+                                      className={cn(
+                                        rowDerive.unitPrice.owner === 'derived' &&
+                                          'text-muted-foreground italic'
+                                      )}
+                                    />
+                                  </Field>
+                                  <form.Field
+                                    name={`lines[${index}].lineAmount`}
+                                    children={(subField) => {
+                                      const invalid =
+                                        subField.state.meta.isTouched &&
+                                        !subField.state.meta.isValid;
+                                      return (
+                                        <DocumentLineDropTarget
+                                          id={`field:lines.${index}.lineAmount`}
+                                          onDrop={(line) => {
+                                            const extracted = extractProvisionalAmount(line.text);
+                                            if (extracted === null) {
+                                              toast.error(
+                                                'No amount found in that line — type it manually.'
+                                              );
+                                              return;
+                                            }
+                                            updateLineNumberField(index, 'subtotal', extracted);
+                                          }}
+                                        >
+                                          <Field data-invalid={invalid}>
+                                            <Input
+                                              inputMode='decimal'
+                                              placeholder='0.00'
+                                              value={rowDerive.subtotal.value}
+                                              onChange={(event) =>
+                                                updateLineNumberField(
+                                                  index,
+                                                  'subtotal',
+                                                  event.target.value
+                                                )
+                                              }
+                                              onBlur={subField.handleBlur}
+                                              aria-label={`Line ${index + 1} subtotal`}
+                                              aria-invalid={invalid}
+                                              title={
+                                                rowDerive.subtotal.owner === 'derived'
+                                                  ? 'Derived from quantity and unit price — edit to override'
+                                                  : undefined
+                                              }
+                                              className={cn(
+                                                rowDerive.subtotal.owner === 'derived' &&
+                                                  'text-muted-foreground italic'
+                                              )}
+                                            />
+                                            {invalid && (
+                                              <FieldError errors={subField.state.meta.errors} />
+                                            )}
+                                          </Field>
+                                        </DocumentLineDropTarget>
+                                      );
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
                           <Button
                             type='button'
                             variant='outline'
                             size='sm'
                             className='self-start'
-                            onClick={() =>
+                            onClick={() => {
                               field.pushValue({
                                 description: '',
                                 quantity: '',
                                 unitAmount: '',
-                                lineAmount: ''
-                              })
-                            }
+                                lineAmount: '',
+                                lineKind: 'item',
+                                unit: NO_UNIT_VALUE
+                              });
+                              setLineDerive((prev) => [...prev, EMPTY_LINE_ITEM_DERIVE_STATE]);
+                            }}
                           >
                             <Icons.add />
                             Add line

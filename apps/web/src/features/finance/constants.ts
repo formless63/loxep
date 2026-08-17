@@ -152,3 +152,67 @@ export const expenseLineKindOptions = EXPENSE_LINE_KIND_VALUES.map((value) => ({
   value,
   label: expenseLineKindLabel(value)
 }));
+
+/**
+ * Mirrors `EXPENSE_LINE_UNITS` (`@loxep/accounting`/`packages/db/src/schema/expenses.ts`)
+ * — closed, CHECKed, nullable (expense entry v2, loxep-zk5). A modest
+ * practical set: count, weight, length, area, time.
+ */
+export type ExpenseLineUnit =
+  | 'each'
+  | 'pair'
+  | 'pack'
+  | 'box'
+  | 'case'
+  | 'lot'
+  | 'lb'
+  | 'oz'
+  | 'kg'
+  | 'g'
+  | 'ft'
+  | 'in'
+  | 'm'
+  | 'cm'
+  | 'sqft'
+  | 'hr'
+  | 'day'
+  | 'mi'
+  | 'km';
+
+const EXPENSE_LINE_UNIT_LABELS = {
+  each: 'each',
+  pair: 'pair',
+  pack: 'pack',
+  box: 'box',
+  case: 'case',
+  lot: 'lot',
+  lb: 'lb',
+  oz: 'oz',
+  kg: 'kg',
+  g: 'g',
+  ft: 'ft',
+  in: 'in',
+  m: 'm',
+  cm: 'cm',
+  sqft: 'sq ft',
+  hr: 'hr',
+  day: 'day',
+  mi: 'mi',
+  km: 'km'
+} satisfies Record<ExpenseLineUnit, string>;
+
+export const EXPENSE_LINE_UNIT_VALUES = Object.keys(
+  EXPENSE_LINE_UNIT_LABELS
+) as readonly ExpenseLineUnit[];
+
+export function expenseLineUnitLabel(unit: string): string {
+  return EXPENSE_LINE_UNIT_LABELS[unit as ExpenseLineUnit] ?? unit;
+}
+
+/** The select's own "no unit" sentinel — a plain string field value cannot carry `null` directly. */
+export const NO_UNIT_VALUE = '__no_unit__';
+
+export const expenseLineUnitOptions = [
+  { value: NO_UNIT_VALUE, label: '—' },
+  ...EXPENSE_LINE_UNIT_VALUES.map((value) => ({ value, label: expenseLineUnitLabel(value) }))
+];
