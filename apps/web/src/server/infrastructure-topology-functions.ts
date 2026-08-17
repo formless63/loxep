@@ -246,7 +246,13 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
     status: healthFor('connection', connection.id),
     href: { to: '/settings/connections' },
     badges: [],
-    meta: { provider: providerLabel(connection.provider), status: connection.status }
+    // Raw provider slug (not `providerLabel`'s capitalized display form) —
+    // matches `hosting_target`'s own `meta.provider` convention (line below,
+    // `target.provider`) and is required for the node card's `BrandIcon`
+    // stitch (loxep-pso, W5): `integrationServiceForProvider`/
+    // `PROVIDER_BRAND_ICONS` key off the exact `IntegrationServiceId` slug,
+    // which a capitalized label would never match.
+    meta: { provider: connection.provider, status: connection.status }
   }));
 
   const domainNodes: TopologyNodeDto[] = input.managedDomains.map((domain) => ({

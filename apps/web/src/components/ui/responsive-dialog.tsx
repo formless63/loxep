@@ -56,13 +56,34 @@ function ResponsiveDialogClose(props: React.ComponentProps<typeof DialogClose>) 
 }
 
 /**
- * The one real behavioral addition: `Drawer`'s content otherwise has no
- * scroll mechanism of its own (only a per-direction `max-h`), so a form
- * taller than the viewport would silently overflow off-screen. Adding
- * `overflow-y-auto` is purely additive against vaul's existing `max-h-*`
- * classes (no conflicting utility to fight), so it is the only class this
- * wrapper adds beyond the caller's own `className` — everything else about
- * sizing/spacing is exactly what the caller already passed for `Dialog`.
+ * Two behavioral additions on top of vaul's own `Drawer.Content`, both
+ * discovered against a REAL tall form at a 390px viewport (loxep-pso, W5's
+ * mobile QA pass — every credential dialog's `SetupGuidance` panel defaults
+ * open and routinely makes the form taller than the drawer's own
+ * `max-h-[85vh]`):
+ *
+ * - **`overflow-y-auto`.** `Drawer`'s content otherwise has no scroll
+ *   mechanism of its own (only a per-direction `max-h`), so a form taller
+ *   than the viewport would silently overflow off-screen. Purely additive
+ *   against vaul's existing `max-h-*` classes — no conflicting utility to
+ *   fight.
+ * - **`after:pointer-events-none`.** vaul injects its OWN `::after` on every
+ *   `[data-vaul-drawer]` element — an invisible "overscroll fill" so the
+ *   drawer's background color extends during an elastic rubber-band drag,
+ *   sized `top: 100%` / `height: 200%` of the drawer's own box. That sizing
+ *   assumes vaul's DEFAULT (non-scrolling) content box; once THIS wrapper's
+ *   own `overflow-y-auto` makes the content scrollable and taller than the
+ *   drawer, the pseudo-element's positioning no longer stays harmlessly
+ *   below the visible drawer — it ends up geometrically on top of real form
+ *   controls (verified via `document.elementsFromPoint`: the drawer's own
+ *   `::after` was the TOPMOST hit at a submit button's own coordinates,
+ *   silently swallowing every click). vaul sets no `pointer-events` on it at
+ *   all, so this class neutralizes it; a compiled Tailwind utility present
+ *   in the document from initial page load reliably wins the cascade tie
+ *   against vaul's `<style>` tag (equal specificity, but vaul's is injected
+ *   into the document later, at runtime, on first mount — CSS's source-order
+ *   tiebreak resolves in this class's favor). A caller's own `className`
+ *   still composes after both, exactly as before.
  */
 function ResponsiveDialogContent({
   className,
@@ -74,7 +95,10 @@ function ResponsiveDialogContent({
 
   if (isMobile) {
     return (
-      <DrawerContent className={cn('overflow-y-auto', className)} {...props}>
+      <DrawerContent
+        className={cn('overflow-y-auto after:pointer-events-none', className)}
+        {...props}
+      >
         {children}
       </DrawerContent>
     );

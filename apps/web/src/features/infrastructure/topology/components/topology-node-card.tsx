@@ -1,5 +1,8 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Icons } from '@/components/icons';
+import { BrandIcon } from '@/components/ui/brand-icon';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
+import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
 import { cn } from '@/lib/utils';
 import { toneForStatus, TOPOLOGY_NODE_KIND_LABELS } from '../constants';
 import type { Tone } from '@/features/settings/components/status-tone';
@@ -36,11 +39,37 @@ export interface TopologyNodeCardData extends Record<string, unknown> {
   onOpen: (dto: TopologyNodeDto) => void;
 }
 
+/**
+ * `connection` nodes carry the raw provider slug in `dto.meta.provider`
+ * (`infrastructure-topology-functions.ts`'s `meta: { provider: connection.
+ * provider, ... }`) — the same registry lookup `/settings/connections`'
+ * Provider column already does (`connections-table/columns.tsx`), so a
+ * provider absent from the catalog (or a node kind that isn't `connection`)
+ * renders no mark, exactly as that column falls through to no icon at all.
+ */
+function connectionBrandIcon(dto: TopologyNodeDto) {
+  if (dto.kind !== 'connection') return null;
+  const provider = dto.meta['provider'];
+  if (provider === null || provider === undefined) return null;
+  const service = integrationServiceForProvider(provider);
+  if (service === null) return null;
+  return (
+    <BrandIcon
+      mark={PROVIDER_BRAND_ICONS[service.id]}
+      fallback={PROVIDER_BRAND_ICON_FALLBACKS[service.id]}
+      name={service.name}
+      size={16}
+      className='text-muted-foreground'
+    />
+  );
+}
+
 /** Custom xyflow node renderer — a plain `bg-card`/`border` card, never a graph-specific palette (rule G5). */
 export function TopologyNodeCard({ data }: NodeProps) {
   const { dto, dimmed, focused, onOpen } = data as unknown as TopologyNodeCardData;
   const tone = toneForStatus(dto.status);
   const statusLabel = dto.status === null ? 'No health data' : dto.status;
+  const brandIcon = connectionBrandIcon(dto);
 
   return (
     <div
@@ -65,11 +94,15 @@ export function TopologyNodeCard({ data }: NodeProps) {
           }}
           className='mt-1 flex w-full items-center gap-1 truncate text-left text-sm font-medium hover:text-primary hover:underline focus-visible:ring-primary focus-visible:ring-2 focus-visible:outline-none'
         >
+          {brandIcon}
           <span className='truncate'>{dto.name}</span>
           <Icons.externalLink className='size-3 shrink-0 text-muted-foreground' />
         </button>
       ) : (
-        <p className='mt-1 truncate text-sm font-medium'>{dto.name}</p>
+        <p className='mt-1 flex items-center gap-1 truncate text-sm font-medium'>
+          {brandIcon}
+          {dto.name}
+        </p>
       )}
       {dto.badges.length > 0 && (
         <div className='mt-2 flex flex-wrap gap-1'>

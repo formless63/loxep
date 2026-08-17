@@ -71,8 +71,8 @@ Compose stack.
 From `apps/web` (server still running):
 
 ```bash
-bun run test:e2e             # whole suite, headless chromium
-bunx playwright test auth    # one spec
+bun run test:e2e             # both projects: desktop + mobile-chromium
+bunx playwright test auth    # one spec (desktop project; auth.spec.ts has no @mobile tests)
 ```
 
 Overrides: `LOXEP_E2E_BASE_URL` (default `http://localhost:3093`) and
@@ -83,6 +83,43 @@ specs share one database, one server process, and one Mailpit mailbox.
 Entity names are timestamped per run, so the scratch database does not need
 resetting between runs — drop/recreate `loxep_e2e` only when you want a
 truly clean slate (then rerun `node bin/loxep.ts migrate`).
+
+### Two projects: `chromium` (desktop) and `mobile-chromium`
+
+`playwright.config.ts` defines two projects (UI overhaul 2026 design §3,
+rule M6, `loxep-pso`/W5). `workers: 1` is a suite-wide setting and stays true
+**per project** too — both share the one database/server/mailbox, so a bare
+`bunx playwright test` still runs everything serially, desktop project first
+(alphabetical file order otherwise governs — see `auth.spec.ts`'s own
+bootstrap-ordering note — and this repo relies on `chromium` completing
+before `mobile-chromium` starts, since the mobile suite's own sign-in test
+needs an already-bootstrapped admin).
+
+- **`chromium`** — the completeness gate, every spec file EXCEPT tests tagged
+  `@mobile` (`grepInvert: /@mobile/`). Currently 55 tests (54 pre-existing +
+  W3's `infrastructure.spec.ts` topology spec).
+- **`mobile-chromium`** — `e2e/mobile.spec.ts` ONLY (`testMatch`), and only
+  its `@mobile`-tagged tests (`grep: /@mobile/`) — the regression tripwire
+  for the M1–M5 mobile mechanisms (`ResponsiveDialog`, the table mobile pin,
+  the toolbar filter sheet, the sidebar Sheet, touch targets), not a second
+  copy of the whole suite. 390×844 viewport, `hasTouch`/`isMobile` true,
+  `deviceScaleFactor: 3`, built from `devices['Desktop Chrome']` (Chromium
+  engine) with those four fields overridden — deliberately NOT
+  `devices['iPhone 14']`, whose own preset switches the browser engine to
+  WebKit and reports a smaller, browser-chrome-subtracted viewport. Currently
+  7 tests.
+
+Run one project at a time with `--project`:
+
+```bash
+bunx playwright test --project=chromium         # desktop only, 55 tests
+bunx playwright test --project=mobile-chromium   # mobile only, 7 tests
+```
+
+A full `bunx playwright test` (both projects) currently reports **62 tests**
+total. Any new spec file must NOT put `@mobile` anywhere in a test title
+unless it genuinely belongs in `mobile-chromium`'s tagged subset — that
+substring is the only thing routing tests between the two projects.
 
 ## Teardown
 

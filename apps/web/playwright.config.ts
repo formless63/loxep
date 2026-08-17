@@ -12,6 +12,27 @@ import { defineConfig, devices } from '@playwright/test';
  * Tests share one database, one server, and one Mailpit mailbox, so the
  * suite runs single-worker/serial by design. Retries stay at 0 locally so
  * flakes surface instead of being papered over.
+ *
+ * ## `mobile-chromium` (UI overhaul 2026 design §3, rule M6, `loxep-pso`/W5)
+ *
+ * A second project running ONLY the `@mobile`-tagged subset in
+ * `e2e/mobile.spec.ts` (6-8 specs, per M6: sign-in, sidebar-sheet nav, a
+ * table scroll + row action, an expense create through the drawer, one
+ * estate open, one table filter through the sheet, the topology page) —
+ * the regression tripwire for the M1-M5 mobile mechanisms, NOT a second
+ * full run of the suite. The desktop `chromium` project stays the
+ * completeness gate and explicitly excludes `@mobile` tests (`grepInvert`)
+ * so its own count never moves because of this project's specs.
+ *
+ * Deliberately built from `devices['Desktop Chrome']` (Chromium engine —
+ * this is "mobile-chromium", not a WebKit iPhone emulation) with only the
+ * specific emulation fields M6 names overridden: viewport pinned to the
+ * exact 390x844 iPhone-class size the design specifies (not
+ * `devices['iPhone 14']`'s own 390x664 *browser-chrome-subtracted*
+ * viewport), plus `hasTouch`/`isMobile`/`deviceScaleFactor` for touch-target
+ * and responsive-image behavior. `workers: 1` above is the suite-wide
+ * setting and stays true per-project too — both projects still share the
+ * one database/server/mailbox.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -31,7 +52,20 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] }
+      use: { ...devices['Desktop Chrome'] },
+      grepInvert: /@mobile/
+    },
+    {
+      name: 'mobile-chromium',
+      testMatch: '**/mobile.spec.ts',
+      grep: /@mobile/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+        deviceScaleFactor: 3
+      }
     }
   ]
 });
