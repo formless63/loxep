@@ -131,18 +131,31 @@ export function TopologyGraph({
           neighborIds !== null &&
           !(neighborIds.has(edge.sourceNodeId) && neighborIds.has(edge.targetNodeId));
         const isEmphasized = neighborIds !== null && !isDimmed;
+        // `loxep-h4v`: `address_match` is the one INFERRED edge kind (rule
+        // G2/G3 unmoved) — dotted and muted at rest so it never reads as
+        // recorded fact, distinct from `observed_via` (a normal recorded
+        // edge, `connection.connection_id`, styled exactly like the
+        // original six). Focus mode still dims/emphasizes it like any other
+        // edge; only the RESTING stroke differs.
+        const isAddressMatch = edge.kind === 'address_match';
         const stroke = isDimmed
           ? 'var(--muted)'
           : isEmphasized
             ? 'var(--primary)'
-            : 'var(--border)';
+            : isAddressMatch
+              ? 'var(--muted-foreground)'
+              : 'var(--border)';
         const edgeData: TopologyEdgeLineData = { sentence: edge.sentence };
         return {
           id: edge.id,
           source: edge.sourceNodeId,
           target: edge.targetNodeId,
           type: 'topology',
-          style: { stroke, strokeWidth: isEmphasized ? 2 : 1 },
+          style: {
+            stroke,
+            strokeWidth: isEmphasized ? 2 : 1,
+            strokeDasharray: isAddressMatch ? '4 4' : undefined
+          },
           data: edgeData
         } satisfies Edge;
       }),

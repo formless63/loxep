@@ -18,7 +18,14 @@ const FIXTURE_PARAMS: EdgeSentenceParamsByKind = {
   routes_to: { fullDomain: 'app.example.com', targetName: 'origin-1' },
   zone_hosted_at: { domainName: 'example.com', providerLabel: 'Cloudflare' },
   proxied_via: { targetName: 'origin-1', providerLabel: 'Pangolin' },
-  watched_by: { toolName: 'Beszel system', targetName: 'origin-1' }
+  watched_by: { toolName: 'Beszel system', targetName: 'origin-1' },
+  observed_via: { providerLabel: 'Beszel', resourceName: 'web-1' },
+  address_match: {
+    resourceName: 'web-1',
+    address: '10.0.0.5',
+    targetName: 'origin-1',
+    extraMatchesLabel: ''
+  }
 };
 
 describe('EDGE_SENTENCE_REGISTRY totality', () => {
@@ -80,6 +87,29 @@ describe('individual sentences match the design table verbatim (§4)', () => {
   test('watched_by', () => {
     expect(buildEdgeSentence('watched_by', FIXTURE_PARAMS.watched_by)).toBe(
       'Beszel system is linked to origin-1 — Loxep records it as a companion, and probes its health.'
+    );
+  });
+
+  test('observed_via', () => {
+    expect(buildEdgeSentence('observed_via', FIXTURE_PARAMS.observed_via)).toBe(
+      "Loxep's Beszel sweeps read web-1 through this connection."
+    );
+  });
+
+  test('address_match — single matched address, no extra-matches suffix', () => {
+    expect(buildEdgeSentence('address_match', FIXTURE_PARAMS.address_match)).toBe(
+      'web-1 reports 10.0.0.5, which origin-1 also has — possibly the same machine. Link it to confirm.'
+    );
+  });
+
+  test('address_match — extraMatchesLabel names the extra-match count when supplied', () => {
+    expect(
+      buildEdgeSentence('address_match', {
+        ...FIXTURE_PARAMS.address_match,
+        extraMatchesLabel: ' (and 2 more matching addresses)'
+      })
+    ).toBe(
+      'web-1 reports 10.0.0.5 (and 2 more matching addresses), which origin-1 also has — possibly the same machine. Link it to confirm.'
     );
   });
 });

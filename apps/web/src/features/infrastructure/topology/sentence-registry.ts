@@ -10,6 +10,14 @@
  * proxied via      "target publishes its resources through this provider connection."
  * watched by       "tool is linked to target - Loxep records it as a
  *                   companion, and probes its health."
+ * observed via      "Loxep's provider sweeps read name through this
+ *                    connection." (loxep-h4v)
+ * address match      "resource reports address, which target also has -
+ *                    possibly the same machine. Link it to confirm."
+ *                    (loxep-h4v, INFERRED - the one edge kind that is NOT
+ *                    recorded fact; see infrastructure-topology-functions.ts's
+ *                    own module doc for the exact-match rule this sentence
+ *                    describes)
  * ```
  *
  * ## Why an edge without a registered sentence structurally cannot render
@@ -38,6 +46,21 @@ export interface EdgeSentenceParamsByKind {
   zone_hosted_at: { domainName: string; providerLabel: string };
   proxied_via: { targetName: string; providerLabel: string };
   watched_by: { toolName: string; targetName: string };
+  observed_via: { providerLabel: string; resourceName: string };
+  /**
+   * `extraMatchesLabel` is a fully-formatted, ready-to-splice suffix (e.g.
+   * `' (and 2 more matching addresses)'`), computed by the caller — never a
+   * raw `matchCount` here, so every param in this registry stays a plain
+   * string and the totality test's generic "every value appears verbatim in
+   * the sentence" check keeps working unmodified for this kind too (an empty
+   * string trivially satisfies it for the single-match case).
+   */
+  address_match: {
+    resourceName: string;
+    address: string;
+    targetName: string;
+    extraMatchesLabel: string;
+  };
 }
 
 /** The registry itself — see this file's module doc for why its type makes an unregistered edge kind a compile error. */
@@ -55,7 +78,11 @@ export const EDGE_SENTENCE_REGISTRY: {
   proxied_via: ({ targetName, providerLabel }) =>
     `${targetName} publishes its resources through this ${providerLabel} connection.`,
   watched_by: ({ toolName, targetName }) =>
-    `${toolName} is linked to ${targetName} — Loxep records it as a companion, and probes its health.`
+    `${toolName} is linked to ${targetName} — Loxep records it as a companion, and probes its health.`,
+  observed_via: ({ providerLabel, resourceName }) =>
+    `Loxep's ${providerLabel} sweeps read ${resourceName} through this connection.`,
+  address_match: ({ resourceName, address, targetName, extraMatchesLabel }) =>
+    `${resourceName} reports ${address}${extraMatchesLabel}, which ${targetName} also has — possibly the same machine. Link it to confirm.`
 };
 
 /** The one call site every edge-constructing caller uses — see this file's module doc. */

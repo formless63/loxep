@@ -1,8 +1,9 @@
 /**
  * `fetchInfrastructureTopology` — the living infrastructure topology page's
- * one server function (UI overhaul 2026 design §4, Wave W3, `loxep-m4m`).
+ * one server function (UI overhaul 2026 design §4, Wave W3, `loxep-m4m`;
+ * `observed_via`/`address_match` added by `loxep-h4v`).
  * Design: `apps/docs/src/content/docs/architecture/ui-overhaul-2026-design.md`,
- * rules G1-G6 and MAP1-MAP2.
+ * rules G1-G7 and MAP1-MAP2.
  *
  * ## Rule G2: database reads only, ever
  *
@@ -37,6 +38,8 @@
  * zone_hosted_at   managed_domains.dns_connection_id
  * proxied_via      hosting_targets.proxy_connection_id
  * watched_by       resource_links on hosting_target
+ * observed_via     external_resources.connection_id (loxep-h4v, see below)
+ * address_match    host_addresses value intersection (loxep-h4v, INFERRED)
  * ```
  *
  * Every edge is built through `@/features/infrastructure/topology`'s
@@ -74,10 +77,39 @@
  * accessor the attach picker (`fetchDiscoveredFleetResources`) and the
  * tailnet candidates panel (`fetchUnmatchedTailscaleDevices`) already read.
  * Tailscale rows dismissed via `tailscaleIgnoredDevicesSetting` are excluded
- * — ignored means hidden here too. These nodes carry no edges (nothing links
- * them — that is the whole point) and are visually distinguished by the
- * `observed` flag alone, not a separate {@link TopologyNodeKind} — see the
- * field's own doc comment for why a flag beat a sixth node kind.
+ * — ignored means hidden here too. These nodes carry no `watched_by` edge
+ * (nothing links them — that is the whole point of "observed"), but DO
+ * participate in `loxep-h4v`'s two edge kinds below like any other tool
+ * node, and are visually distinguished by the `observed` flag alone, not a
+ * separate {@link TopologyNodeKind} — see the field's own doc comment for
+ * why a flag beat a sixth node kind.
+ *
+ * ## `observed_via` / `address_match` (`loxep-h4v`, 2026-08-17)
+ *
+ * The sweeps' own PERSISTED data carries two more relationships the six
+ * edges above never draw, so a connections-heavy estate used to render as
+ * disconnected columns:
+ *
+ * - **`observed_via`** — `external_resources.connection_id` names the
+ *   connection that DISCOVERED every tool node, linked or observed alike.
+ *   Drawn `connection -> tool`, a normal recorded edge (it IS a recorded
+ *   fact, same footing as `watched_by`), for every tool/observed row that
+ *   carries a `connection_id` whose connection is in the node set (rule G3's
+ *   "Infrastructure category" filter always keeps it there; guarded anyway,
+ *   same dangling-reference posture the other five edges already hold to).
+ * - **`address_match`** — INFERRED, never recorded fact. Rule G2 stands
+ *   unmoved (persisted data only, zero live calls): a tool/observed
+ *   resource's own persisted address fields (tailscale's `metadata.
+ *   addresses`, dockhand's `metadata.host`/`.publicIp`, beszel's `metadata.
+ *   host` — see `candidateAddresses`) are compared, by EXACT string
+ *   equality only (never fuzzy, never DNS, never subnet logic), against
+ *   every hosting target's `host_addresses.value` set. A match draws
+ *   `tool -> hosting_target`, at most one edge per pair even when several
+ *   addresses match (`TopologyEdgeDto.matchedAddress`/`.matchCount` carry
+ *   which one and how many), and is SKIPPED entirely for a pair already
+ *   connected by `watched_by` — a declared companion has nothing left to
+ *   "possibly" confirm. Rendered visually distinct (dotted, muted) by
+ *   `topology-graph.tsx` so it is never mistaken for recorded fact.
  */
 import { createServerFn } from '@tanstack/react-start';
 import type { HealthStatus } from '@loxep/domain';
@@ -102,7 +134,9 @@ export const TOPOLOGY_EDGE_KINDS = [
   'routes_to',
   'zone_hosted_at',
   'proxied_via',
-  'watched_by'
+  'watched_by',
+  'observed_via',
+  'address_match'
 ] as const;
 export type TopologyEdgeKind = (typeof TOPOLOGY_EDGE_KINDS)[number];
 
@@ -149,6 +183,21 @@ export interface TopologyEdgeDto {
   targetNodeId: string;
   /** The registered, real-names-substituted operator-language sentence (rule G3). Never empty — see this file's module doc. */
   sentence: string;
+  /**
+   * `address_match` only (`loxep-h4v`) — the first exactly-matched address
+   * (deterministic: the resource's own candidate-address order, filtered to
+   * addresses the target also carries). `undefined` for every other edge
+   * kind, including `observed_via`.
+   */
+  matchedAddress?: string;
+  /**
+   * `address_match` only — the count of DISTINCT addresses this resource and
+   * target share (always >= 1). The sentence names only the first
+   * ({@link matchedAddress}) and mentions the count when it is more than
+   * one; this field lets the UI do the same without re-deriving it.
+   * `undefined` for every other edge kind.
+   */
+  matchCount?: number;
 }
 
 export interface InfrastructureTopologyDto {
@@ -172,6 +221,14 @@ export interface TopologyHostingTargetRow {
 export interface TopologyHostAddressRow {
   hostingTargetId: string;
   kind: string;
+  /**
+   * The `inet` column's own text form (`loxep-h4v`) — PostgreSQL omits the
+   * `/32`/`/128` suffix for a full-width mask, which is all `declare()`/
+   * `upsertObserved()` ever write, so this is a bare address literal, ready
+   * for the `address_match` edge's exact string-equality comparison with no
+   * normalization step.
+   */
+  value: string;
 }
 
 export interface TopologyManagedDomainRow {
@@ -202,6 +259,14 @@ export interface TopologyExternalResourceRow {
   externalType: string;
   title: string | null;
   connectionId: string | null;
+  /**
+   * Optional (`loxep-h4v`) — absent from every pre-existing caller/test that
+   * only ever fed a `watched_by` edge and never needed a resource's address
+   * fields. Populated by the handler so the `address_match` edge can read a
+   * LINKED tool's persisted addresses too, exactly like it already does for
+   * an observed row's {@link TopologyObservedResourceRow.metadata}.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface TopologyResourceLinkRow {
@@ -330,6 +395,78 @@ function observedResourceMeta(
   return meta;
 }
 
+/** The one "title, or Provider externalType" fallback every `tool`-kind node (linked and observed alike) has always used — pulled out so `loxep-h4v`'s edge-building loops (`observed_via`/`address_match`) can name a node exactly the way its own card does, without a second copy of the fallback. */
+function toolNodeName(resource: {
+  title: string | null;
+  provider: string;
+  externalType: string;
+}): string {
+  return resource.title ?? `${providerLabel(resource.provider)} ${resource.externalType}`;
+}
+
+/**
+ * `loxep-h4v`'s `address_match` edge, exact-string-equality only (never
+ * fuzzy, never DNS, never subnet logic — the design's own words). A regex
+ * IP-literal guard, not `node:net`'s `isIP` (the pattern `fleet-health.ts`'s
+ * `hostAddressFamilyOf` already established for the identical "only a real
+ * IP literal is eligible" judgment on these same provider fields): THIS
+ * module also feeds the client bundle directly (`TOPOLOGY_NODE_KINDS` etc.
+ * are plain value imports in `topology/components/*`), and `fleet-health.ts`
+ * never crosses that boundary — importing a Node builtin here would be a new
+ * risk that module never had to take. `IPV4_LITERAL` validates each octet's
+ * range (0-255), stricter than `infrastructure-functions.ts`'s own
+ * `IPV4_SHAPE` (a shape-only guess used solely for a best-effort
+ * `hosting_targets.address_v4` default on adopt) because a false-positive
+ * here would let a bogus "match" through the edge itself, not just a form
+ * default an operator can immediately see and fix.
+ */
+const IPV4_OCTET = '(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d|0)';
+const IPV4_LITERAL = new RegExp(`^${IPV4_OCTET}(\\.${IPV4_OCTET}){3}$`);
+const IPV6_LITERAL =
+  /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
+
+function isIpLiteral(value: string): boolean {
+  return IPV4_LITERAL.test(value) || IPV6_LITERAL.test(value);
+}
+
+/**
+ * The persisted per-provider address FIELDS the `address_match` edge is
+ * allowed to read (`loxep-h4v`'s own inventory, verified against
+ * `fleet-health.ts`'s `projectDockhandResources`/`projectTailscaleDevices`,
+ * the same sweeps that write these exact `metadata` keys): tailscale's
+ * `addresses` array, dockhand's `host` + `publicIp`, beszel's `host`. Every
+ * candidate is filtered through {@link isIpLiteral} before it is even
+ * eligible to match — `host` in particular is a CONNECTION address and is
+ * very often a hostname, exactly the reasoning `fleet-health.ts` already
+ * documents for the identical field. A provider outside this table (gatus,
+ * termix — neither one carries a persisted address field at all) returns no
+ * candidates, never a crash.
+ */
+function candidateAddresses(provider: string, metadata: Record<string, unknown>): string[] {
+  switch (provider) {
+    case 'tailscale': {
+      const raw = metadata['addresses'];
+      const values = Array.isArray(raw)
+        ? raw.filter((entry): entry is string => typeof entry === 'string')
+        : [];
+      return values.filter(isIpLiteral);
+    }
+    case 'dockhand': {
+      const host = metadata['host'];
+      const publicIp = metadata['publicIp'];
+      return [host, publicIp].filter(
+        (entry): entry is string => typeof entry === 'string' && isIpLiteral(entry)
+      );
+    }
+    case 'beszel': {
+      const host = metadata['host'];
+      return typeof host === 'string' && isIpLiteral(host) ? [host] : [];
+    }
+    default:
+      return [];
+  }
+}
+
 function sortNodesByName(nodes: TopologyNodeDto[]): TopologyNodeDto[] {
   return nodes.toSorted((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
@@ -348,10 +485,19 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
   const externalResourceById = new Map(input.externalResources.map((r) => [r.id, r]));
 
   const badgesByTargetId = new Map<string, Set<string>>();
+  // `loxep-h4v`: every persisted address VALUE a target carries, regardless
+  // of `kind` — `address_match` compares against the target's whole
+  // `host_addresses` set (WAN, LAN, tailnet, and unclassified `other` rows
+  // all count; a match is a match, classification is a separate question).
+  const addressValuesByTargetId = new Map<string, Set<string>>();
   for (const address of input.hostAddresses) {
     const set = badgesByTargetId.get(address.hostingTargetId) ?? new Set<string>();
     set.add(address.kind);
     badgesByTargetId.set(address.hostingTargetId, set);
+
+    const values = addressValuesByTargetId.get(address.hostingTargetId) ?? new Set<string>();
+    values.add(address.value);
+    addressValuesByTargetId.set(address.hostingTargetId, values);
   }
 
   const connectionNodes: TopologyNodeDto[] = input.connections.map((connection) => ({
@@ -425,7 +571,7 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
     return {
       id: `tool:${resource.id}`,
       kind: 'tool',
-      name: resource.title ?? `${providerLabel(resource.provider)} ${resource.externalType}`,
+      name: toolNodeName(resource),
       status: healthFor('external_resource', resource.id),
       href,
       badges: [],
@@ -436,33 +582,35 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
 
   // Rule G7's observed layer: unlinked external_resources rows, `observed:
   // true`, sharing the `tool` kind (see TopologyNodeDto.observed's own doc
-  // for why). Never has an edge — `watched_by` only ever iterates
+  // for why). Never has a `watched_by` edge — that loop only ever iterates
   // `input.resourceLinks`, which by construction has no row pointing at one
-  // of these ids. Ignored means hidden here too: a tailscale row whose
-  // externalId is in the ignore set is dropped before it ever becomes a node.
-  const observedResourceNodes: TopologyNodeDto[] = input.observedResources
-    .filter(
-      (resource) =>
-        resource.provider !== 'tailscale' ||
-        resource.externalId === null ||
-        !input.ignoredTailscaleExternalIds.has(resource.externalId)
-    )
-    .map((resource) => {
-      const href =
-        resource.connectionId === null
-          ? null
-          : estateHref(resource.provider, resource.connectionId);
-      return {
-        id: `tool:${resource.id}`,
-        kind: 'tool',
-        name: resource.title ?? `${providerLabel(resource.provider)} ${resource.externalType}`,
-        status: healthFor('external_resource', resource.id),
-        href,
-        badges: [],
-        observed: true,
-        meta: observedResourceMeta(resource)
-      };
-    });
+  // of these ids. `loxep-h4v`'s `observed_via`/`address_match` edges DO reach
+  // these nodes, same as a linked tool (see below). Ignored means hidden
+  // here too: a tailscale row whose externalId is in the ignore set is
+  // dropped before it ever becomes a node — pulled out to its own binding so
+  // the edge-building loops below read the identical filtered set, not a
+  // second copy of the ignore rule.
+  const visibleObservedResources = input.observedResources.filter(
+    (resource) =>
+      resource.provider !== 'tailscale' ||
+      resource.externalId === null ||
+      !input.ignoredTailscaleExternalIds.has(resource.externalId)
+  );
+
+  const observedResourceNodes: TopologyNodeDto[] = visibleObservedResources.map((resource) => {
+    const href =
+      resource.connectionId === null ? null : estateHref(resource.provider, resource.connectionId);
+    return {
+      id: `tool:${resource.id}`,
+      kind: 'tool',
+      name: toolNodeName(resource),
+      status: healthFor('external_resource', resource.id),
+      href,
+      badges: [],
+      observed: true,
+      meta: observedResourceMeta(resource)
+    };
+  });
 
   const nodes: TopologyNodeDto[] = [
     ...sortNodesByName(connectionNodes),
@@ -567,15 +715,85 @@ export function buildInfrastructureTopology(input: BuildTopologyInput): Infrastr
     const dedupeKey = `${resource.id}:${target.id}`;
     if (seenWatchedBy.has(dedupeKey)) continue;
     seenWatchedBy.add(dedupeKey);
-    const toolName =
-      resource.title ?? `${providerLabel(resource.provider)} ${resource.externalType}`;
     edges.push({
       id: `edge:watched_by:${dedupeKey}`,
       kind: 'watched_by',
       sourceNodeId: `tool:${resource.id}`,
       targetNodeId: `hosting_target:${target.id}`,
-      sentence: buildEdgeSentence('watched_by', { toolName, targetName: target.name })
+      sentence: buildEdgeSentence('watched_by', {
+        toolName: toolNodeName(resource),
+        targetName: target.name
+      })
     });
+  }
+
+  // `loxep-h4v`: every tool node, linked AND observed, participates in the
+  // two edge kinds below — the same combined, order-preserving list both
+  // loops share.
+  const allToolResources = [...input.externalResources, ...visibleObservedResources];
+
+  // observed_via: external_resources.connection_id, for BOTH linked and
+  // observed rows. Rule G3's "an edge with no registered sentence may not
+  // render" is enforced by buildEdgeSentence's total mapped type, same as
+  // every other edge kind; the dangling-reference guard here follows this
+  // module's own established precedent (fronted_by/apex_points_at/etc.
+  // above): if the connection isn't a node (shouldn't happen — infrastructure
+  // connections are all nodes), skip, never a dangling edge.
+  for (const resource of allToolResources) {
+    if (resource.connectionId === null) continue;
+    const connection = connectionById.get(resource.connectionId);
+    if (connection === undefined) continue;
+    edges.push({
+      id: `edge:observed_via:${resource.id}`,
+      kind: 'observed_via',
+      sourceNodeId: `connection:${connection.id}`,
+      targetNodeId: `tool:${resource.id}`,
+      sentence: buildEdgeSentence('observed_via', {
+        providerLabel: providerLabel(connection.provider),
+        resourceName: toolNodeName(resource)
+      })
+    });
+  }
+
+  // address_match (INFERRED, rule G2/G3 unmoved): exact-string-equality
+  // intersection of a tool/observed resource's persisted address fields
+  // (see `candidateAddresses`'s own doc) with a hosting target's
+  // `host_addresses.value` set. At most one edge per (resource, target) pair
+  // even when several addresses match — the first (the resource's own
+  // candidate-address order, filtered to values the target also carries)
+  // is named in the sentence/`matchedAddress`; `matchCount` carries the
+  // total distinct matches so the UI never has to re-derive it. A pair
+  // already connected by `watched_by` is skipped: that relationship is
+  // DECLARED, not inferred, so "possibly the same machine — link it to
+  // confirm" would be actively misleading for something already linked.
+  for (const resource of allToolResources) {
+    const candidates = candidateAddresses(resource.provider, resource.metadata ?? {});
+    if (candidates.length === 0) continue;
+    for (const target of input.hostingTargets) {
+      if (seenWatchedBy.has(`${resource.id}:${target.id}`)) continue;
+      const targetAddresses = addressValuesByTargetId.get(target.id);
+      if (targetAddresses === undefined) continue;
+      const matched = [...new Set(candidates.filter((address) => targetAddresses.has(address)))];
+      const matchedAddress = matched[0];
+      if (matchedAddress === undefined) continue;
+      edges.push({
+        id: `edge:address_match:${resource.id}:${target.id}`,
+        kind: 'address_match',
+        sourceNodeId: `tool:${resource.id}`,
+        targetNodeId: `hosting_target:${target.id}`,
+        matchedAddress,
+        matchCount: matched.length,
+        sentence: buildEdgeSentence('address_match', {
+          resourceName: toolNodeName(resource),
+          address: matchedAddress,
+          targetName: target.name,
+          extraMatchesLabel:
+            matched.length > 1
+              ? ` (and ${matched.length - 1} more matching address${matched.length - 1 === 1 ? '' : 'es'})`
+              : ''
+        })
+      });
+    }
   }
 
   return { nodes, edges, readAt: input.readAt.toISOString() };
@@ -669,7 +887,8 @@ export const fetchInfrastructureTopology = createServerFn({ method: 'GET' }).han
       })),
       hostAddresses: hostAddressRows.map((row) => ({
         hostingTargetId: row.hostingTargetId,
-        kind: row.kind
+        kind: row.kind,
+        value: row.value
       })),
       managedDomains: managedDomainRows.map((row) => ({
         id: row.id,
@@ -695,7 +914,14 @@ export const fetchInfrastructureTopology = createServerFn({ method: 'GET' }).han
         provider: row.provider,
         externalType: row.externalType,
         title: row.title,
-        connectionId: row.connectionId
+        connectionId: row.connectionId,
+        // `loxep-h4v`: needed for the `address_match` edge over a LINKED
+        // tool's own persisted address fields, same source `observedResources`
+        // below already reads for an unlinked row. Cast, not `$type`d at the
+        // schema (plain `jsonb`, same as `resources.ts` itself) — the same
+        // cast `infrastructure-functions.ts` already applies to this exact
+        // column elsewhere in this workspace.
+        metadata: row.metadata as Record<string, unknown>
       })),
       resourceLinks: resourceLinkRows.map((row) => ({
         externalResourceId: row.externalResourceId,

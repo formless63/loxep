@@ -80,9 +80,9 @@ describe('buildInfrastructureTopology — node assembly', () => {
           }
         ],
         hostAddresses: [
-          { hostingTargetId: 'target-1', kind: 'tailnet' },
-          { hostingTargetId: 'target-1', kind: 'wan' },
-          { hostingTargetId: 'target-1', kind: 'lan' }
+          { hostingTargetId: 'target-1', kind: 'tailnet', value: 'fd7a:115c:a1e0::1' },
+          { hostingTargetId: 'target-1', kind: 'wan', value: '203.0.113.1' },
+          { hostingTargetId: 'target-1', kind: 'lan', value: '10.0.0.1' }
         ]
       })
     );
@@ -237,12 +237,20 @@ describe('buildInfrastructureTopology — edge assembly, one per design table ro
         provider: 'beszel',
         externalType: 'system',
         title: 'web-1',
-        connectionId: null
+        // `loxep-h4v`: a connection, to exercise `observed_via`, and a
+        // `host` address that matches `target-edge`'s (NOT `target-origin`,
+        // the target it's already `watched_by`-linked to below) — the two
+        // targets are deliberately different so this same fixture also
+        // exercises `address_match` without tripping its own
+        // already-linked-pair suppression.
+        connectionId: 'conn-cf',
+        metadata: { host: '10.0.0.9' }
       }
     ],
     resourceLinks: [
       { externalResourceId: 'ext-1', resourceId: 'target-origin', resourceType: 'hosting_target' }
-    ]
+    ],
+    hostAddresses: [{ hostingTargetId: 'target-edge', kind: 'other', value: '10.0.0.9' }]
   });
 
   test('emits exactly one edge of every kind the fixture exercises, each with a sentence', () => {
@@ -303,6 +311,26 @@ describe('buildInfrastructureTopology — edge assembly, one per design table ro
     expect(edge.targetNodeId).toBe('hosting_target:target-origin');
     expect(edge.sentence).toBe(
       'web-1 is linked to origin-1 — Loxep records it as a companion, and probes its health.'
+    );
+  });
+
+  test('observed_via connects the discovering connection to the tool it discovered', () => {
+    const dto = buildInfrastructureTopology(fixture);
+    const edge = dto.edges.find((e) => e.kind === 'observed_via')!;
+    expect(edge.sourceNodeId).toBe('connection:conn-cf');
+    expect(edge.targetNodeId).toBe('tool:ext-1');
+    expect(edge.sentence).toBe("Loxep's Cloudflare sweeps read web-1 through this connection.");
+  });
+
+  test('address_match connects the resource to a target sharing its persisted address, distinct from its watched_by target', () => {
+    const dto = buildInfrastructureTopology(fixture);
+    const edge = dto.edges.find((e) => e.kind === 'address_match')!;
+    expect(edge.sourceNodeId).toBe('tool:ext-1');
+    expect(edge.targetNodeId).toBe('hosting_target:target-edge');
+    expect(edge.matchedAddress).toBe('10.0.0.9');
+    expect(edge.matchCount).toBe(1);
+    expect(edge.sentence).toBe(
+      'web-1 reports 10.0.0.9, which edge-1 also has — possibly the same machine. Link it to confirm.'
     );
   });
 
@@ -511,6 +539,299 @@ describe("buildInfrastructureTopology — rule G7's observed layer", () => {
     expect(node.href).toEqual({
       to: '/infrastructure/estate/$connectionId',
       params: { connectionId: 'conn-gatus' }
+    });
+  });
+});
+
+describe('buildInfrastructureTopology — rule G7 extension: observed_via and address_match (loxep-h4v)', () => {
+  const connections = [
+    { id: 'conn-beszel', provider: 'beszel', name: 'Beszel account', status: 'active' }
+  ];
+
+  describe('observed_via', () => {
+    test('emitted for a LINKED tool node whose external_resources row carries a connection_id', () => {
+      const dto = buildInfrastructureTopology(
+        baseInput({
+          connections,
+          hostingTargets: [
+            {
+              id: 'target-1',
+              name: 'origin-1',
+              provider: null,
+              region: null,
+              frontedByTargetId: null,
+              proxyConnectionId: null
+            }
+          ],
+          externalResources: [
+            {
+              id: 'ext-1',
+              provider: 'beszel',
+              externalType: 'system',
+              title: 'web-1',
+              connectionId: 'conn-beszel'
+            }
+          ],
+          resourceLinks: [
+            {
+              externalResourceId: 'ext-1',
+              resourceId: 'target-1',
+              resourceType: 'hosting_target'
+            }
+          ]
+        })
+      );
+      const edge = dto.edges.find((e) => e.kind === 'observed_via')!;
+      expect(edge).toBeDefined();
+      expect(edge.sourceNodeId).toBe('connection:conn-beszel');
+      expect(edge.targetNodeId).toBe('tool:ext-1');
+    });
+
+    test('emitted for an OBSERVED (unlinked) tool node the same way', () => {
+      const dto = buildInfrastructureTopology(
+        baseInput({
+          connections,
+          observedResources: [
+            {
+              id: 'obs-1',
+              provider: 'beszel',
+              externalType: 'system',
+              title: 'web-2',
+              connectionId: 'conn-beszel',
+              externalId: null,
+              url: 'https://beszel.example/systems/web-2',
+              metadata: {}
+            }
+          ]
+        })
+      );
+      const edge = dto.edges.find((e) => e.kind === 'observed_via')!;
+      expect(edge).toBeDefined();
+      expect(edge.sourceNodeId).toBe('connection:conn-beszel');
+      expect(edge.targetNodeId).toBe('tool:obs-1');
+    });
+
+    test('dropped, never a dangling edge, when connection_id is set but no matching connection is in the node set', () => {
+      const dto = buildInfrastructureTopology(
+        baseInput({
+          // No `connections` at all — `conn-missing` resolves to nothing.
+          observedResources: [
+            {
+              id: 'obs-1',
+              provider: 'beszel',
+              externalType: 'system',
+              title: 'web-2',
+              connectionId: 'conn-missing',
+              externalId: null,
+              url: 'https://beszel.example/systems/web-2',
+              metadata: {}
+            }
+          ]
+        })
+      );
+      expect(dto.edges.filter((e) => e.kind === 'observed_via')).toEqual([]);
+    });
+
+    test('not emitted at all when connection_id is null', () => {
+      const dto = buildInfrastructureTopology(
+        baseInput({
+          observedResources: [
+            {
+              id: 'obs-1',
+              provider: 'beszel',
+              externalType: 'system',
+              title: 'web-2',
+              connectionId: null,
+              externalId: null,
+              url: 'https://beszel.example/systems/web-2',
+              metadata: {}
+            }
+          ]
+        })
+      );
+      expect(dto.edges.filter((e) => e.kind === 'observed_via')).toEqual([]);
+    });
+  });
+
+  describe('address_match', () => {
+    const targetFixture = baseInput({
+      hostingTargets: [
+        {
+          id: 'target-1',
+          name: 'origin-1',
+          provider: null,
+          region: null,
+          frontedByTargetId: null,
+          proxyConnectionId: null
+        }
+      ],
+      hostAddresses: [{ hostingTargetId: 'target-1', kind: 'wan', value: '203.0.113.9' }]
+    });
+
+    test('an exact address match between an OBSERVED resource and a target emits the edge', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-2',
+            connectionId: null,
+            externalId: null,
+            url: 'https://beszel.example/systems/web-2',
+            metadata: { host: '203.0.113.9' }
+          }
+        ]
+      });
+      const edge = dto.edges.find((e) => e.kind === 'address_match')!;
+      expect(edge).toBeDefined();
+      expect(edge.sourceNodeId).toBe('tool:obs-1');
+      expect(edge.targetNodeId).toBe('hosting_target:target-1');
+      expect(edge.matchedAddress).toBe('203.0.113.9');
+      expect(edge.matchCount).toBe(1);
+    });
+
+    test('a partial-string match is never an edge — exact equality only', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-2',
+            connectionId: null,
+            externalId: null,
+            url: 'https://beszel.example/systems/web-2',
+            // Shares a prefix with the target's address, not the whole value.
+            metadata: { host: '203.0.113.90' }
+          }
+        ]
+      });
+      expect(dto.edges.filter((e) => e.kind === 'address_match')).toEqual([]);
+    });
+
+    test('a different address is never an edge', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-2',
+            connectionId: null,
+            externalId: null,
+            url: 'https://beszel.example/systems/web-2',
+            metadata: { host: '198.51.100.4' }
+          }
+        ]
+      });
+      expect(dto.edges.filter((e) => e.kind === 'address_match')).toEqual([]);
+    });
+
+    test('a dockhand host that is not an IP literal (a hostname) is skipped — never becomes a match candidate', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        hostAddresses: [
+          // A target that happens to have a `host_addresses` row whose
+          // VALUE is a real IP is irrelevant here; the point is that the
+          // resource's own `host` field never even becomes a candidate.
+          { hostingTargetId: 'target-1', kind: 'wan', value: '203.0.113.9' }
+        ],
+        observedResources: [
+          {
+            id: 'obs-dockhand',
+            provider: 'dockhand',
+            externalType: 'environment',
+            title: 'docker-host-1',
+            connectionId: null,
+            externalId: null,
+            url: 'https://dockhand.example/environments/env-1',
+            metadata: { host: 'docker.internal.example', publicIp: null }
+          }
+        ]
+      });
+      expect(dto.edges.filter((e) => e.kind === 'address_match')).toEqual([]);
+    });
+
+    test('a LINKED tool node also participates in address_match, against a target other than the one it watches', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        externalResources: [
+          {
+            id: 'ext-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-1',
+            connectionId: null,
+            metadata: { host: '203.0.113.9' }
+          }
+        ]
+        // No resourceLinks — ext-1 is not linked to target-1, so the match
+        // is not suppressed by the watched_by dedupe.
+      });
+      const edge = dto.edges.find((e) => e.kind === 'address_match')!;
+      expect(edge).toBeDefined();
+      expect(edge.sourceNodeId).toBe('tool:ext-1');
+      expect(edge.targetNodeId).toBe('hosting_target:target-1');
+    });
+
+    test('a pair already connected by watched_by is suppressed — nothing left to "possibly" confirm', () => {
+      const dto = buildInfrastructureTopology({
+        ...targetFixture,
+        externalResources: [
+          {
+            id: 'ext-1',
+            provider: 'beszel',
+            externalType: 'system',
+            title: 'web-1',
+            connectionId: null,
+            metadata: { host: '203.0.113.9' }
+          }
+        ],
+        resourceLinks: [
+          { externalResourceId: 'ext-1', resourceId: 'target-1', resourceType: 'hosting_target' }
+        ]
+      });
+      expect(dto.edges.filter((e) => e.kind === 'address_match')).toEqual([]);
+      expect(dto.edges.filter((e) => e.kind === 'watched_by')).toHaveLength(1);
+    });
+
+    test('at most one edge per (resource, target) pair even when multiple addresses match; the first is named, the rest counted', () => {
+      const dto = buildInfrastructureTopology({
+        hostingTargets: targetFixture.hostingTargets,
+        hostAddresses: [
+          { hostingTargetId: 'target-1', kind: 'wan', value: '203.0.113.9' },
+          { hostingTargetId: 'target-1', kind: 'tailnet', value: '100.64.1.2' }
+        ],
+        managedDomains: [],
+        proxyResources: [],
+        connections: [],
+        externalResources: [],
+        resourceLinks: [],
+        observedResources: [
+          {
+            id: 'obs-1',
+            provider: 'tailscale',
+            externalType: 'device',
+            title: 'device-1',
+            connectionId: null,
+            externalId: null,
+            url: 'https://login.tailscale.com/admin/machines/device-1',
+            metadata: { addresses: ['203.0.113.9', '100.64.1.2'] }
+          }
+        ],
+        ignoredTailscaleExternalIds: new Set(),
+        health: [],
+        readAt: READ_AT
+      });
+      const matches = dto.edges.filter((e) => e.kind === 'address_match');
+      expect(matches).toHaveLength(1);
+      expect(matches[0]!.matchedAddress).toBe('203.0.113.9');
+      expect(matches[0]!.matchCount).toBe(2);
+      expect(matches[0]!.sentence).toContain('(and 1 more matching address),');
     });
   });
 });

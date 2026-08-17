@@ -32,6 +32,13 @@ export function TopologyLegend({
     countsByKind[node.kind] += 1;
     if (node.observed) observedCount += 1;
   }
+  // `loxep-h4v`: the one INFERRED edge kind gets its own legend line (a
+  // dashed swatch matching `topology-graph.tsx`'s resting stroke) so a
+  // reader can tell "Loxep recorded this" from "Loxep noticed this" without
+  // hovering every edge — `observed_via` needs no separate line, it renders
+  // as a normal recorded edge and is already counted in `data.edges.length`
+  // below, same as the original six.
+  const addressMatchCount = data.edges.filter((edge) => edge.kind === 'address_match').length;
 
   return (
     <div className='flex flex-col gap-2 rounded-lg border bg-card p-3 text-card-foreground'>
@@ -58,6 +65,17 @@ export function TopologyLegend({
           </span>
         )}
         <span className='text-xs text-muted-foreground'>{data.edges.length} edges</span>
+        {addressMatchCount > 0 && (
+          <span className='flex items-center gap-1.5 text-xs'>
+            <span
+              className='inline-block h-0 w-3 border-t-2 border-dashed border-muted-foreground/60'
+              aria-hidden
+            />
+            <span className='text-muted-foreground'>
+              Inferred address match ({addressMatchCount})
+            </span>
+          </span>
+        )}
       </div>
       <p className='text-xs text-muted-foreground'>
         Assembled from Loxep's records · read {formatRelativeTime(data.readAt)}
