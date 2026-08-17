@@ -1,5 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Run-stable fixture seed (loxep-wtk): minted once here in the runner
+// process before workers spawn; workers inherit the env, so a worker
+// restart after a failure re-imports spec modules onto the SAME seed
+// instead of minting a new one and orphaning earlier tests' fixtures.
+// See e2e/helpers/run-id.ts for the full mechanism.
+process.env['LOXEP_E2E_RUN_SEED'] ??= String(Date.now());
+
 /**
  * Playwright configuration for Loxep critical-flow e2e coverage.
  *

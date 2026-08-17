@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * /commerce workspace critical flow (loxep-dgf.6, Flipping M6: manual/
@@ -17,7 +18,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * palette chrome outside the page content in strict mode.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const itemLabel = `E2E vintage lamp ${runId}`;
 
 test.beforeAll(async ({ browser }) => {

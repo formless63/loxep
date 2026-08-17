@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * `/finance/import` critical flow (loxep-dgf.4, M4): a CSV of "money I
@@ -18,7 +19,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * or account-number format (a plain description/amount/date/payee row).
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const payeeName = `E2E CSV Vendor ${runId}`;
 const category = `e2e-import-${runId}`;
 

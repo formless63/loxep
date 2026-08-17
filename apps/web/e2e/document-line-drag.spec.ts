@@ -6,6 +6,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
 // image here. This is a filesystem reference to a test-only fixture, not a
 // package dependency: `apps/web/package.json` gains nothing.
 import { syntheticReceiptPng } from '../../../packages/documents/test/fixtures/synthetic-receipt';
+import { runSeed } from './helpers/run-id';
 
 /**
  * OCR tier B — highlight overlay and drag-to-field (loxep-cd3.5, M5 —
@@ -35,7 +36,7 @@ import { syntheticReceiptPng } from '../../../packages/documents/test/fixtures/s
  * native-HTML5-only technique and does not apply to a dnd-kit surface.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 
 async function ensureStorageBackend(page: Page): Promise<void> {
   await page.goto('/settings/storage');

@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * /finance/books critical flow (loxep-cmo): create a book — which, in one
@@ -15,7 +16,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * reason, not only as the established reusable-session pattern.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const bookCode = `E2E-${runId}`;
 const bookName = `E2E Book ${runId}`;
 

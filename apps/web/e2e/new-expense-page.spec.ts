@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { expect, test, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * `/finance/expenses/new` critical flow (loxep-cd3.2, M2 —
@@ -18,7 +19,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * `documents-import.spec.ts`), not because the role matters here.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const category = `e2e-new-expense-${runId}`;
 
 /**

@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * /inventory workspace critical flow (loxep-dgf.2, M2): create an
@@ -28,7 +29,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * now Available" an untestable assertion on that view.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const acquisitionTitle = `E2E Estate Sale ${runId}`;
 const itemLabel = `E2E brass lamp ${runId}`;
 

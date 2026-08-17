@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers/auth';
+import { runSeed } from './helpers/run-id';
 
 /**
  * /finance workspace critical flow (loxep-dgf.1, M1): quick-entry an expense
@@ -13,7 +14,7 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
  * because the role matters here.
  */
 
-const runId = Date.now();
+const runId = runSeed();
 const payeeName = `E2E Payee ${runId}`;
 const category = `e2e-shipping-${runId}`;
 
