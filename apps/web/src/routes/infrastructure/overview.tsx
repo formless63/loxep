@@ -283,6 +283,11 @@ function InfrastructureOverview() {
     <InfrastructurePage
       title='Infrastructure'
       description='Fleet and domain health — what needs attention.'
+      actions={
+        <Button asChild variant='outline' size='sm'>
+          <Link to='/infrastructure/topology'>View topology</Link>
+        </Button>
+      }
     >
       <React.Suspense fallback={<OverviewSkeleton />}>
         <OverviewData />

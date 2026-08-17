@@ -676,3 +676,52 @@ test("the connections row action opens a Gatus connection's estate page", async 
   await expect(estateMain.getByText('Instance', { exact: true })).toBeVisible();
   await expect(estateMain.getByText('Endpoints', { exact: true })).toBeVisible();
 });
+
+/**
+ * The living infrastructure topology page (UI overhaul 2026 design §4,
+ * rules G1-G6/MAP1-MAP2, `loxep-m4m`). Creates a Cloudflare connection
+ * through the UI first — the same "seed exclusively through the UI"
+ * convention this file's own module doc names — so the Graph tab has at
+ * least one real node to assert against (an infra-category connection is
+ * one of the design's five node kinds). No DNS/mail/fleet fixtures beyond
+ * that connection exist in this harness, so hosting targets/domains are
+ * empty here; that is the honest "assembled from what Loxep actually knows"
+ * state rule G2 describes, not a gap in the test.
+ */
+test('topology page renders the Graph/Map tabs, the legend stamp, and a connection node', async ({
+  page
+}) => {
+  const runId = `${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const connectionName = `E2E Topology Cloudflare ${runId}`;
+
+  await page.goto('/settings/connections');
+  await page.getByRole('button', { name: 'Add connection' }).click();
+  await page.getByRole('menuitem', { name: 'Add Cloudflare account' }).click();
+  const connectionDialog = page.getByRole('dialog');
+  await connectionDialog.getByLabel('Account name *').fill(connectionName);
+  await connectionDialog.getByLabel('API token *').fill(`cf_e2e_token_${runId}`);
+  await connectionDialog.getByRole('button', { name: 'Connect account' }).click();
+  await expect(connectionDialog).toBeHidden();
+
+  await page.goto('/infrastructure/topology');
+  await expect(page.getByRole('heading', { name: 'Topology' })).toBeVisible();
+
+  const main = page.getByRole('main');
+  await expect(main.getByRole('tab', { name: 'Graph' })).toBeVisible();
+  await expect(main.getByRole('tab', { name: 'Map' })).toBeVisible();
+
+  // The legend's honesty stamp (rule G6) — assembled from Loxep's own
+  // records, never a live provider read.
+  await expect(main.getByText("Assembled from Loxep's records", { exact: false })).toBeVisible();
+
+  // The seeded Cloudflare connection renders as a graph node.
+  await expect(main.getByText(connectionName)).toBeVisible();
+
+  // Switch to the Map tab — with no hosting targets in this harness, the
+  // honest state is either the empty SVG map or the "every target
+  // resolves" empty state naming zero unplaced; either way the Unplaced
+  // panel and the map svg must render, never a blank tab.
+  await main.getByRole('tab', { name: 'Map' }).click();
+  await expect(main.getByRole('img', { name: /Hosting target locations/ })).toBeVisible();
+  await expect(main.getByText('Unplaced (0)', { exact: true })).toBeVisible();
+});

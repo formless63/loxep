@@ -59,6 +59,19 @@ export const infrastructureNavGroups: NavGroup[] = [
     ]
   },
   {
+    label: 'Topology',
+    items: [
+      {
+        title: 'Topology',
+        url: '/infrastructure/topology',
+        icon: 'radar',
+        isActive: false,
+        shortcut: ['g', 'o'],
+        items: []
+      }
+    ]
+  },
+  {
     label: 'Templates',
     items: [
       {
