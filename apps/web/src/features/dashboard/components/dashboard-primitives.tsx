@@ -113,12 +113,7 @@ export function StatCard({
     <Card className='@container/card h-full'>
       <CardHeader>
         <CardDescription>{label}</CardDescription>
-        <CardTitle
-          className={cn(
-            'text-2xl font-semibold tabular-nums @[250px]/card:text-3xl',
-            valueClassName
-          )}
-        >
+        <CardTitle className={cn('text-2xl font-semibold tabular-nums', valueClassName)}>
           {value}
         </CardTitle>
         {trend && (

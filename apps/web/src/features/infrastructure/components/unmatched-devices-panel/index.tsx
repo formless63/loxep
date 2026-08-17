@@ -80,9 +80,9 @@ export default function UnmatchedTailscaleDevicesPanel() {
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className='rounded-xl border bg-card py-6 text-card-foreground shadow-sm'
+      className='rounded-xl border bg-card py-4 text-card-foreground shadow-sm'
     >
-      <CollapsibleTrigger className='flex w-full items-center justify-between gap-2 px-6 text-left'>
+      <CollapsibleTrigger className='flex w-full items-center justify-between gap-2 px-4 text-left'>
         <div className='space-y-1'>
           <p className='text-base leading-none font-semibold'>
             Unmatched tailnet devices
@@ -99,7 +99,7 @@ export default function UnmatchedTailscaleDevicesPanel() {
           aria-hidden='true'
         />
       </CollapsibleTrigger>
-      <CollapsibleContent className='space-y-4 px-6 pt-4'>
+      <CollapsibleContent className='space-y-4 px-4 pt-4'>
         {ignored.length > 0 && (
           <Button size='sm' variant='ghost' onClick={() => setShowIgnored((value) => !value)}>
             {showIgnored ? 'Hide ignored' : `Show ignored (${ignored.length})`}

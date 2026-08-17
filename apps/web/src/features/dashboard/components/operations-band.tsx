@@ -91,7 +91,7 @@ function ConnectionsCard({
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Connections</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(connectionCount)}
           </CardTitle>
         </CardHeader>
@@ -174,7 +174,7 @@ function OrderSyncCard({ targets }: { targets: DashboardOrderSyncDto[] }) {
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Order sync</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(targets.filter((target) => target.enabled).length)}
           </CardTitle>
         </CardHeader>
@@ -240,7 +240,7 @@ function OtherSyncCard({ targets }: { targets: DashboardOtherSyncTargetDto[] }) 
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Purchase &amp; reconcile sync</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(targets.filter((target) => target.enabled).length)}
           </CardTitle>
         </CardHeader>
@@ -304,7 +304,7 @@ function InfrastructureCard({ infrastructure }: { infrastructure: DashboardInfra
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Hosting targets</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(infrastructure.hostingTargetCount)}
           </CardTitle>
         </CardHeader>
@@ -355,7 +355,7 @@ function FleetSignalsCard({ signals }: { signals: FleetSignalsDto }) {
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Fleet signals</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(active.length)}/{formatQuantity(signals.providers.length)}
           </CardTitle>
           {active.length === 0 && (
@@ -408,7 +408,7 @@ function NotificationsCard({ notifications }: { notifications: DashboardNotifica
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Notification delivery ({notifications.windowDays}d)</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatRate(notifications.successRatePct)}
           </CardTitle>
           {/* No settled attempt means no rate to plot and no trend to claim —

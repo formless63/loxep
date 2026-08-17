@@ -107,9 +107,7 @@ function StatCard({
     <Card className='@container/card h-full'>
       <CardHeader>
         <CardDescription>{label}</CardDescription>
-        <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-          {value}
-        </CardTitle>
+        <CardTitle className='text-2xl font-semibold tabular-nums'>{value}</CardTitle>
         {trend && (
           <CardAction>
             <Badge variant='outline'>
@@ -186,7 +184,7 @@ function TopOpportunityCard({ topOpportunity }: { topOpportunity: TopOpportunity
     <Card className='@container/card h-full'>
       <CardHeader>
         <CardDescription>Top opportunity</CardDescription>
-        <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+        <CardTitle className='text-2xl font-semibold tabular-nums'>
           {formatScore(topOpportunity.score)}
         </CardTitle>
       </CardHeader>

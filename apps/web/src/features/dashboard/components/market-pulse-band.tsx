@@ -57,7 +57,7 @@ function EventsActivityCard({
       <Card className='@container/card h-full'>
         <CardHeader>
           <CardDescription>Event activity (24h)</CardDescription>
-          <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+          <CardTitle className='text-2xl font-semibold tabular-nums'>
             {formatQuantity(total)}
           </CardTitle>
         </CardHeader>
@@ -130,7 +130,7 @@ function TopOpportunityCard({ topOpportunity }: { topOpportunity: TopOpportunity
           <CardDescription>Top opportunity</CardDescription>
           {topOpportunity ? (
             <>
-              <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
+              <CardTitle className='text-2xl font-semibold tabular-nums'>
                 {formatScore(topOpportunity.score)}
               </CardTitle>
               <CardDescription className='pt-1'>

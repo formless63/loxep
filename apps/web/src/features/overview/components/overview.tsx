@@ -38,9 +38,7 @@ export default function OverViewPage() {
               <Card className='@container/card'>
                 <CardHeader>
                   <CardDescription>Total Revenue</CardDescription>
-                  <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-                    $1,250.00
-                  </CardTitle>
+                  <CardTitle className='text-2xl font-semibold tabular-nums'>$1,250.00</CardTitle>
                   <CardAction>
                     <Badge variant='outline'>
                       <Icons.trendingUp />
@@ -58,9 +56,7 @@ export default function OverViewPage() {
               <Card className='@container/card'>
                 <CardHeader>
                   <CardDescription>New Customers</CardDescription>
-                  <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-                    1,234
-                  </CardTitle>
+                  <CardTitle className='text-2xl font-semibold tabular-nums'>1,234</CardTitle>
                   <CardAction>
                     <Badge variant='outline'>
                       <Icons.trendingDown />
@@ -78,9 +74,7 @@ export default function OverViewPage() {
               <Card className='@container/card'>
                 <CardHeader>
                   <CardDescription>Active Accounts</CardDescription>
-                  <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-                    45,678
-                  </CardTitle>
+                  <CardTitle className='text-2xl font-semibold tabular-nums'>45,678</CardTitle>
                   <CardAction>
                     <Badge variant='outline'>
                       <Icons.trendingUp />
@@ -98,9 +92,7 @@ export default function OverViewPage() {
               <Card className='@container/card'>
                 <CardHeader>
                   <CardDescription>Growth Rate</CardDescription>
-                  <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-                    4.5%
-                  </CardTitle>
+                  <CardTitle className='text-2xl font-semibold tabular-nums'>4.5%</CardTitle>
                   <CardAction>
                     <Badge variant='outline'>
                       <Icons.trendingUp />

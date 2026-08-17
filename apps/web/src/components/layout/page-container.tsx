@@ -55,7 +55,7 @@ export default function PageContainer({
   return (
     <div className='flex flex-1 flex-col p-4 md:px-6'>
       {hasHeader && (
-        <div className='mb-4 flex items-start justify-between gap-4'>
+        <div className='mb-3 flex items-start justify-between gap-4'>
           <Heading
             title={pageTitle ?? ''}
             description={pageDescription ?? ''}

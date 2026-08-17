@@ -206,7 +206,6 @@ export function MoneyBand({ data }: { data: DashboardMoneyDto }) {
             className='sm:col-span-2 xl:row-span-2'
             label={`Revenue (${data.windowDays}d)`}
             value={formatMoney(data.grossAmount, currency)}
-            valueClassName='text-3xl @[250px]/card:text-4xl'
             trend={trendFrom(data.revenueTrendPct, formatPercent(data.revenueTrendPct))}
             {...revenueGraphic}
             footer={

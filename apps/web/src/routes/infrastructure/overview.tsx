@@ -51,9 +51,7 @@ function StatTile({
     <Card className='@container/card h-full'>
       <CardHeader>
         <CardDescription>{label}</CardDescription>
-        <CardTitle className='text-2xl font-semibold tabular-nums @[250px]/card:text-3xl'>
-          {value}
-        </CardTitle>
+        <CardTitle className='text-2xl font-semibold tabular-nums'>{value}</CardTitle>
       </CardHeader>
       <CardContent className='text-muted-foreground text-sm'>{footer}</CardContent>
     </Card>

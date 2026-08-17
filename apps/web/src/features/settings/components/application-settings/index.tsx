@@ -161,7 +161,7 @@ export default function ApplicationSettings({ isAdmin }: { isAdmin: boolean }) {
   );
 
   return (
-    <div className='flex flex-col gap-8'>
+    <div className='flex flex-col gap-4'>
       <SettingsGroup heading='Marketplace polling'>
         <div className='grid gap-4 md:grid-cols-2'>
           {keysFor('Marketplace polling').map((key) => card(key))}

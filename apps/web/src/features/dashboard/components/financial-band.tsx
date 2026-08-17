@@ -254,7 +254,7 @@ export function FinancialBand({ data }: { data: DashboardFinancialDto }) {
           <StatCard
             label='Period'
             value={data.period.code}
-            valueClassName='text-xl @[250px]/card:text-2xl'
+            valueClassName='text-xl'
             icon={{ icon: Icons.ledger, className: 'bg-chart-4/15 text-chart-4' }}
             footer={
               <div className='flex flex-wrap items-center gap-1.5'>

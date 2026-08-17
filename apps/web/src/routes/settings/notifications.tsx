@@ -16,7 +16,7 @@ function SettingsNotifications() {
       title='Notifications'
       description='Delivery endpoints and the rules that route detected events to them — detection and delivery stay separate concepts.'
     >
-      <div className='flex flex-col gap-8'>
+      <div className='flex flex-col gap-4'>
         <section className='flex flex-col gap-3'>
           <h2 className='text-lg font-medium'>Endpoints</h2>
           <NotificationEndpointsTable isAdmin={isAdmin} />

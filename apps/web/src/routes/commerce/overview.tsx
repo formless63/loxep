@@ -14,6 +14,7 @@ import {
 import {
   channelListingStatusLabel,
   channelListingStatusOptions,
+  channelListingStatusTone,
   MANUAL_PROVIDER
 } from '@/features/commerce/constants';
 
@@ -50,7 +51,7 @@ function StatCardBody({
           <Skeleton className='h-8 w-16' />
         ) : (
           <>
-            <p className='text-3xl font-semibold tabular-nums'>{value}</p>
+            <p className='text-2xl font-semibold tabular-nums'>{value}</p>
             {detail}
           </>
         )}
@@ -150,7 +151,10 @@ function CommerceOverview() {
                 search={{ status: option.value }}
                 className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
               >
-                <Badge variant='outline' className='hover:bg-accent cursor-pointer'>
+                <Badge
+                  variant={channelListingStatusTone(option.value)}
+                  className='hover:opacity-80 cursor-pointer'
+                >
                   {channelListingStatusLabel(option.value)}: {countByStatus.get(option.value) ?? 0}
                 </Badge>
               </Link>

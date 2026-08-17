@@ -13,6 +13,8 @@ import {
   DialogTitle
 } from '@/components/ui/dialog';
 import { FieldGroup } from '@/components/ui/field';
+import { InfoButton } from '@/components/ui/info-button';
+import type { InfobarContent } from '@/components/ui/infobar';
 import {
   Empty,
   EmptyDescription,
@@ -61,6 +63,22 @@ import AcquisitionLotPickerDialog from './acquisition-lot-picker';
 import type { AcquisitionLotTarget } from './acquisition-lot-picker';
 
 const NO_LOCATION_VALUE = '__no_location__';
+
+const CONFIRM_TO_LOT_INFO: InfobarContent = {
+  title: 'Confirm to a lot',
+  sections: [
+    {
+      title: 'Acquisition cost vs. stock',
+      description:
+        'Money that bought goods for resale becomes an acquisition — never an expense. "Cost of a lot" lines become cost components; "Stock (inventory)" lines become actual items. Both target the same lot, confirmed with two separate actions.'
+    },
+    {
+      title: 'Stock intake',
+      description:
+        'Lines dispositioned "Stock (inventory)" become physical stock, in intake status, same as any other item. Condition and location apply to every item this confirms.'
+    }
+  ]
+};
 
 const confirmSchema = z.object({
   category: z.string().trim().min(1, 'Category is required'),
@@ -448,12 +466,10 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
 
           {(readyAcquisitionCount > 0 || readyIntakeCount > 0) && (
             <div className='space-y-3 rounded-md border p-4'>
-              <p className='text-sm font-medium'>Confirm to a lot</p>
-              <p className='text-muted-foreground text-xs'>
-                Money that bought goods for resale becomes an acquisition — never an expense. "Cost
-                of a lot" lines become cost components; "Stock (inventory)" lines become actual
-                items. Both target the same lot, confirmed with two separate actions.
-              </p>
+              <div className='flex items-center gap-1.5'>
+                <p className='text-sm font-medium'>Confirm to a lot</p>
+                <InfoButton content={CONFIRM_TO_LOT_INFO} className='size-6' />
+              </div>
               {acquisitionTarget ? (
                 <div className='flex flex-wrap items-center gap-2 text-sm'>
                   <span className='text-muted-foreground'>Lot:</span>
@@ -504,9 +520,7 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
               {readyIntakeCount > 0 && (
                 <div className='space-y-3 border-t pt-3'>
                   <p className='text-muted-foreground text-xs'>
-                    {readyIntakeCount} line(s) dispositioned "Stock (inventory)" — becomes physical
-                    stock, in `intake` status, same as any other item. Condition and location apply
-                    to every item this confirms.
+                    {readyIntakeCount} line(s) dispositioned "Stock (inventory)".
                   </p>
                   <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                     <Select value={intakeConditionCode} onValueChange={setIntakeConditionCode}>

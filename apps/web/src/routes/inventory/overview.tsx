@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InventoryPage } from '@/features/inventory/components/inventory-page';
 import { acquisitionsQuery, inventoryItemsQuery } from '@/features/inventory/api/queries';
-import { itemStatusLabel, itemStatusOptions } from '@/features/inventory/constants';
+import { itemStatusLabel, itemStatusOptions, itemStatusTone } from '@/features/inventory/constants';
 
 const CARD_LINK_CLASS =
   'block rounded-xl outline-none focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-[3px] focus-visible:ring-offset-2';
@@ -42,7 +42,7 @@ function StatCardBody({
         {isPending ? (
           <Skeleton className='h-8 w-16' />
         ) : (
-          <p className='text-3xl font-semibold tabular-nums'>{value}</p>
+          <p className='text-2xl font-semibold tabular-nums'>{value}</p>
         )}
       </CardContent>
     </Card>
@@ -115,7 +115,10 @@ function InventoryOverview() {
                 search={{ status: option.value }}
                 className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
               >
-                <Badge variant='outline' className='hover:bg-accent cursor-pointer'>
+                <Badge
+                  variant={itemStatusTone(option.value)}
+                  className='hover:opacity-80 cursor-pointer'
+                >
                   {itemStatusLabel(option.value)}: {itemCountByStatus.get(option.value) ?? 0}
                 </Badge>
               </Link>
