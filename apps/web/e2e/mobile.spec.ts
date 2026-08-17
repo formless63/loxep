@@ -209,7 +209,11 @@ test.describe('authenticated mobile flows', () => {
     if (accountAfter === null) {
       throw new Error('pinned account cell not visible after scrolling');
     }
-    expect(Math.abs(accountAfter.x - accountBefore.x)).toBeLessThanOrEqual(2);
+    // Tolerance covers sticky engagement: pre-scroll the cell sits at its
+    // natural offset inside the rounded card (~8px of border/padding);
+    // once scrolled it clamps to the scrollport edge. The defect this
+    // guards against moved the cell by the full content width (~520px).
+    expect(Math.abs(accountAfter.x - accountBefore.x)).toBeLessThanOrEqual(12);
 
     // The row action trigger (`size='icon-sm'`) carries a mobile-only
     // invisible `::after` hit-box (`after:-inset-1`, `md:after:hidden`) that
