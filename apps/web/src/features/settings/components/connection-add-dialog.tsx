@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
@@ -74,12 +74,12 @@ export default function ConnectionAddDialog({
   if (accounts === null) return null;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
-        <DialogHeader>
-          <DialogTitle>{accounts.addLabel}</DialogTitle>
-          <DialogDescription>{accounts.formHint}</DialogDescription>
-        </DialogHeader>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>{accounts.addLabel}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>{accounts.formHint}</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         {accounts.form === 'ebay-consent' ? (
           <EbayAccountForm service={service} entities={entities} onDone={onOpenChange} />
         ) : accounts.form === 'etsy-consent' ? (
@@ -109,8 +109,8 @@ export default function ConnectionAddDialog({
         ) : (
           <PangolinAccountForm entities={entities} onDone={onOpenChange} />
         )}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

@@ -2,12 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { Button } from '@/components/ui/button';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
@@ -108,19 +108,19 @@ export default function AdoptPangolinResourceDialog({
   if (resource.resourceId === null) return null;
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className='sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>
+    <ResponsiveDialog open={open} onOpenChange={close}>
+      <ResponsiveDialogContent className='sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>
             Adopt &quot;{resource.fullDomain ?? resource.name ?? 'this resource'}&quot;
-          </DialogTitle>
-          <DialogDescription>
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Declares this Pangolin resource in Loxep — a `proxy_resources` row Loxep will manage
             from here on. This writes only Loxep&apos;s own record; nothing is sent to Pangolin.
             Apply, retire, and re-enable become available afterward from the domain or fleet detail
             page.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -161,7 +161,7 @@ export default function AdoptPangolinResourceDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

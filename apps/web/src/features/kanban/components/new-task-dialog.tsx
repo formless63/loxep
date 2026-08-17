@@ -1,14 +1,14 @@
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogClose,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+  ResponsiveDialogTrigger
+} from '@/components/ui/responsive-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useTaskStore } from '../utils/store';
@@ -28,17 +28,19 @@ export default function NewTaskDialog() {
   };
 
   return (
-    <Dialog>
-      <DialogTrigger asChild>
+    <ResponsiveDialog>
+      <ResponsiveDialogTrigger asChild>
         <Button variant='secondary' size='sm'>
           + Add New Task
         </Button>
-      </DialogTrigger>
-      <DialogContent className='sm:max-w-[425px]'>
-        <DialogHeader>
-          <DialogTitle>Add New Task</DialogTitle>
-          <DialogDescription>What do you want to get done today?</DialogDescription>
-        </DialogHeader>
+      </ResponsiveDialogTrigger>
+      <ResponsiveDialogContent className='sm:max-w-[425px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Add New Task</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            What do you want to get done today?
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form id='task-form' className='grid gap-4 py-4' onSubmit={handleSubmit}>
           <div className='grid grid-cols-4 items-center gap-4'>
             <Input id='title' name='title' placeholder='Task title...' className='col-span-4' />
@@ -52,14 +54,14 @@ export default function NewTaskDialog() {
             />
           </div>
         </form>
-        <DialogFooter>
-          <DialogClose asChild>
+        <ResponsiveDialogFooter>
+          <ResponsiveDialogClose asChild>
             <Button type='submit' size='sm' form='task-form'>
               Add Task
             </Button>
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </ResponsiveDialogClose>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

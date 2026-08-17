@@ -46,7 +46,7 @@ export function CellAction({ data }: CellActionProps) {
       <UserFormSheet user={data} open={editOpen} onOpenChange={setEditOpen} />
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
-          <Button variant='ghost' className='h-8 w-8 p-0'>
+          <Button variant='ghost' size='icon-sm'>
             <span className='sr-only'>Open menu</span>
             <Icons.ellipsis className='h-4 w-4' />
           </Button>

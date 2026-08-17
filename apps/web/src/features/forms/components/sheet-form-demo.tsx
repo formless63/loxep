@@ -14,14 +14,14 @@ import {
   SheetTrigger
 } from '@/components/ui/sheet';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+  ResponsiveDialogTrigger
+} from '@/components/ui/responsive-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Icons } from '@/components/icons';
 
@@ -177,7 +177,7 @@ function SheetFormSection() {
 }
 
 // ---------------------------------------------------------------------------
-// Dialog Form
+// ResponsiveDialog Form
 // ---------------------------------------------------------------------------
 
 function DialogFormSection() {
@@ -203,24 +203,27 @@ function DialogFormSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Dialog Form</CardTitle>
+        <CardTitle>ResponsiveDialog Form</CardTitle>
         <CardDescription>
-          A quick feedback form inside a Dialog with the submit button in the DialogFooter.
+          A quick feedback form inside a ResponsiveDialog with the submit button in the
+          ResponsiveDialogFooter.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
+        <ResponsiveDialog open={open} onOpenChange={setOpen}>
+          <ResponsiveDialogTrigger asChild>
             <Button variant='outline'>
               <Icons.send className='mr-2 h-4 w-4' />
               Send Feedback
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Quick Feedback</DialogTitle>
-              <DialogDescription>Rate your experience and leave a comment.</DialogDescription>
-            </DialogHeader>
+          </ResponsiveDialogTrigger>
+          <ResponsiveDialogContent>
+            <ResponsiveDialogHeader>
+              <ResponsiveDialogTitle>Quick Feedback</ResponsiveDialogTitle>
+              <ResponsiveDialogDescription>
+                Rate your experience and leave a comment.
+              </ResponsiveDialogDescription>
+            </ResponsiveDialogHeader>
 
             <form
               id='dialog-form-id'
@@ -259,16 +262,16 @@ function DialogFormSection() {
               </FieldGroup>
             </form>
 
-            <DialogFooter>
+            <ResponsiveDialogFooter>
               <Button type='button' variant='outline' onClick={() => setOpen(false)}>
                 Cancel
               </Button>
               <Button type='submit' form='dialog-form-id'>
                 Submit Feedback
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </ResponsiveDialogFooter>
+          </ResponsiveDialogContent>
+        </ResponsiveDialog>
       </CardContent>
     </Card>
   );

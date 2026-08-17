@@ -13,9 +13,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import type { DocumentPreviewOverlayLine } from '@/components/document-preview';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
+import { cn } from '@/lib/utils';
 import { useAppForm } from '@/lib/form';
 import { createExpenseWithEvidence } from '@/server/expense-functions';
 import { entitiesQuery } from '@/features/settings/api/queries';
@@ -173,6 +175,15 @@ function UseLineMenu({
  * separate route, because the whole point is that the receipt and the
  * fields are visible at once.
  *
+ * **Mobile (loxep-45k, rule M5):** below 768px a sticky "Form | Evidence"
+ * segmented toggle sits above the stack so a long form (or a receipt with
+ * several pages) never leaves the other pane a long scroll away. Both panes
+ * stay mounted at every width — the toggle only switches which one is
+ * `hidden` below `md` via plain CSS (`hidden md:block`), never `useIsMobile`
+ * — so resizing across 768px, or a `>=md` viewport where the toggle itself
+ * is `md:hidden`, always shows both panes with no JS-driven remount and no
+ * lost pending upload/selection state in `EvidencePane`.
+ *
  * `useAppForm` only, per Frontend Standards — no raw `<Input>` + `useState`.
  * "Save as draft" and "Record expense" are two DISTINCT buttons (the
  * design's own mockup), not a toggle field: each sets the intended status
@@ -202,6 +213,9 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
   const [attachments, setAttachments] = React.useState<EvidenceAttachment[]>([]);
   const [pinnedLines, setPinnedLines] = React.useState<PinnedDocumentLine[]>([]);
   const [hoveredLineId, setHoveredLineId] = React.useState<string | null>(null);
+  // Mobile-only (M5) — which pane the sticky toggle currently shows below
+  // `md`; irrelevant at `>=md`, where both panes render unconditionally.
+  const [activePane, setActivePane] = React.useState<'form' | 'evidence'>('form');
 
   const entityOptions = [
     { value: UNATTRIBUTED_ENTITY_VALUE, label: 'Unattributed' },
@@ -330,7 +344,25 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
   return (
     <DocumentLineDndProvider>
       <div className='grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_360px]'>
-        <Card>
+        <div className='bg-background sticky top-14 z-10 -mx-4 border-b px-4 py-2 md:hidden'>
+          <ToggleGroup
+            type='single'
+            variant='outline'
+            value={activePane}
+            onValueChange={(value) => {
+              if (value === 'form' || value === 'evidence') setActivePane(value);
+            }}
+            className='w-full'
+          >
+            <ToggleGroupItem value='form' className='flex-1'>
+              Form
+            </ToggleGroupItem>
+            <ToggleGroupItem value='evidence' className='flex-1'>
+              Evidence
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <Card className={cn(activePane !== 'form' && 'hidden md:flex')}>
           <CardContent className='pt-6'>
             <form
               className='space-y-6'
@@ -697,6 +729,7 @@ export default function NewExpensePage({ prefill }: { prefill?: NewExpensePrefil
           </CardContent>
         </Card>
         <EvidencePane
+          className={cn(activePane !== 'evidence' && 'hidden md:flex')}
           attachments={attachments}
           onAttachmentsChange={setAttachments}
           hoveredLineId={hoveredLineId}

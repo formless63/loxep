@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
@@ -145,15 +145,15 @@ export default function EtsyKeysetDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
-        <DialogHeader>
-          <DialogTitle>Configure Etsy keyset</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Configure Etsy keyset</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             The application keyset from your Etsy Developer Portal app — one keyset for the whole
             installation, shared by every Etsy shop.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <KeysetSetupGuidance />
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
@@ -190,7 +190,7 @@ export default function EtsyKeysetDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

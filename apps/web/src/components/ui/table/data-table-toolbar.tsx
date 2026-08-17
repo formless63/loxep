@@ -5,8 +5,11 @@ import { DataTableDateFilter } from '@/components/ui/table/data-table-date-filte
 import { DataTableFacetedFilter } from '@/components/ui/table/data-table-faceted-filter';
 import { DataTableSliderFilter } from '@/components/ui/table/data-table-slider-filter';
 import { DataTableViewOptions } from '@/components/ui/table/data-table-view-options';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
 import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
@@ -21,7 +24,9 @@ export function DataTableToolbar<TData extends RowData>({
   className,
   ...props
 }: DataTableToolbarProps<TData>) {
+  const isMobile = useIsMobile();
   const isFiltered = table.state.columnFilters.length > 0;
+  const activeFilterCount = table.state.columnFilters.length;
 
   const columns = React.useMemo(
     () => table.getAllColumns().filter((column) => column.getCanFilter()),
@@ -31,6 +36,63 @@ export function DataTableToolbar<TData extends RowData>({
   const onReset = React.useCallback(() => {
     table.resetColumnFilters();
   }, [table]);
+
+  // Rule M2.3: below 768px the toolbar collapses to one filter button (funnel
+  // + active-filter count) opening a Sheet with the same per-column filter
+  // controls the desktop toolbar renders inline; view-options (a
+  // column-visibility popover with no mobile-sized target) hides. The
+  // desktop branch below is untouched so >=768px renders byte-identical to
+  // before this rule landed.
+  if (isMobile) {
+    return (
+      <div
+        role='toolbar'
+        aria-orientation='horizontal'
+        className={cn('flex w-full items-center justify-between gap-2 p-1', className)}
+        {...props}
+      >
+        <Sheet>
+          <SheetTrigger asChild>
+            <Button aria-label='Filters' variant='outline' size='sm' className='relative'>
+              <Icons.filter />
+              Filters
+              {activeFilterCount > 0 && (
+                <Badge
+                  variant='secondary'
+                  className='ml-1 h-5 min-w-5 justify-center px-1 tabular-nums'
+                >
+                  {activeFilterCount}
+                </Badge>
+              )}
+            </Button>
+          </SheetTrigger>
+          <SheetContent side='bottom' className='max-h-[80vh] overflow-y-auto'>
+            <SheetHeader>
+              <SheetTitle>Filters</SheetTitle>
+            </SheetHeader>
+            <div className='flex flex-col gap-3 px-4 pb-4 [&_button]:w-full [&_input]:w-full'>
+              {columns.map((column) => (
+                <DataTableToolbarFilter key={column.id} column={column} />
+              ))}
+              {isFiltered && (
+                <Button
+                  aria-label='Reset filters'
+                  variant='outline'
+                  size='sm'
+                  className='self-start border-dashed'
+                  onClick={onReset}
+                >
+                  <Icons.close />
+                  Reset
+                </Button>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+        {children && <div className='flex items-center gap-2'>{children}</div>}
+      </div>
+    );
+  }
 
   return (
     <div

@@ -13,13 +13,13 @@ import {
   CommandSeparator
 } from '@/components/ui/command';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Icons } from '@/components/icons';
@@ -113,15 +113,15 @@ function NewTradingPartnerDialog({
   }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>New trading partner</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>New trading partner</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             The minimum that makes a party useful: who they are, and how to reach them. Everything
             else — tax id, billing address, terms — is filled in later from the counterparty record.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -178,17 +178,17 @@ function NewTradingPartnerDialog({
               )}
             />
           </FieldGroup>
-          <DialogFooter>
+          <ResponsiveDialogFooter>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <form.AppForm>
               <form.SubmitButton>Create</form.SubmitButton>
             </form.AppForm>
-          </DialogFooter>
+          </ResponsiveDialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

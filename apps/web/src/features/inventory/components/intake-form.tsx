@@ -4,12 +4,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -145,15 +145,15 @@ export default function IntakeForm({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>Add item to intake</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Add item to intake</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Creates one stock row in `intake` status. The same shape a receipt scan or an ingested
             purchase will use once those producers arrive.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -237,7 +237,7 @@ export default function IntakeForm({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

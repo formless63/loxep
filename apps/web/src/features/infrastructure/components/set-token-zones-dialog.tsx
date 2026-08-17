@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
@@ -66,15 +66,15 @@ export default function SetTokenZonesDialog({
   const domainOptions = (domains ?? []).map((domain) => ({ value: domain.id, label: domain.name }));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>Edit zone scope for "{token.name}"</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Edit zone scope for "{token.name}"</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             A policy update replaces the whole set — the sync task rebuilds it from this selection
             every time. This does not change the token's value.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -94,7 +94,7 @@ export default function SetTokenZonesDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

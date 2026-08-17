@@ -92,7 +92,8 @@ export default function EvidencePane({
   onAttachmentsChange,
   renderLineActions,
   hoveredLineId,
-  onHoveredLineChange
+  onHoveredLineChange,
+  className
 }: {
   attachments: EvidenceAttachment[];
   onAttachmentsChange: React.Dispatch<React.SetStateAction<EvidenceAttachment[]>>;
@@ -100,6 +101,8 @@ export default function EvidencePane({
   renderLineActions?: (line: DocumentPreviewOverlayLine) => React.ReactNode;
   hoveredLineId?: string | null;
   onHoveredLineChange?: (id: string | null) => void;
+  /** loxep-45k (rule M5): lets the two-pane page toggle this pane's visibility below 768px without unmounting it (state — pending uploads, selection — survives switching panes). */
+  className?: string;
 }) {
   const [pendingFiles, setPendingFiles] = React.useState<File[]>([]);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
@@ -179,7 +182,7 @@ export default function EvidencePane({
       })) ?? [];
 
   return (
-    <div className='flex flex-col gap-4'>
+    <div className={cn('flex flex-col gap-4', className)}>
       <div>
         <h2 className='text-sm font-medium'>Evidence</h2>
         <p className='text-muted-foreground text-xs'>

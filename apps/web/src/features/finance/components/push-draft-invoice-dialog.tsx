@@ -4,12 +4,12 @@ import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -175,24 +175,24 @@ export default function PushDraftInvoiceDialog({
   const counterparties = counterpartiesQuery.data ?? [];
 
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) resetAndClose();
         else onOpenChange(next);
       }}
     >
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[560px]'>
-        <DialogHeader>
-          <DialogTitle>Push draft invoice to Invoice Ninja</DialogTitle>
-          <DialogDescription>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[560px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Push draft invoice to Invoice Ninja</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Creates a DRAFT invoice in Invoice Ninja for the chosen counterparty. Loxep records the
             linkage via external_resources/resource_links
             (purpose=&apos;billing_invoice_draft&apos;); re-pushing the same counterparty/project
             reuses the existing link instead of creating a second draft. Shows up to 10
             counterparties, alphabetically.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={handleSubmit}>
           <FieldGroup>
             <Field>
@@ -373,7 +373,7 @@ export default function PushDraftInvoiceDialog({
             </Button>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

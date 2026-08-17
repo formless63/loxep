@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -92,15 +92,15 @@ export default function RecordSaleForm({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>Record sale</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Record sale</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Records a manual order for this listing and depletes the linked stock unit. PROVISIONAL:
             manual orders were unrecordable until this milestone — see design open question 7.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -141,7 +141,7 @@ export default function RecordSaleForm({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

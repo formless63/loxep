@@ -4,12 +4,12 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { formatDate } from '@/lib/format';
 import { toastError } from '@/lib/errors';
@@ -149,15 +149,15 @@ export function TailscaleExpiryDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>Record token expiry — {connection.name}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Record token expiry — {connection.name}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Tailscale showed an expiry when this API access token was generated. Recording it here
             lets Loxep warn you before the token dies; it never changes the token itself.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -174,8 +174,8 @@ export function TailscaleExpiryDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

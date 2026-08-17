@@ -12,12 +12,12 @@ import {
   CommandList
 } from '@/components/ui/command';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
@@ -157,15 +157,15 @@ export default function AcquisitionLotPickerDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-lg'>
-        <DialogHeader>
-          <DialogTitle>Choose a lot</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-lg'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Choose a lot</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Money that bought goods for resale becomes an acquisition and its cost components —
             never an expense. Attach to an open lot, or start a new one.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <Tabs defaultValue='existing'>
           <TabsList>
             <TabsTrigger value='existing'>Attach to an open lot</TabsTrigger>
@@ -262,7 +262,7 @@ export default function AcquisitionLotPickerDialog({
             </form>
           </TabsContent>
         </Tabs>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

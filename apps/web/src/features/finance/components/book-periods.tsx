@@ -16,12 +16,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import {
   Empty,
   EmptyDescription,
@@ -104,15 +104,15 @@ function GenerateFiscalYearDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>Generate fiscal year</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Generate fiscal year</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Twelve monthly periods, anchored on the book&rsquo;s fiscal-year start. Re-running a
             year that already has periods creates nothing — this is idempotent, not additive.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -143,8 +143,8 @@ function GenerateFiscalYearDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

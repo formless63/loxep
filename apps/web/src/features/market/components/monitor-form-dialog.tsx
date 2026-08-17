@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
 import { createMonitor, updateMonitor, type MonitorDto } from '@/server/market-functions';
@@ -233,15 +233,15 @@ export default function MonitorFormDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
-        <DialogHeader>
-          <DialogTitle>{isEdit ? 'Edit monitor' : 'New monitor'}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>{isEdit ? 'Edit monitor' : 'New monitor'}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Scheduling state — interval, priority, backoff — lives in the database; a small number
             of dispatcher jobs claim due monitors, never one cron entry per item.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(e) => {
@@ -397,7 +397,7 @@ export default function MonitorFormDialog({
             </Button>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

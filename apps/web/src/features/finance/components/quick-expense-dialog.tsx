@@ -6,12 +6,12 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -211,24 +211,24 @@ export default function QuickExpenseDialog({
   }
 
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) setFile(null);
         onOpenChange(next);
       }}
     >
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>
             {prefill?.correctingReferenceCode ? 'Record corrected expense' : 'New expense'}
-          </DialogTitle>
-          <DialogDescription>
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             {prefill?.correctingReferenceCode
               ? `Correcting ${prefill.correctingReferenceCode}, which was just voided — the voided row stays as evidence.`
               : 'Amount is the only field that cannot be defaulted. Saving records the spend immediately; a recorded expense is locked and corrected by voiding it, never edited.'}
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -382,7 +382,7 @@ export default function QuickExpenseDialog({
             </div>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

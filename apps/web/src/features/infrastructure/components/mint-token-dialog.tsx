@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
@@ -112,15 +112,15 @@ export default function MintTokenDialog({
   }));
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>Mint a DNS token for {hostingTargetName}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={close}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Mint a DNS token for {hostingTargetName}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             A narrow, host-scoped credential the control plane mints — never one it authenticates
             with itself. The value is shown exactly once, in the response to this action.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -161,7 +161,7 @@ export default function MintTokenDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

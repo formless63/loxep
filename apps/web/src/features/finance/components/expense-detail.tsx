@@ -8,12 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -88,15 +88,15 @@ function VoidExpenseDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>Void {referenceCode}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Void {referenceCode}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             The row is kept as evidence, never deleted. This is the only correction path — the
             corrected fact is recorded fresh right after.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -125,8 +125,8 @@ function VoidExpenseDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 
@@ -189,18 +189,18 @@ function PromoteToAcquisitionDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>
             Promote {referenceCode} to {target.referenceCode}
-          </DialogTitle>
-          <DialogDescription>
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Voids this expense and records its value as a capitalized cost on {target.title}. The
             row is kept as evidence, never deleted — this is the acquisition seam's correction path
             for spend that turns out to have bought goods for resale.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -231,8 +231,8 @@ function PromoteToAcquisitionDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 
@@ -288,15 +288,15 @@ function LinkPayeeDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>Link this payee</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Link this payee</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Attaches a trading partner to this expense without reopening it — works on a recorded
             expense, not just a draft. Unlinking keeps the last-known payee name as evidence.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <div className='space-y-6'>
           <PayeeComboboxField
             label='Payee'
@@ -314,8 +314,8 @@ function LinkPayeeDialog({
             </Button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

@@ -5,13 +5,13 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { InfoButton } from '@/components/ui/info-button';
 import type { InfobarContent } from '@/components/ui/infobar';
@@ -579,25 +579,25 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
         defaultCurrency={document.currency}
       />
 
-      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Discard this document?</DialogTitle>
-            <DialogDescription>
+      <ResponsiveDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <ResponsiveDialogContent>
+          <ResponsiveDialogHeader>
+            <ResponsiveDialogTitle>Discard this document?</ResponsiveDialogTitle>
+            <ResponsiveDialogDescription>
               Every unresolved line is marked "Discard" — this is for throwing out a review before
               anything was confirmed, and cannot run once a line has been confirmed.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+            </ResponsiveDialogDescription>
+          </ResponsiveDialogHeader>
+          <ResponsiveDialogFooter>
             <Button variant='outline' onClick={() => setDiscardOpen(false)}>
               Cancel
             </Button>
             <Button variant='destructive' onClick={() => discardMutation.mutate(null)}>
               Discard
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveDialogFooter>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
     </div>
   );
 }

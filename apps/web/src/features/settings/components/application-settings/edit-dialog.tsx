@@ -3,12 +3,12 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { toastError, errorMessage } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
@@ -81,12 +81,14 @@ export default function SettingEditDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[560px]'>
-        <DialogHeader>
-          <DialogTitle className='font-mono text-sm break-all'>{setting.key}</DialogTitle>
-          <DialogDescription>{setting.description}</DialogDescription>
-        </DialogHeader>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[560px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle className='font-mono text-sm break-all'>
+            {setting.key}
+          </ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>{setting.description}</ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -112,7 +114,7 @@ export default function SettingEditDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

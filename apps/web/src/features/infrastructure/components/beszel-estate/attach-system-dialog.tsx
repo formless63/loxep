@@ -3,13 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import {
   Empty,
   EmptyDescription,
@@ -71,15 +71,15 @@ export default function AttachBeszelSystemDialog({
   const systemLabel = system.name ?? system.host ?? system.externalSystemId;
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>Attach {systemLabel} to a hosting target</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={close}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Attach {systemLabel} to a hosting target</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Pick the existing hosting target this Beszel system actually is. Loxep never guesses
             this from a name.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
 
         {isLoading ? (
           <p className='text-muted-foreground text-sm'>Loading…</p>
@@ -115,7 +115,7 @@ export default function AttachBeszelSystemDialog({
           </RadioGroup>
         )}
 
-        <DialogFooter>
+        <ResponsiveDialogFooter>
           <Button type='button' variant='outline' onClick={() => close(false)}>
             Cancel
           </Button>
@@ -126,8 +126,8 @@ export default function AttachBeszelSystemDialog({
           >
             Attach
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

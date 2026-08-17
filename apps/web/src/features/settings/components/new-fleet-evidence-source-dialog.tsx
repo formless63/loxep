@@ -4,14 +4,14 @@ import { z } from 'zod';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+  ResponsiveDialogTrigger
+} from '@/components/ui/responsive-dialog';
 import { FieldGroup } from '@/components/ui/field';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -87,18 +87,18 @@ export default function NewFleetEvidenceSourceDialog() {
 
   if (revealed !== null) {
     return (
-      <Dialog open={open} onOpenChange={close}>
-        <DialogContent
+      <ResponsiveDialog open={open} onOpenChange={close}>
+        <ResponsiveDialogContent
           className='sm:max-w-[560px]'
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <DialogHeader>
-            <DialogTitle>Evidence source configured</DialogTitle>
-            <DialogDescription>
+          <ResponsiveDialogHeader>
+            <ResponsiveDialogTitle>Evidence source configured</ResponsiveDialogTitle>
+            <ResponsiveDialogDescription>
               Paste the URL and the token into the sender&apos;s own configuration now — the token
               is shown exactly once.
-            </DialogDescription>
-          </DialogHeader>
+            </ResponsiveDialogDescription>
+          </ResponsiveDialogHeader>
           <Alert variant='warning'>
             <Icons.warning />
             <AlertTitle>You will not see this token again</AlertTitle>
@@ -109,28 +109,28 @@ export default function NewFleetEvidenceSourceDialog() {
           </Alert>
           <CopyableValue label='Webhook URL' value={revealed.url} copyLabel='Copy URL' />
           <CopyableValue label='Bearer token' value={revealed.token} copyLabel='Copy token' />
-          <DialogFooter>
+          <ResponsiveDialogFooter>
             <Button onClick={() => close(false)}>I&apos;ve saved these values</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </ResponsiveDialogFooter>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
     );
   }
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogTrigger asChild>
+    <ResponsiveDialog open={open} onOpenChange={close}>
+      <ResponsiveDialogTrigger asChild>
         <Button size='sm'>New evidence source</Button>
-      </DialogTrigger>
-      <DialogContent className='sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>New inbound evidence source</DialogTitle>
-          <DialogDescription>
+      </ResponsiveDialogTrigger>
+      <ResponsiveDialogContent className='sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>New inbound evidence source</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Creates a dedicated, evidence-only connection and mints a bearer token for it. Recording
             evidence is not delivering an alert — the sending tool must still alert its own operator
             directly (ntfy or otherwise); Loxep only rolls the evidence into integration health.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form className='space-y-6' onSubmit={submitFormEvent(form.handleSubmit)}>
           <FieldGroup>
             <form.AppField
@@ -159,7 +159,7 @@ export default function NewFleetEvidenceSourceDialog() {
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

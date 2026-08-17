@@ -3,13 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import {
   Empty,
   EmptyDescription,
@@ -95,16 +95,16 @@ export default function AttachDiscoveredResourceDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
-        <DialogHeader>
-          <DialogTitle>Attach a discovered {providerLabel} system</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={close}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[520px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Attach a discovered {providerLabel} system</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Loxep discovered these during its last sweep but has not linked any of them to a host.
             Pick the one that is actually {hostingTargetName} — Loxep never guesses this from a
             name.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
 
         {isLoading ? (
           <p className='text-muted-foreground text-sm'>Loading…</p>
@@ -150,7 +150,7 @@ export default function AttachDiscoveredResourceDialog({
           </RadioGroup>
         )}
 
-        <DialogFooter>
+        <ResponsiveDialogFooter>
           <Button type='button' variant='outline' onClick={() => close(false)}>
             Cancel
           </Button>
@@ -161,8 +161,8 @@ export default function AttachDiscoveredResourceDialog({
           >
             Attach
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </ResponsiveDialogFooter>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

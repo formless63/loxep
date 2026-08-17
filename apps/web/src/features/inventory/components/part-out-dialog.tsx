@@ -4,13 +4,13 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogFooter,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import { Field, FieldError } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/icons';
@@ -88,15 +88,15 @@ export default function PartOutDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[560px]'>
-        <DialogHeader>
-          <DialogTitle>Part out {itemCode}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='max-h-[85vh] overflow-y-auto sm:max-w-[560px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Part out {itemCode}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             Breaks this unit into the children listed below, divides its cost basis across them, and
             depletes this row. This cannot be undone from here.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-4'
           onSubmit={(event) => {
@@ -185,16 +185,16 @@ export default function PartOutDialog({
             )}
           />
 
-          <DialogFooter>
+          <ResponsiveDialogFooter>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
             <form.AppForm>
               <form.SubmitButton variant='destructive'>Part out</form.SubmitButton>
             </form.AppForm>
-          </DialogFooter>
+          </ResponsiveDialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

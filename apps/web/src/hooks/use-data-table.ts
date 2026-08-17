@@ -15,6 +15,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router';
 import * as React from 'react';
 
 import { useDebouncedCallback } from '@/hooks/use-debounced-callback';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import { parseSortingState, serializeSortingState } from '@/lib/parsers';
 import type { ExtendedColumnSort } from '@/types/data-table';
@@ -73,6 +74,26 @@ export function useDataTable<TData extends RowData>(props: UseDataTableProps<TDa
   const [columnPinning, setColumnPinning] = React.useState<ColumnPinningState>(
     initialState?.columnPinning ?? { start: [], end: [] }
   );
+
+  // Rule M2.2: on mobile, the first non-select data column pins `start` so a
+  // row's identity stays visible while the table scrolls horizontally —
+  // actions stay pinned `end` (unaffected, per-table configured as today).
+  // This is a DERIVED override, not stored state: it only fills in when the
+  // table's own pinning has nothing pinned `start`, so a table that already
+  // configures (or a user who manually sets) a `start` pin is left alone —
+  // one shared mechanism, zero per-table edits, and it never fights an
+  // explicit pin.
+  const isMobile = useIsMobile();
+  const mobileStartColumnId = React.useMemo(
+    () => columns.find((column) => column.id && column.id !== 'select')?.id,
+    [columns]
+  );
+  const effectiveColumnPinning = React.useMemo<ColumnPinningState>(() => {
+    if (!isMobile || !mobileStartColumnId || (columnPinning.start?.length ?? 0) > 0) {
+      return columnPinning;
+    }
+    return { ...columnPinning, start: [mobileStartColumnId] };
+  }, [isMobile, mobileStartColumnId, columnPinning]);
 
   // Read pagination from search params
   const page = (search.page as number) ?? 1;
@@ -242,7 +263,7 @@ export function useDataTable<TData extends RowData>(props: UseDataTableProps<TDa
       pagination,
       sorting,
       columnVisibility,
-      columnPinning,
+      columnPinning: effectiveColumnPinning,
       rowSelection,
       columnFilters
     },

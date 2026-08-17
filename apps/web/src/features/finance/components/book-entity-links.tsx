@@ -6,12 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle
-} from '@/components/ui/dialog';
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle
+} from '@/components/ui/responsive-dialog';
 import {
   Empty,
   EmptyDescription,
@@ -109,16 +109,16 @@ function LinkEntityDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[480px]'>
-        <DialogHeader>
-          <DialogTitle>Link entity</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Link entity</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             A child entity always rolls up into its parent&rsquo;s posting book — the service
             refuses a posting-primary link that would split a parent from a part of itself. Record
             the standalone view as reporting-only instead.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <form
           className='space-y-6'
           onSubmit={(event) => {
@@ -167,8 +167,8 @@ function LinkEntityDialog({
             </form.AppForm>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 
@@ -197,15 +197,15 @@ function EndLinkDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-[420px]'>
-        <DialogHeader>
-          <DialogTitle>End link for {link.entityName}</DialogTitle>
-          <DialogDescription>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[420px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>End link for {link.entityName}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
             This is how an entity moves books at a date boundary — the link itself is never deleted,
             only closed. Open a new link (in this book or another) starting the day after.
-          </DialogDescription>
-        </DialogHeader>
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor='end-link-effective-to'>Effective to</FieldLabel>
@@ -230,8 +230,8 @@ function EndLinkDialog({
             End link
           </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 
