@@ -140,6 +140,7 @@ function CatalogCard({
   const manage = service.manage;
   return (
     <IntegrationCard
+      id={service.id}
       name={service.name}
       description={service.description}
       status={service.status(statusInput)}

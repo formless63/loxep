@@ -42,6 +42,7 @@ import {
   IconEyeOff,
   IconFile,
   IconFileText,
+  IconFilter,
   IconFileTypePdf,
   IconFileTypeDoc,
   IconFileTypeXls,
@@ -123,6 +124,7 @@ export const Icons = {
   info: IconInfoCircle,
   spinner: IconLoader2,
   search: IconSearch,
+  filter: IconFilter,
   settings: IconSettings,
   trash: IconTrash,
 

@@ -1,5 +1,6 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
@@ -7,6 +8,7 @@ import { formatDateTime } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import { CONNECTION_STATUS_LABELS } from '@/features/settings/constants';
 import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
 import { EbayCredentialStatus } from '@/features/settings/components/ebay-connection-actions';
 import type { ConnectionDto, EntityDto } from '@/server/admin-functions';
 import type { ConnectionStatus, ProviderWritePolicyTier } from '@loxep/domain';
@@ -250,7 +252,17 @@ export function getColumns({
         const flagged = disabledProviders.has(provider);
         return (
           <div className='flex flex-wrap items-center gap-1.5'>
-            <Badge variant='secondary'>{service?.name ?? provider}</Badge>
+            <Badge variant='secondary' className='gap-1.5'>
+              {service && (
+                <BrandIcon
+                  mark={PROVIDER_BRAND_ICONS[service.id]}
+                  fallback={PROVIDER_BRAND_ICON_FALLBACKS[service.id]}
+                  name={service.name}
+                  size={16}
+                />
+              )}
+              {service?.name ?? provider}
+            </Badge>
             {flagged && (
               <ToneBadge tone='warning' title={PROVIDER_DISABLED_EXPLANATION}>
                 Disabled here

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,6 +11,7 @@ import { toastError } from '@/lib/errors';
 import { cn } from '@/lib/utils';
 import { integrationsEnabledQuery } from '@/features/settings/api/queries';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
+import { PROVIDER_BRAND_ICONS, PROVIDER_BRAND_ICON_FALLBACKS } from '@/config/provider-brand-icons';
 import type {
   IntegrationServiceId,
   IntegrationStatus,
@@ -59,6 +61,7 @@ export function IntegrationStatusBadges({ status }: { status: IntegrationStatus 
  * matching the setting's "display preference, not a kill switch" rule.
  */
 export function IntegrationCard({
+  id,
   name,
   description,
   status,
@@ -67,6 +70,7 @@ export function IntegrationCard({
   disabled = false,
   children
 }: {
+  id: IntegrationServiceId;
   name: string;
   description: string;
   status: IntegrationStatus;
@@ -79,19 +83,33 @@ export function IntegrationCard({
   return (
     <Card className={cn('flex h-full flex-col', disabled && 'opacity-75')}>
       <CardHeader className='flex flex-row items-start justify-between gap-4'>
-        <div className='min-w-0'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <CardTitle className='text-base'>{name}</CardTitle>
-            {disabled && (
-              <ToneBadge
-                tone='warning'
-                title='Hidden from the catalog and connection-add options by this installation’s settings. Any existing accounts keep working unchanged.'
-              >
-                Disabled here
-              </ToneBadge>
-            )}
+        <div className='flex min-w-0 items-start gap-3'>
+          {/* The one permitted brand-color-adjacent flourish (rule I2): a
+              tinted tile behind the mark, never the mark itself in a brand
+              hex. `BrandIcon` still renders `currentColor` — the tint is
+              this wrapper's background only. */}
+          <span className='bg-primary/10 text-primary flex size-8 shrink-0 items-center justify-center rounded-md'>
+            <BrandIcon
+              mark={PROVIDER_BRAND_ICONS[id]}
+              fallback={PROVIDER_BRAND_ICON_FALLBACKS[id]}
+              name={name}
+              size={20}
+            />
+          </span>
+          <div className='min-w-0'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <CardTitle className='text-base'>{name}</CardTitle>
+              {disabled && (
+                <ToneBadge
+                  tone='warning'
+                  title='Hidden from the catalog and connection-add options by this installation’s settings. Any existing accounts keep working unchanged.'
+                >
+                  Disabled here
+                </ToneBadge>
+              )}
+            </div>
+            <CardDescription>{description}</CardDescription>
           </div>
-          <CardDescription>{description}</CardDescription>
         </div>
         <div className='flex shrink-0 flex-col items-end gap-2'>{action}</div>
       </CardHeader>

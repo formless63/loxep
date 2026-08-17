@@ -1,11 +1,13 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import {
   CONNECTION_STATUS_LABELS,
   PROVIDER_WRITE_POLICY_TIER_LABELS
 } from '@/features/settings/constants';
 import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
 import { formatRelativeTime } from '@/lib/format';
 import type { EstateConnectionSummaryDto } from '@/server/estate-functions';
 import type { ConnectionStatus } from '@loxep/domain';
@@ -48,6 +50,14 @@ export function EstateHeader({ summary }: { summary: EstateConnectionSummaryDto 
     <Card>
       <CardHeader>
         <div className='flex flex-wrap items-center gap-2'>
+          {service && (
+            <BrandIcon
+              mark={PROVIDER_BRAND_ICONS[service.id]}
+              fallback={PROVIDER_BRAND_ICON_FALLBACKS[service.id]}
+              name={service.name}
+              size={24}
+            />
+          )}
           <CardTitle className='text-base'>{summary.name}</CardTitle>
           <Badge variant='secondary'>{service?.name ?? summary.provider}</Badge>
           <ToneBadge tone={CONNECTION_STATUS_TONE[summary.status]}>

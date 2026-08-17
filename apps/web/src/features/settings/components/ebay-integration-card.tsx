@@ -44,6 +44,7 @@ export default function EbayIntegrationCard({
 
   return (
     <IntegrationCard
+      id={service.id}
       name={service.name}
       description={service.description}
       status={status}

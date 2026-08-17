@@ -1,4 +1,5 @@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Empty,
@@ -9,6 +10,7 @@ import {
 } from '@/components/ui/empty';
 import { Icons } from '@/components/icons';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
 import { formatDateTime, formatRate, formatRelativeTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type {
@@ -86,9 +88,17 @@ function ProviderTile({ provider }: { provider: FleetProviderSignalDto }) {
     <Card className='@container/card h-full'>
       <CardHeader>
         <div className='flex flex-wrap items-center justify-between gap-2'>
-          <CardTitle className='text-sm font-medium'>
-            {FLEET_PROVIDER_LABELS[provider.provider]}
-          </CardTitle>
+          <div className='flex items-center gap-2'>
+            <BrandIcon
+              mark={PROVIDER_BRAND_ICONS[provider.provider]}
+              fallback={PROVIDER_BRAND_ICON_FALLBACKS[provider.provider]}
+              name={FLEET_PROVIDER_LABELS[provider.provider]}
+              size={20}
+            />
+            <CardTitle className='text-sm font-medium'>
+              {FLEET_PROVIDER_LABELS[provider.provider]}
+            </CardTitle>
+          </div>
           <ToneBadge tone={tone}>{connectionCountLabel(provider)}</ToneBadge>
         </div>
         <CardDescription>{FLEET_PROVIDER_DESCRIPTIONS[provider.provider]}</CardDescription>

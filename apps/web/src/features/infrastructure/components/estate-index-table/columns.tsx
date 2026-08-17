@@ -1,6 +1,7 @@
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
 import { Button } from '@/components/ui/button';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import { Icons } from '@/components/icons';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
@@ -9,6 +10,7 @@ import {
   PROVIDER_WRITE_POLICY_TIER_LABELS
 } from '@/features/settings/constants';
 import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
 import { lastActivityTimestamp } from '@/features/settings/components/connections-table/columns';
 import { formatRelativeTime } from '@/lib/format';
 import { estateHref } from '@/features/estate/provider-registry';
@@ -68,7 +70,19 @@ export function getEstateIndexColumns({
       ),
       cell: ({ row }) => {
         const service = integrationServiceForProvider(row.original.provider);
-        return <span>{service?.name ?? row.original.provider}</span>;
+        return (
+          <span className='flex items-center gap-1.5'>
+            {service && (
+              <BrandIcon
+                mark={PROVIDER_BRAND_ICONS[service.id]}
+                fallback={PROVIDER_BRAND_ICON_FALLBACKS[service.id]}
+                name={service.name}
+                size={16}
+              />
+            )}
+            {service?.name ?? row.original.provider}
+          </span>
+        );
       },
       enableColumnFilter: true,
       meta: { label: 'Provider', variant: 'multiSelect' as const }

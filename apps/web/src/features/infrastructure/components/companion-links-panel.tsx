@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { BrandIcon } from '@/components/ui/brand-icon';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Empty,
@@ -17,6 +18,8 @@ import { toastError } from '@/lib/errors';
 import { formatDateTime, formatRelativeTime } from '@/lib/format';
 import { ToneBadge, type Tone } from '@/features/settings/components/status-tone';
 import { hostingTargetQuery } from '@/features/infrastructure/api/queries';
+import { PROVIDER_BRAND_ICON_FALLBACKS, PROVIDER_BRAND_ICONS } from '@/config/provider-brand-icons';
+import { integrationServiceForProvider } from '@/features/settings/integrations-catalog';
 import AddCompanionLinkDialog from '@/features/infrastructure/components/add-companion-link-dialog';
 import AttachDiscoveredResourceDialog from '@/features/infrastructure/components/attach-discovered-resource-dialog';
 import { removeCompanionLink } from '@/server/infrastructure-functions';
@@ -93,6 +96,26 @@ function TermixSessionCountChip({ link }: { link: CompanionLinkDto }) {
     <span className='text-muted-foreground text-xs' title='Active terminal sessions, per Termix'>
       {count} active {count === 1 ? 'session' : 'sessions'}
     </span>
+  );
+}
+
+/**
+ * A companion link row's brand mark (I4 — companion links panel, 16px). Looks
+ * `link.provider` up in the SAME catalog `integrationServiceForProvider`
+ * already reads elsewhere in this component (`LinkHealth`'s `label`); a
+ * provider absent from the catalog (should not occur — every fleet tool this
+ * panel links is a catalog entry) renders no mark and no fallback, which
+ * `BrandIcon` degrades to its own initial-letter tile.
+ */
+function CompanionLinkBrandIcon({ link }: { link: CompanionLinkDto }) {
+  const service = integrationServiceForProvider(link.provider);
+  return (
+    <BrandIcon
+      mark={service ? PROVIDER_BRAND_ICONS[service.id] : null}
+      fallback={service ? PROVIDER_BRAND_ICON_FALLBACKS[service.id] : undefined}
+      name={link.knownTool?.label ?? link.provider}
+      size={16}
+    />
   );
 }
 
@@ -335,6 +358,7 @@ export default function CompanionLinksPanel({
                       className='flex min-w-0 flex-1 flex-col outline-none focus-visible:ring-[3px] focus-visible:ring-ring'
                     >
                       <span className='flex items-center gap-2'>
+                        <CompanionLinkBrandIcon link={link} />
                         <span className='font-medium'>
                           {link.title ?? link.knownTool?.label ?? link.provider}
                         </span>

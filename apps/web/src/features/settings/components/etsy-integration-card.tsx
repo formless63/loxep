@@ -34,6 +34,7 @@ export default function EtsyIntegrationCard({
 
   return (
     <IntegrationCard
+      id={service.id}
       name={service.name}
       description={service.description}
       status={status}
