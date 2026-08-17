@@ -67,6 +67,8 @@ import {
   IconPaperclip,
   IconPhone,
   IconPhoto,
+  IconPin,
+  IconPinFilled,
   IconPizza,
   IconPlugConnected,
   IconPlus,
@@ -184,6 +186,8 @@ export const Icons = {
   login: IconLogin,
   logout: IconLogout,
   gripVertical: IconGripVertical,
+  pin: IconPin,
+  pinFilled: IconPinFilled,
 
   // Shapes / Indicators
   circle: IconCircle,

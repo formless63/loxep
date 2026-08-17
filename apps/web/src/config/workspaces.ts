@@ -1,4 +1,4 @@
-import type { NavGroup } from '@/types';
+import type { NavGroup, NavItem } from '@/types';
 import { commerceNavGroups } from '@/config/navigation/commerce';
 import { dashboardNavGroups } from '@/config/navigation/dashboard';
 import { financeNavGroups } from '@/config/navigation/finance';
@@ -22,6 +22,8 @@ export type Workspace = {
   id: WorkspaceId;
   label: string;
   description: string;
+  /** Used by the dashboard launchpad's Workspaces tiles (loxep-koj). */
+  icon: NonNullable<NavItem['icon']>;
   root: string;
   defaultPath: string;
   navGroups: NavGroup[];
@@ -32,6 +34,7 @@ export const workspaces: Workspace[] = [
     id: 'dashboard',
     label: 'Dashboard',
     description: 'Money, market, operations, and the ledger',
+    icon: 'dashboard',
     root: '/dashboard',
     defaultPath: '/dashboard/overview',
     navGroups: dashboardNavGroups
@@ -40,6 +43,7 @@ export const workspaces: Workspace[] = [
     id: 'market',
     label: 'Market',
     description: 'Monitors, watched items, and market events',
+    icon: 'radar',
     root: '/market',
     defaultPath: '/market/overview',
     navGroups: marketNavGroups
@@ -48,6 +52,7 @@ export const workspaces: Workspace[] = [
     id: 'finance',
     label: 'Finance',
     description: 'Expense capture, receipts, and the expense reports',
+    icon: 'ledger',
     root: '/finance',
     defaultPath: '/finance/overview',
     navGroups: financeNavGroups
@@ -56,6 +61,7 @@ export const workspaces: Workspace[] = [
     id: 'inventory',
     label: 'Inventory',
     description: 'Stock, locations, acquisitions, and movements',
+    icon: 'product',
     root: '/inventory',
     defaultPath: '/inventory/overview',
     navGroups: inventoryNavGroups
@@ -64,6 +70,7 @@ export const workspaces: Workspace[] = [
     id: 'commerce',
     label: 'Commerce',
     description: 'Catalog, channel listings, and manual/offline sales',
+    icon: 'orders',
     root: '/commerce',
     defaultPath: '/commerce/overview',
     navGroups: commerceNavGroups
@@ -72,6 +79,7 @@ export const workspaces: Workspace[] = [
     id: 'infrastructure',
     label: 'Infrastructure',
     description: 'Managed domains, DNS, mail, and the hosting fleet',
+    icon: 'integrations',
     root: '/infrastructure',
     defaultPath: '/infrastructure/overview',
     navGroups: infrastructureNavGroups
@@ -80,6 +88,7 @@ export const workspaces: Workspace[] = [
     id: 'settings',
     label: 'Settings',
     description: 'Administration & diagnostics',
+    icon: 'settings',
     root: '/settings',
     defaultPath: '/settings/overview',
     navGroups: settingsNavGroups
@@ -88,6 +97,7 @@ export const workspaces: Workspace[] = [
     id: 'starter',
     label: 'Starter Reference',
     description: 'UI pattern reference',
+    icon: 'workspace',
     root: '/starter',
     defaultPath: '/starter/overview',
     navGroups: starterNavGroups

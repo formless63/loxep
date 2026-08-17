@@ -142,7 +142,7 @@ It is **not** `/settings`. `/settings` configures Loxep — its users, connectio
 
 ## Dashboard workspace
 
-`/dashboard/overview` is the product home and is now filled. It answers one question — *how is my operation doing right now* — as four bands, in the order an operator cares about them:
+`/dashboard/overview` is the product home and is now filled. It answers one question — *how is my operation doing right now* — as four bands, in the order an operator cares about them. The `/dashboard` **sidebar** (distinct from the four content bands below) is the post-login launchpad (`loxep-koj`): a "Workspaces" group listing every other workspace as a rich entry (icon, label, one-line description), and a "Pinned" group of user-chosen favorite pages that can be pinned from any workspace's sidebar. See [Dashboard customization and state](#dashboard-customization-and-state) for the pinned-pages persistence call.
 
 | Band | Reads | Owning surface |
 | --- | --- | --- |
@@ -252,6 +252,8 @@ user edits layout/chart/table view
 Examples include widget position/size, visible table columns, column order, chart configuration, saved filters, default date ranges, and collapsed panels.
 
 Zustand may own the live client editing experience. PostgreSQL should normally own preferences that must survive browser/device changes. TanStack Query remains the owner of server/cache state; Router owns URL state; TanStack Form owns form state.
+
+**Deliberate exception, PROVISIONAL:** the sidebar launchpad's Pinned pages (`loxep-koj`) skip the save/debounce step and stop at Zustand + `localStorage` — no PostgreSQL preference row, no migration, no server function. That is a knowing departure from constraint 6 below, an explicit owner directive for v1 rather than a drift: pins are low-stakes, device-local is an acceptable loss, and the underlying per-user server-side prefs mechanism constraint 6 assumes does not exist yet. Revisit once one does, or once cross-device pin sync is actually requested.
 
 ## Starter Reference workspace
 

@@ -18,6 +18,11 @@ import { useLocation, useRouteContext, useRouter } from '@tanstack/react-router'
 import * as React from 'react';
 import { toast } from 'sonner';
 import { Icons } from '../icons';
+import { NavPinToggle } from './nav-pin-toggle';
+import {
+  PinnedNavGroup,
+  WorkspacesNavGroup
+} from '@/features/dashboard/components/sidebar-launchpad';
 
 async function handleSignOut() {
   const { error } = await authClient.signOut();
@@ -172,12 +177,26 @@ export default function AppSidebar() {
                         <span>{item.title}</span>
                       </Link>
                     </SidebarMenuButton>
+                    <NavPinToggle
+                      page={{
+                        title: item.title,
+                        url: item.url,
+                        icon: item.icon,
+                        workspaceId: activeWorkspace.id
+                      }}
+                    />
                   </SidebarMenuItem>
                 );
               })}
             </SidebarMenu>
           </SidebarGroup>
         ))}
+        {activeWorkspace.id === 'dashboard' && (
+          <>
+            <PinnedNavGroup />
+            <WorkspacesNavGroup />
+          </>
+        )}
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
