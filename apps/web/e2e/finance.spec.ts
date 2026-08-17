@@ -80,10 +80,15 @@ test('void-and-re-record relocates the corrected fact to the entry page, prefill
   await expect(page.getByRole('button', { name: /Void & re-record/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0);
 
-  const referenceCode = await page
-    .getByText(/^EXP-\d{4}-\d+$/)
+  // The code renders as a bare text node inside the CardTitle, next to the
+  // status Badge — the element's full text is "EXP-… Recorded", so an
+  // anchored exact match can never hit. Match unanchored, then extract.
+  const titleText = await page
+    .getByText(/EXP-\d+/)
     .first()
     .innerText();
+  const referenceCode = titleText.match(/EXP-[\d-]+\d/)?.[0];
+  if (!referenceCode) throw new Error(`no reference code in "${titleText}"`);
 
   await page.getByRole('button', { name: /Void & re-record/ }).click();
   const voidDialog = page.getByRole('dialog').filter({ hasText: 'Void' });

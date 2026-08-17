@@ -247,12 +247,14 @@ export function DocumentPreview({
         <iframe
           src={servingUrl}
           title={alt}
-          // Same-origin, session-cookie-gated bytes we serve ourselves (see
-          // this component's own doc) — `allow-same-origin` keeps the
-          // browser's native PDF viewer working; `allow-downloads` keeps its
-          // built-in download/print affordance usable. No script/form/
-          // top-navigation permission is granted.
-          sandbox='allow-same-origin allow-downloads'
+          // Deliberately NOT sandboxed: Chrome refuses to run its built-in
+          // PDF viewer inside ANY sandboxed iframe — the user sees "This
+          // page has been blocked by Chrome" instead of the document (found
+          // live, 2026-08-17). The prior sandbox bought nothing anyway: the
+          // src is same-origin, session-cookie-gated bytes Loxep itself
+          // serves with a safe content type, and allow-same-origin had
+          // already handed back the only isolation sandboxing provides
+          // against your own origin.
           className='h-full min-h-80 w-full rounded-md border'
         />
         <p className='text-muted-foreground text-xs'>

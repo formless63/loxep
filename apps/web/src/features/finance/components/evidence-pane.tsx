@@ -80,7 +80,8 @@ function attachmentStatusIcon(status: EvidenceAttachmentStatus) {
  * review panel uses — while the document's OCR extraction is still running
  * (`status === 'pending'`), and stops once it settles. When the selected
  * document carries candidates with a `sourceRegion` (an `ocr_tesseract` run
- * that found lines; the default `manual` parser never does), `<DocumentPreview>`
+ * that found lines; `ocr_tesseract` is the default since the 2026-08-17
+ * owner ruling, and the `manual` parser never emits regions), `<DocumentPreview>`
  * renders them as a draggable overlay — this pane is a drag SOURCE only; the
  * drop TARGETS (the form's fields and its "Line items" zone) live on
  * `new-expense-page.tsx`, which supplies `renderLineActions` so each
@@ -157,16 +158,19 @@ export default function EvidencePane({
 
   const selected = attachments.find((attachment) => attachment.key === selectedKey) ?? null;
 
-  // Polls only while the document's OCR extraction is genuinely in flight —
-  // most installations never enable `ocr_tesseract` (the default `manual`
-  // parser never touches `status`), so this stays a single, terminal fetch
-  // for the common case and a short-lived poll only when a backend is
-  // actually working. `enabled` guards against firing for an attachment
-  // still mid-upload (no `documentId` yet).
+  // Polls only while extraction is genuinely in flight, keyed on `parsedAt`
+  // — NEVER on `status`: a parse that yields zero candidates (a text-layer
+  // PDF, a photo Tesseract finds no lines in) deliberately leaves
+  // `status = 'pending'`, and keying the poll on status made this an
+  // infinite 2s loop over a long-finished document (found live,
+  // 2026-08-17). `parsedAt` flips exactly once, when the extraction task
+  // records its result, whatever it found. `enabled` guards against firing
+  // for an attachment still mid-upload (no `documentId` yet).
   const documentQueryResult = useQuery({
     ...documentQuery(selected?.documentId ?? ''),
     enabled: selected?.documentId !== undefined,
-    refetchInterval: (query) => (query.state.data?.status === 'pending' ? 2000 : false)
+    refetchInterval: (query) =>
+      query.state.data !== undefined && query.state.data.parsedAt === null ? 2000 : false
   });
   const selectedDocument =
     selected?.documentId !== undefined ? documentQueryResult.data : undefined;
@@ -279,13 +283,19 @@ export default function EvidencePane({
         />
       )}
       {selected?.documentId !== undefined &&
-        selectedDocument?.status === 'pending' &&
-        overlayLines.length === 0 && (
+        overlayLines.length === 0 &&
+        (selectedDocument?.parsedAt == null ? (
+          selectedDocument?.status === 'pending' && (
+            <p className='text-muted-foreground text-xs'>
+              Text extraction runs shortly after upload — detected lines will appear here.
+            </p>
+          )
+        ) : (
           <p className='text-muted-foreground text-xs'>
-            Waiting for text extraction… (only runs when an OCR backend is enabled under Settings →
-            Documents)
+            Text extracted and searchable — no boxed line items were detected in this file, so there
+            is nothing to drag. PDFs with a text layer extract words but not box positions.
           </p>
-        )}
+        ))}
     </div>
   );
 }

@@ -146,6 +146,16 @@ export interface DocumentQueueRowDto {
   confirmedCount: number;
   note: string | null;
   createdAt: string;
+  /**
+   * When extraction last ran (`documents.parsed_at`), or `null` if no
+   * parser has touched this document yet. The UI keys its "waiting for
+   * extraction" copy on THIS, never on `status`: a parse that yields zero
+   * candidates deliberately leaves `status = 'pending'` (nothing to
+   * review), and conflating the two showed a permanent "waiting" message
+   * over a document whose text had long since extracted (found live,
+   * 2026-08-17).
+   */
+  parsedAt: string | null;
 }
 
 export interface CandidateDto {
@@ -187,7 +197,8 @@ function rowToDocumentDto(row: Record<string, unknown>): DocumentQueueRowDto {
     lineCount: Number(row['line_count']),
     confirmedCount: Number(row['confirmed_count']),
     note: (row['note'] as string | null) ?? null,
-    createdAt: iso(new Date(row['created_at'] as string))
+    createdAt: iso(new Date(row['created_at'] as string)),
+    parsedAt: row['parsed_at'] == null ? null : iso(new Date(row['parsed_at'] as string))
   };
 }
 
