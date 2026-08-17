@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StackedStatusBar } from '@/components/ui/stacked-status-bar';
 import { Icons } from '@/components/icons';
 import { CommercePage } from '@/features/commerce/components/commerce-page';
 import {
@@ -12,6 +13,7 @@ import {
   ordersQuery
 } from '@/features/commerce/api/queries';
 import {
+  channelListingStatusBarColor,
   channelListingStatusLabel,
   channelListingStatusOptions,
   channelListingStatusTone,
@@ -140,25 +142,38 @@ function CommerceOverview() {
         <CardHeader>
           <CardTitle className='text-base'>Listings by status</CardTitle>
         </CardHeader>
-        <CardContent className='flex flex-wrap gap-2'>
+        <CardContent className='flex flex-col gap-3'>
           {listingsPending ? (
             <Skeleton className='h-6 w-full' />
           ) : (
-            channelListingStatusOptions.map((option) => (
-              <Link
-                key={option.value}
-                to='/commerce/listings'
-                search={{ status: option.value }}
-                className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
-              >
-                <Badge
-                  variant={channelListingStatusTone(option.value)}
-                  className='hover:opacity-80 cursor-pointer'
-                >
-                  {channelListingStatusLabel(option.value)}: {countByStatus.get(option.value) ?? 0}
-                </Badge>
-              </Link>
-            ))
+            <>
+              <StackedStatusBar
+                segments={channelListingStatusOptions.map((option) => ({
+                  key: option.value,
+                  label: option.label,
+                  count: countByStatus.get(option.value) ?? 0,
+                  color: channelListingStatusBarColor(option.value)
+                }))}
+              />
+              <div className='flex flex-wrap gap-2'>
+                {channelListingStatusOptions.map((option) => (
+                  <Link
+                    key={option.value}
+                    to='/commerce/listings'
+                    search={{ status: option.value }}
+                    className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
+                  >
+                    <Badge
+                      variant={channelListingStatusTone(option.value)}
+                      className='hover:opacity-80 cursor-pointer'
+                    >
+                      {channelListingStatusLabel(option.value)}:{' '}
+                      {countByStatus.get(option.value) ?? 0}
+                    </Badge>
+                  </Link>
+                ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

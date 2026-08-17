@@ -3,9 +3,15 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StackedStatusBar } from '@/components/ui/stacked-status-bar';
 import { InventoryPage } from '@/features/inventory/components/inventory-page';
 import { acquisitionsQuery, inventoryItemsQuery } from '@/features/inventory/api/queries';
-import { itemStatusLabel, itemStatusOptions, itemStatusTone } from '@/features/inventory/constants';
+import {
+  itemStatusBarColor,
+  itemStatusLabel,
+  itemStatusOptions,
+  itemStatusTone
+} from '@/features/inventory/constants';
 
 const CARD_LINK_CLASS =
   'block rounded-xl outline-none focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-[3px] focus-visible:ring-offset-2';
@@ -104,25 +110,37 @@ function InventoryOverview() {
         <CardHeader>
           <CardTitle className='text-base'>Stock by status</CardTitle>
         </CardHeader>
-        <CardContent className='flex flex-wrap gap-2'>
+        <CardContent className='flex flex-col gap-3'>
           {itemsPending ? (
             <Skeleton className='h-6 w-full' />
           ) : (
-            itemStatusOptions.map((option) => (
-              <Link
-                key={option.value}
-                to='/inventory/stock'
-                search={{ status: option.value }}
-                className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
-              >
-                <Badge
-                  variant={itemStatusTone(option.value)}
-                  className='hover:opacity-80 cursor-pointer'
-                >
-                  {itemStatusLabel(option.value)}: {itemCountByStatus.get(option.value) ?? 0}
-                </Badge>
-              </Link>
-            ))
+            <>
+              <StackedStatusBar
+                segments={itemStatusOptions.map((option) => ({
+                  key: option.value,
+                  label: option.label,
+                  count: itemCountByStatus.get(option.value) ?? 0,
+                  color: itemStatusBarColor(option.value)
+                }))}
+              />
+              <div className='flex flex-wrap gap-2'>
+                {itemStatusOptions.map((option) => (
+                  <Link
+                    key={option.value}
+                    to='/inventory/stock'
+                    search={{ status: option.value }}
+                    className='focus-visible:ring-ring rounded-full outline-none focus-visible:ring-[3px]'
+                  >
+                    <Badge
+                      variant={itemStatusTone(option.value)}
+                      className='hover:opacity-80 cursor-pointer'
+                    >
+                      {itemStatusLabel(option.value)}: {itemCountByStatus.get(option.value) ?? 0}
+                    </Badge>
+                  </Link>
+                ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

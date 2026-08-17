@@ -78,6 +78,7 @@ import {
   IconReportMoney,
   IconRosetteDiscountCheck,
   IconSearch,
+  IconServer,
   IconShoppingCart,
   IconSelector,
   IconSend,
@@ -89,6 +90,7 @@ import {
   IconStar,
   IconSun,
   IconTrash,
+  IconWorld,
   IconTrendingDown,
   IconTrendingUp,
   IconTypography,
@@ -230,6 +232,8 @@ export const Icons = {
   adjustments: IconAdjustmentsHorizontal,
   radar: IconRadar,
   pulse: IconActivity,
+  world: IconWorld,
+  server: IconServer,
 
   // Text formatting
   bold: IconBold,

@@ -11,6 +11,7 @@ import {
 } from '@/features/market/constants';
 import type { MarketItemDto } from '@/server/market-functions';
 import type { Option } from '@/types/data-table';
+import { PriceTrendCell } from './price-trend-cell';
 
 /**
  * Columns are built by a function, not a static array, because the
@@ -70,6 +71,12 @@ export function createColumns(
           )}
         </span>
       )
+    },
+    {
+      id: 'priceTrend',
+      enableSorting: false,
+      header: 'Price trend',
+      cell: ({ row }) => <PriceTrendCell points={row.original.priceTrend} />
     },
     {
       id: 'availability',

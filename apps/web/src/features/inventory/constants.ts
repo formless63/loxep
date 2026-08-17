@@ -77,6 +77,29 @@ export const itemStatusOptions = ITEM_STATUS_VALUES.map((value) => ({
   label: itemStatusLabel(value)
 }));
 
+/**
+ * The "Stock by status" mini-bar's segment colors (loxep-0g4 D4) — the same
+ * tone `ITEM_STATUS_TONES` already maps each status to, expressed as the CSS
+ * var its `Badge` variant renders (`success`/`warning`/`destructive`/
+ * `secondary`, or `primary` for `default`). `outline` has no fill of its own
+ * (a bordered, transparent badge), so those two statuses fall back to a
+ * `--chart-N` token instead of a fabricated fill.
+ */
+const ITEM_STATUS_BAR_COLORS = {
+  intake: 'var(--warning)',
+  available: 'var(--success)',
+  listed: 'var(--primary)',
+  reserved: 'var(--secondary)',
+  partially_depleted: 'var(--chart-1)',
+  depleted: 'var(--chart-2)',
+  written_off: 'var(--destructive)',
+  archived: 'var(--secondary)'
+} satisfies Record<ItemStatus, string>;
+
+export function itemStatusBarColor(status: string): string {
+  return ITEM_STATUS_BAR_COLORS[status as ItemStatus] ?? 'var(--muted-foreground)';
+}
+
 /** `inventory_items.condition_code` — Loxep-owned closed set, `CHECK`ed. */
 export type ItemConditionCode =
   | 'new_sealed'

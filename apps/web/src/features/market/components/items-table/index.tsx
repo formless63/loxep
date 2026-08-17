@@ -30,6 +30,7 @@ const ITEM_COLUMN_IDS = [
   'item',
   'currentState',
   'price',
+  'priceTrend',
   'availability',
   'quantity',
   'listingState',

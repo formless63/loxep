@@ -352,6 +352,12 @@ export interface LinkedMonitorDto {
   name: string;
 }
 
+export interface PriceTrendPointDto {
+  observedAt: string;
+  /** Decimal string (PostgreSQL `numeric`) — never coerced here. */
+  price: string;
+}
+
 export interface MarketItemDto {
   id: string;
   provider: string;
@@ -366,6 +372,13 @@ export interface MarketItemDto {
   lastSeenAt: string;
   latestObservation: LatestObservationDto | null;
   monitors: LinkedMonitorDto[];
+  /**
+   * Oldest-first, bounded to {@link PRICE_TREND_POINTS} priced observations
+   * (loxep-0g4 D4 items-table sparkline). Empty when the item has never
+   * recorded a priced observation — the cell renders a dash, not an empty
+   * chart.
+   */
+  priceTrend: PriceTrendPointDto[];
 }
 
 export interface MarketItemsPageDto {
@@ -377,6 +390,55 @@ export interface MarketItemsPageDto {
 
 /** Sensible default page size for the items table. */
 export const MARKET_ITEMS_PAGE_SIZE = 25;
+
+/**
+ * Per-item bound for the items-table price sparkline (loxep-0g4 D4). This is
+ * the ONLY new query this pass adds: one statement per page load, a
+ * lateral-limited read against `marketplace_item_observations` scoped to the
+ * current page's item ids — never one query per row.
+ */
+export const PRICE_TREND_POINTS = 20;
+
+const uuidSchema = z.uuid();
+
+/** Mirrors `@loxep/market/sql.ts`'s `uuidLiteral` — that module takes no `drizzle-orm` dependency, so this repeats the same validated-literal pattern already used by `commerce-functions.ts`/`expense-functions.ts` for raw SQL built in `apps/web`. */
+function uuidLiteral(value: string): string {
+  const parsed = uuidSchema.safeParse(value);
+  if (!parsed.success) throw new Error('expected a UUID value');
+  return `'${parsed.data}'`;
+}
+
+function toDate(value: unknown): Date {
+  return value instanceof Date ? value : new Date(value as string);
+}
+
+interface PriceTrendRow {
+  marketplace_item_id: string;
+  observed_at: unknown;
+  price: string;
+}
+
+/**
+ * Groups flat lateral-query rows into a per-item, oldest-first, bounded
+ * series. Pure and DB-free so it's unit-testable on its own
+ * (`market-functions.test.ts`); the SQL already orders each item's rows
+ * ascending and limits them to {@link PRICE_TREND_POINTS}, so the `maxPoints`
+ * slice here is defense in depth, not the primary bound.
+ */
+export function shapePriceTrends(
+  rows: readonly PriceTrendRow[],
+  itemIds: readonly string[],
+  maxPoints = PRICE_TREND_POINTS
+): Map<string, PriceTrendPointDto[]> {
+  const byId = new Map<string, PriceTrendPointDto[]>(itemIds.map((id) => [id, []]));
+  for (const row of rows) {
+    const list = byId.get(row.marketplace_item_id);
+    if (list === undefined) continue; // defensive: row outside the requested page
+    if (list.length >= maxPoints) continue; // defensive: SQL already bounds this per item
+    list.push({ observedAt: iso(toDate(row.observed_at)), price: row.price });
+  }
+  return byId;
+}
 
 function toObservationDto(
   row: {
@@ -447,7 +509,9 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
       return { items: [], total, page, pageSize };
     }
 
-    const [pageItemRows, observationLists, linkRows] = await Promise.all([
+    const pageIdsLiteral = pageIds.map((id) => uuidLiteral(id)).join(', ');
+
+    const [pageItemRows, observationLists, linkRows, priceTrendResult] = await Promise.all([
       handle.db.query.marketplaceItems.findMany({
         where: (table, { inArray }) => inArray(table.id, pageIds)
       }),
@@ -455,8 +519,30 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
       handle.db.query.monitorItems.findMany({
         where: (table, { inArray, eq, and }) =>
           and(inArray(table.marketplaceItemId, pageIds), eq(table.active, true))
-      })
+      }),
+      // One query for the whole page (never N+1): a per-item LATERAL limited
+      // to the last PRICE_TREND_POINTS priced observations, mirroring
+      // `@loxep/market/observations.ts`'s `listWatchedItemIds` lateral
+      // pattern. `mi.id = any(array[...])` is scoped to this page's ids only.
+      handle.db.execute(
+        `select mi.id as marketplace_item_id, ph.observed_at, ph.price
+           from marketplace_items mi
+           join lateral (
+             select o.observed_at, o.price
+               from marketplace_item_observations o
+              where o.marketplace_item_id = mi.id
+                and o.price is not null
+              order by o.observed_at desc
+              limit ${PRICE_TREND_POINTS}
+           ) ph on true
+          where mi.id = any(array[${pageIdsLiteral}]::uuid[])
+          order by mi.id asc, ph.observed_at asc`
+      )
     ]);
+    const priceTrendByItemId = shapePriceTrends(
+      priceTrendResult.rows as unknown as PriceTrendRow[],
+      pageIds
+    );
 
     const monitorTargetIds = [...new Set(linkRows.map((link) => link.monitorTargetId))];
     const monitorTargetRows =
@@ -498,7 +584,8 @@ export const fetchMarketItems = createServerFn({ method: 'GET' })
         firstSeenAt: iso(item.firstSeenAt),
         lastSeenAt: iso(item.lastSeenAt),
         latestObservation: toObservationDto(observationByItemId.get(item.id) ?? null),
-        monitors: monitorsByItemId.get(item.id) ?? []
+        monitors: monitorsByItemId.get(item.id) ?? [],
+        priceTrend: priceTrendByItemId.get(item.id) ?? []
       }));
 
     return { items, total, page, pageSize };
@@ -557,7 +644,11 @@ export const fetchMarketItem = createServerFn({ method: 'GET' })
       categoryExternalId: item.categoryExternalId,
       listingStartedAt: iso(item.listingStartedAt),
       latestObservation: toObservationDto(observations[0] ?? null),
-      monitors: monitorTargetRows.map((row) => ({ id: row.id, name: row.name }))
+      monitors: monitorTargetRows.map((row) => ({ id: row.id, name: row.name })),
+      // Not populated here: the detail page renders the full, unbounded
+      // series via `fetchItemPriceHistory`/`PriceHistoryChart` below, so this
+      // route has no need for the table's bounded sparkline field.
+      priceTrend: []
     };
   });
 

@@ -12,6 +12,9 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { formatDateTime } from '@/lib/format';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
+import DomainChainDiagram, {
+  DomainChainDiagramSkeleton
+} from '@/features/infrastructure/components/domain-chain-diagram';
 import DnsDriftPanel from '@/features/infrastructure/components/dns-drift-panel';
 import MailPanel from '@/features/infrastructure/components/mail-panel';
 import ProxyChainPanel from '@/features/infrastructure/components/proxy-chain-panel';
@@ -35,6 +38,7 @@ export const Route = createFileRoute('/infrastructure/domains/$name')({
 function DetailSkeleton() {
   return (
     <div className='flex flex-col gap-4'>
+      <DomainChainDiagramSkeleton />
       <Skeleton className='h-32 w-full' />
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <Skeleton className='h-64 w-full' />
@@ -136,6 +140,7 @@ function DomainDetailData({ name }: { name: string }) {
   const { data } = useSuspenseQuery(managedDomainQuery(name));
   return (
     <div className='flex flex-col gap-4'>
+      <DomainChainDiagram domain={data} />
       <DomainSummaryCard domain={data} />
       <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
         <DnsDriftPanel domainId={data.id} domainName={data.name} findings={data.unresolvedDrift} />

@@ -55,6 +55,28 @@ export const channelListingStatusOptions = CHANNEL_LISTING_STATUS_VALUES.map((va
 }));
 
 /**
+ * The "Listings by status" mini-bar's segment colors (loxep-0g4 D4) — same
+ * idea as `@/features/inventory/constants.ts`'s `itemStatusBarColor`:
+ * `active`/`ended` reuse their badge's real trio/secondary token; `sold_out`
+ * (badge variant `default`) reuses `--primary`, the fill that badge already
+ * renders; `draft`/`unknown` (badge variant `outline`, no fill of its own)
+ * fall back to a `--chart-N` token instead.
+ */
+const CHANNEL_LISTING_STATUS_BAR_COLORS = {
+  draft: 'var(--chart-1)',
+  active: 'var(--success)',
+  ended: 'var(--secondary)',
+  sold_out: 'var(--primary)',
+  unknown: 'var(--chart-2)'
+} satisfies Record<ChannelListingStatus, string>;
+
+export function channelListingStatusBarColor(status: string): string {
+  return (
+    CHANNEL_LISTING_STATUS_BAR_COLORS[status as ChannelListingStatus] ?? 'var(--muted-foreground)'
+  );
+}
+
+/**
  * `channel_listings.channel` for `provider = 'manual'` (design 4a). `channel`
  * itself stays free text — this union is the UI's channel picker only, and
  * "other" is always a valid escape hatch.
