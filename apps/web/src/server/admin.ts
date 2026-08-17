@@ -71,6 +71,7 @@ import {
   createHostingTargetsService,
   createMailDomainsService,
   createMailSyncService,
+  createMailboxAdminService,
   createManagedDomainsService,
   createProvisioningTemplatesService,
   createProxyResourcesService,
@@ -83,6 +84,7 @@ import {
   type HostingTargetsService,
   type MailDomainsService,
   type MailSyncService,
+  type MailboxAdminService,
   type ManagedDomainsService,
   type ProvisioningTemplatesService,
   type ProxyResourcesService,
@@ -940,6 +942,31 @@ export async function getMailSyncServiceForConnection(
     db: registry.handle.db,
     provider: fleet.mailProviderPortFromPurelymailAdapter(purelymail.adapter),
     secrets: registry.secrets,
+    providerName: fleet.PURELYMAIL_CONNECTION_PROVIDER,
+    connectionId: mailConnectionId
+  });
+}
+
+/**
+ * Builds a `MailboxAdminService` scoped to ONE Purelymail connection — the
+ * estate page's per-row mailbox-delete and routing-rule verbs (loxep-47o.11).
+ * Same construction shape as {@link getMailSyncServiceForConnection}
+ * immediately above (independent instance, `connectionId` ALWAYS passed so
+ * the write-authorization gate is live on every call), reusing the SAME
+ * `mailProviderPortFromPurelymailAdapter` bridge — no new port member, no new
+ * adapter call.
+ */
+export async function getMailboxAdminServiceForConnection(
+  mailConnectionId: string
+): Promise<MailboxAdminService> {
+  const registry = getAdminServices();
+  const [fleet, purelymail] = await Promise.all([
+    getFleetModule(),
+    getPurelymailAdapterForConnection(mailConnectionId)
+  ]);
+  return createMailboxAdminService({
+    db: registry.handle.db,
+    provider: fleet.mailProviderPortFromPurelymailAdapter(purelymail.adapter),
     providerName: fleet.PURELYMAIL_CONNECTION_PROVIDER,
     connectionId: mailConnectionId
   });

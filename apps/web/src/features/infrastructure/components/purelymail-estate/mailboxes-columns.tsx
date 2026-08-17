@@ -4,9 +4,17 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
 import type { PurelymailEstateMailboxDto } from '@/server/purelymail-estate-functions';
+import { PurelymailMailboxRowActions } from './mailbox-row-actions';
 
-export const purelymailMailboxColumns: ColumnDef<DataTableFeatures, PurelymailEstateMailboxDto>[] =
-  [
+/**
+ * `connectionId` is a factory parameter (matching `purelymailDomainColumns`'s
+ * own precedent) rather than a static array — the row-action cell needs it to
+ * mount `MailboxAdminService.deleteMailboxNow` (loxep-47o.11).
+ */
+export function purelymailMailboxColumns(
+  connectionId: string
+): ColumnDef<DataTableFeatures, PurelymailEstateMailboxDto>[] {
+  return [
     {
       id: 'address',
       accessorKey: 'address',
@@ -39,5 +47,22 @@ export const purelymailMailboxColumns: ColumnDef<DataTableFeatures, PurelymailEs
             {row.original.loxep.kind}
           </Badge>
         )
+    },
+    {
+      id: 'actions',
+      header: '',
+      cell: ({ row }) =>
+        // Gated on a Loxep intent row of kind 'mailbox' specifically — the
+        // reconcile run this writes needs a `managed_domains.id` subject
+        // (Rule P10's own precedent, `purelymailDomainColumns`), and
+        // `deleteMailboxNow` refuses a non-'mailbox' kind itself.
+        row.original.loxep !== null && row.original.loxep.kind === 'mailbox' ? (
+          <PurelymailMailboxRowActions
+            connectionId={connectionId}
+            domainId={row.original.loxep.managedDomainId}
+            address={row.original.address}
+          />
+        ) : null
     }
   ];
+}

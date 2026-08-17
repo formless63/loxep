@@ -366,6 +366,25 @@ export type {
   RunMailSyncInput,
 } from "./mail-sync.ts";
 
+/* ------------------------------------- mailbox admin (loxep-47o.11) --- */
+
+export {
+  CREATE_ROUTING_RULE_RUN_KIND,
+  DELETE_MAILBOX_NOW_RUN_KIND,
+  DELETE_ROUTING_RULE_RUN_KIND,
+  createMailboxAdminService,
+} from "./mailbox-admin.ts";
+export type {
+  CreateMailboxAdminServiceOptions,
+  CreateRoutingRuleInput,
+  CreateRoutingRuleResult,
+  DeleteMailboxNowInput,
+  DeleteMailboxNowResult,
+  DeleteRoutingRuleInput,
+  DeleteRoutingRuleResult,
+  MailboxAdminService,
+} from "./mailbox-admin.ts";
+
 /* ------------------------------------------------- tokens (milestone 3) --- */
 
 export {

@@ -18,7 +18,13 @@ const CLIENT_COLUMNS: ClientColumnSpec<PurelymailEstateMailboxDto>[] = [
   { id: 'address', accessor: (row) => row.address, filterVariant: 'text' }
 ];
 
-function MailboxesTable({ addresses }: { addresses: PurelymailEstateMailboxDto[] }) {
+function MailboxesTable({
+  connectionId,
+  addresses
+}: {
+  connectionId: string;
+  addresses: PurelymailEstateMailboxDto[];
+}) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
@@ -31,7 +37,7 @@ function MailboxesTable({ addresses }: { addresses: PurelymailEstateMailboxDto[]
   );
   const { table } = useDataTable({
     data: rows,
-    columns: purelymailMailboxColumns,
+    columns: purelymailMailboxColumns(connectionId),
     pageCount,
     getRowId: (mailbox) => mailbox.address,
     shallow: true,
@@ -71,7 +77,7 @@ export default function PurelymailMailboxesSection({ connectionId }: { connectio
             Capped at {value.limit} addresses — Purelymail's listUser takes no paging parameter of
             any kind.
           </p>
-          <MailboxesTable addresses={value.addresses} />
+          <MailboxesTable connectionId={connectionId} addresses={value.addresses} />
         </div>
       )}
     </EstateSection>

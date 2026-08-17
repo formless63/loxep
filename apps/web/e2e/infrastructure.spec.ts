@@ -477,6 +477,21 @@ test("the connections row action opens a Purelymail connection's estate page", a
   await expect(estateMain.getByText('Domains', { exact: true })).toBeVisible();
   await expect(estateMain.getByText('Mailboxes', { exact: true })).toBeVisible();
   await expect(estateMain.getByText('Routing rules', { exact: true })).toBeVisible();
+
+  // The row-level mailbox-delete/routing-rule-delete verbs (loxep-47o.11)
+  // render on a Loxep-tracked ROW, and this harness's fake token makes every
+  // Domains/Mailboxes/Routing-rules call fail (per this test's own module
+  // doc), so no row ever renders here to click — there is nothing this
+  // harness can adopt into intent to produce one, and this suite never
+  // attempts a live provider write. What IS reliably assertable without any
+  // live Purelymail call is the SAME write-policy fact those row verbs
+  // gate on (Rule P14: "renders visibly blocked with the flip named"): the
+  // header's write-policy badge, a database-only read
+  // (`fetchEstateConnectionSummary`), defaults every fresh connection to
+  // "Read-only" — below the `access_affecting` tier both destructive verbs
+  // require, so a hypothetical row on this connection would render blocked
+  // from the moment it existed.
+  await expect(estateMain.getByText('Read-only', { exact: true })).toBeVisible();
 });
 
 /**

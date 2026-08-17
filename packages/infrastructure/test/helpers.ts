@@ -442,6 +442,14 @@ export function createStubMailProvider(
 
     async deleteUser(fullAddress) {
       record("deleteUser");
+      if (!users.has(fullAddress)) {
+        // Matches real Purelymail (`noSuchUser` -> `not_found`, per
+        // `@loxep/integration-purelymail`'s errors.ts) — `mail-sync.ts`'s own
+        // remove loop never calls this on an absent address (it checks
+        // `usersHere` first), so this only fires from a caller that does NOT
+        // pre-check, e.g. `mailbox-admin.ts`'s idempotent double-delete path.
+        throw kindedError({ kind: "not_found", message: "noSuchUser" });
+      }
       users.delete(fullAddress);
     },
 
@@ -471,7 +479,10 @@ export function createStubMailProvider(
     async deleteRoutingRule(routingRuleId) {
       record("deleteRoutingRule");
       const index = rules.findIndex((rule) => rule.id === routingRuleId);
-      if (index >= 0) rules.splice(index, 1);
+      if (index < 0) {
+        throw kindedError({ kind: "not_found", message: "no such routing rule" });
+      }
+      rules.splice(index, 1);
     },
 
     requiredRecords({ domainName, ownershipCode }): MailDnsRecord[] {

@@ -36,6 +36,20 @@
  * undeclared domain has no `domainId` to sync, and creating one here would
  * be a NEW write path (forbidden independently of the gate). Admin-only,
  * matching every other write in this feature area.
+ *
+ * ## Per-row mailbox/routing-rule verbs (loxep-47o.11)
+ *
+ * {@link deletePurelymailMailboxNow}/{@link deletePurelymailRoutingRule} mount
+ * `MailboxAdminService` (`packages/infrastructure/src/mailbox-admin.ts`) —
+ * the new service-layer verbs that make a single-row delete possible at all
+ * (`runMailboxSync`'s own convergence loop only deletes what an operator
+ * soft-deleted, discovered on the next scheduled run). Both are gated at
+ * `access_affecting`-or-higher EXPLICITLY, never the `additive` tier
+ * `runMailboxSync`'s own batch delete uses, and both require a typed
+ * confirmation the SERVICE re-checks itself. `createRoutingRule` and
+ * `modifyMailbox` are deliberately NOT mounted — see that module's own doc
+ * for why (no sanctioned UI home for the former; no adapter call exists for
+ * the latter at all).
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
@@ -372,4 +386,85 @@ export const triggerPurelymailMailboxSync = createServerFn({ method: 'POST' })
       outcome: result.status === 'partial' ? 'write_policy_blocked' : 'synced',
       blocked: result.status === 'partial'
     };
+  });
+
+// ---------------------------------------------------------------------------
+// Per-row mailbox/routing-rule verbs (loxep-47o.11) — mount `MailboxAdminService`
+// ---------------------------------------------------------------------------
+
+export interface PurelymailMailboxAdminActionDto {
+  runId: string;
+  status: 'succeeded' | 'failed' | 'partial';
+  outcome: 'deleted' | 'already_absent' | 'write_policy_blocked';
+}
+
+const deleteMailboxNowInput = z.strictObject({
+  connectionId: z.uuid(),
+  domainId: z.uuid(),
+  /** Full address, e.g. `postmaster@example.com`. */
+  address: z.string().trim().min(1),
+  /** The operator's typed confirmation — re-verified against `address` itself, server-side, in `MailboxAdminService.deleteMailboxNow`. */
+  confirmationText: z.string().trim().min(1)
+});
+
+/**
+ * Mounts `MailboxAdminService.deleteMailboxNow` — destructive, tier
+ * `access_affecting`-or-higher, typed confirmation of the full address
+ * (Rule P10, loxep-47o.11). Admin-only, matching every other write in this
+ * feature area; the typed-confirmation compare happens INSIDE the service
+ * (package-testable), not only here — this handler passes `confirmationText`
+ * straight through rather than re-checking it, mirroring how
+ * `retireProxyResourceRule` passes `confirmedFullDomain` through to its own
+ * fresh, server-side re-check.
+ */
+export const deletePurelymailMailboxNow = createServerFn({ method: 'POST' })
+  .inputValidator(deleteMailboxNowInput)
+  .handler(async ({ data }): Promise<PurelymailMailboxAdminActionDto> => {
+    const { requireAdmin, getMailboxAdminServiceForConnection } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const admin = await getMailboxAdminServiceForConnection(data.connectionId);
+    const result = await admin.deleteMailboxNow({
+      domainId: data.domainId,
+      address: data.address,
+      confirmationText: data.confirmationText,
+      trigger: 'manual',
+      actorUserId: session.user.id,
+      actorIsAdmin: true
+    });
+    return { runId: result.runId, status: result.status, outcome: result.outcome };
+  });
+
+const deleteRoutingRuleInput = z.strictObject({
+  connectionId: z.uuid(),
+  domainId: z.uuid(),
+  /** Purelymail's own int64 rule id. */
+  routingRuleId: z.number().int(),
+  /** Must equal `"<matchUser>@<domainName>"`, re-verified server-side against a FRESH provider read. */
+  confirmationText: z.string().trim().min(1)
+});
+
+/**
+ * Mounts `MailboxAdminService.deleteRoutingRule` — destructive, tier
+ * `access_affecting`-or-higher, typed confirmation of the rule's own match
+ * pattern. `createRoutingRule` has NO mounted server function: Estate
+ * Browsers Design §3.2 names no sanctioned home for a section-level create
+ * affordance on this page (Rule P10 — an estate page mounts existing write
+ * paths, it never invents where one belongs), so the additive verb ships at
+ * the service layer only, unmounted, pending a design home.
+ */
+export const deletePurelymailRoutingRule = createServerFn({ method: 'POST' })
+  .inputValidator(deleteRoutingRuleInput)
+  .handler(async ({ data }): Promise<PurelymailMailboxAdminActionDto> => {
+    const { requireAdmin, getMailboxAdminServiceForConnection } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const admin = await getMailboxAdminServiceForConnection(data.connectionId);
+    const result = await admin.deleteRoutingRule({
+      domainId: data.domainId,
+      routingRuleId: data.routingRuleId,
+      confirmationText: data.confirmationText,
+      trigger: 'manual',
+      actorUserId: session.user.id,
+      actorIsAdmin: true
+    });
+    return { runId: result.runId, status: result.status, outcome: result.outcome };
   });

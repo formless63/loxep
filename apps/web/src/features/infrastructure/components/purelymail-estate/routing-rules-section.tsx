@@ -19,14 +19,20 @@ const CLIENT_COLUMNS: ClientColumnSpec<PurelymailEstateRoutingRuleDto>[] = [
   }
 ];
 
-function RoutingRulesTable({ rules }: { rules: PurelymailEstateRoutingRuleDto[] }) {
+function RoutingRulesTable({
+  connectionId,
+  rules
+}: {
+  connectionId: string;
+  rules: PurelymailEstateRoutingRuleDto[];
+}) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? 10;
   const { rows, pageCount } = applyClientTableState(rules, CLIENT_COLUMNS, search, page, perPage);
   const { table } = useDataTable({
     data: rows,
-    columns: purelymailRoutingRuleColumns,
+    columns: purelymailRoutingRuleColumns(connectionId),
     pageCount,
     getRowId: (rule) => String(rule.id),
     shallow: true,
@@ -37,10 +43,11 @@ function RoutingRulesTable({ rules }: { rules: PurelymailEstateRoutingRuleDto[] 
 
 /**
  * The Purelymail estate's ROUTING RULES section (Estate Browsers Design
- * §3.2) — `listRoutingRules`, account-wide. Fully read-only: routing-rule
- * create/update/delete has no independent service-layer path outside
- * `runMailboxSync`'s own convergence loop, so no per-row action is offered
- * here (a follow-up bead covers that gap, filed against loxep-47o).
+ * §3.2) — `listRoutingRules`, account-wide. A Loxep-tracked row's "Delete…"
+ * mounts `MailboxAdminService.deleteRoutingRule` (loxep-47o.11), destructive,
+ * typed confirmation. `createRoutingRule` has no mounted affordance: the
+ * design names no sanctioned section-level create home on this page (Rule
+ * P10), so it ships at the service layer only, unmounted.
  */
 export default function PurelymailRoutingRulesSection({ connectionId }: { connectionId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(
@@ -59,7 +66,7 @@ export default function PurelymailRoutingRulesSection({ connectionId }: { connec
       isEmpty={(rules) => rules.length === 0}
       emptyMessage='This account has no routing rules yet.'
     >
-      {(rules) => <RoutingRulesTable rules={rules} />}
+      {(rules) => <RoutingRulesTable connectionId={connectionId} rules={rules} />}
     </EstateSection>
   );
 }
