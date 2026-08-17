@@ -237,42 +237,49 @@ test.describe('authenticated mobile flows', () => {
     await page.keyboard.press('Escape');
   });
 
-  test('an expense records through the ResponsiveDialog drawer at 390px @mobile', async ({
+  /**
+   * `/finance/expenses/new`'s two-pane page replaced the quick-entry dialog
+   * as the expense-entry path (OWNER REVERSAL, 2026-08-17,
+   * `expense-entry-design.md` decision 1), so it no longer exercises
+   * `ResponsiveDialog`'s mobile drawer mechanism at all — retargeted to
+   * `/settings/entities`' New-entity dialog, the same drawer coverage
+   * `settings.spec.ts`'s desktop "admin creates an economic entity through
+   * the dialog" test exercises as a `Dialog`.
+   */
+  test('an entity is created through the ResponsiveDialog drawer at 390px @mobile', async ({
     page
   }) => {
     const runId = freshRunId();
-    const category = `e2e-mobile-expense-${runId}`;
-    const payeeName = `E2E Mobile Payee ${runId}`;
+    const name = `E2E Mobile Entity ${runId}`;
 
-    await page.goto('/finance/expenses');
-    await expect(page.getByRole('heading', { name: 'Expenses' })).toBeVisible();
+    await page.goto('/settings/entities');
+    await expect(page.getByRole('heading', { name: 'Economic entities' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'New expense' }).first().click();
+    await page.getByRole('button', { name: 'New entity' }).first().click();
 
     // Below 768px `ResponsiveDialog` renders vaul's `Drawer`, not `Dialog`
     // (rule M3) — `data-slot='drawer-content'` is the direct proof of that.
     // `Drawer.Content` still exposes `role='dialog'` under the hood
     // (`responsive-dialog.tsx`'s own doc comment), so every
     // `getByRole('dialog')` selector below is unchanged from the desktop
-    // spec this test otherwise mirrors (`finance.spec.ts`).
+    // spec this test otherwise mirrors (`settings.spec.ts`).
     await expect(page.locator('[data-slot="drawer-content"]')).toBeVisible();
 
     const dialog = page.getByRole('dialog');
-    await expect(dialog.getByText('New expense')).toBeVisible();
-    await dialog.getByLabel('Amount *').fill('12.34');
-    await dialog.getByLabel('Category *').fill(category);
-    await dialog.getByLabel('Payee (free text)').fill(payeeName);
-    await dialog.getByRole('button', { name: 'Save' }).click();
+    await expect(dialog.getByText('New economic entity')).toBeVisible();
+    await dialog.getByLabel('Name *').fill(name);
+    await dialog.getByRole('combobox', { name: /^Kind/ }).click();
+    await page.getByRole('option', { name: 'LLC' }).click();
+    await dialog.getByRole('button', { name: 'Create entity' }).click();
     await expect(dialog).toBeHidden();
 
-    // The expenses table accumulates fixtures across the whole suite's
-    // reused scratch database, so the freshly-recorded row is located
-    // through the mobile filter sheet's own "Category" column filter
-    // (`expenses-table/columns.tsx`) rather than assumed to land on page one.
-    await mobileFilterByText(page, 'Category', category);
-    const row = tableRow(page, payeeName);
+    // Unlike the connections table this suite's other mobile tests filter
+    // through the "Filters" sheet, the entities table has no column filters
+    // (it renders its whole small, admin-only tree unpaginated) — the fresh
+    // fixture's unique name is enough to find it directly.
+    const row = tableRow(page, name);
     await expect(row).toBeVisible();
-    await expect(row.getByText('$12.34')).toBeVisible();
+    await expect(row.getByText('LLC')).toBeVisible();
   });
 
   test("a connection's estate page opens and stacks single-column at 390px @mobile", async ({

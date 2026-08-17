@@ -3,10 +3,16 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
 import { runSeed } from './helpers/run-id';
 
 /**
- * /finance workspace critical flow (loxep-dgf.1, M1): quick-entry an expense
- * through the dialog and confirm it lands, recorded, in the expenses table —
- * lighting up `@loxep/accounting`'s `createExpensesService`, which shipped
- * complete with zero callers before this milestone.
+ * /finance workspace critical flow (loxep-dgf.1, M1): record an expense
+ * through `/finance/expenses/new` and confirm it lands, recorded, in the
+ * expenses table — lighting up `@loxep/accounting`'s `createExpensesService`,
+ * which shipped complete with zero callers before this milestone.
+ *
+ * OWNER REVERSAL (2026-08-17, `expense-entry-design.md` decision 1): the
+ * one-screen quick-entry dialog is REMOVED — `/finance/expenses/new` is now
+ * the single entry path, reached by clicking "New expense" (a plain `Link`,
+ * not a dialog trigger), so this spec exercises the page flow directly
+ * rather than a dialog.
  *
  * Recording a spend is session-gated (`requireSession`), not admin-only —
  * this spec reuses the harness's bootstrap-admin storage state only because
@@ -34,32 +40,38 @@ function tableRow(page: Page, text: string): Locator {
   return page.getByRole('row').filter({ hasText: text });
 }
 
-test('quick-entry records an expense that appears in the expenses table', async ({ page }) => {
+test('recording an expense through the entry page appears in the expenses table', async ({
+  page
+}) => {
   await page.goto('/finance/expenses');
   await expect(page.getByRole('heading', { name: 'Expenses' })).toBeVisible();
 
-  await page.getByRole('main').getByRole('button', { name: 'New expense' }).first().click();
+  await page.getByRole('main').getByRole('link', { name: 'New expense' }).first().click();
+  await page.waitForURL('**/finance/expenses/new');
+  await expect(page.getByRole('heading', { name: 'New expense' })).toBeVisible();
 
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('New expense')).toBeVisible();
-  await dialog.getByLabel('Amount *').fill('42.50');
-  await dialog.getByLabel('Category *').fill(category);
-  await dialog.getByLabel('Payee (free text)').fill(payeeName);
+  await page.getByLabel('Amount *').fill('42.50');
+  await page.getByLabel('Category *').fill(category);
+  await page.getByLabel('Payee name').fill(payeeName);
   // Payment (card), currency (USD), and entity (Unattributed) all keep
-  // their sensible quick-entry defaults — see `QuickExpenseDialog`.
-  await dialog.getByRole('button', { name: 'Save' }).click();
+  // their sensible defaults — see `NewExpensePage`.
+  await page.getByRole('button', { name: 'Record expense' }).click();
 
-  await expect(dialog).toBeHidden();
+  // Landing on the detail page (never staying on `/new`) is the save
+  // succeeding — `Void & re-record` only renders for a `recorded` expense.
+  await expect(page.getByRole('button', { name: /Void & re-record/ })).toBeVisible();
 
+  await page.goto('/finance/expenses');
   const row = tableRow(page, payeeName);
   await expect(row).toBeVisible();
   await expect(row.getByText(category)).toBeVisible();
   await expect(row.getByText('$42.50')).toBeVisible();
-  // Quick entry writes `status: 'recorded'` in one action, never `draft`.
   await expect(row.getByText('Recorded')).toBeVisible();
 });
 
-test('a recorded expense offers void-and-re-record, never an edit affordance', async ({ page }) => {
+test('void-and-re-record relocates the corrected fact to the entry page, prefilled', async ({
+  page
+}) => {
   await page.goto('/finance/expenses');
   const row = tableRow(page, payeeName);
   await row.getByRole('link').first().click();
@@ -68,25 +80,37 @@ test('a recorded expense offers void-and-re-record, never an edit affordance', a
   await expect(page.getByRole('button', { name: /Void & re-record/ })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0);
 
+  const referenceCode = await page
+    .getByText(/^EXP-\d{4}-\d+$/)
+    .first()
+    .innerText();
+
   await page.getByRole('button', { name: /Void & re-record/ }).click();
   const voidDialog = page.getByRole('dialog').filter({ hasText: 'Void' });
   await voidDialog.getByLabel('Reason *').fill(`e2e correction ${runId}`);
   await voidDialog.getByRole('button', { name: 'Void expense' }).click();
-  // The re-record dialog opens automatically and its description references
-  // the voided row, so `hasText: 'Void'` matches it too — assert succession
-  // (the void form's Reason field is gone) rather than dialog absence.
-  await expect(page.getByLabel('Reason *')).toBeHidden();
 
-  // Voiding is the correction path, not a delete: the row stays as evidence.
-  await expect(page.getByText('Void', { exact: true })).toBeVisible();
-
-  // The re-record dialog opens automatically, pre-filled from the voided row.
-  const reRecordDialog = page.getByRole('dialog');
-  await expect(reRecordDialog.getByText('Record corrected expense')).toBeVisible();
+  // The void write lands first (`VoidExpenseDialog`'s own `onSuccess`), THEN
+  // `expense-detail.tsx` navigates to the entry page carrying the
+  // now-voided expense's id — never a dialog reopening in place.
+  await page.waitForURL('**/finance/expenses/new**');
+  await expect(page.getByRole('heading', { name: 'New expense' })).toBeVisible();
+  await expect(page.getByText(new RegExp(`^Re-recording ${referenceCode}`))).toBeVisible();
   // `expenses.amount` is `numeric(20,6)` — the prefill carries the stored
   // six-decimal-scale string, not the table's 2-decimal display format.
-  await expect(reRecordDialog.getByLabel('Amount *')).toHaveValue('42.500000');
-  await reRecordDialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByLabel('Amount *')).toHaveValue('42.500000');
+  await expect(page.getByLabel('Category *')).toHaveValue(category);
+  await expect(page.getByLabel('Payee name')).toHaveValue(payeeName);
+
+  await page.getByRole('button', { name: 'Record expense' }).click();
+  await expect(page.getByRole('button', { name: /Void & re-record/ })).toBeVisible();
+
+  // Voiding is the correction path, not a delete: the original row stays as
+  // evidence (Void), and the corrected fact is its own new recorded row —
+  // both visible in the table under the same payee name.
+  await page.goto('/finance/expenses');
+  await expect(tableRow(page, payeeName).filter({ hasText: 'Void' })).toBeVisible();
+  await expect(tableRow(page, payeeName).filter({ hasText: 'Recorded' })).toBeVisible();
 });
 
 /**
@@ -107,17 +131,13 @@ test('a recorded expense offers promote-to-acquisition, voiding it and creating 
   const lotTitle = `E2E Promote Lot ${runId}`;
 
   await page.goto('/finance/expenses');
-  await page.getByRole('main').getByRole('button', { name: 'New expense' }).first().click();
-  const createDialog = page.getByRole('dialog');
-  await createDialog.getByLabel('Amount *').fill('89.00');
-  await createDialog.getByLabel('Category *').fill(promoteCategory);
-  await createDialog.getByLabel('Payee (free text)').fill(promotePayeeName);
-  await createDialog.getByRole('button', { name: 'Save' }).click();
-  await expect(createDialog).toBeHidden();
-
-  const row = tableRow(page, promotePayeeName);
-  await row.getByRole('link').first().click();
-  await page.waitForURL('**/finance/expenses/*');
+  await page.getByRole('main').getByRole('link', { name: 'New expense' }).first().click();
+  await page.waitForURL('**/finance/expenses/new');
+  await page.getByLabel('Amount *').fill('89.00');
+  await page.getByLabel('Category *').fill(promoteCategory);
+  await page.getByLabel('Payee name').fill(promotePayeeName);
+  await page.getByRole('button', { name: 'Record expense' }).click();
+  await expect(page.getByRole('button', { name: /Promote to acquisition/ })).toBeVisible();
 
   await page.getByRole('button', { name: /Promote to acquisition/ }).click();
   const lotPickerDialog = page.getByRole('dialog').filter({ hasText: 'Choose a lot' });

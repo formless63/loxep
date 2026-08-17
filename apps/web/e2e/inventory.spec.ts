@@ -15,7 +15,7 @@ import { runSeed } from './helpers/run-id';
  * `createItemsService`) through `@/server/admin.ts`, registered there behind
  * the same `@vite-ignore` lazy-module pattern `@loxep/market` uses (see
  * `admin.ts`'s `getInventoryModule` doc) — exactly the shape
- * `QuickExpenseDialog`'s create flow exercises for `/finance`.
+ * `NewExpensePage`'s create flow exercises for `/finance`.
  *
  * The create-time receipt movement used to promote a new item straight past
  * `intake` (a real bug this spec's first run caught — `deriveItemStatus`,
@@ -60,7 +60,7 @@ test('creates an acquisition, adds an item to it, and the item lands in the stoc
   await expect(acquisitionDialog.getByText('New acquisition')).toBeVisible();
   await acquisitionDialog.getByLabel('Title *').fill(acquisitionTitle);
   // Source (thrift/retail default) and currency (USD default) keep their
-  // quick-entry defaults — mirrors `QuickExpenseDialog`'s reasoning.
+  // sensible defaults, same reasoning as `NewExpensePage`'s own defaults.
   await acquisitionDialog.getByRole('button', { name: 'Create' }).click();
   await expect(acquisitionDialog).toBeHidden();
 

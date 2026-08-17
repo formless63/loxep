@@ -10,14 +10,20 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { FinancePage } from '@/features/finance/components/finance-page';
 import NewExpensePage from '@/features/finance/components/new-expense-page';
 import { entitiesQuery } from '@/features/settings/api/queries';
+import { expenseQuery } from '@/features/finance/api/queries';
 
 /**
  * `/finance/expenses/new` — the real two-pane entry page (loxep-cd3.2, M2 —
- * `expense-entry-design.md` section 1). Search params carry whatever the
- * quick-entry dialog's "More options" link had already typed, so starting
- * fast and discovering the receipt has fourteen lines is not a re-type.
- * Every field is optional and free-form here — the actual submission is
- * still validated by `createExpenseWithEvidence`'s own schema.
+ * `expense-entry-design.md` section 1) and, since the OWNER REVERSAL
+ * (2026-08-17, decision 1), the ONLY expense-entry path — the one-screen
+ * quick-entry dialog is removed. Every field here is optional and free-form
+ * — the actual submission is still validated by `createExpenseWithEvidence`'s
+ * own schema.
+ *
+ * `reRecordFrom` is the void-and-re-record handoff (relocated from the
+ * quick dialog's prefilled reopen, same decision): `expense-detail.tsx`
+ * navigates here with the just-voided expense's id after the void write
+ * lands, and `NewExpensePage` loads it via `fetchExpense` to seed the form.
  */
 const newExpenseSearchSchema = z.object({
   amount: z.string().optional(),
@@ -26,7 +32,8 @@ const newExpenseSearchSchema = z.object({
   payeeName: z.string().optional(),
   paymentMethod: z.string().optional(),
   currency: z.string().optional(),
-  economicEntityId: z.string().optional()
+  economicEntityId: z.string().optional(),
+  reRecordFrom: z.uuid().optional()
 });
 
 function NewExpenseError({ error }: ErrorComponentProps) {
@@ -49,8 +56,12 @@ function NewExpenseError({ error }: ErrorComponentProps) {
 
 export const Route = createFileRoute('/finance/expenses/new')({
   validateSearch: zodValidator(newExpenseSearchSchema),
-  loader: async ({ context: { queryClient } }) => {
+  loaderDeps: ({ search }) => ({ reRecordFrom: search.reRecordFrom }),
+  loader: async ({ context: { queryClient }, deps: { reRecordFrom } }) => {
     await queryClient.ensureQueryData(entitiesQuery);
+    if (reRecordFrom) {
+      await queryClient.ensureQueryData(expenseQuery(reRecordFrom));
+    }
   },
   errorComponent: NewExpenseError,
   component: FinanceExpensesNew
@@ -62,10 +73,10 @@ function FinanceExpensesNew() {
   return (
     <FinancePage
       title='New expense'
-      description='Form on the left, evidence on the right — visible at once. The dialog is capture; this page is composition.'
+      description='Form on the left, evidence on the right — visible at once.'
     >
       <React.Suspense fallback={<Skeleton className='h-96 w-full' />}>
-        <NewExpensePage prefill={search} />
+        <NewExpensePage prefill={search} reRecordFrom={search.reRecordFrom} />
       </React.Suspense>
     </FinancePage>
   );

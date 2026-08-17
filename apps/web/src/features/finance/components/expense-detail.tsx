@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -30,9 +30,6 @@ import { entitiesQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ReceiptGallery from '@/features/finance/components/receipt-gallery';
 import ExpenseLinesCard from '@/features/finance/components/expense-lines-card';
-import QuickExpenseDialog, {
-  type QuickExpensePrefill
-} from '@/features/finance/components/quick-expense-dialog';
 import {
   NO_TRADING_PARTNER_VALUE,
   PayeeComboboxField
@@ -139,11 +136,13 @@ const promoteSchema = z.object({
  * open question 2) — the void-and-promote correction path alongside
  * `VoidExpenseDialog`'s plain void-and-re-record above: the operator
  * realizes a recorded expense was really money spent on goods for resale.
- * TWO steps, chained exactly like `VoidExpenseDialog`'s own `onVoided` ->
- * `QuickExpenseDialog` chain: choosing a lot first (the SAME
- * `AcquisitionLotPickerDialog` the document-review panel uses — create-new
- * or attach-existing, resolving an identity only, no write), THEN this
- * dialog's own reason field, which is what actually submits.
+ * TWO steps, chained the same way `VoidExpenseDialog`'s own `onVoided` chains
+ * onward (that one now navigates to `/finance/expenses/new` post-void, per
+ * the OWNER REVERSAL above — this dialog stays in-place instead, since a
+ * lot pick + reason is still a dialog-sized action): choosing a lot first
+ * (the SAME `AcquisitionLotPickerDialog` the document-review panel uses —
+ * create-new or attach-existing, resolving an identity only, no write),
+ * THEN this dialog's own reason field, which is what actually submits.
  */
 function PromoteToAcquisitionDialog({
   open,
@@ -339,13 +338,10 @@ export default function ExpenseDetail({
   const { data, isPending, isError, error, refetch } = useQuery(expenseQuery(expenseId, q));
   const { data: entities } = useQuery(entitiesQuery);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const [voidOpen, setVoidOpen] = React.useState(false);
   const [linkPayeeOpen, setLinkPayeeOpen] = React.useState(false);
-  const [reRecordOpen, setReRecordOpen] = React.useState(false);
-  const [reRecordPrefill, setReRecordPrefill] = React.useState<QuickExpensePrefill | undefined>(
-    undefined
-  );
   const [promoteLotPickerOpen, setPromoteLotPickerOpen] = React.useState(false);
   const [promoteTarget, setPromoteTarget] = React.useState<AcquisitionLotTarget | null>(null);
   const [promoteOpen, setPromoteOpen] = React.useState(false);
@@ -518,26 +514,19 @@ export default function ExpenseDetail({
         expenseId={expenseId}
         referenceCode={data.referenceCode}
         onVoided={() => {
-          setReRecordPrefill({
-            amount: data.amount,
-            category: data.category,
-            payeeName: data.payeeName,
-            paymentMethod: data.paymentMethod,
-            currency: data.currency,
-            economicEntityId: data.economicEntityId,
-            correctingReferenceCode: data.referenceCode
+          // Relocated from the quick-entry dialog's prefilled re-open
+          // (OWNER REVERSAL, 2026-08-17, `expense-entry-design.md` decision
+          // 1) — the void itself is unchanged (this fires from
+          // `VoidExpenseDialog`'s own `onSuccess`, i.e. AFTER the void
+          // write lands), only WHERE the re-record form lives moves: the
+          // page loads this now-voided expense via `reRecordFrom` and seeds
+          // itself, instead of a dialog reopening prefilled in place.
+          void navigate({
+            to: '/finance/expenses/new',
+            search: { reRecordFrom: expenseId }
           });
-          setReRecordOpen(true);
         }}
       />
-      {reRecordOpen && (
-        <QuickExpenseDialog
-          open={reRecordOpen}
-          onOpenChange={setReRecordOpen}
-          entities={entities}
-          prefill={reRecordPrefill}
-        />
-      )}
 
       <AcquisitionLotPickerDialog
         open={promoteLotPickerOpen}

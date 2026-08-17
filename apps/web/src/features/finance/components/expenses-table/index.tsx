@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -178,22 +178,16 @@ export default function ExpensesTable() {
             <EmptyDescription>
               {q
                 ? 'No expense has an attached receipt with extracted text matching that search.'
-                : 'Every dollar that leaves gets captured here — card, cash, marketplace balance, or anything else. Record one with the quick-entry action, reachable from the command palette too.'}
+                : 'Every dollar that leaves gets captured here — card, cash, marketplace balance, or anything else.'}
             </EmptyDescription>
           </EmptyHeader>
           {!q && (
             <EmptyContent>
-              <Button
-                size='sm'
-                onClick={() =>
-                  void navigate({
-                    search: (prev) => ({ ...prev, quickEntry: true }),
-                    replace: true
-                  })
-                }
-              >
-                <Icons.add />
-                New expense
+              <Button size='sm' asChild>
+                <Link to='/finance/expenses/new'>
+                  <Icons.add />
+                  New expense
+                </Link>
               </Button>
             </EmptyContent>
           )}
