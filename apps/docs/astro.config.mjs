@@ -92,6 +92,7 @@ export default defineConfig({
             { label: 'Expense Entry & Document Intelligence Design', slug: 'architecture/expense-entry-design' },
             { label: 'Settings UX Overhaul Design', slug: 'architecture/settings-ux-design' },
             { label: 'Estate Browsers Design', slug: 'architecture/estate-browsers-design' },
+            { label: 'UI Overhaul 2026 Design', slug: 'architecture/ui-overhaul-2026-design' },
           ],
         },
         {

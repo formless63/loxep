@@ -17,6 +17,8 @@ The `/starter/*` routes are the preserved donor workspace and the **living patte
 5. Every surface renders a real empty state, a real skeleton, and a toast on mutation.
 6. Dates, times, and money go through `@/lib/format`. No per-file `formatTimestamp`.
 7. Every new surface is eyeballed in **two themes plus dark mode** before it is called done.
+8. Loxep is a data/dashboard product: **dashboard density, not marketing spacing** — the shared primitives carry the scale (see [Density and mobile](#density-and-mobile)); a surface does not re-widen them.
+9. Every structural mobile adaptation happens at the one 768px breakpoint through the shared mechanisms (`ResponsiveDialog`, the DataTable mobile behaviors) — see [Density and mobile](#density-and-mobile).
 
 ## Theme tokens: what actually exists
 
@@ -250,6 +252,32 @@ A surface is not done until it visibly responds to the theme. Before closing UI 
 
 If the surface looks the same in all three, it is built from `muted` and `border` only. Fix it before merging.
 
+## Density and mobile
+
+Binding rules from the [UI Overhaul 2026 Design](../../architecture/ui-overhaul-2026-design/) (loxep-0g4); the reasoning lives there, the rules live here.
+
+### Density
+
+- **The shared primitives carry the density scale; surfaces inherit it.** `Card` is `gap-4 py-4` with `px-4` sections; page `Heading` is `text-xl font-semibold`; table primitives stay `h-10` headers / `p-2` cells. A product surface never re-widens a primitive (`py-6`, `px-6`, `text-3xl` on a page title are review findings), and there is deliberately **no density toggle**.
+- Section/grid gaps on product surfaces: `gap-3` within a section, `gap-4` between major sections.
+- Numeric data and stat values carry `tabular-nums`; stat values cap at `text-2xl` with no container-query upscaling. Labels are `text-xs`/`text-sm text-muted-foreground`.
+- Explanatory prose beyond one sentence moves behind the `InfoButton`/infobar — the page body states facts, the info affordance teaches.
+- Every product page carries at least one emphasis element (`--primary`, `--accent`, `--chart-*`, or the status trio); status renders as a colored dot or tinted badge, never a plain word. Micro-visualizations may only use data the surface already fetched.
+
+### Mobile
+
+- **One structural breakpoint: 768px** (`useIsMobile`). Structure changes (dialog→drawer, toolbar→sheet, pane stacking) happen only there; `sm:`/`lg:`/`xl:` remain for pure layout flow.
+- **Tables scroll horizontally; they never transform into card lists.** On mobile the first data column pins `start` and actions stay pinned `end` (shared `useDataTable` behavior, not per-table code); the toolbar collapses to a filter button opening a `Sheet` with an active-filter count.
+- **Form dialogs use `ResponsiveDialog`** (Dialog ≥768px, Drawer below). `AlertDialog` confirms and the command palette stay dialogs at every size.
+- Two-pane pages stack below 768px with a sticky segmented toggle. Interactive triggers get a ≥40px hit area on mobile.
+- Mobile regression coverage lives in the `mobile-chromium` Playwright project (tagged `@mobile` subset), not by duplicating the desktop suite.
+
+### Brand iconography
+
+- Provider marks come from the pinned `simple-icons` package via the Loxep `BrandIcon` component and the `PROVIDER_BRAND_ICONS` registry — never a CDN fetch, never an `<img>` from a brand's site. Fallback order: registry's lucide icon, then an initial-letter tile on `bg-muted`.
+- Marks render **monochrome `currentColor` everywhere** (brand hexes fight ten themes and dark mode). The one permitted flourish: the integrations catalog card may tint the icon *tile* `bg-primary/10`.
+- Icons appear only beside factual references to the integrated service (nominative use). Sizes: 16px inline/table, 20px card header, 24px estate header — no others.
+
 ## Standard formats
 
 Formatting is centralized in `@/lib/format`. Per-file helpers are the current reality and are a violation: `formatTimestamp` is copy-pasted into at least nine components under `features/settings` and `features/market`, each one re-deriving `format(new Date(v), 'yyyy-MM-dd HH:mm')`, and `formatPrice` is duplicated as naive string concatenation.
@@ -344,4 +372,7 @@ Keep these routes working. They are the executable half of this document.
 - [ ] Status badges map state → variant/tone, plus an icon.
 - [ ] Empty state uses `Empty`; skeleton mirrors the real layout.
 - [ ] Dates/money/durations come from `@/lib/format`.
+- [ ] No re-widened primitives (`py-6`/`px-6` cards, `text-3xl` page titles) on product surfaces; gaps follow the `gap-3`/`gap-4` rule.
+- [ ] Form dialogs use `ResponsiveDialog`; any structural mobile change happens at 768px through the shared mechanisms.
+- [ ] Provider marks go through `BrandIcon` (monochrome `currentColor`, sanctioned sizes), never a hand-placed SVG or brand hex.
 - [ ] Verified in two themes plus dark mode.

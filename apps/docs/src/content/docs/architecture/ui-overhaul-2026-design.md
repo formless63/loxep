@@ -1,0 +1,170 @@
+---
+title: UI Overhaul 2026 Design
+description: Dashboard density, the mobile system, the living infrastructure topology, the estate map, and brand iconography — one coordinated pass (loxep-0g4).
+---
+
+**Status: DRAFT — accepted for implementation under epic `loxep-0g4`.** Owner directive 2026-08-17, six requirements verbatim in the epic bead: a mobile pass throughout; contemporary dashboard-density styling in place of SaaS-marketing spacing; living diagrams of connections between items with explanatory tooltips and filtering; a map view of server locations; logos and symbols where licensing allows; users who feel properly impressed. This document decides how, with reasons, so the implementation waves execute rather than re-decide.
+
+## 0. The one-paragraph shape
+
+Loxep's surfaces are structurally sound — one table stack, one form hook, semantic tokens, ten themes — and visually miscalibrated: hero-scale headings, `py-6`/`gap-6` cards, and two grey tokens doing all the talking. This pass recalibrates the **shared primitives once** (density lands everywhere without 56 hand edits), adds the **mobile mechanisms to the shared stack** (a responsive dialog wrapper, a mobile table discipline, a filter sheet) so phones get first-class treatment for the same low per-surface cost, and then spends the saved budget on the two things that genuinely impress: a **live infrastructure topology** — graph and map, two lenses on one page, assembled entirely from data Loxep already owns — and **brand iconography** keyed off the registries that already describe every provider. Four small dependency additions, **zero migrations**, zero new tables.
+
+## 1. Ground truth: what the survey found
+
+Measured against the working tree at `loxep-0g4`'s filing (2026-08-17):
+
+- **The shell is already mobile-capable.** The shadcn sidebar renders as a `Sheet` below 768px (`useIsMobile`, the one breakpoint constant in the app); the header is sticky `h-14`; `PageContainer` is `p-4 md:px-6`. Breakpoint usage across features/components: 230 `sm:`, 70 `md:`, 33 `lg:`, 25 `xl:` — responsive flow exists; responsive *mechanisms* (tables, dialogs) do not.
+- **Dialogs are the mobile gap.** 77 feature files use `Dialog`; 4 use `Sheet`; 0 use `Drawer` — though `drawer.tsx` (vaul) ships in `ui/`. A 720px-wide form dialog on a 390px phone is the single worst experience in the app today.
+- **The table stack is closer than expected.** `DataTable` already renders inside a `ScrollArea` with horizontal scrollbar and has column pinning (`getCommonPinningStyles`, actions pinned `end` per frontend-standards). `TableHead h-10 px-2` / `TableCell p-2` are already dashboard-compact. The table body is not the density problem.
+- **Cards and headings are the density problem.** `Card` is `gap-6 py-6` with `px-6` sections; page `Heading` is `text-3xl font-bold`; stat cards on `/infrastructure/overview` scale to `text-3xl`. That is the marketing scale the owner is naming.
+- **The deadness diagnosis already exists.** Frontend-standards' semantic-token section records that settings/market surfaces use `text-muted-foreground` 44–51× with near-zero `primary`/`accent`/`chart-*` — "a surface built from only those tokens cannot respond to a theme switch." This design is that note's answer as much as the density answer.
+- **The topology data already exists, joined and keyed.** `hosting_targets` (with `provider`, `region`, `fronted_by_target_id`, `proxy_connection_id`), `managed_domains` (`dns_connection_id`, `apex_target_id`), `proxy_resources` (`domain_id`, `hosting_target_id`, `subdomain`, `mode`), `host_addresses` (typed `wan`/`lan`/`tailnet`, migration 0029), `external_resources` + `resource_links` (companion tools per host), `integration_health` (status per subject), `connections`. Every edge the diagram needs is a foreign key that already exists. **The map needs no new data either**: `hosting_targets.provider` and `.region` have been columns since Phase 7.
+
+## 2. Density and emphasis: the calibration
+
+### The decision
+
+**Rule D1 — recalibrate the shared primitives once; no density toggle.** The fix is a one-time recalibration of `Card`, `Heading`, and the page-level spacing conventions, not a user-facing "comfortable/compact" switch and not per-surface overrides. A toggle is machinery nobody asked for and a second axis every future surface must test against; per-surface overrides are how the drift got here. *(Rejected: `data-density` attribute system — revisit only if a real operator asks for larger type.)*
+
+**Rule D2 — the scale.** Binding values, applied in the shared primitives so call sites inherit them:
+
+| Primitive | Today | Becomes |
+| --- | --- | --- |
+| `Card` | `gap-6 py-6` | `gap-4 py-4` |
+| `CardHeader` / `CardContent` / `CardFooter` | `px-6` | `px-4` |
+| `CardHeader` bordered variant | `pb-6` | `pb-4` |
+| Page `Heading` h1 | `text-3xl font-bold` | `text-xl font-semibold` |
+| Stat/KPI value | `text-2xl` → `@[250px]:text-3xl` | `text-2xl tabular-nums`, no container upscale |
+| Section/grid gaps on product surfaces | `gap-4` everywhere | `gap-3` within a section; `gap-4` between major sections |
+| Page header margin (`PageContainer`) | `mb-4` | `mb-3` |
+
+Table primitives (`h-10` headers, `p-2` cells) are **already correct and do not change.** The `/starter` donor workspace inherits the primitive recalibration and is otherwise untouched.
+
+**Rule D3 — data typography.** Numeric data cells and stat values carry `tabular-nums`. Field-label/section-label text is `text-xs` or `text-sm text-muted-foreground` — never `text-base`. Prose paragraphs on product surfaces are capped at `text-sm`; if a surface needs a paragraph of explanation, it belongs in the `InfoButton`/infobar, not the page body (the app is "text-heavy" mostly because explanatory prose sits inline — move it behind the existing info affordance rather than deleting it).
+
+**Rule D4 — the emphasis layer (extends the frontend-standards liveliness rule from advisory to audited).** Every product page must carry at least one emphasis element drawn from `--primary`, `--accent`, `--chart-*`, or the status trio (`--success`/`--warning`/`--destructive`): the primary metric, the active filter chip, the leading status dot, the selected row. Status is always a colored dot or tinted badge, never a plain word. Micro-visualizations (sparklines via the existing chart tokens) are permitted **only** over data the surface already fetched — an emphasis element never earns a new query.
+
+**Rule D5 — empty states.** The `Empty` component (icon + one sentence + at most one action), never a bare muted sentence. An empty table keeps the existing DataTable empty row; `Empty` is for empty *sections and panels*.
+
+## 3. The mobile system
+
+**Rule M1 — one structural breakpoint.** 768px (`useIsMobile`, the existing constant) is the *only* breakpoint at which structure changes (dialog→drawer, toolbar→sheet, pane stacking). `sm:`/`lg:`/`xl:` remain free for pure layout flow (grid column counts, visibility of secondary text). No surface invents its own structural breakpoint.
+
+**Rule M2 — tables: scroll, pin, and a filter sheet; never a card-list transform.** All 52+ tables stay `DataTable`. On mobile:
+
+1. Horizontal scroll is the pattern (already shipped via `ScrollArea`). A card-list transform is rejected: it forks 52 renderers, loses sorting/selection, and hides the columnar comparisons a data app exists for.
+2. **The first data column pins `start` on mobile** so the row's identity stays visible while scrolling; actions stay pinned `end`. This is ONE mechanism in the shared stack — `useDataTable` gains the behavior (pin the first non-select column when `useIsMobile()`), not 52 hand edits.
+3. **The toolbar collapses to a filter sheet.** Below 768px, `DataTableToolbar` renders a single filter button (funnel icon + active-filter count badge) opening a `Sheet` containing the same filter controls; view-options hide on mobile. One change in `DataTableToolbar`, inherited everywhere.
+
+**Rule M3 — dialogs become drawers via one wrapper.** A new `ResponsiveDialog` in `ui/` (same API surface as `Dialog`: Trigger/Content/Header/Title/Description/Footer) renders `Dialog` ≥768px and `Drawer` (vaul, already in `ui/`) below. Every *form* dialog on a product surface migrates to it (the 77-file sweep, mostly a 2-line import change per file). `AlertDialog` confirms stay as they are at every size — a small centered confirm is correct on a phone. `CommandDialog` (palette) stays a dialog.
+
+**Rule M4 — navigation and touch.** The sidebar's existing mobile Sheet stands. The header gains a mobile-only search button that opens the command palette (Cmd+K has no phone equivalent today — the palette is currently unreachable there). Interactive row/menu triggers get a ≥40px hit area on mobile (padding, not layout change). The `InfoButton`/infobar must be reachable on mobile (verify; fix placement if the infobar assumes a wide viewport).
+
+**Rule M5 — two-pane pages stack.** `/finance/expenses/new`'s evidence pane (and any future two-pane surface) stacks below the form under 768px with a sticky segmented toggle (Form / Evidence) so neither pane is lost off-screen. Estate pages stack sections naturally (already single-column); estate header chips wrap.
+
+**Rule M6 — the QA story.** Playwright gains a second project `mobile-chromium` (iPhone-class viewport 390×844, touch enabled) running a **tagged subset** (`@mobile`), not the whole suite: sign-in, sidebar-sheet navigation, a connections-table scroll + row action, an expense create through the drawer, one estate open, one table filter through the sheet — roughly 6–8 specs. The desktop suite stays the completeness gate; the mobile project is the regression tripwire for the mechanisms above.
+
+## 4. The living infrastructure topology
+
+### Placement and jurisdiction
+
+**Rule G1 — one page, one nav item, two lenses.** A new route `/infrastructure/topology` with a "Topology" nav item, presenting **Graph** and **Map** as tabs of the same page. `/infrastructure/overview` links to it; no preview panel is embedded there (anti-soup: the overview already carries the fleet signals band — a second rendering of the same facts would be the soup rule's first violation).
+
+**Rule G2 — database reads only; the estate jurisdiction holds.** The topology page reads Loxep's own tables and registries — never a live provider call. Live truth stays the estate pages' jurisdiction (rules P5–P8 unmoved); the topology is the map of *what Loxep knows and intends*, stamped with Loxep's own clock ("as recorded, read just now"), and every node deep-links to the page that owns its liveness (fleet detail, estate page, domain page). This is what keeps the page fast, budget-free, and honest.
+
+### The graph
+
+**Rule G3 — nodes and edges come only from existing keys.** One member-readable server function (`fetchInfrastructureTopology`) assembles:
+
+| Node kind | Source |
+| --- | --- |
+| Hosting target | `hosting_targets` (undecommissioned), with its `host_addresses` (kind-badged) and health in the tooltip |
+| Managed domain | `managed_domains` |
+| Proxy resource | `proxy_resources` (subdomain · mode) |
+| Connection | `connections` in the infrastructure category (provider-iconed once §6 lands) |
+| Companion tool | `external_resources` rows linked to hosting targets |
+
+| Edge | Source key | Tooltip sentence (operator language, binding) |
+| --- | --- | --- |
+| fronted by | `hosting_targets.fronted_by_target_id` | "Traffic for *A* arrives through *B* first." |
+| apex points at | `managed_domains.apex_target_id` | "*domain*'s apex record points at *target*." |
+| routes to | `proxy_resources.hosting_target_id` + `.domain_id` | "*sub.domain* is proxied through Pangolin to *target*." |
+| zone hosted at | `managed_domains.dns_connection_id` | "*domain*'s DNS zone lives at this *provider* connection." |
+| proxied via | `hosting_targets.proxy_connection_id` | "*target* publishes its resources through this Pangolin connection." |
+| watched by | `resource_links` on `hosting_target` | "*tool* is linked to *target* — Loxep records it as a companion, and probes its health." |
+
+Every edge type has exactly one registered sentence; hovering any edge shows it with the real names substituted. An edge with no registered sentence may not render — that is the falsifiable form of "tooltips abound so they can understand."
+
+**Rule G4 — deterministic columnar layout, no layout dependency.** Nodes lay out in domain-shaped columns — connections | domains | proxy resources | targets | tools — with simple barycenter ordering to reduce crossings, computed in Loxep code. *(Rejected: force-directed layout — illegible hairballs for ops topology and non-deterministic between visits; dagre/elkjs — a dependency for a layout a loop can compute over five fixed ranks.)*
+
+**Rule G5 — rendering is `@xyflow/react` 12, client-only, route-lazy.** MIT, actively maintained (12.11.3, published this month), the contemporary standard for interactive node graphs; pan/zoom/touch ship free, which is most of the mobile story. The chunk loads only on this route. Node cards and edges are token-themed (`bg-card`/`border`, status dots from the status trio, `--primary` for the focused path, `--border` for resting edges) so all ten themes and dark mode work without a graph-specific palette. React Flow's base stylesheet is imported once in the route chunk.
+
+**Rule G6 — interaction.** Filter chips toggle node kinds in/out; a text filter matches names; clicking a node enters focus mode (neighbors full, non-neighbors dimmed to `--muted`); clicking through opens the owning page. A legend states node/edge counts and what was read ("assembled from Loxep's records · read just now"). Isolated nodes render isolated — an unconnected target is information, not a rendering failure.
+
+### The map
+
+**Rule MAP1 — no migration; location resolves from data Loxep already has.** `hosting_targets.provider` + `.region` resolve through a code-side `REGION_GEO_REGISTRY` (provider+region → lat/lon + display label) seeded with the common self-hosting providers (Hetzner, OVH, DigitalOcean, Vultr, Linode, AWS/GCP/Azure region codes, plus a `home`/`lan` convention pinning to a configurable "home" marker — no coordinates guessed). Targets whose provider/region resolve nowhere land in an **"Unplaced"** side list naming exactly the string to fix — the map never guesses, and unplaced is a stated state, not an empty map. *(Rejected: a lat/lon migration — a second copy of what `provider`+`region` already say, and a form asking operators for coordinates; IP geolocation — an external lookup and a privacy leak. Revisit an explicit coordinates column only when a real operator has a region the registry cannot carry — recorded as OQ2.)*
+
+**Rule MAP2 — offline SVG, no tile servers, ever.** Natural Earth 110m country geometry via `world-atlas` (public-domain data, ISC package) + `topojson-client` + `d3-geo` (ISC), rendered as inline SVG paths with a Natural Earth projection: land `--muted`, borders `--border`, ocean transparent (page ground), target markers `--primary` tinted by worst linked health. Zero external requests — a self-hosted Loxep draws its map from its own bundle. Multiple targets in one region cluster into one marker with a count; the tooltip lists them with deep links. *(Rejected: Leaflet/MapLibre — tile servers are an external dependency and a privacy leak, WebGL is overkill for tens of points; react-simple-maps — effectively unmaintained.)*
+
+## 5. Brand iconography
+
+**Rule I1 — `simple-icons` as data, rendered by a Loxep-owned component.** `simple-icons` 16.28.0 (CC0-1.0) imported per-icon (tree-shaken), rendered by one `BrandIcon` component as inline SVG. A `PROVIDER_BRAND_ICONS` registry maps Loxep provider slugs → simple-icons slugs; providers without a mark (Beszel, Dockhand, Termix, Purelymail are likely absent — verify at implementation) fall back to the lucide icon the catalog/fleet registries already carry, then to an initial-letter tile on `bg-muted`. Never a CDN fetch, never an `<img>` from a brand's site.
+
+**Rule I2 — monochrome `currentColor`, everywhere.** Brand hex colors are rejected outright: they fight ten themes and dark mode, and half the marks fail contrast on tinted cards. The "dressing up" is presence and placement, not brand color. One exception is permitted: the integrations catalog card may tint the icon *tile* with `bg-primary/10` — the mark itself stays `currentColor`.
+
+**Rule I3 — trademark posture, recorded.** Icons appear only beside factual references to the integrated service (a connection of that provider, that provider's estate, that provider's catalog entry) — nominative use to identify the service, no implied endorsement, no use in Loxep's own branding. `simple-icons` removes marks on brand-owner request; the pinned version is the audit trail, and removing a provider's mark is a one-line registry edit. No provider currently requires exclusion.
+
+**Rule I4 — surfaces.** Integrations catalog cards, `/settings/connections` provider cells, estate page headers and the estate indexes, the fleet signals band tiles, the companion links panel, and topology nodes. Icon sizes: 16px inline/table, 20px card header, 24px estate header — no other sizes.
+
+## 6. What does not change (falsifiable)
+
+- The donor `DataTable` stack and `useAppForm` remain the only table and form paths; nothing in this design forks them — the density and mobile work lands *inside* them.
+- Every existing frontend-standards rule stays binding: semantic tokens only, `getRowId` on every table, URL table state, chart tokens, one-setting-per-save.
+- No new state library; no tailwind config fork; the route/nav architecture and `workspaces.ts` model stand (this design adds exactly one nav item, Topology).
+- `/starter` donor surfaces are out of scope beyond inheriting the primitive recalibration.
+- No page gains an external network call by default; the map is offline by construction.
+- No migration, no new table, no schema change of any kind in this epic.
+
+## 7. Dependencies (verified 2026-08-17 against npm)
+
+| Package | Version | License | Why | Rejected alternatives |
+| --- | --- | --- | --- | --- |
+| `@xyflow/react` | 12.11.3 | MIT | Interactive node graph: pan/zoom/touch/a11y ship free; active (published 2026-08) | d3-force (illegible for topology), reaflow (small community), hand-rolled SVG (reimplements pan/zoom/hit-testing) |
+| `simple-icons` | 16.28.0 | CC0-1.0 | Brand marks as data, tree-shaken per icon | @tabler/icons (no brand focus), CDN fetches (forbidden) |
+| `d3-geo` | 3.1.1 | ISC | Projection + path for the offline SVG map | Leaflet/MapLibre (tile servers / WebGL overkill) |
+| `topojson-client` | 3.1.0 | ISC | Decode the vendored world topology | — |
+| `world-atlas` | 2.0.2 | ISC (Natural Earth data: public domain) | 110m world geometry, bundled, offline | react-simple-maps (unmaintained) |
+
+All five are additive `apps/web` dependencies; manifests are orchestrator-only.
+
+## 8. Contradictions and tensions with existing documents
+
+1. **Frontend-standards' own liveliness note** ("a surface built from only muted tokens cannot respond to a theme switch") has been advisory since the foi epic. Rule D4 promotes it to an audited requirement — an amendment, not a contradiction.
+2. **Estate rule P5 (live-read, never persisted) vs the topology page.** No conflict once jurisdiction is stated: estates render *provider truth live*; topology renders *Loxep's records*. Rule G2 records the boundary so a future reader does not "improve" the topology with live fan-out — that would rebuild the estate program without its budget rules.
+3. **The stat-card container query** (`@[250px]:text-3xl` upscaling) works against D2's calibration; it is removed with the recalibration rather than fought per-surface.
+4. **Heading `text-3xl`** was inherited from the donor dashboard's marketing scale; D2 supersedes it deliberately.
+
+## 9. Open questions
+
+1. **OQ1 (review-noted, not blocking) — brand-mark posture.** This design ships monochrome nominative-use icons (I2/I3). If the owner prefers full-color brand marks anywhere beyond the catalog tile, that is a contrast/theme review per surface — flag before building it.
+2. **OQ2 (deferred by rule) — explicit coordinates.** MAP1's registry answers today's fleet. An operator with a colo the registry cannot name reopens the question of an explicit location column — a migration decision to take *then*, on a real case, not now.
+
+## 10. Decomposition into waves
+
+| Wave | Scope | Depends on | Size |
+| --- | --- | --- | --- |
+| **W1 — Density & emphasis foundation** | D1–D5: primitive recalibration (`card.tsx`, `heading.tsx`, `PageContainer`), stat-card calibration, worst-offender sweep (overview grids, settings/market gaps), frontend-standards amendments land with it | — | M |
+| **W2 — Mobile mechanisms** | M1–M5: `ResponsiveDialog` + form-dialog sweep, DataTable mobile pin + toolbar filter sheet, header palette button, touch targets, two-pane stacking | W1 (shared `ui/` files) | L |
+| **W3 — Topology page** | G1–G6 + MAP1–MAP2: route, server function, graph lens, map lens, region registry | deps added; parallel with W4 | L |
+| **W4 — Brand iconography** | I1–I4: `BrandIcon`, registry, six surfaces | deps added; parallel with W3 | M |
+| **W5 — Mobile QA + closeout** | M6: `mobile-chromium` Playwright project, tagged specs, docs status updates | W2 (mechanisms exist) | M |
+
+Zero migrations in every wave. W3 and W4 have disjoint fences and run in parallel; W5 runs last against the integrated tree.
+
+## 11. Related documents
+
+- [Frontend Standards](../../development/frontend-standards/) — amended by this design (density scale, mobile patterns, iconography rules).
+- [Estate Browsers Design](../estate-browsers-design/) — the jurisdiction boundary G2 inherits.
+- [Fleet Observability Design](../fleet-observability-design/) — `integration_health`, the status source for topology tinting.
+- [Settings UX Overhaul Design](../settings-ux-design/) — the previous surface-wide pass this one builds on.
