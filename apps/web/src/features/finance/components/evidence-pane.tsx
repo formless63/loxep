@@ -275,12 +275,13 @@ export default function EvidencePane({
           mimeType={selected.mimeType ?? null}
           servingUrl={selected.servingUrl ?? null}
           alt={selected.originalFilename ?? selected.file.name}
-          // loxep-zk5: the evidence pane is now the DOMINANT flexible pane
-          // (`new-expense-page.tsx`'s layout inversion) — a PDF/receipt
-          // needs to actually be readable at desktop widths, so this grew
-          // well past the old `min-h-64` (16rem) that made the owner's core
-          // complaint true.
-          className='min-h-[36rem]'
+          // loxep-zk5 follow-up: width alone never made a PDF readable —
+          // Chrome fits the page to the iframe's HEIGHT. The pane is now
+          // viewport-bound on md+ (`new-expense-page.tsx`), so the preview
+          // flex-fills whatever height the dropzone strip and attachment
+          // list leave; below md (the stacked mobile toggle) a dvh minimum
+          // keeps it tall enough to read.
+          className='min-h-[60dvh] md:min-h-0 md:flex-1'
           overlay={
             overlayLines.length > 0
               ? {

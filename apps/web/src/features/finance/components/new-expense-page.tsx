@@ -279,6 +279,17 @@ const PAYEE_NAME_INFO: InfobarContent = {
   ]
 };
 
+const ENTITY_INFO: InfobarContent = {
+  title: 'Entity',
+  sections: [
+    {
+      title: 'Attribution',
+      description:
+        'Empty selection means Unattributed — a deliberate choice, not an omission. Attribution can be set or corrected later from the expense detail.'
+    }
+  ]
+};
+
 const LINE_ITEMS_INFO: InfobarContent = {
   title: 'Line items',
   sections: [
@@ -333,6 +344,10 @@ export default function NewExpensePage({
   // Mobile-only (M5) — which pane the sticky toggle currently shows below
   // `md`; irrelevant at `>=md`, where both panes render unconditionally.
   const [activePane, setActivePane] = React.useState<'form' | 'evidence'>('form');
+  // Notes collapse behind a toggle so line items fit above the fold (owner
+  // directive 2026-08-17); starts open only when a prefill/re-record
+  // actually carries a note worth showing.
+  const [notesOpen, setNotesOpen] = React.useState(false);
 
   const entityOptions = [
     { value: UNATTRIBUTED_ENTITY_VALUE, label: 'Unattributed' },
@@ -655,7 +670,11 @@ export default function NewExpensePage({
                       )}
                     </form.Field>
                   </div>
-                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                  {/* One row, three columns: payment, the 3-char currency,
+                      and attribution — line items must be visible without
+                      scrolling (owner directive 2026-08-17), so every header
+                      row above them earns its height. */}
+                  <div className='grid grid-cols-1 gap-3 sm:grid-cols-[1fr_6rem_1fr]'>
                     <form.AppField
                       name='paymentMethod'
                       children={(field) => (
@@ -677,21 +696,18 @@ export default function NewExpensePage({
                         />
                       )}
                     />
+                    <div className='flex items-end gap-1'>
+                      <div className='min-w-0 flex-1'>
+                        <form.AppField
+                          name='economicEntityId'
+                          children={(field) => (
+                            <field.SelectField label='Entity' options={entityOptions} />
+                          )}
+                        />
+                      </div>
+                      <InfoButton content={ENTITY_INFO} className='mb-1 size-7' />
+                    </div>
                   </div>
-                  <form.AppField
-                    name='economicEntityId'
-                    children={(field) => (
-                      <field.SelectField
-                        label='Entity'
-                        options={entityOptions}
-                        description='Empty selection means Unattributed — a deliberate choice, not an omission.'
-                      />
-                    )}
-                  />
-                  <form.AppField
-                    name='notes'
-                    children={(field) => <field.TextareaField label='Notes' />}
-                  />
                   <div className='flex flex-col gap-3 rounded-md border p-3'>
                     <div className='flex items-center justify-between'>
                       <p className='text-sm font-medium'>Line items — optional</p>
@@ -994,6 +1010,23 @@ export default function NewExpensePage({
                     </DocumentLineDropTarget>
                   </div>
                 </FieldGroup>
+                {notesOpen ? (
+                  <form.AppField
+                    name='notes'
+                    children={(field) => <field.TextareaField label='Notes' />}
+                  />
+                ) : (
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    className='text-muted-foreground w-fit'
+                    onClick={() => setNotesOpen(true)}
+                  >
+                    <Icons.add />
+                    Add note
+                  </Button>
+                )}
                 <div className='flex justify-end gap-2'>
                   <Button
                     type='button'
@@ -1011,7 +1044,15 @@ export default function NewExpensePage({
             </CardContent>
           </Card>
           <EvidencePane
-            className={cn(activePane !== 'evidence' && 'hidden md:flex')}
+            // Sticky and viewport-bound on md+: Chrome's PDF viewer fits the
+            // page to the IFRAME'S HEIGHT, so "dominant" measured in width
+            // alone rendered a letterboxed 58%-zoom strip (owner finding,
+            // 2026-08-17). Binding the pane to the viewport and letting the
+            // preview flex-fill it is what actually makes a PDF readable.
+            className={cn(
+              'md:sticky md:top-[4.5rem] md:h-[calc(100dvh-5.5rem)] md:overflow-hidden',
+              activePane !== 'evidence' && 'hidden md:flex'
+            )}
             attachments={attachments}
             onAttachmentsChange={setAttachments}
             hoveredLineId={hoveredLineId}

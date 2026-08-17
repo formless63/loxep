@@ -243,7 +243,7 @@ export function DocumentPreview({
 
   if (mimeType === 'application/pdf') {
     return (
-      <div className={cn('flex h-full min-h-80 w-full flex-col gap-1', className)}>
+      <div className={cn('flex h-full min-h-0 w-full flex-col gap-1', className)}>
         <iframe
           src={servingUrl}
           title={alt}
@@ -255,12 +255,10 @@ export function DocumentPreview({
           // serves with a safe content type, and allow-same-origin had
           // already handed back the only isolation sandboxing provides
           // against your own origin.
-          className='h-full min-h-80 w-full rounded-md border'
+          className='min-h-0 w-full flex-1 rounded-md border'
         />
         <p className='text-muted-foreground text-xs'>
-          Shown in your browser's own PDF viewer — no highlight overlay is possible here (a
-          controlled canvas via pdfjs-dist is designed for this, but is not part of this pass — see
-          the expense-entry design's M5 status note).
+          Browser PDF viewer — detected-line highlights apply to image receipts only.
         </p>
       </div>
     );
