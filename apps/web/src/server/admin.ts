@@ -44,13 +44,15 @@ import {
   createResourceLinksService,
   createSecretsService,
   createSettingsService,
+  createUserPreferencesService,
   type ConnectionCredentialsService,
   type ConnectionsService,
   type EconomicEntitiesService,
   type HealthService,
   type ResourceLinksService,
   type SecretsService,
-  type SettingsService
+  type SettingsService,
+  type UserPreferencesService
 } from '@loxep/domain';
 import {
   createMediaService,
@@ -112,6 +114,8 @@ interface AdminRegistry {
   settings: SettingsService;
   /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
   secrets: SecretsService;
+  /** Durable per-user preferences (loxep-lbj) — `/dashboard`'s pinned-pages persistence, and any future per-user setting. Depends only on `db`, so it is built eagerly like `settings` above. */
+  userPreferences: UserPreferencesService;
   /** `/finance` (loxep-dgf.1): expenses lifecycle and the expense read models. Depends only on `db`, so it is built eagerly like the other domain services above. */
   expenses: ExpensesService;
   expenseReports: ExpenseReports;
@@ -411,6 +415,7 @@ function buildRegistry(): AdminRegistry {
     connections: createConnectionsService({ db: handle.db, keyring: config.keyring }),
     health: createHealthService({ db: handle.db }),
     settings: createSettingsService({ db: handle.db }),
+    userPreferences: createUserPreferencesService({ db: handle.db }),
     secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
     expenses: createExpensesService({ db: handle.db }),
     expenseReports: createExpenseReports({ db: handle.db }),
@@ -540,6 +545,11 @@ export function getFiscalPeriodsService(): FiscalPeriodsService {
 /** Trial balance and the other ledger read models (`/finance/books`), loxep-cmo. */
 export function getLedgerReports(): LedgerReports {
   return getAdminServices().ledgerReports;
+}
+
+/** Durable per-user preferences (loxep-lbj) — `dashboard.pinned_pages` and any future per-user setting. */
+export function getUserPreferencesService(): UserPreferencesService {
+  return getAdminServices().userPreferences;
 }
 
 /** Managed domains, desired DNS records, and the transactional-enqueue intent path (`/infrastructure/domains`). */

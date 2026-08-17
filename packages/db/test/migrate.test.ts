@@ -91,7 +91,7 @@ import {
  *      dropped (a CHECK cannot query another table) and re-expressed as a
  *      service-level invariant in @loxep/infrastructure.
  */
-const MIGRATION_FILE_COUNT = 30;
+const MIGRATION_FILE_COUNT = 31;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");

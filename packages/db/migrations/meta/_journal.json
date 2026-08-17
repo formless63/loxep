@@ -211,6 +211,13 @@
       "when": 1786884722907,
       "tag": "0029_host_addresses",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786972674370,
+      "tag": "0030_user_preferences",
+      "breakpoints": true
     }
   ]
 }

@@ -1,15 +1,22 @@
 import * as React from 'react';
-import { create } from 'zustand';
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
+import type { PinnedPagePreferenceEntry } from '@loxep/domain';
+import { Icons } from '@/components/icons';
+import { fetchPinnedPages, savePinnedPages } from '@/server/preferences-functions';
 import type { NavItem } from '@/types';
 import type { WorkspaceId } from '@/config/workspaces';
 
 /**
- * A user-pinned page for the /dashboard launchpad (loxep-koj).
+ * A user-pinned page for the /dashboard launchpad (loxep-koj, made durable by
+ * loxep-lbj).
  *
- * PROVISIONAL per the bead: localStorage-only for v1, no migration, no
- * server function — revisit only if a per-user server-side prefs mechanism
- * lands later. This is cross-component ephemeral UI state, the one case the
- * frontend standards sanction zustand for (never duplicated server data).
+ * Server-backed via `dashboard.pinned_pages` (`@loxep/domain`'s
+ * `UserPreferencesService`, `@/server/preferences-functions`) — TanStack
+ * Query is the cache, matching the frontend standards' state-ownership rule
+ * ("server data lives in TanStack Query — never duplicated into Zustand").
+ * There is no store left in this module; every export below is either a pure
+ * helper or a hook over `pinnedPagesQuery`.
  */
 export type PinnedPage = {
   title: string;
@@ -18,6 +25,12 @@ export type PinnedPage = {
   workspaceId: WorkspaceId;
 };
 
+/**
+ * loxep-koj's original localStorage key. Read exactly once per page session
+ * (see the module-level merge guard below) to migrate any pre-existing pins
+ * into the server copy, then removed — this constant only still exists for
+ * that one-time migration and its tests.
+ */
 export const PINNED_PAGES_STORAGE_KEY = 'loxep.dashboard.pinnedPages';
 
 function isPinnedPage(value: unknown): value is PinnedPage {
@@ -58,80 +71,218 @@ export function removePinnedPage(pinned: PinnedPage[], url: string): PinnedPage[
   return pinned.filter((entry) => entry.url !== url);
 }
 
-function readStorage(): PinnedPage[] {
+/**
+ * Pure union of the server's pins with the browser's leftover localStorage
+ * pins, deduped by url — the server copy always wins a conflict (it is the
+ * durable source once this merge has run at all). Used exactly once, by the
+ * one-time migration below.
+ */
+export function mergePinnedPages(server: PinnedPage[], local: PinnedPage[]): PinnedPage[] {
+  const existingUrls = new Set(server.map((entry) => entry.url));
+  const additions = local.filter((entry) => !existingUrls.has(entry.url));
+  return additions.length === 0 ? server : [...server, ...additions];
+}
+
+function readLocalStoragePins(): PinnedPage[] {
   if (typeof window === 'undefined') return [];
   try {
     return parsePinnedPages(window.localStorage.getItem(PINNED_PAGES_STORAGE_KEY));
   } catch {
-    // Private browsing / storage disabled: pins simply don't persist this session.
+    // Private browsing / storage disabled: nothing to migrate this session.
     return [];
   }
 }
 
-function writeStorage(pinned: PinnedPage[]) {
+function clearLocalStoragePins(): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(PINNED_PAGES_STORAGE_KEY, JSON.stringify(pinned));
+    window.localStorage.removeItem(PINNED_PAGES_STORAGE_KEY);
   } catch {
-    // Ignore — see readStorage.
+    // Ignore — see readLocalStoragePins.
   }
 }
 
-type PinnedPagesStore = {
-  pinned: PinnedPage[];
-  hydrated: boolean;
-  /** Loads from localStorage once. Safe to call repeatedly; a no-op after the first. */
-  hydrate: () => void;
-  togglePin: (page: PinnedPage) => void;
-  unpin: (url: string) => void;
-};
-
-export const usePinnedPagesStore = create<PinnedPagesStore>()((set, get) => ({
-  pinned: [],
-  hydrated: false,
-  hydrate: () => {
-    if (get().hydrated) return;
-    set({ pinned: readStorage(), hydrated: true });
-  },
-  // Both mutators fall back to reading storage directly when called before
-  // hydration (e.g. a pin toggle firing before the launchpad's own mount
-  // effect runs) — otherwise they would silently overwrite an
-  // already-persisted list with a single-item one.
-  togglePin: (page) =>
-    set((state) => {
-      const base = state.hydrated ? state.pinned : readStorage();
-      const pinned = togglePinnedPage(base, page);
-      writeStorage(pinned);
-      return { pinned, hydrated: true };
-    }),
-  unpin: (url) =>
-    set((state) => {
-      const base = state.hydrated ? state.pinned : readStorage();
-      const pinned = removePinnedPage(base, url);
-      writeStorage(pinned);
-      return { pinned, hydrated: true };
-    })
-}));
-
 /**
- * Hydrates from localStorage on first client mount and returns the live
- * pinned list. SSR renders an empty list — the same "empty until mounted"
- * pattern the notification bell's `lastSeenAt` uses — so there is no
- * hydration mismatch, just a one-frame update after mount.
+ * `@loxep/domain`'s `pinnedPageSchema` deliberately keeps `icon`/`workspaceId`
+ * as plain strings (see that schema's own doc comment) — closing them to
+ * `NavItem['icon']`/`WorkspaceId` would require the domain package to depend
+ * on `apps/web`'s icon registry and workspace config. This is the one place
+ * that narrows a server DTO back to the client's typed shape: an icon key
+ * that no longer resolves in `Icons` degrades to `undefined` (every consumer
+ * already falls back to a default icon for a falsy `icon`), and a
+ * `workspaceId` is passed through as-is — `workspaceLabel()` already falls
+ * back to the raw id for one that no longer matches a configured workspace.
  */
-export function usePinnedPages(): PinnedPage[] {
-  const hydrate = usePinnedPagesStore((state) => state.hydrate);
-  React.useEffect(() => {
-    hydrate();
-  }, [hydrate]);
-  return usePinnedPagesStore((state) => state.pinned);
+function toPinnedPage(entry: PinnedPagePreferenceEntry): PinnedPage {
+  return {
+    title: entry.title,
+    url: entry.url,
+    icon: entry.icon in Icons ? (entry.icon as NavItem['icon']) : undefined,
+    workspaceId: entry.workspaceId as WorkspaceId
+  };
 }
 
-/** Whether `url` is currently pinned. Triggers hydration on mount, same as `usePinnedPages`. */
-export function useIsPinned(url: string): boolean {
-  const hydrate = usePinnedPagesStore((state) => state.hydrate);
+function toPinnedPages(entries: PinnedPagePreferenceEntry[]): PinnedPage[] {
+  return entries.map(toPinnedPage);
+}
+
+/**
+ * What the server accepts back — `icon`/`workspaceId` widened to plain
+ * strings, matching `pinnedPageSchema`. `pinnedPageSchema.icon` requires a
+ * non-empty string, so a nav item with no icon of its own (`NavItem.icon` is
+ * optional) falls back to `'page'` — the same default every render site
+ * already uses for a falsy `icon` (`page.icon ? Icons[page.icon] : Icons.page`
+ * in `PinnedNavGroup`) — rather than sending `''` and failing validation.
+ */
+function toPreferenceEntry(page: PinnedPage): PinnedPagePreferenceEntry {
+  return {
+    title: page.title,
+    url: page.url,
+    icon: page.icon ?? 'page',
+    workspaceId: page.workspaceId
+  };
+}
+
+function toPreferenceEntries(pages: PinnedPage[]): PinnedPagePreferenceEntry[] {
+  return pages.map(toPreferenceEntry);
+}
+
+export const pinnedPagesQuery = queryOptions({
+  queryKey: ['preferences', 'pinned-pages'],
+  queryFn: () => fetchPinnedPages().then(toPinnedPages)
+});
+
+/**
+ * Module-scoped, not per-component: every mounted consumer of
+ * `usePinnedPages`/`useIsPinned` runs the same effect, and this flag is what
+ * keeps the migration a genuine ONE-TIME event per page load rather than one
+ * attempt per mounted component (the sidebar renders `NavPinToggle` on every
+ * nav leaf across every workspace). Resets on a full page reload, which is
+ * harmless: by then localStorage has already been cleared by a prior success,
+ * so the next attempt reads an empty list and no-ops.
+ */
+let localMergeState: 'idle' | 'pending' | 'done' = 'idle';
+
+/** Test-only: resets the module-level merge guard between test cases. */
+export function resetPinnedPagesMergeStateForTests(): void {
+  localMergeState = 'idle';
+}
+
+function saveMergedPins(
+  queryClient: QueryClient,
+  merged: PinnedPage[],
+  mutate: (
+    pages: PinnedPage[],
+    options: { onSuccess: (saved: PinnedPage[]) => void; onError: () => void }
+  ) => void
+): void {
+  mutate(merged, {
+    onSuccess: (saved) => {
+      queryClient.setQueryData(pinnedPagesQuery.queryKey, saved);
+      clearLocalStoragePins();
+      localMergeState = 'done';
+    },
+    onError: () => {
+      // Leave localStorage intact — the next mount that observes 'idle' (a
+      // fresh page load) retries.
+      localMergeState = 'idle';
+    }
+  });
+}
+
+/**
+ * The one hook every export below is built on: subscribes to the server
+ * query and, on its first successful resolution this page session, performs
+ * the ONE-TIME migration of any pre-existing localStorage pins.
+ */
+function usePinnedPagesQuery() {
+  const queryClient = useQueryClient();
+  const query = useQuery(pinnedPagesQuery);
+  const mergeMutation = useMutation({
+    mutationFn: (pages: PinnedPage[]) =>
+      savePinnedPages({ data: toPreferenceEntries(pages) }).then(toPinnedPages)
+  });
+  // Effects run after render, so the mutate function is current by the time
+  // the effect body reads it — a ref keeps the effect's own dependency array
+  // limited to what should actually retrigger it (the fetched data), not a
+  // new mutation object identity every render.
+  const mutateRef = React.useRef(mergeMutation.mutate);
+  mutateRef.current = mergeMutation.mutate;
+
   React.useEffect(() => {
-    hydrate();
-  }, [hydrate]);
-  return usePinnedPagesStore((state) => state.pinned.some((entry) => entry.url === url));
+    if (query.data === undefined || localMergeState !== 'idle') return;
+    const local = readLocalStoragePins();
+    if (local.length === 0) {
+      localMergeState = 'done';
+      return;
+    }
+    localMergeState = 'pending';
+    const merged = mergePinnedPages(query.data, local);
+    saveMergedPins(queryClient, merged, mutateRef.current);
+  }, [query.data, queryClient]);
+
+  return query;
+}
+
+/** Hydrates from the server and returns the live pinned list; `[]` until the first fetch resolves. */
+export function usePinnedPages(): PinnedPage[] {
+  const { data } = usePinnedPagesQuery();
+  return data ?? [];
+}
+
+/** Whether `url` is currently pinned. Shares the same query as `usePinnedPages`. */
+export function useIsPinned(url: string): boolean {
+  const { data } = usePinnedPagesQuery();
+  return (data ?? []).some((entry) => entry.url === url);
+}
+
+/**
+ * Optimistic toggle/unpin mutations over the server-backed pin list —
+ * `NavPinToggle` and `PinnedNavGroup`'s replacement for the old
+ * `usePinnedPagesStore((state) => state.togglePin | state.unpin)` zustand
+ * access. The mutation applies the pure helpers above to whatever the query
+ * cache currently holds, writes the result optimistically, and rolls back on
+ * a failed save.
+ */
+export function usePinnedPagesActions(): {
+  togglePin: (page: PinnedPage) => void;
+  unpin: (url: string) => void;
+} {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (pages: PinnedPage[]) =>
+      savePinnedPages({ data: toPreferenceEntries(pages) }).then(toPinnedPages),
+    onMutate: async (pages) => {
+      await queryClient.cancelQueries({ queryKey: pinnedPagesQuery.queryKey });
+      const previous = queryClient.getQueryData<PinnedPage[]>(pinnedPagesQuery.queryKey);
+      queryClient.setQueryData(pinnedPagesQuery.queryKey, pages);
+      return { previous };
+    },
+    onError: (_error, _pages, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(pinnedPagesQuery.queryKey, context.previous);
+      }
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData(pinnedPagesQuery.queryKey, saved);
+    }
+  });
+
+  const togglePin = React.useCallback(
+    (page: PinnedPage) => {
+      const current = queryClient.getQueryData<PinnedPage[]>(pinnedPagesQuery.queryKey) ?? [];
+      mutation.mutate(togglePinnedPage(current, page));
+    },
+    [queryClient, mutation]
+  );
+
+  const unpin = React.useCallback(
+    (url: string) => {
+      const current = queryClient.getQueryData<PinnedPage[]>(pinnedPagesQuery.queryKey) ?? [];
+      mutation.mutate(removePinnedPage(current, url));
+    },
+    [queryClient, mutation]
+  );
+
+  return { togglePin, unpin };
 }

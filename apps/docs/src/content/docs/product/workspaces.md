@@ -253,7 +253,7 @@ Examples include widget position/size, visible table columns, column order, char
 
 Zustand may own the live client editing experience. PostgreSQL should normally own preferences that must survive browser/device changes. TanStack Query remains the owner of server/cache state; Router owns URL state; TanStack Form owns form state.
 
-**Deliberate exception, PROVISIONAL:** the sidebar launchpad's Pinned pages (`loxep-koj`) skip the save/debounce step and stop at Zustand + `localStorage` — no PostgreSQL preference row, no migration, no server function. That is a knowing departure from constraint 6 below, an explicit owner directive for v1 rather than a drift: pins are low-stakes, device-local is an acceptable loss, and the underlying per-user server-side prefs mechanism constraint 6 assumes does not exist yet. Revisit once one does, or once cross-device pin sync is actually requested.
+**Resolved (`loxep-lbj`):** the sidebar launchpad's Pinned pages, originally `localStorage`-only (`loxep-koj`) as a deliberate PROVISIONAL exception to constraint 6 below, are now a durable per-user preference in PostgreSQL (`user_preferences`, the `dashboard.pinned_pages` key), migrated in-app from any pre-existing local pins on first authenticated load.
 
 ## Starter Reference workspace
 

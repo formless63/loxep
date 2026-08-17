@@ -4,8 +4,10 @@ import { ADMIN_EMAIL, ADMIN_STORAGE_STATE, signInWithMagicLink } from './helpers
 /**
  * The /dashboard sidebar launchpad (loxep-koj): the Workspaces group
  * (derived from `config/workspaces.ts`, excluding Dashboard itself and the
- * `/starter` donor reference) and the Pinned group (localStorage-backed,
- * PROVISIONAL per the bead — no server function, no migration).
+ * `/starter` donor reference) and the Pinned group — durable per-user
+ * storage in PostgreSQL (loxep-lbj), replacing loxep-koj's original
+ * localStorage-only persistence. Assertions below are behavior-only (button
+ * roles, visible text); nothing here depends on where a pin is persisted.
  *
  * The admin session is established once via the real magic-link flow and
  * reused through storageState, the same pattern `settings.spec.ts` uses.

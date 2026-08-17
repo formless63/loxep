@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  mergePinnedPages,
   parsePinnedPages,
   removePinnedPage,
   togglePinnedPage,
@@ -59,6 +60,32 @@ describe('togglePinnedPage (loxep-koj)', () => {
   test('is a no-op on the rest of the list', () => {
     const result = togglePinnedPage([marketOverview], financeExpenses);
     expect(result).toEqual([marketOverview, financeExpenses]);
+  });
+});
+
+describe('mergePinnedPages (loxep-lbj)', () => {
+  test('appends local pins the server does not have yet', () => {
+    expect(mergePinnedPages([marketOverview], [financeExpenses])).toEqual([
+      marketOverview,
+      financeExpenses
+    ]);
+  });
+
+  test('the server copy wins a url conflict — local is dropped, not overwritten', () => {
+    const serverVersion: PinnedPage = { ...marketOverview, title: 'Server title' };
+    expect(mergePinnedPages([serverVersion], [marketOverview])).toEqual([serverVersion]);
+  });
+
+  test('an empty local list is a no-op, returning the same server reference', () => {
+    const server = [marketOverview];
+    expect(mergePinnedPages(server, [])).toBe(server);
+  });
+
+  test('an empty server list adopts every local pin', () => {
+    expect(mergePinnedPages([], [marketOverview, financeExpenses])).toEqual([
+      marketOverview,
+      financeExpenses
+    ]);
   });
 });
 

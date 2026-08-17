@@ -7,6 +7,8 @@ export {
   DomainError,
   SettingNotRegisteredError,
   SettingValidationError,
+  UserPreferenceNotRegisteredError,
+  UserPreferenceValidationError,
   SecretCipherError,
   BundleValidationError,
   UnknownPurposeError,
@@ -74,6 +76,27 @@ export {
   wooRateBudgetSetting,
 } from "./settings-defaults.ts";
 export type { GatusPushFactSlug } from "./settings-defaults.ts";
+
+export {
+  createUserPreferencesService,
+  defineUserPreference,
+  findRegisteredUserPreference,
+  registeredUserPreferenceKeys,
+} from "./user-preferences.ts";
+export type {
+  UserPreferenceDefinition,
+  UserPreferencesService,
+} from "./user-preferences.ts";
+
+// Importing this module is what REGISTERS Loxep's shipped user preferences,
+// mirroring the settings-defaults.ts registration comment above.
+export {
+  dashboardPinnedPagesPreference,
+  MAX_PINNED_PAGES,
+  pinnedPageSchema,
+  registeredUserPreferences,
+} from "./user-preferences-defaults.ts";
+export type { PinnedPagePreferenceEntry } from "./user-preferences-defaults.ts";
 
 export {
   PROVIDER_WRITE_POLICY_TIER_DESCRIPTIONS,

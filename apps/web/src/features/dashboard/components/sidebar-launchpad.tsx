@@ -19,7 +19,7 @@ import {
   SidebarMenuItem
 } from '@/components/ui/sidebar';
 import { workspaces } from '@/config/workspaces';
-import { usePinnedPages, usePinnedPagesStore } from '@/hooks/use-pinned-pages';
+import { usePinnedPages, usePinnedPagesActions } from '@/hooks/use-pinned-pages';
 
 /**
  * Every workspace the launchpad can jump to, in `workspaces` order. Today
@@ -73,7 +73,7 @@ function workspaceLabel(workspaceId: string): string {
 
 export function PinnedNavGroup() {
   const pinned = usePinnedPages();
-  const unpin = usePinnedPagesStore((state) => state.unpin);
+  const { unpin } = usePinnedPagesActions();
 
   return (
     <SidebarGroup className='py-0'>

@@ -20,6 +20,12 @@ export class SettingNotRegisteredError extends DomainError {}
 /** A stored/incoming setting value failed its registered Zod schema. */
 export class SettingValidationError extends DomainError {}
 
+/** A user-preference definition was not created through defineUserPreference(). */
+export class UserPreferenceNotRegisteredError extends DomainError {}
+
+/** A stored/incoming user-preference value failed its registered Zod schema. */
+export class UserPreferenceValidationError extends DomainError {}
+
 /**
  * Encryption/decryption failure: unknown key version, or ciphertext / auth
  * tag / AAD that fails authentication. Never carries material.

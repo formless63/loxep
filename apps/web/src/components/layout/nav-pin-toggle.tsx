@@ -1,6 +1,6 @@
 import { Icons } from '@/components/icons';
 import { SidebarMenuAction } from '@/components/ui/sidebar';
-import { useIsPinned, usePinnedPagesStore, type PinnedPage } from '@/hooks/use-pinned-pages';
+import { useIsPinned, usePinnedPagesActions, type PinnedPage } from '@/hooks/use-pinned-pages';
 
 /**
  * The pin/unpin affordance rendered on every leaf sidebar nav item, across
@@ -15,7 +15,7 @@ import { useIsPinned, usePinnedPagesStore, type PinnedPage } from '@/hooks/use-p
  */
 export function NavPinToggle({ page }: { page: PinnedPage }) {
   const pinned = useIsPinned(page.url);
-  const togglePin = usePinnedPagesStore((state) => state.togglePin);
+  const { togglePin } = usePinnedPagesActions();
 
   return (
     <SidebarMenuAction

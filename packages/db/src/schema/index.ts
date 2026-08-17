@@ -27,3 +27,4 @@ export * from "./projects.ts";
 export * from "./infrastructure.ts";
 export * from "./health.ts";
 export * from "./documents.ts";
+export * from "./preferences.ts";

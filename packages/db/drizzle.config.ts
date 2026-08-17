@@ -36,5 +36,6 @@ export default defineConfig({
     "./src/schema/infrastructure.ts",
     "./src/schema/health.ts",
     "./src/schema/documents.ts",
+    "./src/schema/preferences.ts",
   ],
 });
