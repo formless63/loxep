@@ -38,9 +38,9 @@ describe('PROVIDER_BRAND_ICONS (loxep-2xk)', () => {
     const markless = integrationServices
       .filter((service) => PROVIDER_BRAND_ICONS[service.id] === null)
       .map((service) => service.id)
-      .sort();
+      .toSorted();
     expect(markless).toEqual(
-      ['beszel', 'dockhand', 'gatus', 'purelymail', 'reverb', 'termix'].sort()
+      ['beszel', 'dockhand', 'gatus', 'purelymail', 'reverb', 'termix'].toSorted()
     );
   });
 });

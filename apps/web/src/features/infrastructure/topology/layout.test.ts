@@ -39,6 +39,9 @@ const edges: TopologyLayoutEdge[] = [
   { sourceNodeId: 'tool:beszel', targetNodeId: 'hosting_target:origin' } // watched_by, adjacent
 ];
 
+const sortById = <T extends { id: string }>(list: T[]): T[] =>
+  list.toSorted((a, b) => a.id.localeCompare(b.id));
+
 describe('computeTopologyLayout', () => {
   test('assigns every node the fixed rank for its kind', () => {
     const positions = computeTopologyLayout(nodes, edges);
@@ -65,10 +68,9 @@ describe('computeTopologyLayout', () => {
     const second = computeTopologyLayout(
       // Fresh array/object instances with the same content — determinism
       // must not depend on object identity or input array order.
-      [...nodes].reverse().map((node) => ({ ...node })),
-      [...edges].reverse().map((edge) => ({ ...edge }))
+      nodes.toReversed().map((node) => ({ ...node })),
+      edges.toReversed().map((edge) => ({ ...edge }))
     );
-    const sortById = (list: typeof first) => [...list].sort((a, b) => a.id.localeCompare(b.id));
     expect(sortById(second)).toEqual(sortById(first));
   });
 
@@ -81,8 +83,8 @@ describe('computeTopologyLayout', () => {
       byRank.set(position.rank, list);
     }
     for (const [, orders] of byRank) {
-      expect([...orders].sort((a, b) => a - b)).toEqual(
-        orders.map((_, index) => index).sort((a, b) => a - b)
+      expect(orders.toSorted((a, b) => a - b)).toEqual(
+        orders.map((_, index) => index).toSorted((a, b) => a - b)
       );
     }
   });

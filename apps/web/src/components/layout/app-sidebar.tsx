@@ -41,13 +41,24 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarRail
+  SidebarRail,
+  useSidebar
 } from '@/components/ui/sidebar';
 
 export default function AppSidebar() {
   const { pathname } = useLocation();
   const { isOpen } = useMediaQuery();
+  const { isMobile, setOpenMobile } = useSidebar();
   const router = useRouter();
+  // On a phone the sidebar is a Sheet overlaying the page; navigating must
+  // dismiss it, or the destination renders underneath a still-open menu
+  // (loxep-0g4 W5's finding). Keyed on the pathname rather than per-link
+  // onClick so every navigation path — nav link, workspace switcher,
+  // command palette — dismisses it. No-op on desktop.
+  React.useEffect(() => {
+    if (isMobile) setOpenMobile(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- close on route change only
+  }, [pathname]);
   const { auth } = useRouteContext({ from: '__root__' });
   const activeWorkspace = getWorkspaceForPath(pathname);
   const filteredGroups = useFilteredNavGroups(activeWorkspace.navGroups);

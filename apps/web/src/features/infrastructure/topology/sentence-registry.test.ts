@@ -29,7 +29,7 @@ describe('EDGE_SENTENCE_REGISTRY totality', () => {
   });
 
   test('the registry has no keys beyond the declared edge kinds', () => {
-    expect(Object.keys(EDGE_SENTENCE_REGISTRY).sort()).toEqual([...TOPOLOGY_EDGE_KINDS].sort());
+    expect(Object.keys(EDGE_SENTENCE_REGISTRY).toSorted()).toEqual(TOPOLOGY_EDGE_KINDS.toSorted());
   });
 
   test('every edge kind renders a non-empty sentence with real names substituted', () => {

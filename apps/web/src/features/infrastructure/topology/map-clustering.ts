@@ -51,7 +51,7 @@ export interface TopologyMapData {
 }
 
 function sortTargets(targets: MapClusterTarget[]): MapClusterTarget[] {
-  return [...targets].sort(
+  return targets.toSorted(
     (a, b) => a.name.localeCompare(b.name) || a.nodeId.localeCompare(b.nodeId)
   );
 }
@@ -116,7 +116,7 @@ export function clusterTopologyMap(
 
   const clusters = [...clustersByKey.values()]
     .map((cluster) => ({ ...cluster, targets: sortTargets(cluster.targets) }))
-    .sort((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
+    .toSorted((a, b) => a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
 
   unplaced.sort((a, b) => a.name.localeCompare(b.name) || a.nodeId.localeCompare(b.nodeId));
 

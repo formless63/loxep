@@ -53,8 +53,8 @@ describe('buildInfrastructureTopology — node assembly', () => {
     );
 
     expect(dto.readAt).toBe(READ_AT.toISOString());
-    expect(dto.nodes.map((n) => n.id).sort()).toEqual(
-      ['connection:conn-1', 'domain:domain-1', 'hosting_target:target-1'].sort()
+    expect(dto.nodes.map((n) => n.id).toSorted()).toEqual(
+      ['connection:conn-1', 'domain:domain-1', 'hosting_target:target-1'].toSorted()
     );
     const target = dto.nodes.find((n) => n.id === 'hosting_target:target-1')!;
     expect(target.href).toEqual({
@@ -246,7 +246,7 @@ describe('buildInfrastructureTopology — edge assembly, one per design table ro
   test('emits exactly one edge of every kind the fixture exercises, each with a sentence', () => {
     const dto = buildInfrastructureTopology(fixture);
     const kindsPresent = new Set(dto.edges.map((e) => e.kind));
-    expect([...kindsPresent].sort()).toEqual([...TOPOLOGY_EDGE_KINDS].sort());
+    expect([...kindsPresent].toSorted()).toEqual(TOPOLOGY_EDGE_KINDS.toSorted());
     for (const edge of dto.edges) {
       expect(edge.sentence.length).toBeGreaterThan(0);
     }

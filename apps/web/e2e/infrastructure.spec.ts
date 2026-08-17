@@ -717,11 +717,12 @@ test('topology page renders the Graph/Map tabs, the legend stamp, and a connecti
   // The seeded Cloudflare connection renders as a graph node.
   await expect(main.getByText(connectionName)).toBeVisible();
 
-  // Switch to the Map tab — with no hosting targets in this harness, the
-  // honest state is either the empty SVG map or the "every target
-  // resolves" empty state naming zero unplaced; either way the Unplaced
-  // panel and the map svg must render, never a blank tab.
+  // Switch to the Map tab — the map svg and the Unplaced panel must render,
+  // never a blank tab. The Unplaced COUNT is deliberately not pinned:
+  // earlier specs in this suite create hosting targets without a
+  // provider/region (which honestly land in Unplaced), so a fixed count is
+  // suite-order-dependent (loxep-0g4 W5's finding).
   await main.getByRole('tab', { name: 'Map' }).click();
   await expect(main.getByRole('img', { name: /Hosting target locations/ })).toBeVisible();
-  await expect(main.getByText('Unplaced (0)', { exact: true })).toBeVisible();
+  await expect(main.getByText(/^Unplaced \(\d+\)$/)).toBeVisible();
 });

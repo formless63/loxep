@@ -216,7 +216,7 @@ function fullDomainName(domainName: string, subdomain: string | null): string {
 }
 
 function sortNodesByName(nodes: TopologyNodeDto[]): TopologyNodeDto[] {
-  return [...nodes].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return nodes.toSorted((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
 }
 
 /** PURE, no db, no fetch — see this file's module doc for why this is separated from the handler. */

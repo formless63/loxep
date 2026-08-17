@@ -182,6 +182,11 @@ test.describe('authenticated mobile flows', () => {
     if (providerBefore === null) {
       throw new Error('row cells not visible before scrolling');
     }
+    const accountCell = row.getByText(name, { exact: true }).first();
+    const accountBefore = await accountCell.boundingBox();
+    if (accountBefore === null) {
+      throw new Error('pinned account cell not visible before scrolling');
+    }
 
     await viewport.evaluate((el) => {
       el.scrollLeft = el.scrollWidth;
@@ -193,28 +198,18 @@ test.describe('authenticated mobile flows', () => {
     }
     expect(providerAfter.x).toBeLessThan(providerBefore.x);
 
-    // FOUND (not fixed here — the root cause sits in `data-table.tsx`'s
-    // outer Radix `ScrollArea` wrapping the base `Table` primitive's OWN
-    // built-in `[data-slot="table-container"]` `overflow-x-auto` scroller,
-    // neither of which is one of this wave's four permitted W2 mechanism
-    // files): rule M2.2's first-column pin (`useDataTable`'s mobile
-    // `columnPinning.start` override, verified correct at the hook/style
-    // level — `getCommonPinningStyles` DOES emit `position: sticky; left:
-    // 0px` on the Account `<td>`) does not actually stay visually fixed when
-    // scrolled. Two NESTED horizontal-scroll containers exist for the same
-    // table (the donor `Table` component's own `table-container` div, inside
-    // `DataTable`'s additional `ScrollArea`); `position: sticky` only
-    // counteracts scrolling of its OWN nearest scrolling ancestor
-    // (`table-container`), so scrolling the OUTER, user-visible one (the one
-    // with the actual `ScrollBar`) carries the "pinned" cell along with
-    // everything else — confirmed by measuring the Account cell's
-    // `boundingBox()` shift by the same ~520px as an ordinary column when
-    // only the outer container's `scrollLeft` is moved. This is the mobile
-    // pin's first real browser-rendered verification (`loxep-45k`'s own
-    // status note describes the mechanism only at the hook/style level); the
-    // apparent fix (drop the redundant outer `ScrollArea`, or make the inner
-    // `table-container` non-scrolling) touches a primitive shared by 52+
-    // tables app-wide, well beyond this wave's mobile-QA-only scope.
+    // Rule M2.2, browser-verified: the pinned first data column (Account)
+    // must STAY PUT while unpinned columns scroll underneath it. This
+    // assertion caught a real defect once — two nested horizontal scrollers
+    // (the donor Table's own container inside DataTable's ScrollArea) meant
+    // sticky cells slid with the outer, user-visible scroller; DataTable now
+    // collapses the inner scroller so the ScrollArea viewport is the one
+    // scroll ancestor sticky positions against.
+    const accountAfter = await accountCell.boundingBox();
+    if (accountAfter === null) {
+      throw new Error('pinned account cell not visible after scrolling');
+    }
+    expect(Math.abs(accountAfter.x - accountBefore.x)).toBeLessThanOrEqual(2);
 
     // The row action trigger (`size='icon-sm'`) carries a mobile-only
     // invisible `::after` hit-box (`after:-inset-1`, `md:after:hidden`) that
