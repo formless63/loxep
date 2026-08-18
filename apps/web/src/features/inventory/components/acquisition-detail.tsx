@@ -42,6 +42,26 @@ import {
   type CostAllocationBasis
 } from '@/features/inventory/constants';
 
+/**
+ * `acquisition_opportunity_links.link_kind` (loxep-759) — closed, `CHECK`ed
+ * (`OPPORTUNITY_LINK_KINDS`, `packages/db/src/schema/inventory.ts`): a
+ * generic `.replace(/_/g, ' ')` badge could not distinguish `evaluated_against`
+ * from `comparable`, even though the schema doc is explicit that they are
+ * different claims about causation — `sourced_from` means the observation
+ * drove the purchase, `evaluated_against` means we priced our decision using
+ * it, `comparable` means it is a reference point found later, unrelated to
+ * why we bought.
+ */
+const OPPORTUNITY_LINK_KIND_LABELS: Record<string, string> = {
+  sourced_from: 'Sourced from',
+  evaluated_against: 'Priced against',
+  comparable: 'Comparable (found later)'
+};
+
+function opportunityLinkKindLabel(kind: string): string {
+  return OPPORTUNITY_LINK_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className='flex flex-col gap-0.5'>
@@ -111,6 +131,8 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
       <QueryErrorAlert error={error} title='Could not load acquisition' onRetry={() => refetch()} />
     );
   }
+
+  const itemById = new Map(data.items.map((item) => [item.id, item]));
 
   return (
     <div className='flex flex-col gap-4'>
@@ -197,12 +219,14 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
       {data.sourcedFrom.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className='text-base'>Sourced from /market</CardTitle>
+            <CardTitle className='text-base'>/market relationships</CardTitle>
           </CardHeader>
           <CardContent className='flex flex-col gap-2'>
             {data.sourcedFrom.map((link) => (
               <div key={link.id} className='flex flex-wrap items-center gap-2 text-sm'>
-                <Badge variant='secondary'>{link.linkKind.replace(/_/g, ' ')}</Badge>
+                <Badge variant={link.linkKind === 'sourced_from' ? 'secondary' : 'outline'}>
+                  {opportunityLinkKindLabel(link.linkKind)}
+                </Badge>
                 {link.marketplaceItemId ? (
                   <Link
                     to='/market/items/$itemId'
@@ -217,6 +241,11 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
                 {link.scoreAtLink && (
                   <span className='text-muted-foreground'>
                     score {formatScore(Number(link.scoreAtLink))} at link time
+                  </span>
+                )}
+                {link.targetPriceAmount && link.targetCurrency && (
+                  <span className='text-muted-foreground'>
+                    target {formatMoney(link.targetPriceAmount, link.targetCurrency)} at link time
                   </span>
                 )}
                 <span className='text-muted-foreground text-xs'>
@@ -287,28 +316,57 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
                   <TableHead>Type</TableHead>
                   <TableHead>Class</TableHead>
                   <TableHead>Scope</TableHead>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Incurred</TableHead>
                   <TableHead className='text-right'>Amount</TableHead>
                   <TableHead>Capitalized</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.costs.map((cost) => (
-                  <TableRow key={cost.id}>
-                    <TableCell>{cost.costType}</TableCell>
-                    <TableCell className='text-muted-foreground'>{cost.costClass}</TableCell>
-                    <TableCell className='text-muted-foreground'>{cost.costScope}</TableCell>
-                    <TableCell className='text-right tabular-nums'>
-                      {formatMoney(cost.amount, cost.currency)}
-                    </TableCell>
-                    <TableCell>
-                      {cost.capitalize ? (
-                        <Badge variant='secondary'>Capitalized</Badge>
-                      ) : (
-                        <Badge variant='outline'>Not capitalized</Badge>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {data.costs.map((cost) => {
+                  const item = cost.inventoryItemId
+                    ? itemById.get(cost.inventoryItemId)
+                    : undefined;
+                  return (
+                    <TableRow key={cost.id}>
+                      <TableCell>
+                        {cost.costType}
+                        {cost.description && (
+                          <span className='text-muted-foreground block text-xs'>
+                            {cost.description}
+                          </span>
+                        )}
+                        {item && (
+                          <Link
+                            to='/inventory/stock/$id'
+                            params={{ id: item.id }}
+                            className='text-muted-foreground block text-xs hover:underline'
+                          >
+                            {item.itemCode}
+                          </Link>
+                        )}
+                      </TableCell>
+                      <TableCell className='text-muted-foreground'>{cost.costClass}</TableCell>
+                      <TableCell className='text-muted-foreground'>{cost.costScope}</TableCell>
+                      <TableCell className='text-muted-foreground'>
+                        {cost.vendorName ?? '—'}
+                      </TableCell>
+                      <TableCell className='text-muted-foreground'>
+                        {cost.incurredAt ? formatDate(cost.incurredAt) : '—'}
+                      </TableCell>
+                      <TableCell className='text-right tabular-nums'>
+                        {formatMoney(cost.amount, cost.currency)}
+                      </TableCell>
+                      <TableCell>
+                        {cost.capitalize ? (
+                          <Badge variant='secondary'>Capitalized</Badge>
+                        ) : (
+                          <Badge variant='outline'>Not capitalized</Badge>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

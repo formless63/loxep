@@ -249,6 +249,7 @@ Notes:
 - `zone_nameservers text[]` is one of the few array columns in the schema. It is justified: the value is an ordered, small, opaque-to-Loxep list displayed verbatim for the operator to paste, never joined or filtered on. A child table would add a join for no query.
 - `provider_zone_status` retains the provider's own status string verbatim, the same evidence-preserving role `orders.provider_status_raw` plays. `state` is Loxep's interpretation; this is what the provider actually said.
 - **Health is orthogonal to state** — `last_error_at`, `last_error_code`, `consecutive_errors`, `drift_detected_at`. See below.
+- **Write-once until `loxep-4xo` (2026-08-18).** `updateManagedDomainIntent` (`apps/web/src/server/infrastructure-functions.ts`) existed and was tested but had no importer anywhere — apex retarget, proxy flags, `mail_enabled`, `registrar`, and `notes` all required direct SQL. `/infrastructure/domains/$name` now has an "Edit…" affordance (a focused dialog over exactly this function's fields, not `new-domain-form.tsx`'s create-only wizard reused — that wizard's `name`/`dns_connection_id` fields have no place in an edit, and it has no `notes` field at all). `notes` itself was write-only from the UI's own perspective before this bead too: the column existed and `createManagedDomainInput`/`updateManagedDomainIntentInput` both accepted it, but no read DTO (`ManagedDomainDto`/`ManagedDomainDetailDto`) ever returned it back to the client.
 
 ### `dns_records`
 
@@ -482,6 +483,8 @@ check(kind in ('mailbox','alias','catchall'))
   *Done at implementation time (loxep-lmy.2), and the refusal paid for itself.* The verified seven-record Purelymail set is in this page's [implementation-status header](#milestone-2-mail-hosting-loxep-lmy2), and three of its properties would have been guessed wrong: three DKIM keys rather than one, a DMARC `CNAME` rather than a `TXT` policy, and an ownership code scoped to the **account** rather than the domain. The set itself lives in `packages/integrations/purelymail/src/records.ts`, not in any Loxep table — a second mail provider supplies its own.
 
 **Implemented shape of the verification columns (loxep-lmy.2).** The provider offers no "ownership verified" flag, so the reconciler interprets rather than reads one: `provider_added_at` records that `addDomain` succeeded, and `ownership_verified_at` records that a subsequent read-back listed the domain. `verify_attempts` / `last_verify_error` / `last_verify_at` count only **real attempts** — a run stopped by the delegation gate makes no provider call and therefore increments nothing, which is what keeps the counter meaningful as a signal that something is actually wrong.
+
+**`mailbox_templates` had a service (`MailboxTemplatesService`) since this milestone but no `apps/web` accessor until `loxep-4xo` (2026-08-18).** `applyDefaultMailboxTemplate` applied a template nobody could see, list, or author. Now wired: `admin.ts`'s `getMailboxTemplatesService`, and a READ-ONLY "View templates" dialog on the domain detail page's Mail panel (name, default flag, entries). Authoring a template through the UI is still not built — `MailboxTemplatesService.create` takes a whole template in one call, but a legible multi-entry editor is real form work, left for a follow-up.
 
 ### `provider_operations`
 

@@ -23,6 +23,14 @@ export const settingsNavGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['g', 'j'],
         items: []
+      },
+      {
+        title: 'Audit log',
+        url: '/settings/audit',
+        icon: 'clock',
+        isActive: false,
+        shortcut: ['g', 'l'],
+        items: []
       }
     ]
   },

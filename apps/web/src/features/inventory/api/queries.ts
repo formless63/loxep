@@ -6,6 +6,7 @@ import {
   fetchInventoryItems,
   fetchInventoryLocations,
   fetchInventoryMovements,
+  fetchInventoryMovementTrend,
   fetchInventoryProfitability,
   fetchMarketItemAcquisitionLinks,
   fetchShipmentsForOrder
@@ -45,6 +46,12 @@ export const inventoryMovementsQuery = (filter: MovementFilterParams) =>
     queryKey: ['inventory', 'movements', filter],
     queryFn: () => fetchInventoryMovements({ data: filter })
   });
+
+/** `/inventory/movements`'s stacked-by-kind trend (loxep-8e2, priority 1) — see `fetchInventoryMovementTrend`'s doc for the 90-day bound. */
+export const inventoryMovementTrendQuery = queryOptions({
+  queryKey: ['inventory', 'movements', 'trend'],
+  queryFn: () => fetchInventoryMovementTrend()
+});
 
 export interface AcquisitionFilterParams {
   status?: string;

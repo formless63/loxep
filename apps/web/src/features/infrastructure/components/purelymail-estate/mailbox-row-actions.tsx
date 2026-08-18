@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import TypedConfirmDialog from '@/components/ui/typed-confirm-dialog';
 import { toastError } from '@/lib/errors';
 import { estateConnectionSummaryQuery } from '@/features/estate/api/queries';
+import { purelymailEstateMailboxesQuery } from '@/features/infrastructure/api/queries';
 import { PROVIDER_WRITE_POLICY_TIER_VALUES } from '@/features/settings/constants';
 import { deletePurelymailMailboxNow } from '@/server/purelymail-estate-functions';
 import type { PurelymailMailboxAdminActionDto } from '@/server/purelymail-estate-functions';
@@ -24,6 +25,13 @@ const ACCESS_AFFECTING_RANK = PROVIDER_WRITE_POLICY_TIER_VALUES.indexOf('access_
  * with the flip named, before any click — reusing the SAME
  * `estateConnectionSummaryQuery` the page header already fetches, so this
  * never surprises an operator with a post-click refusal.
+ *
+ * loxep-4xo fix: the invalidation below used to spell the query key by hand
+ * as `['infrastructure', 'purelymail', ...]` — one segment off from
+ * `purelymailEstateMailboxesQuery`'s actual `'purelymail-estate'` key, so a
+ * successful delete never invalidated the list that renders it (the row
+ * only cleared on an unrelated refetch). Now invalidates the query's own
+ * `.queryKey` directly.
  */
 export function PurelymailMailboxRowActions({
   connectionId,
@@ -59,7 +67,7 @@ export function PurelymailMailboxRowActions({
         );
       }
       await queryClient.invalidateQueries({
-        queryKey: ['infrastructure', 'purelymail', connectionId, 'mailboxes']
+        queryKey: purelymailEstateMailboxesQuery(connectionId).queryKey
       });
     },
     onError: (error) => toastError(error, `Failed to delete ${address}`)

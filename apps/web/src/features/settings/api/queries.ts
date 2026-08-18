@@ -20,6 +20,7 @@ import {
   fetchStorageBackends,
   fetchUsers
 } from '@/server/admin-functions';
+import { fetchAuditEvents } from '@/server/audit-functions';
 import { fetchEbayCallbackUrl, fetchEbayKeysetStatus } from '@/server/ebay-oauth';
 import { fetchEtsyCallbackUrl, fetchEtsyKeysetStatus } from '@/server/etsy-oauth';
 import {
@@ -193,3 +194,21 @@ export const notificationDeliveriesQuery = queryOptions({
   queryFn: () => fetchNotificationDeliveries(),
   refetchInterval: 15_000
 });
+
+/** `/settings/audit`'s server-side filters (loxep-161) — pushed into `fetchAuditEvents`, never applied client-side over a full fetch (this ledger grows forever). */
+export interface AuditEventsFilterParams {
+  actorUserId?: string;
+  resourceType?: string;
+  resourceId?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export const auditEventsQuery = (filter: AuditEventsFilterParams) =>
+  queryOptions({
+    queryKey: ['settings', 'audit', filter],
+    queryFn: () => fetchAuditEvents({ data: filter })
+  });

@@ -12,6 +12,8 @@ import {
   itemStatusOptions,
   itemStatusTone
 } from '@/features/inventory/constants';
+import { sumMoneyBy } from '@/lib/aggregate';
+import { formatMoney } from '@/lib/format';
 
 const CARD_LINK_CLASS =
   'block rounded-xl outline-none focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-[3px] focus-visible:ring-offset-2';
@@ -71,6 +73,39 @@ function InventoryOverview() {
     (acquisition) => acquisition.costAllocationStatus !== 'final'
   ).length;
 
+  /**
+   * "Value on shelves right now" (loxep-759). Zero new query:
+   * `landedCostAmount` / `estimatedValueAmount` / `currency` /
+   * `quantityOnHand` are already on every row `inventoryItemsQuery({})`
+   * fetches above for the "Stock rows"/"Intake pending review" tiles.
+   *
+   * "On shelves" = actually holding units, per the domain rule that
+   * quantity is the authority and `status` is only a convenience label
+   * (`packages/db/src/schema/inventory.ts`'s `ITEM_STATUSES` doc) — a
+   * `written_off`/`archived`/`depleted` row with zero `quantityOnHand`
+   * contributes nothing to shelf value even though its cost row still
+   * exists.
+   *
+   * Grouped by currency via `sumMoneyBy` — money is NEVER summed across
+   * currencies, so a multi-currency shelf renders one total per currency
+   * instead of one meaningless combined figure.
+   */
+  const onShelfItems = (items ?? []).filter((item) => Number(item.quantityOnHand) > 0);
+  const shelfCostByCurrency = sumMoneyBy(
+    onShelfItems,
+    (item) => item.landedCostAmount,
+    (item) => item.currency
+  );
+  // `estimatedValueAmount` is nullable (a market-value opinion, not a cost)
+  // — shown as a secondary muted line per currency when present, since it
+  // costs nothing extra to surface alongside the authoritative landed-cost
+  // figure.
+  const shelfEstimatedByCurrency = sumMoneyBy(
+    onShelfItems,
+    (item) => item.estimatedValueAmount,
+    (item) => item.currency
+  );
+
   return (
     <InventoryPage
       title='Overview'
@@ -105,6 +140,41 @@ function InventoryOverview() {
           <StatCardBody label='Open lots' value={openLotCount} isPending={acquisitionsPending} />
         </Link>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='text-base'>Value on shelves right now</CardTitle>
+        </CardHeader>
+        <CardContent className='flex flex-col gap-3'>
+          {itemsPending ? (
+            <Skeleton className='h-8 w-32' />
+          ) : shelfCostByCurrency.size === 0 ? (
+            <p className='text-muted-foreground text-sm'>No stock currently on hand.</p>
+          ) : (
+            <div className='flex flex-wrap gap-6'>
+              {[...shelfCostByCurrency].map(([currency, amount]) => (
+                <div key={currency}>
+                  <p className='text-2xl font-semibold tabular-nums'>
+                    {formatMoney(amount, currency)}
+                  </p>
+                  {shelfEstimatedByCurrency.has(currency) && (
+                    <p className='text-muted-foreground text-xs'>
+                      est. value {formatMoney(shelfEstimatedByCurrency.get(currency), currency)}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <p className='text-muted-foreground text-sm'>
+            Landed cost of every row with quantity on hand, one total per currency.{' '}
+            <Link to='/inventory/profitability' className='underline-offset-2 hover:underline'>
+              See aging by days-since-acquired
+            </Link>
+            .
+          </p>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

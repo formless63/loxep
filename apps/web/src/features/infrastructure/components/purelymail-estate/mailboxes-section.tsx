@@ -1,5 +1,7 @@
+import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
+import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/table/data-table';
 import { useDataTable } from '@/hooks/use-data-table';
 import {
@@ -13,6 +15,7 @@ import type {
   PurelymailEstateMailboxesDto
 } from '@/server/purelymail-estate-functions';
 import { purelymailMailboxColumns } from './mailboxes-columns';
+import AddMailboxDialog from './add-mailbox-dialog';
 
 const CLIENT_COLUMNS: ClientColumnSpec<PurelymailEstateMailboxDto>[] = [
   { id: 'address', accessor: (row) => row.address, filterVariant: 'text' }
@@ -53,11 +56,17 @@ function MailboxesTable({
  * paginate at all renders its one call's full result and states the cap —
  * never hides it). The unique fact this page adds: mailboxes that exist in
  * the account but correspond to no Loxep `mailboxes` row.
+ *
+ * "New mailbox…" (loxep-4xo) is the section-level CREATE counterpart to each
+ * row's "Delete…" (`PurelymailMailboxRowActions`) — mounted here, in the
+ * header, rather than per-row, because creating has no existing row to act
+ * on. See `add-mailbox-dialog.tsx` for the write it mounts.
  */
 export default function PurelymailMailboxesSection({ connectionId }: { connectionId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(
     purelymailEstateMailboxesQuery(connectionId)
   );
+  const [addOpen, setAddOpen] = React.useState(false);
 
   return (
     <EstateSection
@@ -70,6 +79,14 @@ export default function PurelymailMailboxesSection({ connectionId }: { connectio
       result={data}
       isEmpty={(value: PurelymailEstateMailboxesDto) => value.addresses.length === 0}
       emptyMessage='This account has no mailboxes yet.'
+      headerAction={
+        <div className='flex items-center gap-2'>
+          <Button size='sm' variant='outline' onClick={() => setAddOpen(true)}>
+            New mailbox…
+          </Button>
+          <AddMailboxDialog connectionId={connectionId} open={addOpen} onOpenChange={setAddOpen} />
+        </div>
+      }
     >
       {(value) => (
         <div className='flex flex-col gap-2'>

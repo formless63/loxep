@@ -26,10 +26,21 @@ export type { ConnectionReferenceCount } from "./errors.ts";
 export { REDACTED, redactJson } from "./redact.ts";
 export type { RedactOptions } from "./redact.ts";
 
-export { createAuditService } from "./audit.ts";
+export {
+  createAuditService,
+  createAuditReader,
+  DEFAULT_AUDIT_PAGE_SIZE,
+  MAX_AUDIT_PAGE_SIZE,
+} from "./audit.ts";
 export type {
   AuditAppendInput,
+  AuditEventRow,
   AuditExecutor,
+  AuditListFilter,
+  AuditListOptions,
+  AuditListResult,
+  AuditReader,
+  AuditReaderExecutor,
   AuditService,
 } from "./audit.ts";
 

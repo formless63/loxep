@@ -6,7 +6,12 @@ import {
   fetchCommerceOverviewReports,
   fetchListingsForInventoryItem
 } from '@/server/commerce-functions';
-import { fetchDuplicateOrderCandidates, fetchOrder, fetchOrders } from '@/server/orders-functions';
+import {
+  fetchDuplicateOrderCandidates,
+  fetchOrder,
+  fetchOrderFeeTrends,
+  fetchOrders
+} from '@/server/orders-functions';
 
 export interface ListingFilterParams {
   status?: string;
@@ -69,4 +74,10 @@ export const orderQuery = (id: string) =>
 export const duplicateOrderCandidatesQuery = queryOptions({
   queryKey: ['commerce', 'orders', 'duplicates'],
   queryFn: () => fetchDuplicateOrderCandidates()
+});
+
+/** `order_fees` (seller-charged, last 90 days) for the `/commerce/overview` take-rate chart (loxep-8e2 item 3). */
+export const orderFeeTrendsQuery = queryOptions({
+  queryKey: ['commerce', 'orders', 'fee-trends'],
+  queryFn: () => fetchOrderFeeTrends()
 });

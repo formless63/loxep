@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { zodValidator } from '@tanstack/zod-adapter';
 import { z } from 'zod';
 import RunsTable from '@/features/infrastructure/components/runs-table';
+import RunsOutcomeChart from '@/features/infrastructure/components/runs-outcome-chart';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 
 const runsSearchSchema = z.object({
@@ -20,7 +21,10 @@ export const Route = createFileRoute('/infrastructure/runs/')({
 function InfrastructureRuns() {
   return (
     <InfrastructurePage title='Reconcile runs' description='What the reconciler did, step by step.'>
-      <RunsTable />
+      <div className='flex flex-col gap-4'>
+        <RunsOutcomeChart />
+        <RunsTable />
+      </div>
     </InfrastructurePage>
   );
 }

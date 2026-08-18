@@ -25,6 +25,7 @@ import BookJournal from '@/features/finance/components/book-journal';
 import BookPeriods from '@/features/finance/components/book-periods';
 import BookStatements from '@/features/finance/components/book-statements';
 import BookTrialBalance from '@/features/finance/components/book-trial-balance';
+import SuspenseTrendCard from '@/features/finance/components/suspense-trend-card';
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -132,6 +133,7 @@ export default function BookDetail({ bookId, isAdmin }: { bookId: string; isAdmi
       <BookAccounts accountingBookId={bookId} isAdmin={isAdmin} />
       <BookStatements accountingBookId={bookId} periods={data.periods} />
       <BookTrialBalance accountingBookId={bookId} />
+      <SuspenseTrendCard accountingBookId={bookId} />
       <BookJournal accountingBookId={bookId} functionalCurrency={data.functionalCurrency} />
 
       <ArchiveBookDialog

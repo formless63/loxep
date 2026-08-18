@@ -28,13 +28,15 @@ import {
 } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
 import { InventoryPage } from '@/features/inventory/components/inventory-page';
-import { inventoryLocationsQuery } from '@/features/inventory/api/queries';
+import { inventoryItemsQuery, inventoryLocationsQuery } from '@/features/inventory/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { locationKindLabel } from '@/features/inventory/constants';
 import {
   AddLocationDialog,
   MoveLocationDialog
 } from '@/features/inventory/components/location-dialogs';
+import { sumMoneyBy } from '@/lib/aggregate';
+import { formatMoney, formatQuantity } from '@/lib/format';
 import type { InventoryLocationDto } from '@/server/inventory-functions';
 
 export const Route = createFileRoute('/inventory/locations')({
@@ -50,8 +52,32 @@ export const Route = createFileRoute('/inventory/locations')({
  */
 function InventoryLocations() {
   const { data, isPending, isError, error, refetch } = useQuery(inventoryLocationsQuery);
+  /**
+   * loxep-759: per-location item count + cost. This IS a new bounded query
+   * on this route, not a free read of another route's cache — a mount of
+   * `/inventory/locations` does not automatically have `/inventory/stock`'s
+   * query data in memory; TanStack Query caches are keyed per `queryKey`,
+   * not shared just because two routes happen to fetch the same shape.
+   *
+   * It reuses `inventoryItemsQuery({})` — the exact `['inventory','items',{}]`
+   * key `/inventory/overview` and an unfiltered `/inventory/stock` both use
+   * — deliberately: on a warm cache (navigated from either of those) this
+   * costs nothing extra; on a cold direct hit to this route it is ONE
+   * additional server round trip, bounded by the same `ITEM_LIST_LIMIT =
+   * 1000` those routes already accept (`inventory-functions.ts`), not an
+   * unbounded new read.
+   */
+  const { data: items } = useQuery(inventoryItemsQuery({}));
   const [addOpen, setAddOpen] = React.useState(false);
   const [moveTarget, setMoveTarget] = React.useState<InventoryLocationDto | null>(null);
+
+  const itemsByLocation = new Map<string, NonNullable<typeof items>>();
+  for (const item of items ?? []) {
+    if (item.locationId === null) continue;
+    const bucket = itemsByLocation.get(item.locationId);
+    if (bucket) bucket.push(item);
+    else itemsByLocation.set(item.locationId, [item]);
+  }
 
   return (
     <InventoryPage
@@ -94,50 +120,70 @@ function InventoryLocations() {
               <TableHead>Kind</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className='text-right'>Items</TableHead>
+              <TableHead className='text-right'>Landed cost</TableHead>
               <TableHead className='w-10' />
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.map((location) => (
-              <TableRow key={location.id}>
-                <TableCell style={{ paddingLeft: `${location.depth * 1.5 + 1}rem` }}>
-                  {location.name}
-                  {location.isDefault && (
-                    <Badge variant='secondary' className='ml-2'>
-                      Default
+            {data.map((location) => {
+              const locationItems = itemsByLocation.get(location.id) ?? [];
+              const costByCurrency = sumMoneyBy(
+                locationItems,
+                (item) => item.landedCostAmount,
+                (item) => item.currency
+              );
+              return (
+                <TableRow key={location.id}>
+                  <TableCell style={{ paddingLeft: `${location.depth * 1.5 + 1}rem` }}>
+                    {location.name}
+                    {location.isDefault && (
+                      <Badge variant='secondary' className='ml-2'>
+                        Default
+                      </Badge>
+                    )}
+                  </TableCell>
+                  <TableCell className='text-muted-foreground'>
+                    {locationKindLabel(location.kind)}
+                  </TableCell>
+                  <TableCell className='text-muted-foreground'>{location.code}</TableCell>
+                  <TableCell>
+                    <Badge variant={location.active ? 'success' : 'outline'}>
+                      {location.active ? 'Active' : 'Inactive'}
                     </Badge>
-                  )}
-                </TableCell>
-                <TableCell className='text-muted-foreground'>
-                  {locationKindLabel(location.kind)}
-                </TableCell>
-                <TableCell className='text-muted-foreground'>{location.code}</TableCell>
-                <TableCell>
-                  <Badge variant={location.active ? 'success' : 'outline'}>
-                    {location.active ? 'Active' : 'Inactive'}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant='ghost'
-                        size='icon'
-                        className='size-8'
-                        aria-label={`Actions for ${location.name}`}
-                      >
-                        <Icons.ellipsis />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align='end'>
-                      <DropdownMenuItem onSelect={() => setMoveTarget(location)}>
-                        Move to parent…
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))}
+                  </TableCell>
+                  <TableCell className='text-right tabular-nums'>
+                    {formatQuantity(locationItems.length)}
+                  </TableCell>
+                  <TableCell className='text-right tabular-nums'>
+                    {costByCurrency.size === 0
+                      ? '—'
+                      : [...costByCurrency]
+                          .map(([currency, amount]) => formatMoney(amount, currency))
+                          .join(', ')}
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant='ghost'
+                          size='icon'
+                          className='size-8'
+                          aria-label={`Actions for ${location.name}`}
+                        >
+                          <Icons.ellipsis />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align='end'>
+                        <DropdownMenuItem onSelect={() => setMoveTarget(location)}>
+                          Move to parent…
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       )}

@@ -989,6 +989,48 @@ export const fetchInventoryMovements = createServerFn({ method: 'GET' })
       .filter((row): row is InventoryMovementListItemDto => row !== null);
   });
 
+export interface InventoryMovementTrendRowDto {
+  movementKind: string;
+  quantity: string;
+  occurredAt: string;
+}
+
+const MOVEMENT_TREND_WINDOW_DAYS = 90;
+
+/**
+ * BOUNDED new read (loxep-8e2, priority 1): "am I receiving faster than
+ * selling, and is shrinkage trending up" needs a genuine calendar trend, not
+ * `fetchInventoryMovements`'s `MOVEMENT_LIST_LIMIT = 500` most-recent-N
+ * across every item — at any real movement volume 500 rows spans hours, not
+ * weeks, so reusing that query's cache would silently mislabel a few hours
+ * of activity as a trend. This reads `inventory_movements` bounded to
+ * `occurred_at >= now() - 90 days` (stated here, not re-derived per caller),
+ * with no additional row cap. It returns bare kind/quantity/day rows rather
+ * than a server-side aggregate so the day+kind bucketing stays a pure,
+ * independently testable client function (`shapeMovementsTrend`), mirroring
+ * `market-functions.ts`'s `shapePriceTrends` split.
+ */
+export const fetchInventoryMovementTrend = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<InventoryMovementTrendRowDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const since = new Date(Date.now() - MOVEMENT_TREND_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+    const rows = await handle.db.query.inventoryMovements.findMany({
+      where: (table, { gte }) => gte(table.occurredAt, since),
+      columns: { movementKind: true, quantity: true, occurredAt: true },
+      orderBy: (table, { asc }) => [asc(table.occurredAt)]
+    });
+
+    return rows.map((row) => ({
+      movementKind: row.movementKind,
+      quantity: row.quantity,
+      occurredAt: iso(row.occurredAt)
+    }));
+  }
+);
+
 /**
  * `createMovementsService({ db }).record(...)` (loxep-wx3, A8) —
  * `record`/`reverse`/`ledgerBalance`/`reconcile` had zero callers: no

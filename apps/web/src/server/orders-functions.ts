@@ -604,6 +604,60 @@ export const setOrderAttribution = createServerFn({ method: 'POST' })
     });
   });
 
+// ---------------------------------------------------------------------------
+// Reads — order fee trend (loxep-8e2 item 3, `/commerce/overview`).
+// ---------------------------------------------------------------------------
+
+/**
+ * Bound: `order_fees.charged_at >= now() - 90 days`. "Did eBay's rate change,
+ * and what is promoted-listing spend costing me?" is a recent-trend question,
+ * not a full-history one, and `order_fees_fee_type_charged_at_idx` already
+ * covers this predicate. Only `fee_direction = 'seller_charge'` rows are
+ * read — `buyer_surcharge` is a pass-through already inside `orders.total`
+ * (never a cost to the seller), so it does not belong in a take-rate/spend
+ * chart. `chargedAt` is filtered not-null at the query level (a fee with no
+ * charge timestamp cannot be placed on a time series) and the row shape is
+ * narrowed to that fact below rather than carrying a nullable field the
+ * client would have to re-check.
+ */
+const ORDER_FEE_TREND_WINDOW_DAYS = 90;
+
+export interface OrderFeeTrendPointDto {
+  feeType: string;
+  currency: string;
+  amount: string;
+  chargedAt: string;
+}
+
+export const fetchOrderFeeTrends = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<OrderFeeTrendPointDto[]> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+
+    const since = new Date(Date.now() - ORDER_FEE_TREND_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const rows = await handle.db.query.orderFees.findMany({
+      where: (table, { and, eq, gte, isNotNull }) =>
+        and(
+          eq(table.feeDirection, 'seller_charge'),
+          isNotNull(table.chargedAt),
+          gte(table.chargedAt, since)
+        ),
+      columns: { feeType: true, currency: true, amount: true, chargedAt: true },
+      orderBy: (table, { asc }) => [asc(table.chargedAt)]
+    });
+
+    return rows
+      .filter((row): row is typeof row & { chargedAt: Date } => row.chargedAt !== null)
+      .map((row) => ({
+        feeType: row.feeType,
+        currency: row.currency,
+        amount: row.amount,
+        chargedAt: iso(row.chargedAt)
+      }));
+  }
+);
+
 export interface DuplicateOrderCandidateDto {
   provider: string;
   sourceAccountKey: string;

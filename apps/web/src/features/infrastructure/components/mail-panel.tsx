@@ -32,6 +32,7 @@ import {
   enableMailForDomain
 } from '@/server/infrastructure-functions';
 import type { MailboxDto, MailStateDto } from '@/server/infrastructure-functions';
+import MailTemplatesDialog from '@/features/infrastructure/components/mail-templates-dialog';
 
 function EnableMailForm({ domainId, domainName }: { domainId: string; domainName: string }) {
   const queryClient = useQueryClient();
@@ -132,6 +133,7 @@ export default function MailPanel({
   mailboxes: MailboxDto[];
 }) {
   const queryClient = useQueryClient();
+  const [templatesOpen, setTemplatesOpen] = React.useState(false);
 
   const templateMutation = useMutation({
     mutationFn: () => applyDefaultMailboxTemplate({ data: { domainId } }),
@@ -192,15 +194,21 @@ export default function MailPanel({
             <div className='flex flex-col gap-2'>
               <div className='flex items-center justify-between'>
                 <h3 className='text-sm font-medium'>Mailboxes</h3>
-                <Button
-                  size='sm'
-                  variant='outline'
-                  disabled={templateMutation.isPending}
-                  onClick={() => templateMutation.mutate()}
-                >
-                  Apply default template
-                </Button>
+                <div className='flex items-center gap-2'>
+                  <Button size='sm' variant='ghost' onClick={() => setTemplatesOpen(true)}>
+                    View templates
+                  </Button>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={templateMutation.isPending}
+                    onClick={() => templateMutation.mutate()}
+                  >
+                    Apply default template
+                  </Button>
+                </div>
               </div>
+              <MailTemplatesDialog open={templatesOpen} onOpenChange={setTemplatesOpen} />
               {mailboxes.length === 0 ? (
                 <p className='text-muted-foreground text-sm'>No mailboxes declared yet.</p>
               ) : (

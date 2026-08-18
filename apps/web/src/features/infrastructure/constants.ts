@@ -25,6 +25,27 @@ export const MANAGED_DOMAIN_STATE_OPTIONS = Object.entries(MANAGED_DOMAIN_STATE_
   ([value, label]) => ({ value, label })
 );
 
+/**
+ * `/infrastructure/overview`'s "Domains by state" `StackedStatusBar` segment
+ * colors — most states share `MANAGED_DOMAIN_STATE_TONE`'s neutral
+ * `secondary` tone (which has no fill of its own), so each provisioning-chain
+ * step gets a distinct `--chart-N` token instead, same convention as
+ * `itemStatusBarColor` (`features/inventory/constants.ts`).
+ */
+const MANAGED_DOMAIN_STATE_BAR_COLORS: Record<string, string> = {
+  draft: 'var(--chart-1)',
+  zone_created: 'var(--chart-2)',
+  awaiting_delegation: 'var(--warning)',
+  zone_active: 'var(--chart-3)',
+  records_synced: 'var(--chart-4)',
+  mail_pending: 'var(--chart-5)',
+  ready: 'var(--success)'
+};
+
+export function managedDomainStateBarColor(state: string): string {
+  return MANAGED_DOMAIN_STATE_BAR_COLORS[state] ?? 'var(--muted-foreground)';
+}
+
 /** `hosting_targets.control_surface` — a Loxep-owned taxonomy of how (or whether) a name can be reached. */
 export const CONTROL_SURFACE_LABELS: Record<string, string> = {
   proxy_node: 'Proxy node',
@@ -98,6 +119,25 @@ export const DRIFT_KIND_TONE: Record<string, Tone> = {
   modified: 'warning',
   unexpected: 'secondary'
 };
+
+/**
+ * `/infrastructure/overview`'s "Unresolved drift by kind" `StackedStatusBar`
+ * segment colors — `missing`/`modified` share `DRIFT_KIND_TONE`'s `warning`
+ * tone but are two different operator actions (create the missing record vs.
+ * reconcile a divergent value), so each gets its own segment color rather
+ * than one shared fill; `unexpected` (no intent row exists) is the most
+ * consequential class and gets `--destructive`, overriding its neutral badge
+ * tone for exactly this bar.
+ */
+const DRIFT_KIND_BAR_COLORS: Record<string, string> = {
+  missing: 'var(--warning)',
+  modified: 'var(--chart-2)',
+  unexpected: 'var(--destructive)'
+};
+
+export function driftKindBarColor(kind: string): string {
+  return DRIFT_KIND_BAR_COLORS[kind] ?? 'var(--muted-foreground)';
+}
 
 /** `reconcile_runs.status`. */
 export const RUN_STATUS_TONE: Record<string, Tone> = {

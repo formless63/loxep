@@ -10,6 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Icons } from '@/components/icons';
 import { formatBytes, formatDateTime } from '@/lib/format';
 import { toastError } from '@/lib/errors';
@@ -23,16 +24,29 @@ function purposeIcon(mimeType: string | null) {
 }
 
 /**
- * Item image gallery (M3, loxep-dgf.3) — `media_links` rows over
- * `@loxep/inventory`'s `InventoryMediaService`, scoped to `purpose:
- * 'gallery'` (condition-evidence/supporting-document photos are not shown
- * here; this is the sale listing's photo set). Mirrors
+ * `media_links.purpose` values for an inventory item (`INVENTORY_ITEM_MEDIA_PURPOSES`,
+ * `packages/db/src/schema/inventory.ts`) — the sale listing's photo set,
+ * plus condition-evidence photos and supporting documents captured at
+ * intake, which were uploaded and stored but had no tab to view them from
+ * (loxep-759).
+ */
+const MEDIA_PURPOSES = [
+  { value: 'gallery', label: 'Photos' },
+  { value: 'condition_evidence', label: 'Condition evidence' },
+  { value: 'supporting_document', label: 'Documents' }
+] as const;
+type MediaPurpose = (typeof MEDIA_PURPOSES)[number]['value'];
+
+/**
+ * Item media gallery (M3, loxep-dgf.3) — `media_links` rows over
+ * `@loxep/inventory`'s `InventoryMediaService`, tabbed by `purpose`. Mirrors
  * `@/features/finance/components/receipt-gallery.tsx`'s shape, plus the
  * simple up/down reorder the design sanctions in place of DnD Kit.
  *
- * **Primary is the FIRST row — a sort, never a flag.** Reordering therefore
- * only ever swaps `sort_order` between two adjacent rows
- * (`reorderInventoryItemMedia`); nothing here ever writes `purpose`.
+ * **Primary is the FIRST row of the `gallery` tab — a sort, never a flag.**
+ * Reordering therefore only ever swaps `sort_order` between two adjacent
+ * rows of the SAME purpose (`reorderInventoryItemMedia`); nothing here ever
+ * writes `purpose` on an existing row.
  */
 export default function ImageGallery({
   inventoryItemId,
@@ -41,6 +55,7 @@ export default function ImageGallery({
   inventoryItemId: string;
   media: ItemMediaDto[];
 }) {
+  const [purpose, setPurpose] = React.useState<MediaPurpose>('gallery');
   const queryClient = useQueryClient();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -48,7 +63,7 @@ export default function ImageGallery({
     queryClient.invalidateQueries({ queryKey: ['inventory', 'item', inventoryItemId] });
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadInventoryImage({ file, inventoryItemId, purpose: 'gallery' }),
+    mutationFn: (file: File) => uploadInventoryImage({ file, inventoryItemId, purpose }),
     onSuccess: () => {
       toast.success('Photo added');
       void invalidate();
@@ -58,7 +73,7 @@ export default function ImageGallery({
 
   const detachMutation = useMutation({
     mutationFn: (mediaObjectId: string) =>
-      detachInventoryItemMedia({ data: { inventoryItemId, mediaObjectId, purpose: 'gallery' } }),
+      detachInventoryItemMedia({ data: { inventoryItemId, mediaObjectId, purpose } }),
     onSuccess: () => {
       toast.success('Photo removed');
       void invalidate();
@@ -71,7 +86,7 @@ export default function ImageGallery({
       reorderInventoryItemMedia({
         data: {
           inventoryItemId,
-          purpose: 'gallery',
+          purpose,
           moves: [
             { mediaObjectId: input.a.mediaObjectId, sortOrder: input.b.sortOrder ?? 0 },
             { mediaObjectId: input.b.mediaObjectId, sortOrder: input.a.sortOrder ?? 0 }
@@ -89,12 +104,23 @@ export default function ImageGallery({
     uploadMutation.mutate(file);
   }
 
-  const gallery = media.filter((item) => item.purpose === 'gallery');
+  const gallery = media.filter((item) => item.purpose === purpose);
 
   return (
     <div className='flex flex-col gap-3'>
-      <div className='flex items-center justify-between'>
-        <h3 className='text-sm font-medium'>Photos</h3>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <Tabs value={purpose} onValueChange={(value) => setPurpose(value as MediaPurpose)}>
+          <TabsList>
+            {MEDIA_PURPOSES.map((option) => (
+              <TabsTrigger key={option.value} value={option.value}>
+                {option.label}
+                <Badge variant='secondary' className='ml-1'>
+                  {media.filter((item) => item.purpose === option.value).length}
+                </Badge>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <div>
           <input
             ref={fileInputRef}
@@ -111,7 +137,7 @@ export default function ImageGallery({
             onClick={() => fileInputRef.current?.click()}
           >
             <Icons.upload />
-            {uploadMutation.isPending ? 'Uploading…' : 'Add photo'}
+            {uploadMutation.isPending ? 'Uploading…' : 'Add file'}
           </Button>
         </div>
       </div>
@@ -122,9 +148,11 @@ export default function ImageGallery({
             <EmptyMedia variant='icon'>
               <Icons.media />
             </EmptyMedia>
-            <EmptyTitle>No photos yet</EmptyTitle>
+            <EmptyTitle>Nothing here yet</EmptyTitle>
             <EmptyDescription>
-              The first photo added becomes the primary listing image.
+              {purpose === 'gallery'
+                ? 'The first photo added becomes the primary listing image.'
+                : 'Nothing has been uploaded under this purpose yet.'}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

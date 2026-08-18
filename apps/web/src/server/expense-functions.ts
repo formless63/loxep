@@ -1268,3 +1268,63 @@ export const fetchUnallocatedExpenses = createServerFn({ method: 'GET' }).handle
     return getExpenseReports().unallocatedExpenses();
   }
 );
+
+// ---------------------------------------------------------------------------
+// Totals (`/finance/overview`, loxep-8e2 item 5) — `expenseTotals`
+// (`@loxep/accounting/reports.ts`) shipped grouped/summed and TESTED, with
+// ZERO callers anywhere in the app before this: the overview page counted
+// operational gaps (missing receipts, unallocated splits) but never rendered
+// a single dollar figure. This is the SAME `getExpenseReports().expenseTotals`
+// call `fetchExpenses`/`fetchMissingReceipts` above already reach through —
+// no new SQL, just three different `grouping`s of one shipped aggregate.
+// ---------------------------------------------------------------------------
+
+const EXPENSE_GROUPING_VALUES = ['month', 'entity', 'category', 'payee'] as const;
+
+export type ExpenseGroupingDto = (typeof EXPENSE_GROUPING_VALUES)[number];
+
+/**
+ * Mirrors `ExpenseFilter` (`@loxep/accounting/reports.ts`) minus `limit` (the
+ * aggregate has no row-count control of its own — it groups, it does not
+ * list) and minus `q` (receipt full-text search has no join in the
+ * aggregate query; see `matchingExpenseIdsForReceiptText`'s own doc for why
+ * that join stays out of `@loxep/accounting`).
+ */
+const expenseTotalsInput = z.strictObject({
+  grouping: z.enum(EXPENSE_GROUPING_VALUES),
+  economicEntityId: z.uuid().nullish(),
+  from: calendarDate.optional(),
+  to: calendarDate.optional(),
+  category: z.string().trim().min(1).optional(),
+  statuses: z.array(z.enum(EXPENSE_STATUS_VALUES)).optional()
+});
+
+/** One `expenseTotals` row: a group (month/entity/category/payee) × currency — every grouped total carries its own currency, per that function's own module doc, so a caller never sums two currencies together. */
+export interface ExpenseTotalRowDto {
+  groupKey: string;
+  currency: string;
+  totalAmount: string;
+  totalTaxAmount: string;
+  expenseCount: number;
+}
+
+export const fetchExpenseTotals = createServerFn({ method: 'GET' })
+  .inputValidator(expenseTotalsInput)
+  .handler(async ({ data }): Promise<ExpenseTotalRowDto[]> => {
+    const { requireSession, getExpenseReports } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getExpenseReports().expenseTotals(data.grouping, {
+      ...(data.economicEntityId !== undefined ? { economicEntityId: data.economicEntityId } : {}),
+      ...(data.from !== undefined ? { from: data.from } : {}),
+      ...(data.to !== undefined ? { to: data.to } : {}),
+      ...(data.category !== undefined ? { category: data.category } : {}),
+      ...(data.statuses !== undefined ? { statuses: data.statuses } : {})
+    });
+    return rows.map((row) => ({
+      groupKey: row.groupKey,
+      currency: row.currency,
+      totalAmount: row.totalAmount,
+      totalTaxAmount: row.totalTaxAmount,
+      expenseCount: row.expenseCount
+    }));
+  });

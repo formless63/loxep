@@ -17,9 +17,10 @@ import {
   TableRow
 } from '@/components/ui/table';
 import { DataTable } from '@/components/ui/table/data-table';
+import { Progress } from '@/components/ui/progress';
 import { Icons } from '@/components/icons';
 import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
-import { sumMoneyBy } from '@/lib/aggregate';
+import { sumMoney, sumMoneyBy } from '@/lib/aggregate';
 import { formatDateTime, formatMoney, formatQuantity } from '@/lib/format';
 import { orderQuery } from '@/features/commerce/api/queries';
 import {
@@ -96,7 +97,57 @@ function LineJoins({ line }: { line: OrderLineDto }) {
   );
 }
 
-function LinesTable({ lines, currency }: { lines: OrderLineDto[]; currency: string }) {
+/**
+ * Per-line shipped quantity (loxep-759): sums `order_fulfillment_lines.quantity`
+ * across every fulfillment record for the order, grouped by `order_line_id` via
+ * `sumMoneyBy` (decimal-safe — `quantity` is `numeric(20,6)`, never JS `number`
+ * arithmetic). A `cancelled` fulfillment record is excluded — the schema doc
+ * for `order_fulfillments` calls it "what the CHANNEL reported as shipped",
+ * and a cancelled record reports nothing that actually shipped.
+ */
+function shippedQuantityByLine(fulfillments: OrderFulfillmentDto[]): Map<string, string> {
+  const shippedLines = fulfillments
+    .filter((fulfillment) => fulfillment.status !== 'cancelled')
+    .flatMap((fulfillment) => fulfillment.lines);
+  return sumMoneyBy(
+    shippedLines,
+    (line) => line.quantity,
+    (line) => line.orderLineId
+  );
+}
+
+/**
+ * "X of Y units shipped" per line, plus a thin `--primary`-filled progress
+ * bar. The percentage below feeds ONLY the bar's width — a UI proportion, not
+ * a stored or compared value — mirroring the `Number(decimalString)`-for-a-
+ * chart-axis exception in Frontend Standards' "Standard formats" section; the
+ * `X of Y` text itself renders the exact decimal quantities via
+ * `formatQuantity`, never the derived percentage.
+ */
+function ShippedProgress({ shipped, ordered }: { shipped: string; ordered: string }) {
+  const shippedNumber = Number(shipped);
+  const orderedNumber = Number(ordered);
+  const percent =
+    orderedNumber > 0 ? Math.min(100, Math.max(0, (shippedNumber / orderedNumber) * 100)) : 0;
+  return (
+    <div className='flex flex-col items-end gap-1'>
+      <span className='text-muted-foreground text-xs tabular-nums'>
+        {formatQuantity(shippedNumber)} of {formatQuantity(orderedNumber)} shipped
+      </span>
+      <Progress value={percent} className='h-1.5 w-20' />
+    </div>
+  );
+}
+
+function LinesTable({
+  lines,
+  currency,
+  shippedByLine
+}: {
+  lines: OrderLineDto[];
+  currency: string;
+  shippedByLine: Map<string, string>;
+}) {
   if (lines.length === 0) {
     return <p className='text-muted-foreground text-sm'>This order has no lines.</p>;
   }
@@ -109,6 +160,7 @@ function LinesTable({ lines, currency }: { lines: OrderLineDto[]; currency: stri
           <TableHead className='text-right'>Qty</TableHead>
           <TableHead className='text-right'>Unit price</TableHead>
           <TableHead className='text-right'>Line total</TableHead>
+          <TableHead className='text-right'>Shipped</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -133,6 +185,12 @@ function LinesTable({ lines, currency }: { lines: OrderLineDto[]; currency: stri
             </TableCell>
             <TableCell className='text-right font-medium tabular-nums'>
               {formatMoney(line.lineTotal, currency)}
+            </TableCell>
+            <TableCell>
+              <ShippedProgress
+                shipped={shippedByLine.get(line.id) ?? '0'}
+                ordered={line.quantity}
+              />
             </TableCell>
           </TableRow>
         ))}
@@ -302,6 +360,70 @@ function RefundsList({ refunds }: { refunds: OrderRefundDto[] }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Reconciles the sum of displayed refund lines against `orders.refunded_amount`
+ * (loxep-759) — the schema doc for `order_refunds` calls a mismatch "a
+ * reconciliation finding, not a constraint violation": `refunded_amount` is a
+ * provider-reported rollup, not a derived sum, so the two CAN legitimately
+ * disagree (a refund the provider rolled into the order total before a
+ * `order_refunds` row was ever ingested, for instance). Grouped by currency via
+ * `sumMoneyBy` — refunds are never summed across currencies, and
+ * `orders.refunded_amount` is itself in `orders.currency` only, so any bucket
+ * in a different currency is reported as extra evidence rather than compared.
+ */
+function RefundReconciliation({
+  refunds,
+  orderCurrency,
+  orderRefundedAmount
+}: {
+  refunds: OrderRefundDto[];
+  orderCurrency: string;
+  orderRefundedAmount: string;
+}) {
+  const totalsByCurrency = sumMoneyBy(
+    refunds,
+    (refund) => refund.amount,
+    (refund) => refund.currency
+  );
+  const displayedTotal = totalsByCurrency.get(orderCurrency) ?? sumMoney([]);
+  const recordedAmount = sumMoney([orderRefundedAmount]);
+  const matches = displayedTotal === recordedAmount;
+  const otherCurrencyBuckets = [...totalsByCurrency.entries()].filter(
+    ([currency]) => currency !== orderCurrency
+  );
+
+  return (
+    <div
+      className={`flex flex-col gap-1 rounded-md border p-3 text-xs ${
+        matches ? 'border-success/40 bg-success/5' : 'border-warning/40 bg-warning/5'
+      }`}
+    >
+      <div className='flex items-center gap-1.5'>
+        {matches ? (
+          <Icons.circleCheck className='text-success size-3.5' />
+        ) : (
+          <Icons.warning className='text-warning size-3.5' />
+        )}
+        <span className={matches ? 'text-success font-medium' : 'text-warning font-medium'}>
+          {matches ? 'Reconciled' : 'Mismatch'}
+        </span>
+        <span className='text-muted-foreground'>
+          Displayed refunds ({formatMoney(displayedTotal, orderCurrency)}) vs.{' '}
+          <code className='text-[0.7rem]'>orders.refunded_amount</code> (
+          {formatMoney(recordedAmount, orderCurrency)})
+        </span>
+      </div>
+      {otherCurrencyBuckets.length > 0 && (
+        <p className='text-muted-foreground'>
+          Also refunded in a different currency than the order (
+          {otherCurrencyBuckets.map(([currency, total]) => formatMoney(total, currency)).join(', ')}
+          ) — not comparable to <code className='text-[0.7rem]'>orders.refunded_amount</code>.
+        </p>
+      )}
     </div>
   );
 }
@@ -549,7 +671,11 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <LinesTable lines={data.lines} currency={data.currency} />
+          <LinesTable
+            lines={data.lines}
+            currency={data.currency}
+            shippedByLine={shippedQuantityByLine(data.fulfillments)}
+          />
         </CardContent>
       </Card>
 
@@ -570,8 +696,13 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
             <Icons.refunds className='size-4' /> Refunds
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className='flex flex-col gap-3'>
           <RefundsList refunds={data.refunds} />
+          <RefundReconciliation
+            refunds={data.refunds}
+            orderCurrency={data.currency}
+            orderRefundedAmount={data.refundedAmount}
+          />
         </CardContent>
       </Card>
 

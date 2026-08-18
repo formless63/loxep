@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { Line, LineChart } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ChartConfig, ChartContainer } from '@/components/ui/chart';
 import { Link } from '@tanstack/react-router';
 import { toastError } from '@/lib/errors';
 import { formatDateTime, formatRelativeTime } from '@/lib/format';
@@ -22,6 +24,50 @@ import DockhandRegistrationFields, {
   dockhandRegistrationToIntentInput,
   type DockhandRegistrationValue
 } from './dockhand-registration-fields';
+
+const containerHostRunsChartConfig = {
+  health: { label: 'Run health', color: 'var(--chart-3)' }
+} satisfies ChartConfig;
+
+/** `succeeded` → 1, `failed` → 0, anything else (`partial`/`running`) → midline. */
+function runHealthValue(status: string): number {
+  if (status === 'succeeded') return 1;
+  if (status === 'failed') return 0;
+  return 0.5;
+}
+
+/**
+ * `listRuns` already loads every run for this host to compute `lastRun`
+ * (`fetchContainerHostRegistration`, `@/server/infrastructure-functions.ts`)
+ * — this 20-run sparkline is free (loxep-8e2, priority 5's precedent,
+ * mirroring `price-trend-cell.tsx`). `recentRuns` arrives most-recent-first;
+ * reversed here so the strip reads chronologically left→right.
+ */
+function ContainerHostRunsSparkline({
+  runs
+}: {
+  runs: { id: string; status: string; startedAt: string }[];
+}) {
+  if (runs.length < 2) return null;
+  const data = runs
+    .slice()
+    .toReversed()
+    .map((run) => ({ startedAt: run.startedAt, health: runHealthValue(run.status) }));
+  return (
+    <ChartContainer config={containerHostRunsChartConfig} className='aspect-auto h-7 w-[120px]'>
+      <LineChart data={data} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
+        <Line
+          dataKey='health'
+          type='monotone'
+          stroke='var(--color-health)'
+          strokeWidth={1.5}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ChartContainer>
+  );
+}
 
 /**
  * The fleet-detail "Container host registration" panel (hb7 §2.1(b), §2.6) —
@@ -230,6 +276,14 @@ export default function ContainerHostRegistrationPanel({
               </div>
             ) : (
               <p className='text-muted-foreground text-sm'>No reconcile run yet.</p>
+            )}
+            {registration.recentRuns.length >= 2 && (
+              <div className='flex items-center gap-2'>
+                <span className='text-muted-foreground text-xs'>
+                  Last {registration.recentRuns.length} runs
+                </span>
+                <ContainerHostRunsSparkline runs={registration.recentRuns} />
+              </div>
             )}
           </div>
         )}

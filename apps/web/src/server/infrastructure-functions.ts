@@ -29,6 +29,7 @@
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
+import { countByKey } from '@/lib/aggregate';
 import type { JsonValue } from '@/server/admin-functions';
 import type {
   ProxyResourceRow,
@@ -525,6 +526,19 @@ export interface InfrastructureOverviewDto {
     driftDetectedAt: string | null;
     lastErrorCode: string | null;
   }[];
+  /**
+   * `state` breakdown of `domains` (already fetched for `domainCount`) — no
+   * extra query.
+   */
+  domainStateBreakdown: { key: string; count: number }[];
+  /**
+   * `kind` breakdown of `unresolvedDrift` (already fetched for
+   * `unresolvedDriftCount`) — no extra query. Three different operator
+   * actions hide behind the one total: `missing` (Loxep intends a record the
+   * provider doesn't have), `modified` (the provider's value diverged from
+   * intent), `unexpected` (a provider record intent never described).
+   */
+  unresolvedDriftKindBreakdown: { key: string; count: number }[];
   recentRuns: {
     id: string;
     kind: string;
@@ -577,6 +591,12 @@ export const fetchInfrastructureOverview = createServerFn({ method: 'GET' }).han
     const needingAttention = domains.filter(
       (domain) => domain.state !== 'ready' || domain.driftDetectedAt !== null
     );
+    const domainStateBreakdown = [...countByKey(domains, (domain) => domain.state)].map(
+      ([key, count]) => ({ key, count })
+    );
+    const unresolvedDriftKindBreakdown = [
+      ...countByKey(unresolvedDrift, (finding) => finding.kind)
+    ].map(([key, count]) => ({ key, count }));
 
     return {
       domainCount: domains.length,
@@ -591,6 +611,8 @@ export const fetchInfrastructureOverview = createServerFn({ method: 'GET' }).han
         driftDetectedAt: iso(domain.driftDetectedAt),
         lastErrorCode: domain.lastErrorCode
       })),
+      domainStateBreakdown,
+      unresolvedDriftKindBreakdown,
       recentRuns: recentRuns.map((run) => ({
         id: run.id,
         kind: run.kind,
@@ -622,7 +644,13 @@ export interface ManagedDomainDto {
   mailRegistered: boolean;
   mailVerified: boolean;
   registrar: string | null;
+  /** Free-text operator note (loxep-4xo) — surfaced so the domain-edit dialog has something to prefill; was written on create but never read back before this bead. */
+  notes: string | null;
   zoneNameservers: string[] | null;
+  /** The DNS provider's own zone status (e.g. Cloudflare's `active`/`pending`) — distinct from `state`, Loxep's own provisioning-chain state. */
+  providerZoneStatus: string | null;
+  /** When the provider last confirmed delegation (the nameservers above actually resolve to its zone) — `null` means unverified, not "not applicable." */
+  delegationVerifiedAt: string | null;
   driftDetectedAt: string | null;
   lastErrorAt: string | null;
   lastErrorCode: string | null;
@@ -665,7 +693,10 @@ export const fetchManagedDomains = createServerFn({ method: 'GET' }).handler(
         mailRegistered: mail?.providerAddedAt !== undefined && mail.providerAddedAt !== null,
         mailVerified: mail?.ownershipVerifiedAt !== undefined && mail.ownershipVerifiedAt !== null,
         registrar: domain.registrar,
+        notes: domain.notes,
         zoneNameservers: domain.zoneNameservers,
+        providerZoneStatus: domain.providerZoneStatus,
+        delegationVerifiedAt: iso(domain.delegationVerifiedAt),
         driftDetectedAt: iso(domain.driftDetectedAt),
         lastErrorAt: iso(domain.lastErrorAt),
         lastErrorCode: domain.lastErrorCode,
@@ -681,6 +712,8 @@ export interface DnsRecordDto {
   type: string;
   name: string;
   content: string;
+  /** Only meaningful for `MX` (and any future priority-bearing type) — `null` otherwise. Two MX records differ in delivery order only by this field. */
+  priority: number | null;
   ttlSeconds: number | null;
   proxied: boolean;
   owner: string;
@@ -944,7 +977,7 @@ export async function buildProxyResourceChainDtos(
           owner: rule.owner,
           aliasName: parseIpAliasReference(rule.value)
         }))
-        .sort((a, b) => a.priority - b.priority),
+        .toSorted((a, b) => a.priority - b.priority),
       lastRun:
         lastRunRow === undefined
           ? null
@@ -1020,7 +1053,10 @@ export const fetchManagedDomain = createServerFn({ method: 'GET' })
       mailRegistered: mail?.providerAddedAt !== null && mail?.providerAddedAt !== undefined,
       mailVerified: mail?.ownershipVerifiedAt !== null && mail?.ownershipVerifiedAt !== undefined,
       registrar: domain.registrar,
+      notes: domain.notes,
       zoneNameservers: domain.zoneNameservers,
+      providerZoneStatus: domain.providerZoneStatus,
+      delegationVerifiedAt: iso(domain.delegationVerifiedAt),
       driftDetectedAt: iso(domain.driftDetectedAt),
       lastErrorAt: iso(domain.lastErrorAt),
       lastErrorCode: domain.lastErrorCode,
@@ -1031,6 +1067,7 @@ export const fetchManagedDomain = createServerFn({ method: 'GET' })
         type: record.type,
         name: record.name,
         content: record.content,
+        priority: record.priority,
         ttlSeconds: record.ttlSeconds,
         proxied: record.proxied,
         owner: record.owner,
@@ -1202,6 +1239,65 @@ export const applyDefaultMailboxTemplate = createServerFn({ method: 'POST' })
       });
     }
   );
+
+// ---------------------------------------------------------------------------
+// Mailbox templates — READ-ONLY (loxep-4xo)
+// ---------------------------------------------------------------------------
+
+export interface MailboxTemplateEntryDto {
+  id: string;
+  localPart: string;
+  kind: string;
+  forwardTo: string | null;
+  generatePassword: boolean;
+}
+
+export interface MailboxTemplateDto {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  entries: MailboxTemplateEntryDto[];
+}
+
+/**
+ * Read-only: name + the mailboxes/rules each template would create, for the
+ * mail panel's "Templates" view (loxep-4xo). `applyDefaultMailboxTemplate`
+ * above has applied a template since Phase 7 milestone 2, but until this
+ * bead nothing ever constructed `MailboxTemplatesService` in `admin.ts`
+ * (`packages/infrastructure/src/mail.ts`'s own doc names this exact gap), so
+ * a template applied nobody could see, list, or author. Authoring is left
+ * unbuilt: `MailboxTemplatesService.create` takes a whole template (name +
+ * entries) in one call, but composing a legible multi-entry editor — add/
+ * remove rows, per-entry kind/forwardTo validation, `isDefault` exclusivity
+ * — is a real form, not a trivial follow-on to this read, so it is reported
+ * here rather than built (PROVISIONAL: an operator-facing "New template"
+ * dialog is a reasonable next slice, scoped separately).
+ */
+export const fetchMailboxTemplates = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<MailboxTemplateDto[]> => {
+    const { requireSession, getMailboxTemplatesService } = await import('@/server/admin');
+    await requireSession();
+    const templates = getMailboxTemplatesService();
+    const rows = await templates.list();
+    return Promise.all(
+      rows.map(async (row) => {
+        const entries = await templates.listEntries(row.id);
+        return {
+          id: row.id,
+          name: row.name,
+          isDefault: row.isDefault,
+          entries: entries.map((entry) => ({
+            id: entry.id,
+            localPart: entry.localPart,
+            kind: entry.kind,
+            forwardTo: entry.forwardTo,
+            generatePassword: entry.generatePassword
+          }))
+        };
+      })
+    );
+  }
+);
 
 /**
  * A manual "sync now": re-enqueues `infrastructure.sync-records` in `check`
@@ -1471,7 +1567,7 @@ export const fetchIpAliases = createServerFn({ method: 'GET' }).handler(
         boundRulesCount: referencing.length
       });
     }
-    return results.sort((a, b) => a.name.localeCompare(b.name));
+    return results.toSorted((a, b) => a.name.localeCompare(b.name));
   }
 );
 
@@ -2331,7 +2427,7 @@ export const fetchHostingTarget = createServerFn({ method: 'GET' })
       // fleet-observability-design.md's "Where this surfaces" section for
       // the mirrored note. A provider the comparator does not know (a
       // hand-typed tier-1 link) sorts after every known fleet tool.
-      .sort((a, b) => compareFleetToolPanelOrder(a.provider, b.provider));
+      .toSorted((a, b) => compareFleetToolPanelOrder(a.provider, b.provider));
 
     const diagnosis = diagnoseHostWitnesses(computeHostDiagnosisInput(companionLinks));
 
@@ -3113,7 +3209,15 @@ export interface ContainerHostRegistrationDto {
   desiredAt: string;
   lastAppliedAt: string | null;
   lastRun: ContainerHostLastRunDto | null;
+  /**
+   * The 20 most recent runs, most-recent-first — `listRuns` already loads
+   * every run for this host to compute `lastRun` above, so a status
+   * sparkline costs nothing extra (loxep-8e2, priority 5's precedent).
+   */
+  recentRuns: { id: string; status: string; startedAt: string }[];
 }
+
+const CONTAINER_HOST_RECENT_RUNS_LIMIT = 20;
 
 function metadataNumber(metadata: Record<string, unknown>, key: string): number | null {
   const value = metadata[key];
@@ -3144,7 +3248,8 @@ export const fetchContainerHostRegistration = createServerFn({ method: 'GET' })
     if (link === undefined || link.connectionId === null || desiredAt === null) return null;
 
     const runs = await getContainerHostsService().listRuns(data.hostingTargetId);
-    const lastRun = runs.slice().sort((a, b) => +b.startedAt - +a.startedAt)[0] ?? null;
+    const runsByRecency = runs.toSorted((a, b) => +b.startedAt - +a.startedAt);
+    const lastRun = runsByRecency[0] ?? null;
 
     return {
       externalResourceId: link.externalResourceId,
@@ -3170,7 +3275,12 @@ export const fetchContainerHostRegistration = createServerFn({ method: 'GET' })
               trigger: lastRun.trigger,
               startedAt: iso(lastRun.startedAt),
               finishedAt: iso(lastRun.finishedAt)
-            }
+            },
+      recentRuns: runsByRecency.slice(0, CONTAINER_HOST_RECENT_RUNS_LIMIT).map((run) => ({
+        id: run.id,
+        status: run.status,
+        startedAt: iso(run.startedAt)
+      }))
     };
   });
 

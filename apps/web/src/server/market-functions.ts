@@ -17,6 +17,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { JsonValue } from '@/server/admin-functions';
+import { countByKey } from '@/lib/aggregate';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -1010,6 +1011,11 @@ export interface MarketOverviewTrendBucketDto {
   count: number;
 }
 
+export interface MarketOverviewBreakdownEntryDto {
+  key: string;
+  count: number;
+}
+
 export interface MarketOverviewDto {
   activeMonitorCount: number;
   watchedItemCount: number;
@@ -1033,6 +1039,16 @@ export interface MarketOverviewDto {
    * Powers the "New listings (24h)" KPI tile sparkline.
    */
   newListingsTrend: MarketOverviewTrendBucketDto[];
+  /**
+   * `currentState` breakdown of `watchedItems` (already fetched for
+   * `watchedItemCount`, extended with that one column) — no extra query.
+   */
+  watchedItemStateBreakdown: MarketOverviewBreakdownEntryDto[];
+  /**
+   * `eventType` breakdown of `events24h` (already fetched for
+   * `eventsLast24hCount`, extended with that one column) — no extra query.
+   */
+  eventTypeBreakdown24h: MarketOverviewBreakdownEntryDto[];
 }
 
 const OVERVIEW_TREND_BUCKET_HOURS = 24;
@@ -1100,10 +1116,10 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
         where: (table, { eq }) => eq(table.enabled, true),
         columns: { id: true }
       }),
-      handle.db.query.marketplaceItems.findMany({ columns: { id: true } }),
+      handle.db.query.marketplaceItems.findMany({ columns: { id: true, currentState: true } }),
       handle.db.query.marketEvents.findMany({
         where: (table, { gt }) => gt(table.detectedAt, since),
-        columns: { id: true, detectedAt: true }
+        columns: { id: true, detectedAt: true, eventType: true }
       }),
       handle.db.query.marketEvents.findMany({
         where: (table, { gt, and, eq }) =>
@@ -1170,6 +1186,12 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
 
     const eventsTrend = bucketHourly(events24h, since);
     const newListingsTrend = bucketHourly(newListings24h, since);
+    const watchedItemStateBreakdown = [
+      ...countByKey(watchedItems, (item) => item.currentState)
+    ].map(([key, count]) => ({ key, count }));
+    const eventTypeBreakdown24h = [...countByKey(events24h, (event) => event.eventType)].map(
+      ([key, count]) => ({ key, count })
+    );
 
     return {
       activeMonitorCount: activeMonitors.length,
@@ -1179,6 +1201,8 @@ export const fetchMarketOverview = createServerFn({ method: 'GET' }).handler(
       topOpportunity,
       eventsTrend,
       newListingsTrend,
+      watchedItemStateBreakdown,
+      eventTypeBreakdown24h,
       recentEvents: recentEvents.map((event) => ({
         id: event.id,
         eventType: event.eventType,

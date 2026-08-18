@@ -11,6 +11,7 @@ import {
   fetchInfrastructureOverview,
   fetchIpAliases,
   fetchMailConnectionOptions,
+  fetchMailboxTemplates,
   fetchManagedDomain,
   fetchManagedDomainOptions,
   fetchManagedDomains,
@@ -101,6 +102,12 @@ export const dnsConnectionOptionsQuery = queryOptions({
 export const mailConnectionOptionsQuery = queryOptions({
   queryKey: ['infrastructure', 'connection-options', 'mail'],
   queryFn: () => fetchMailConnectionOptions()
+});
+
+/** Read-only mailbox templates (name + entries) — the mail panel's "Templates" view (loxep-4xo). */
+export const mailboxTemplatesQuery = queryOptions({
+  queryKey: ['infrastructure', 'mailbox-templates'],
+  queryFn: () => fetchMailboxTemplates()
 });
 
 export const hostingTargetOptionsQuery = queryOptions({

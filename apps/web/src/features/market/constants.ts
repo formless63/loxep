@@ -103,6 +103,55 @@ export function monitorTargetTypeLabel(targetType: string): string {
 export const NO_CONNECTION_VALUE = '__none__';
 
 /**
+ * Renders `monitor_targets.config` as a one-line "what this monitors" summary
+ * for the monitors table (loxep-759) — today the list says nothing about
+ * WHAT a monitor watches beyond its type. Mirrors `createMonitorConfig`'s
+ * per-`targetType` shape in `@/server/market-functions.ts`; `config` is
+ * untyped `Record<string, JsonValue>` at the DTO boundary, so every field
+ * read here is defensively `typeof`-checked rather than trusted.
+ */
+export function monitorTargetWatchSummary(
+  targetType: string,
+  config: Record<string, unknown>
+): string {
+  const query = typeof config.query === 'string' ? config.query : null;
+  const categoryId = typeof config.categoryId === 'string' ? config.categoryId : null;
+  switch (targetType as SupportedMonitorTargetType) {
+    case 'ebay_item': {
+      const itemId = typeof config.externalItemId === 'string' ? config.externalItemId : null;
+      return itemId ? `Item ${itemId}` : '—';
+    }
+    case 'ebay_watchlist':
+      return 'Connection watchlist';
+    case 'ebay_search': {
+      const parts = [
+        ...(query ? [`"${query}"`] : []),
+        ...(categoryId ? [`category ${categoryId}`] : [])
+      ];
+      return parts.length > 0 ? parts.join(' · ') : '—';
+    }
+    case 'ebay_seller': {
+      const sellerUsername =
+        typeof config.sellerUsername === 'string' ? config.sellerUsername : null;
+      const parts = [
+        ...(sellerUsername ? [`seller ${sellerUsername}`] : []),
+        ...(query ? [`"${query}"`] : []),
+        ...(categoryId ? [`category ${categoryId}`] : [])
+      ];
+      return parts.length > 0 ? parts.join(' · ') : '—';
+    }
+    case 'woo_orders':
+    case 'ebay_orders':
+    case 'medusa_orders':
+      return 'Order sync';
+    case 'ebay_purchases':
+      return 'Purchase sync';
+    default:
+      return '—';
+  }
+}
+
+/**
  * `market_events.event_type` → tone + icon (loxep-foi.5). `@loxep/market`'s
  * `MARKET_EVENT_TYPES` (`events.ts`) has exactly these seven members; the
  * `satisfies Record<...>` below fails typecheck the day an eighth is added,
@@ -152,6 +201,31 @@ export function marketEventTypeIcon(eventType: string): React.FC<React.SVGProps<
 }
 
 /**
+ * `market_events.event_type` segment colors for the overview's "Events by
+ * type (24h)" `StackedStatusBar` (same convention as
+ * `@/features/commerce/constants.ts`'s `channelListingStatusBarColor`).
+ * `price_dropped`/`restocked` share a `success` badge tone but need visibly
+ * distinct bar segments, so this map is deliberately its own palette rather
+ * than a mechanical tone→color lookup.
+ */
+const MARKET_EVENT_TYPE_BAR_COLORS = {
+  price_changed: 'var(--secondary)',
+  price_dropped: 'var(--success)',
+  restocked: 'var(--chart-4)',
+  sold_out: 'var(--warning)',
+  quantity_changed: 'var(--chart-2)',
+  listing_ended: 'var(--chart-1)',
+  new_listing: 'var(--primary)'
+} satisfies Record<keyof typeof MARKET_EVENT_TYPE_TONE, string>;
+
+export function marketEventTypeBarColor(eventType: string): string {
+  return (
+    MARKET_EVENT_TYPE_BAR_COLORS[eventType as keyof typeof MARKET_EVENT_TYPE_BAR_COLORS] ??
+    'var(--muted-foreground)'
+  );
+}
+
+/**
  * `marketplace_items.current_state` is free-form `text` (default `"active"`,
  * see `packages/market/src/observations.ts`), not a PG enum or a closed TS
  * union — `LISTING_STATE_ENDED = "ended"` (`@loxep/market/events.ts`) is the
@@ -185,6 +259,22 @@ export function marketItemStateTone(state: string): BadgeVariant {
 
 export function marketItemStateIcon(state: string): React.FC<React.SVGProps<SVGSVGElement>> {
   return MARKET_ITEM_STATE_ICON[state] ?? Icons.circle;
+}
+
+/**
+ * `marketplace_items.current_state` segment colors for the overview's
+ * "Watched items by state" `StackedStatusBar` — `active` reuses its badge's
+ * real `--success` fill, `ended` falls back to a `--chart-N` token (its
+ * badge tone is `outline`, which has no fill of its own), same convention as
+ * `marketEventTypeBarColor` below and `channelListingStatusBarColor`.
+ */
+const MARKET_ITEM_STATE_BAR_COLORS: Record<string, string> = {
+  active: 'var(--success)',
+  ended: 'var(--chart-2)'
+};
+
+export function marketItemStateBarColor(state: string): string {
+  return MARKET_ITEM_STATE_BAR_COLORS[state] ?? 'var(--muted-foreground)';
 }
 
 /**

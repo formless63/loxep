@@ -46,10 +46,28 @@
  * soft-deleted, discovered on the next scheduled run). Both are gated at
  * `access_affecting`-or-higher EXPLICITLY, never the `additive` tier
  * `runMailboxSync`'s own batch delete uses, and both require a typed
- * confirmation the SERVICE re-checks itself. `createRoutingRule` and
- * `modifyMailbox` are deliberately NOT mounted — see that module's own doc
- * for why (no sanctioned UI home for the former; no adapter call exists for
- * the latter at all).
+ * confirmation the SERVICE re-checks itself. `modifyMailbox` is deliberately
+ * NOT mounted — no adapter call exists for it at all (see that module's own
+ * doc).
+ *
+ * ## Section-level CREATE verbs (loxep-4xo) — closing the delete-only asymmetry
+ *
+ * {@link addPurelymailMailbox} mounts `MailDomainsService.addMailbox`
+ * (`packages/infrastructure/src/mail.ts`) — a Loxep-OWN intent write, exactly
+ * `Rule P10`'s own carve-out shape ("no Pangolin call of any kind"): it
+ * upserts a `mailboxes` row and enqueues `infrastructure.sync-mailboxes`, the
+ * SAME task `enableMailForDomain`/`applyDefaultMailboxTemplate` already
+ * enqueue from `infrastructure-functions.ts`. It therefore has no
+ * write-policy tier of its own to check here — the provider call happens
+ * later, inside `runMailboxSync`, which is ALREADY gated. {@link
+ * createPurelymailRoutingRule} mounts `MailboxAdminService.createRoutingRule`
+ * — additive (tier 1), gated the same way `deletePurelymailRoutingRule` is
+ * gated at tier 2, just one tier lower and with no typed confirmation (an
+ * additive write, never destructive). Both render Rule P14's visibly-blocked
+ * state from the header's own write-policy tier — {@link
+ * createPurelymailRoutingRule}'s button disables the same way the delete
+ * buttons already do; {@link addPurelymailMailbox} is never blocked by
+ * policy at all, matching `enableMailForDomain`'s own precedent.
  */
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
@@ -446,11 +464,8 @@ const deleteRoutingRuleInput = z.strictObject({
 /**
  * Mounts `MailboxAdminService.deleteRoutingRule` — destructive, tier
  * `access_affecting`-or-higher, typed confirmation of the rule's own match
- * pattern. `createRoutingRule` has NO mounted server function: Estate
- * Browsers Design §3.2 names no sanctioned home for a section-level create
- * affordance on this page (Rule P10 — an estate page mounts existing write
- * paths, it never invents where one belongs), so the additive verb ships at
- * the service layer only, unmounted, pending a design home.
+ * pattern. See {@link createPurelymailRoutingRule} below for the now-mounted
+ * create counterpart (loxep-4xo).
  */
 export const deletePurelymailRoutingRule = createServerFn({ method: 'POST' })
   .inputValidator(deleteRoutingRuleInput)
@@ -462,6 +477,107 @@ export const deletePurelymailRoutingRule = createServerFn({ method: 'POST' })
       domainId: data.domainId,
       routingRuleId: data.routingRuleId,
       confirmationText: data.confirmationText,
+      trigger: 'manual',
+      actorUserId: session.user.id,
+      actorIsAdmin: true
+    });
+    return { runId: result.runId, status: result.status, outcome: result.outcome };
+  });
+
+// ---------------------------------------------------------------------------
+// Section-level CREATE verbs (loxep-4xo) — the create half of the asymmetry
+// A9 flagged: the estate page could DELETE a mailbox/routing rule but not
+// CREATE one.
+// ---------------------------------------------------------------------------
+
+const addMailboxInput = z.strictObject({
+  connectionId: z.uuid(),
+  domainId: z.uuid(),
+  localPart: z.string().trim().min(1),
+  kind: z.enum(['mailbox', 'alias', 'catchall']),
+  /** Required for 'alias'/'catchall', forbidden for 'mailbox' — re-checked inside `MailDomainsService.addMailbox` itself. */
+  forwardTo: z.string().trim().min(1).nullish()
+});
+
+export interface PurelymailAddMailboxDto {
+  mailboxId: string;
+  localPart: string;
+  kind: string;
+  forwardTo: string | null;
+}
+
+/**
+ * Mounts `MailDomainsService.addMailbox` — a Loxep-OWN intent write, no
+ * Purelymail call of any kind (Rule P10's own carve-out shape). Upserts the
+ * `mailboxes` row (resurrecting a soft-deleted one by the same natural key
+ * `dns_records` uses) and enqueues `infrastructure.sync-mailboxes` in the
+ * SAME transaction; the actual provider `createUser` call happens later,
+ * inside `runMailboxSync`, which is ALREADY gated by write policy. No tier
+ * check here — matching `enableMailForDomain`/`applyDefaultMailboxTemplate`'s
+ * own precedent one file over, never `MailboxAdminService`'s tier-gated
+ * verbs (this is a different service entirely; there is no
+ * `createMailboxNow` — Purelymail's own API has no single-mailbox-create
+ * outside the reconciler's whole-domain convergence, per this module's own
+ * top-of-file doc). Only reachable for a domain Loxep already declares on
+ * THIS connection (the dialog's own domain picker is built from {@link
+ * fetchPurelymailEstateDomains}'s `loxep !== null` rows) — admin-only,
+ * matching every other write in this feature area.
+ */
+export const addPurelymailMailbox = createServerFn({ method: 'POST' })
+  .inputValidator(addMailboxInput)
+  .handler(async ({ data }): Promise<PurelymailAddMailboxDto> => {
+    const { requireAdmin, getInfrastructureMailService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    await requirePurelymailConnection(data.connectionId);
+    const row = await getInfrastructureMailService().addMailbox(data.domainId, {
+      localPart: data.localPart,
+      kind: data.kind,
+      forwardTo: data.forwardTo ?? null,
+      actorUserId: session.user.id
+    });
+    return {
+      mailboxId: row.id,
+      localPart: row.localPart,
+      kind: row.kind,
+      forwardTo: row.forwardTo
+    };
+  });
+
+const createRoutingRuleInput = z.strictObject({
+  connectionId: z.uuid(),
+  domainId: z.uuid(),
+  /** May be empty — an empty match with `catchall: true` is Purelymail's catch-all shape. */
+  matchUser: z.string().trim(),
+  targetAddresses: z.array(z.string().trim().min(1)).min(1),
+  prefix: z.boolean().optional(),
+  catchall: z.boolean().optional()
+});
+
+export interface PurelymailCreateRoutingRuleActionDto {
+  runId: string;
+  status: 'succeeded' | 'failed' | 'partial';
+  outcome: 'created' | 'already_exists' | 'write_policy_blocked';
+}
+
+/**
+ * Mounts `MailboxAdminService.createRoutingRule` — additive (tier 1), the
+ * SAME write-authorization gate `deletePurelymailRoutingRule` uses one tier
+ * lower, and no typed confirmation (additive, never destructive — matching
+ * every other tier-1 write in this feature area). Admin-only.
+ */
+export const createPurelymailRoutingRule = createServerFn({ method: 'POST' })
+  .inputValidator(createRoutingRuleInput)
+  .handler(async ({ data }): Promise<PurelymailCreateRoutingRuleActionDto> => {
+    const { requireAdmin, getMailboxAdminServiceForConnection } = await import('@/server/admin');
+    const session = await requireAdmin();
+    await requirePurelymailConnection(data.connectionId);
+    const admin = await getMailboxAdminServiceForConnection(data.connectionId);
+    const result = await admin.createRoutingRule({
+      domainId: data.domainId,
+      matchUser: data.matchUser,
+      targetAddresses: data.targetAddresses,
+      prefix: data.prefix,
+      catchall: data.catchall,
       trigger: 'manual',
       actorUserId: session.user.id,
       actorIsAdmin: true

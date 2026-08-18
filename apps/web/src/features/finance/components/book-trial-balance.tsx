@@ -16,12 +16,51 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
 import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import { formatMoney } from '@/lib/format';
+import { sumMoneyBy } from '@/lib/aggregate';
 import { trialBalanceQuery } from '@/features/finance/api/books-queries';
 import type { TrialBalanceDto, TrialBalanceRowDto } from '@/server/books-functions';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import AccountActivityDialog, {
   type AccountActivityTarget
 } from '@/features/finance/components/account-activity-dialog';
+
+/** `ledger_accounts.account_type` — a five-member closed set with a `CHECK` (`packages/db/src/schema/accounting.ts`). */
+const LEDGER_ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  asset: 'Asset',
+  liability: 'Liability',
+  equity: 'Equity',
+  revenue: 'Revenue',
+  expense: 'Expense'
+};
+
+/** Balance-sheet-then-P&L reading order — assets/liabilities/equity first, then revenue/expense. */
+const LEDGER_ACCOUNT_TYPE_ORDER = ['asset', 'liability', 'equity', 'revenue', 'expense'];
+
+function ledgerAccountTypeLabel(accountType: string): string {
+  return LEDGER_ACCOUNT_TYPE_LABELS[accountType] ?? accountType;
+}
+
+/**
+ * Per-`accountType` balance subtotals over `rows` (already fetched for the
+ * trial balance table itself — loxep-759) — grouping the same rows the
+ * statement already reads by `account_type`/`account_subtype`/`is_contra`
+ * turns "every account, flat" into a de facto balance sheet + P&L split for
+ * free, with no additional query. `data.rows`'s existing GROUP order (account
+ * code) is preserved within each subtotal via `sumMoneyBy`'s first-seen-key
+ * ordering; the returned list is then re-sorted into statement order.
+ */
+export function accountTypeSubtotals(
+  rows: readonly TrialBalanceRowDto[]
+): { accountType: string; balance: string }[] {
+  const byType = sumMoneyBy(
+    rows,
+    (row) => row.balance,
+    (row) => row.accountType
+  );
+  return LEDGER_ACCOUNT_TYPE_ORDER.filter((accountType) => byType.has(accountType)).map(
+    (accountType) => ({ accountType, balance: byType.get(accountType)! })
+  );
+}
 
 function createColumns(
   functionalCurrency: string,
@@ -54,6 +93,28 @@ function createColumns(
             </Badge>
           )}
         </button>
+      )
+    },
+    {
+      id: 'accountType',
+      accessorKey: 'accountType',
+      header: 'Type',
+      cell: ({ row }) => (
+        <div className='flex flex-col gap-1'>
+          <span>{ledgerAccountTypeLabel(row.original.accountType)}</span>
+          {(row.original.accountSubtype || row.original.isContra) && (
+            <div className='flex flex-wrap items-center gap-1.5'>
+              {row.original.accountSubtype && (
+                <span className='text-muted-foreground text-xs'>{row.original.accountSubtype}</span>
+              )}
+              {row.original.isContra && (
+                <Badge variant='outline' className='text-xs'>
+                  contra
+                </Badge>
+              )}
+            </div>
+          )}
+        </div>
       )
     },
     {
@@ -143,7 +204,10 @@ export default function BookTrialBalance({ accountingBookId }: { accountingBookI
             </EmptyHeader>
           </Empty>
         ) : (
-          <TrialBalanceDataTable data={data} onDrillThrough={setDrillThrough} />
+          <div className='flex flex-col gap-4'>
+            <AccountTypeSubtotals rows={data.rows} functionalCurrency={data.functionalCurrency} />
+            <TrialBalanceDataTable data={data} onDrillThrough={setDrillThrough} />
+          </div>
         )}
       </CardContent>
       <AccountActivityDialog
@@ -153,6 +217,39 @@ export default function BookTrialBalance({ accountingBookId }: { accountingBookI
         onOpenChange={(open) => !open && setDrillThrough(null)}
       />
     </Card>
+  );
+}
+
+/**
+ * "Assets $X, Liabilities $Y, …" — a balance sheet + P&L split for free,
+ * grouped from the trial balance's own already-fetched rows (loxep-759).
+ * Additive to the row-level table above, not a replacement for it, and
+ * distinct from the separate Statements section shipped elsewhere (this
+ * stays a per-book quick read, not a formal statement).
+ */
+function AccountTypeSubtotals({
+  rows,
+  functionalCurrency
+}: {
+  rows: TrialBalanceRowDto[];
+  functionalCurrency: string;
+}) {
+  const subtotals = accountTypeSubtotals(rows);
+  if (subtotals.length === 0) return null;
+
+  return (
+    <div className='flex flex-wrap gap-4'>
+      {subtotals.map((entry) => (
+        <div key={entry.accountType}>
+          <p className='text-muted-foreground text-xs'>
+            {ledgerAccountTypeLabel(entry.accountType)}
+          </p>
+          <p className='font-medium tabular-nums'>
+            {formatMoney(entry.balance, functionalCurrency)}
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -177,7 +274,9 @@ function TrialBalanceDataTable({
       table={table}
       summary={
         <TableRow>
-          <TableCell className='font-medium'>Total</TableCell>
+          <TableCell colSpan={2} className='font-medium'>
+            Total
+          </TableCell>
           <TableCell className='text-right font-medium tabular-nums'>
             {formatMoney(data.totalDebit, data.functionalCurrency)}
           </TableCell>

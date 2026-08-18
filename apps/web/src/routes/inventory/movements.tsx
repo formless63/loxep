@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { InventoryPage } from '@/features/inventory/components/inventory-page';
 import MovementsTable from '@/features/inventory/components/movements-table';
+import MovementsTrendChart from '@/features/inventory/components/movements-trend-chart';
 import { RecordMovementDialog } from '@/features/inventory/components/movement-dialogs';
 
 const movementsSearchSchema = z.object({
@@ -43,6 +44,13 @@ function InventoryMovements() {
         </Button>
       }
     >
+      {/*
+        The trend answers "am I receiving faster than selling, and is
+        shrinkage trending up" across the whole ledger — a single lot's
+        movement mix isn't that question, so it's scoped to the unfiltered
+        view only (loxep-8e2).
+      */}
+      {acquisitionId === undefined && <MovementsTrendChart />}
       <MovementsTable acquisitionId={acquisitionId} />
       <RecordMovementDialog open={recordOpen} onOpenChange={setRecordOpen} />
     </InventoryPage>

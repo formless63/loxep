@@ -7,6 +7,7 @@ import { Icons } from '@/components/icons';
 import { CommercePage } from '@/features/commerce/components/commerce-page';
 import ListingsTable from '@/features/commerce/components/listings-table';
 import ManualListingForm from '@/features/commerce/components/manual-listing-form';
+import SellThroughFunnelChart from '@/features/commerce/components/sell-through-funnel-chart';
 
 /**
  * List route named `listings.index.tsx`, not `listings.tsx` —
@@ -42,6 +43,7 @@ function CommerceListings() {
         </Button>
       }
     >
+      <SellThroughFunnelChart />
       <ListingsTable />
       {createOpen && <ManualListingForm open={createOpen} onOpenChange={setCreateOpen} />}
     </CommercePage>

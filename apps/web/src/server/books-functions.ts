@@ -26,6 +26,13 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 
+const uuidSchema = z.uuid();
+/** Re-validated even though the Zod input schema already checked it — mirrors `@/server/expense-functions.ts`'s own `uuidLiteral`, defense in depth for a value about to be embedded in raw SQL. */
+function uuidLiteral(value: string): string {
+  if (!uuidSchema.safeParse(value).success) throw new Error('expected a UUID value');
+  return `'${value}'`;
+}
+
 const calendarDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a calendar date as YYYY-MM-DD');
@@ -384,4 +391,104 @@ export const fetchTrialBalance = createServerFn({ method: 'GET' })
     return getLedgerReports().trialBalance(data.accountingBookId, {
       includeEmptyAccounts: true
     });
+  });
+
+// ---------------------------------------------------------------------------
+// Suspense trend (loxep-8e2, item 6) — "is Suspense growing month over
+// month," the single most important ledger-health signal, invisible before
+// this: nothing in this app fetched more than one period's trial balance at
+// a time (`fetchTrialBalance` above reads all-time, unbounded by period).
+// ---------------------------------------------------------------------------
+
+/** Fiscal periods returned, newest-first before the client reverses them — the ONE bound on this read, alongside the single-account join below. */
+const SUSPENSE_TREND_PERIOD_LIMIT = 12;
+
+export interface SuspenseTrendPointDto {
+  periodCode: string;
+  startsOn: string;
+  endsOn: string;
+  /** This PERIOD's own net movement in Suspense (`journal_lines.functional_amount`, summed), not a running balance — see this function's own doc for why. */
+  netActivity: string;
+}
+
+export interface SuspenseTrendDto {
+  /** `null` when this book's chart has no `system_key = 'suspense'` account (an older or hand-edited chart) — the card renders "not available" rather than a fabricated series. */
+  ledgerAccountId: string | null;
+  functionalCurrency: string;
+  /** Oldest-first, at most {@link SUSPENSE_TREND_PERIOD_LIMIT}. */
+  points: SuspenseTrendPointDto[];
+}
+
+/**
+ * The Suspense account's net journal activity for the last
+ * {@link SUSPENSE_TREND_PERIOD_LIMIT} (12) fiscal periods of one book.
+ *
+ * ONE bounded read: `fiscal_periods` for this book, newest-first,
+ * `limit 12`, left-joined to journal activity for exactly one ledger account
+ * (the chart's own `system_key = 'suspense'' row) within each period's own
+ * `[starts_on, ends_on]` window — never an unbounded historical scan, and
+ * never `fetchTrialBalance` called once per period (that would be N reads,
+ * not one).
+ *
+ * Each row is that PERIOD's net movement, not a running balance-to-date: a
+ * true "balance as of this period" would need summing every entry since the
+ * account's inception, which is exactly the unbounded read this query
+ * deliberately avoids. The client (`SuspenseTrendCard`,
+ * `features/finance/components/`) turns the (at most 12) net-activity
+ * figures into a cumulative walk from a zero baseline at the WINDOW's
+ * start — an honest "how has it moved over the last 12 periods" reading,
+ * not a claim about the account's true all-time balance.
+ */
+export const fetchSuspenseTrend = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ accountingBookId: z.uuid() }))
+  .handler(async ({ data }): Promise<SuspenseTrendDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+
+    const [book, suspenseAccount] = await Promise.all([
+      handle.db.query.accountingBooks.findFirst({
+        where: (table, { eq }) => eq(table.id, data.accountingBookId),
+        columns: { functionalCurrency: true }
+      }),
+      handle.db.query.ledgerAccounts.findFirst({
+        where: (table, { eq, and }) =>
+          and(eq(table.accountingBookId, data.accountingBookId), eq(table.systemKey, 'suspense')),
+        columns: { id: true }
+      })
+    ]);
+    const functionalCurrency = book?.functionalCurrency ?? '';
+
+    if (suspenseAccount === undefined) {
+      return { ledgerAccountId: null, functionalCurrency, points: [] };
+    }
+
+    const result = await handle.db.execute(
+      `select fp.period_code, fp.starts_on::text as starts_on, fp.ends_on::text as ends_on,
+              coalesce(sum(l.functional_amount), 0)::numeric(20, 6)::text as net_activity
+         from fiscal_periods fp
+         left join journal_lines l
+           on l.ledger_account_id = ${uuidLiteral(suspenseAccount.id)}
+          and l.accounting_book_id = fp.accounting_book_id
+         left join journal_entries e
+           on e.id = l.journal_entry_id
+          and e.status in ('posted', 'reversed')
+          and e.entry_date >= fp.starts_on
+          and e.entry_date <= fp.ends_on
+        where fp.accounting_book_id = ${uuidLiteral(data.accountingBookId)}
+        group by fp.id, fp.period_code, fp.starts_on, fp.ends_on, fp.sequence
+        order by fp.sequence desc
+        limit ${SUSPENSE_TREND_PERIOD_LIMIT}`
+    );
+
+    const points: SuspenseTrendPointDto[] = result.rows
+      .map((row) => ({
+        periodCode: row['period_code'] as string,
+        startsOn: row['starts_on'] as string,
+        endsOn: row['ends_on'] as string,
+        netActivity: row['net_activity'] as string
+      }))
+      .reverse();
+
+    return { ledgerAccountId: suspenseAccount.id, functionalCurrency, points };
   });

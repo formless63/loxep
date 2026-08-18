@@ -1,5 +1,10 @@
 import { queryOptions } from '@tanstack/react-query';
-import { fetchBookDetail, fetchBooks, fetchTrialBalance } from '@/server/books-functions';
+import {
+  fetchBookDetail,
+  fetchBooks,
+  fetchSuspenseTrend,
+  fetchTrialBalance
+} from '@/server/books-functions';
 import { fetchLedgerAccounts } from '@/server/ledger-accounts-functions';
 import { fetchJournalEntries, fetchJournalEntryLines } from '@/server/journal-functions';
 
@@ -18,6 +23,13 @@ export const trialBalanceQuery = (accountingBookId: string) =>
   queryOptions({
     queryKey: ['finance', 'trial-balance', accountingBookId],
     queryFn: () => fetchTrialBalance({ data: { accountingBookId } })
+  });
+
+/** See `fetchSuspenseTrend`'s own doc (loxep-8e2 item 6) — one bounded read, last 12 fiscal periods. */
+export const suspenseTrendQuery = (accountingBookId: string) =>
+  queryOptions({
+    queryKey: ['finance', 'suspense-trend', accountingBookId],
+    queryFn: () => fetchSuspenseTrend({ data: { accountingBookId } })
   });
 
 export const ledgerAccountsQuery = (accountingBookId: string) =>

@@ -3,9 +3,11 @@ import {
   fetchExpense,
   fetchExpenseCategories,
   fetchExpenses,
+  fetchExpenseTotals,
   fetchMissingReceipts,
   fetchUnallocatedExpenses
 } from '@/server/expense-functions';
+import type { ExpenseGroupingDto } from '@/server/expense-functions';
 import {
   checkDraftInvoicePushStatus,
   listInvoiceNinjaConnections,
@@ -57,6 +59,26 @@ export const unallocatedExpensesQuery = queryOptions({
   queryKey: ['finance', 'unallocated-expenses'],
   queryFn: () => fetchUnallocatedExpenses()
 });
+
+// ---------------------------------------------------------------------------
+// Totals (`/finance/overview`'s Spending band, loxep-8e2 item 5) — see
+// `fetchExpenseTotals`'s own doc: one shipped aggregate, three groupings.
+// ---------------------------------------------------------------------------
+
+export interface ExpenseTotalsParams {
+  grouping: ExpenseGroupingDto;
+  economicEntityId?: string | null;
+  from?: string;
+  to?: string;
+  category?: string;
+  statuses?: ExpenseStatus[];
+}
+
+export const expenseTotalsQuery = (params: ExpenseTotalsParams) =>
+  queryOptions({
+    queryKey: ['finance', 'expense-totals', params],
+    queryFn: () => fetchExpenseTotals({ data: params })
+  });
 
 // ---------------------------------------------------------------------------
 // Invoice Ninja draft-invoice push (loxep-v5r.5)

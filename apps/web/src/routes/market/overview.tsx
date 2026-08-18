@@ -30,13 +30,21 @@ import {
   EmptyTitle
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StackedStatusBar } from '@/components/ui/stacked-status-bar';
 import { Icons, type Icon } from '@/components/icons';
 import { MarketPage } from '@/features/market/components/market-page';
 import RecentEventsList from '@/features/market/components/recent-events-list';
 import { marketOverviewQuery } from '@/features/market/api/queries';
+import { marketEventTypeLabel } from '@/features/settings/constants';
+import {
+  marketEventTypeBarColor,
+  marketItemStateBarColor,
+  marketItemStateLabel
+} from '@/features/market/constants';
 import { cn } from '@/lib/utils';
 import { formatPercent, formatQuantity, formatScore } from '@/lib/format';
 import type {
+  MarketOverviewBreakdownEntryDto,
   MarketOverviewDto,
   MarketOverviewTrendBucketDto,
   TopOpportunityDto
@@ -132,6 +140,35 @@ function StatCard({
   );
 
   return href ? <FocusableLink to={href}>{card}</FocusableLink> : card;
+}
+
+/**
+ * Compact per-category distribution strip for a `StatCard` footer — the
+ * "watched items by state" / "events by type (24h)" breakdowns, derived
+ * in-process from rows the overview query already fetched (loxep-759). Zero
+ * segments (an empty breakdown) renders nothing, matching
+ * `StackedStatusBar`'s own zero-total behavior.
+ */
+function BreakdownBar({
+  entries,
+  labelOf,
+  colorOf
+}: {
+  entries: MarketOverviewBreakdownEntryDto[];
+  labelOf: (key: string) => string;
+  colorOf: (key: string) => string;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <StackedStatusBar
+      segments={entries.map((entry) => ({
+        key: entry.key,
+        label: labelOf(entry.key),
+        count: entry.count,
+        color: colorOf(entry.key)
+      }))}
+    />
+  );
 }
 
 /** Minimal hourly sparkline embedded in a KPI tile — no axis/tooltip, the number above already carries the value. */
@@ -341,7 +378,16 @@ function OverviewContent({ data }: { data: MarketOverviewDto }) {
           label='Watched items'
           value={formatQuantity(data.watchedItemCount)}
           icon={{ icon: Icons.eye, className: 'bg-chart-4/15 text-chart-4' }}
-          footer='Marketplace items linked to your monitors'
+          footer={
+            <div className='flex w-full flex-col gap-1.5'>
+              <span>Marketplace items linked to your monitors</span>
+              <BreakdownBar
+                entries={data.watchedItemStateBreakdown}
+                labelOf={marketItemStateLabel}
+                colorOf={marketItemStateBarColor}
+              />
+            </div>
+          }
         />
         <StatCard
           label='Events (last 24h)'
@@ -354,7 +400,16 @@ function OverviewContent({ data }: { data: MarketOverviewDto }) {
               gradientId='stat-events-sparkline'
             />
           }
-          footer='Derived market events, across every item'
+          footer={
+            <div className='flex w-full flex-col gap-1.5'>
+              <span>Derived market events, across every item</span>
+              <BreakdownBar
+                entries={data.eventTypeBreakdown24h}
+                labelOf={marketEventTypeLabel}
+                colorOf={marketEventTypeBarColor}
+              />
+            </div>
+          }
         />
         <StatCard
           label='New listings (24h)'

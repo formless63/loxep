@@ -55,6 +55,7 @@ import {
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createDb, type DbHandle } from '@loxep/db';
 import {
+  createAuditReader,
   createConnectionCredentialsService,
   createConnectionsService,
   createEconomicEntitiesService,
@@ -63,6 +64,7 @@ import {
   createSecretsService,
   createSettingsService,
   createUserPreferencesService,
+  type AuditReader,
   type ConnectionCredentialsService,
   type ConnectionsService,
   type EconomicEntitiesService,
@@ -91,6 +93,7 @@ import {
   createMailDomainsService,
   createMailSyncService,
   createMailboxAdminService,
+  createMailboxTemplatesService,
   createManagedDomainsService,
   createProvisioningTemplatesService,
   createProxyResourcesService,
@@ -104,6 +107,7 @@ import {
   type MailDomainsService,
   type MailSyncService,
   type MailboxAdminService,
+  type MailboxTemplatesService,
   type ManagedDomainsService,
   type ProvisioningTemplatesService,
   type ProxyResourcesService,
@@ -137,6 +141,14 @@ interface AdminRegistry {
   settings: SettingsService;
   /** ADR-0019 encrypted secrets, reused by any admin surface needing them. */
   secrets: SecretsService;
+  /**
+   * `/settings/audit` (loxep-161) — the read path over `audit_events`,
+   * deliberately a SEPARATE service from every writer's insert-only
+   * `AuditExecutor` (see `@loxep/domain`'s `audit.ts` module doc). Depends
+   * only on `db`, so it is built eagerly like `entities`/`connections`/
+   * `health` above.
+   */
+  auditReader: AuditReader;
   /** Durable per-user preferences (loxep-lbj) — `/dashboard`'s pinned-pages persistence, and any future per-user setting. Depends only on `db`, so it is built eagerly like `settings` above. */
   userPreferences: UserPreferencesService;
   /** `/finance` (loxep-dgf.1): expenses lifecycle and the expense read models. Depends only on `db`, so it is built eagerly like the other domain services above. */
@@ -315,6 +327,15 @@ interface AdminRegistry {
   /** Typed multi-address model (loxep-bub): declare/classify/setPrimary/remove, `/infrastructure/fleet/$name`'s address card. */
   hostAddresses: HostAddressesService;
   infraMail: MailDomainsService;
+  /**
+   * `mailbox_templates`/`mailbox_template_entries` (loxep-4xo, A9 follow-up):
+   * `MailDomainsService.applyTemplate` was already wired
+   * (`applyDefaultMailboxTemplate`) but the templates it applies had no
+   * constructed service anywhere in this registry — nobody could list,
+   * view, or author one. Same eager-construction shape as `infraMail` right
+   * above (pure `{ db }`, no enqueue dependency).
+   */
+  mailboxTemplates: MailboxTemplatesService;
   drift: DriftService;
   /**
    * Token mint/roll/scope. `provider` is a STUB until a live DNS adapter
@@ -571,6 +592,7 @@ function buildRegistry(): AdminRegistry {
     settings: createSettingsService({ db: handle.db }),
     userPreferences: createUserPreferencesService({ db: handle.db }),
     secrets: createSecretsService({ db: handle.db, keyring: config.keyring }),
+    auditReader: createAuditReader({ db: handle.db }),
     expenses: createExpensesService({ db: handle.db }),
     expenseReports: createExpenseReports({ db: handle.db }),
     expenseLines: createExpenseLinesService({ db: handle.db }),
@@ -596,6 +618,7 @@ function buildRegistry(): AdminRegistry {
       db: handle.db,
       enqueue: createTransactionalEnqueue()
     }),
+    mailboxTemplates: createMailboxTemplatesService({ db: handle.db }),
     drift: createDriftService({ db: handle.db }),
     dnsProviderTokens: createDnsProviderTokensService({
       db: handle.db,
@@ -790,6 +813,17 @@ export function getUserPreferencesService(): UserPreferencesService {
   return getAdminServices().userPreferences;
 }
 
+/**
+ * The `/settings/audit` read path (loxep-161) — `list()` only. Never the
+ * writer's `AuditExecutor`/`AuditService`; every appender in the codebase
+ * gets its own `createAuditService({ db })` at its own call site, exactly as
+ * `secrets.ts`/`connections.ts` already do, and none of them go through this
+ * registry.
+ */
+export function getAuditReader(): AuditReader {
+  return getAdminServices().auditReader;
+}
+
 /** Managed domains, desired DNS records, and the transactional-enqueue intent path (`/infrastructure/domains`). */
 export function getManagedDomainsService(): ManagedDomainsService {
   return getAdminServices().managedDomains;
@@ -808,6 +842,11 @@ export function getHostAddressesService(): HostAddressesService {
 /** Mail registration/verification/mailbox intent (`/infrastructure/domains/$name`'s mail panel). */
 export function getInfrastructureMailService(): MailDomainsService {
   return getAdminServices().infraMail;
+}
+
+/** Mailbox templates (loxep-4xo): read-only list/entries for the mail panel's "Templates" view. */
+export function getMailboxTemplatesService(): MailboxTemplatesService {
+  return getAdminServices().mailboxTemplates;
 }
 
 /** Persisted DNS drift findings — the desired-vs-observed diff panel. */

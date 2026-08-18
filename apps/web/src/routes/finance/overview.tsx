@@ -11,6 +11,7 @@ import {
   MissingReceiptsList,
   UnallocatedExpensesList
 } from '@/features/finance/components/expense-reports';
+import ExpenseTotalsBand from '@/features/finance/components/expense-totals-band';
 import PushDraftInvoiceDialog from '@/features/finance/components/push-draft-invoice-dialog';
 import PostingCard from '@/features/finance/components/posting-card';
 import {
@@ -43,13 +44,12 @@ function OverviewSkeleton() {
  * `ReceiptsService.missingReceipts` and `ExpenseReports.unallocatedExpenses`
  * — which had no caller before this page (loxep-dgf.1 acceptance).
  *
- * The dashboard's Financial band, not this page, is where a recorded
- * expense's dollar amount reaches a statement — this page only ever counts
- * OPERATIONAL gaps (missing paper, an unfinished split), never a total, so
- * nothing here can be mistaken for an accounting figure. Acquisition-cost
- * spend (money that bought goods for resale) does not appear anywhere on
- * this page: it is not an expense, and posting it is a later milestone's gap
- * (see the design's "the weave").
+ * These two cards only ever count OPERATIONAL gaps (missing paper, an
+ * unfinished split) — `ExpenseTotalsBand` below, not this pair, is where a
+ * recorded expense's dollar amount reaches this page (loxep-8e2 item 5).
+ * Acquisition-cost spend (money that bought goods for resale) does not
+ * appear anywhere on this page: it is not an expense, and posting it is a
+ * later milestone's gap (see the design's "the weave").
  */
 function OverviewData() {
   const { data: missingReceipts } = useSuspenseQuery(missingReceiptsQuery);
@@ -126,6 +126,7 @@ function FinanceOverview() {
         {/* Own query/skeleton/error boundary — a genuinely independent data
             source from the receipts/unallocated pair above (Frontend
             Standards, "one boundary per data source"). */}
+        <ExpenseTotalsBand />
         <PostingCard isAdmin={isAdmin} />
       </div>
     </FinancePage>

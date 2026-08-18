@@ -26,6 +26,7 @@ import { createColumns } from './columns';
 const COLUMN_IDS = [
   'name',
   'targetType',
+  'watching',
   'connectionName',
   'enabled',
   'intervalSeconds',
@@ -58,7 +59,7 @@ export default function MonitorsTable({ isAdmin }: { isAdmin: boolean }) {
   };
 
   if (isPending) {
-    return <DataTableSkeleton columnCount={isAdmin ? 9 : 8} filterCount={1} />;
+    return <DataTableSkeleton columnCount={isAdmin ? 10 : 9} filterCount={1} />;
   }
 
   if (isError) {

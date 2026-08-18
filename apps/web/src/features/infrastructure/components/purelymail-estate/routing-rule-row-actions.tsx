@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import TypedConfirmDialog from '@/components/ui/typed-confirm-dialog';
 import { toastError } from '@/lib/errors';
 import { estateConnectionSummaryQuery } from '@/features/estate/api/queries';
+import { purelymailEstateRoutingRulesQuery } from '@/features/infrastructure/api/queries';
 import { PROVIDER_WRITE_POLICY_TIER_VALUES } from '@/features/settings/constants';
 import { deletePurelymailRoutingRule } from '@/server/purelymail-estate-functions';
 import type { PurelymailMailboxAdminActionDto } from '@/server/purelymail-estate-functions';
@@ -15,15 +16,20 @@ const ACCESS_AFFECTING_RANK = PROVIDER_WRITE_POLICY_TIER_VALUES.indexOf('access_
  * Row-level "Delete…" for one routing rule on the Purelymail estate page
  * (loxep-47o.11) — mounts `MailboxAdminService.deleteRoutingRule`,
  * destructive, tier `access_affecting`-or-higher, typed confirmation of the
- * rule's own `<matchUser>@<domainName>` pattern. `createRoutingRule` has NO
- * row or section affordance here at all: Estate Browsers Design §3.2 names no
- * sanctioned home for a create action on this page, so it stays unmounted
- * (Rule P10) — this component is delete-only, matching the bead's own
- * fallback instruction.
+ * rule's own `<matchUser>@<domainName>` pattern. The create counterpart
+ * (loxep-4xo) is a SECTION-level "New routing rule…" affordance on
+ * `routing-rules-section.tsx`, not a row action — there is no existing row
+ * to act on when creating one.
  *
  * Only rendered where Loxep has a `mailboxes` intent row for this rule (same
  * `loxep !== null` gate `PurelymailMailboxRowActions` uses), since the
  * reconcile run this writes needs a `managed_domains.id` subject.
+ *
+ * loxep-4xo fix: the invalidation below used to spell the query key by hand
+ * as `['infrastructure', 'purelymail', ...]` — one segment off from
+ * `purelymailEstateRoutingRulesQuery`'s actual `'purelymail-estate'` key, so
+ * a successful delete never invalidated the list that renders it. Now
+ * invalidates the query's own `.queryKey` directly.
  */
 export function PurelymailRoutingRuleRowActions({
   connectionId,
@@ -66,7 +72,7 @@ export function PurelymailRoutingRuleRowActions({
         );
       }
       await queryClient.invalidateQueries({
-        queryKey: ['infrastructure', 'purelymail', connectionId, 'routing-rules']
+        queryKey: purelymailEstateRoutingRulesQuery(connectionId).queryKey
       });
     },
     onError: (error) => toastError(error, `Failed to delete the routing rule for ${confirmText}`)

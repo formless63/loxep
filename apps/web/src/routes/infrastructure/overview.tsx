@@ -14,6 +14,7 @@ import {
   EmptyTitle
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StackedStatusBar } from '@/components/ui/stacked-status-bar';
 import { Icons } from '@/components/icons';
 import { FleetSignalsBand } from '@/features/infrastructure/components/fleet-signals-band';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
@@ -21,8 +22,11 @@ import UnmatchedContainerHostsCard from '@/features/infrastructure/components/un
 import PangolinEstateLinksCard from '@/features/infrastructure/components/pangolin-estate-links-card';
 import { infrastructureOverviewQuery } from '@/features/infrastructure/api/queries';
 import {
+  DRIFT_KIND_LABELS,
+  driftKindBarColor,
   MANAGED_DOMAIN_STATE_LABELS,
   MANAGED_DOMAIN_STATE_TONE,
+  managedDomainStateBarColor,
   RUN_STATUS_TONE
 } from '@/features/infrastructure/constants';
 import { ToneBadge } from '@/features/settings/components/status-tone';
@@ -61,10 +65,14 @@ function StatTile({
 function OverviewSkeleton() {
   return (
     <div className='flex flex-col gap-4'>
-      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'>
-        {Array.from({ length: 4 }, (_, index) => (
+      <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5'>
+        {Array.from({ length: 5 }, (_, index) => (
           <Skeleton key={index} className='h-28 w-full' />
         ))}
+      </div>
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+        <Skeleton className='h-24 w-full' />
+        <Skeleton className='h-24 w-full' />
       </div>
       <div className='flex flex-col gap-4'>
         <Skeleton className='h-5 w-40' />
@@ -87,7 +95,7 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
     <div className='flex flex-col gap-4'>
       <div
         className={cn(
-          'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4',
+          'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5',
           '[&_[data-slot=card]]:bg-gradient-to-t [&_[data-slot=card]]:from-primary/5 [&_[data-slot=card]]:to-card [&_[data-slot=card]]:shadow-xs dark:[&_[data-slot=card]]:bg-card'
         )}
       >
@@ -111,6 +119,75 @@ function OverviewContent({ data }: { data: InfrastructureOverviewDto }) {
           value={formatQuantity(data.unresolvedDriftCount)}
           footer='Findings across every domain'
         />
+        <StatTile
+          label='DNS provider tokens'
+          value={formatQuantity(data.dnsProviderTokenCount)}
+          footer='Credentials registered for zone sync'
+        />
+      </div>
+
+      <div className='grid grid-cols-1 gap-4 md:grid-cols-2'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='text-base'>Domains by state</CardTitle>
+            <CardDescription>
+              Where every managed domain sits in the provisioning chain.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className='flex flex-col gap-3'>
+            <StackedStatusBar
+              segments={data.domainStateBreakdown.map((entry) => ({
+                key: entry.key,
+                label: MANAGED_DOMAIN_STATE_LABELS[entry.key] ?? entry.key,
+                count: entry.count,
+                color: managedDomainStateBarColor(entry.key)
+              }))}
+            />
+            <div className='flex flex-wrap gap-2'>
+              {data.domainStateBreakdown.map((entry) => (
+                <ToneBadge
+                  key={entry.key}
+                  tone={MANAGED_DOMAIN_STATE_TONE[entry.key] ?? 'secondary'}
+                >
+                  {MANAGED_DOMAIN_STATE_LABELS[entry.key] ?? entry.key}:{' '}
+                  {formatQuantity(entry.count)}
+                </ToneBadge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='text-base'>Unresolved drift by kind</CardTitle>
+            <CardDescription>
+              Missing, modified, and unexpected are three different fixes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className='flex flex-col gap-3'>
+            {data.unresolvedDriftKindBreakdown.length === 0 ? (
+              <p className='text-muted-foreground text-sm'>No unresolved drift.</p>
+            ) : (
+              <>
+                <StackedStatusBar
+                  segments={data.unresolvedDriftKindBreakdown.map((entry) => ({
+                    key: entry.key,
+                    label: DRIFT_KIND_LABELS[entry.key] ?? entry.key,
+                    count: entry.count,
+                    color: driftKindBarColor(entry.key)
+                  }))}
+                />
+                <div className='flex flex-wrap gap-2'>
+                  {data.unresolvedDriftKindBreakdown.map((entry) => (
+                    <Badge key={entry.key} variant='outline'>
+                      {DRIFT_KIND_LABELS[entry.key] ?? entry.key}: {formatQuantity(entry.count)}
+                    </Badge>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <FleetSignalsBand signals={data.fleetSignals} />

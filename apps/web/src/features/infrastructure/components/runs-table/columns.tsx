@@ -16,6 +16,62 @@ const STATUS_OPTIONS = [
   { value: 'partial', label: 'Partial' }
 ];
 
+/** `reconcile_runs.trigger` — CLOSED and `CHECK`ed (`packages/db/src/schema/infrastructure.ts`). */
+const TRIGGER_LABELS: Record<string, string> = {
+  intent_change: 'Intent change',
+  sweep: 'Sweep',
+  manual: 'Manual',
+  poll: 'Poll'
+};
+
+/**
+ * `subjectId` becomes a `Link` only for the subject types with an existing
+ * detail route (`domain` → `/infrastructure/domains/$name`, `hosting_target`
+ * → `/infrastructure/fleet/$name`), keyed on the already-resolved
+ * `subjectLabel` (the route param is a name, not the row id). `token`/
+ * `proxy_resource`/`template_run` have no detail page today, so they keep
+ * rendering as plain text rather than a fabricated link.
+ */
+export function SubjectCell({ run }: { run: ReconcileRunDto }) {
+  const label = run.subjectLabel ?? run.subjectId;
+  const suffix = <span className='text-muted-foreground'> ({run.subjectType})</span>;
+
+  if (run.subjectType === 'domain' && run.subjectLabel) {
+    return (
+      <span>
+        <Link
+          to='/infrastructure/domains/$name'
+          params={{ name: run.subjectLabel }}
+          className='font-medium outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring'
+        >
+          {label}
+        </Link>
+        {suffix}
+      </span>
+    );
+  }
+  if (run.subjectType === 'hosting_target' && run.subjectLabel) {
+    return (
+      <span>
+        <Link
+          to='/infrastructure/fleet/$name'
+          params={{ name: run.subjectLabel }}
+          className='font-medium outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring'
+        >
+          {label}
+        </Link>
+        {suffix}
+      </span>
+    );
+  }
+  return (
+    <span>
+      {label}
+      {suffix}
+    </span>
+  );
+}
+
 export function getColumns(): ColumnDef<DataTableFeatures, ReconcileRunDto>[] {
   return [
     {
@@ -44,12 +100,7 @@ export function getColumns(): ColumnDef<DataTableFeatures, ReconcileRunDto>[] {
     {
       id: 'subject',
       header: 'Subject',
-      cell: ({ row }) => (
-        <span>
-          {row.original.subjectLabel ?? row.original.subjectId}
-          <span className='text-muted-foreground'> ({row.original.subjectType})</span>
-        </span>
-      )
+      cell: ({ row }) => <SubjectCell run={row.original} />
     },
     {
       id: 'mode',
@@ -60,18 +111,47 @@ export function getColumns(): ColumnDef<DataTableFeatures, ReconcileRunDto>[] {
       )
     },
     {
+      id: 'trigger',
+      accessorKey: 'trigger',
+      enableSorting: false,
+      header: 'Trigger',
+      cell: ({ row }) => (
+        <span className='text-muted-foreground text-xs'>
+          {TRIGGER_LABELS[row.original.trigger] ?? row.original.trigger}
+        </span>
+      )
+    },
+    {
       id: 'status',
       accessorKey: 'status',
       header: ({ column }: { column: Column<DataTableFeatures, ReconcileRunDto, unknown> }) => (
         <DataTableColumnHeader column={column} title='Status' />
       ),
-      cell: ({ row }) => (
-        <ToneBadge tone={RUN_STATUS_TONE[row.original.status] ?? 'secondary'}>
-          {row.original.status}
-        </ToneBadge>
-      ),
+      cell: ({ row }) => {
+        const { status, errorSummary } = row.original;
+        return (
+          <div className='flex flex-col gap-0.5'>
+            <ToneBadge tone={RUN_STATUS_TONE[status] ?? 'secondary'}>{status}</ToneBadge>
+            {errorSummary && (
+              <span className='text-destructive line-clamp-1 text-xs' title={errorSummary}>
+                {errorSummary}
+              </span>
+            )}
+          </div>
+        );
+      },
       enableColumnFilter: true,
       meta: { label: 'Status', variant: 'multiSelect' as const, options: STATUS_OPTIONS }
+    },
+    {
+      id: 'stepCount',
+      accessorKey: 'stepCount',
+      header: ({ column }: { column: Column<DataTableFeatures, ReconcileRunDto, unknown> }) => (
+        <DataTableColumnHeader column={column} title='Steps' />
+      ),
+      cell: ({ row }) => (
+        <span className='block text-right tabular-nums'>{row.original.stepCount}</span>
+      )
     },
     {
       id: 'startedAt',
@@ -80,6 +160,16 @@ export function getColumns(): ColumnDef<DataTableFeatures, ReconcileRunDto>[] {
         <DataTableColumnHeader column={column} title='Started' />
       ),
       cell: ({ row }) => <span>{formatDateTime(row.original.startedAt)}</span>
+    },
+    {
+      id: 'finishedAt',
+      accessorKey: 'finishedAt',
+      header: ({ column }: { column: Column<DataTableFeatures, ReconcileRunDto, unknown> }) => (
+        <DataTableColumnHeader column={column} title='Finished' />
+      ),
+      cell: ({ row }) => (
+        <span className='text-muted-foreground'>{formatDateTime(row.original.finishedAt)}</span>
+      )
     }
   ];
 }

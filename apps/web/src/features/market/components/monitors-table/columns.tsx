@@ -9,7 +9,8 @@ import {
   consecutiveErrorsIcon,
   consecutiveErrorsTone,
   monitorTargetTypeLabel,
-  monitorTargetTypeOptions
+  monitorTargetTypeOptions,
+  monitorTargetWatchSummary
 } from '@/features/market/constants';
 import type { MonitorDto } from '@/server/market-functions';
 import { CellAction } from './cell-action';
@@ -59,6 +60,16 @@ export function createColumns(
         variant: 'multiSelect',
         options: monitorTargetTypeOptions
       }
+    },
+    {
+      id: 'watching',
+      accessorFn: (row) =>
+        monitorTargetWatchSummary(row.targetType, row.config as Record<string, unknown>),
+      enableSorting: false,
+      header: 'Watching',
+      cell: ({ cell }) => (
+        <span className='text-muted-foreground font-mono text-xs'>{cell.getValue<string>()}</span>
+      )
     },
     {
       id: 'connectionName',

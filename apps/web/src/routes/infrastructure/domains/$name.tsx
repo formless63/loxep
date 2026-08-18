@@ -6,7 +6,14 @@ import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
@@ -16,6 +23,7 @@ import DomainChainDiagram, {
   DomainChainDiagramSkeleton
 } from '@/features/infrastructure/components/domain-chain-diagram';
 import DnsDriftPanel from '@/features/infrastructure/components/dns-drift-panel';
+import EditDomainDialog from '@/features/infrastructure/components/edit-domain-dialog';
 import MailPanel from '@/features/infrastructure/components/mail-panel';
 import ProxyChainPanel from '@/features/infrastructure/components/proxy-chain-panel';
 import { managedDomainQuery } from '@/features/infrastructure/api/queries';
@@ -50,6 +58,7 @@ function DetailSkeleton() {
 
 function DomainSummaryCard({ domain }: { domain: ManagedDomainDetailDto }) {
   const queryClient = useQueryClient();
+  const [editOpen, setEditOpen] = React.useState(false);
   const resyncMutation = useMutation({
     mutationFn: () => requestDomainResync({ data: { domainId: domain.id } }),
     onSuccess: async () => {
@@ -81,11 +90,33 @@ function DomainSummaryCard({ domain }: { domain: ManagedDomainDetailDto }) {
           {domain.lastReconciledAt &&
             ` · last reconciled ${formatDateTime(domain.lastReconciledAt)}`}
         </CardDescription>
+        <CardAction>
+          <Button size='sm' variant='outline' onClick={() => setEditOpen(true)}>
+            Edit…
+          </Button>
+          <EditDomainDialog domain={domain} open={editOpen} onOpenChange={setEditOpen} />
+        </CardAction>
       </CardHeader>
       <CardContent className='flex flex-col gap-3'>
         {domain.zoneNameservers && domain.zoneNameservers.length > 0 && (
           <div>
-            <p className='text-sm font-medium'>Nameservers to set at the registrar</p>
+            <div className='flex flex-wrap items-center gap-2'>
+              <p className='text-sm font-medium'>Nameservers to set at the registrar</p>
+              {domain.delegationVerifiedAt ? (
+                <Badge variant='success'>
+                  <Icons.circleCheck />
+                  Delegation verified {formatDateTime(domain.delegationVerifiedAt)}
+                </Badge>
+              ) : (
+                <Badge variant='warning'>
+                  <Icons.alertCircle />
+                  Delegation not yet verified
+                </Badge>
+              )}
+              {domain.providerZoneStatus && (
+                <Badge variant='outline'>Provider zone: {domain.providerZoneStatus}</Badge>
+              )}
+            </div>
             <ul className='text-muted-foreground font-mono text-sm'>
               {domain.zoneNameservers.map((ns) => (
                 <li key={ns}>{ns}</li>
@@ -114,7 +145,13 @@ function DomainSummaryCard({ domain }: { domain: ManagedDomainDetailDto }) {
                     {record.type}
                   </Badge>
                   {record.name} → {record.content}
+                  {record.priority !== null && (
+                    <span className='text-muted-foreground'> · priority {record.priority}</span>
+                  )}
                   {record.proxied && <span className='text-muted-foreground'> (proxied)</span>}
+                  {record.ttlSeconds !== null && (
+                    <span className='text-muted-foreground'> · TTL {record.ttlSeconds}s</span>
+                  )}
                   <span className='text-muted-foreground'> · {record.owner}</span>
                 </li>
               ))}

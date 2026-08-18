@@ -192,3 +192,36 @@ test('admin creates a child entity beneath a parent', async ({ page }) => {
   await expect(childRow.getByText(rootEntityName)).toBeVisible(); // parent column
   await expect(tableRow(page, rootEntityName).first()).toBeVisible(); // both entities listed
 });
+
+/**
+ * `/settings/audit` (loxep-161): the first reader over `audit_events`.
+ * Filters to the `economic_entity.create` action this suite already
+ * performed (the previous test, "admin creates a child entity beneath a
+ * parent") rather than asserting on the unfiltered top row — robust to any
+ * other economic_entity events another spec records, and newest-first
+ * ordering means it is the top match regardless. Opens the row's diff sheet
+ * and asserts the field-level diff (not a raw JSON dump) shows the created
+ * entity's name.
+ */
+test('audit log records an earlier action and shows its before/after diff', async ({ page }) => {
+  await page.goto('/settings/audit');
+  await expect(page.getByRole('heading', { name: 'Audit log' })).toBeVisible();
+
+  await page.getByPlaceholder('Search resource type…').fill('economic_entity');
+  await page.getByPlaceholder('Search action…').fill('create');
+
+  const row = tableRow(page, 'economic_entity');
+  await expect(row.first()).toBeVisible();
+
+  await row
+    .first()
+    .getByRole('button', { name: /^View diff for/ })
+    .click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByText('economic_entity.create')).toBeVisible();
+
+  // Field-level diff: the "name" key's After value is the entity this suite
+  // just created — not a raw JSON blob.
+  await expect(sheet.getByText('name', { exact: true })).toBeVisible();
+  await expect(sheet.getByText(childEntityName)).toBeVisible();
+});

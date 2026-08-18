@@ -1,7 +1,14 @@
 import type { ReactNode } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from '@/components/ui/card';
 import {
   Empty,
   EmptyDescription,
@@ -48,6 +55,7 @@ export function EstateSection<T>({
   isEmpty,
   emptyMessage,
   skeletonRows = 3,
+  headerAction,
   children
 }: {
   title: string;
@@ -61,6 +69,17 @@ export function EstateSection<T>({
   isEmpty: (data: T) => boolean;
   emptyMessage: string;
   skeletonRows?: number;
+  /**
+   * An optional section-level write affordance (e.g. "New mailbox"), rendered
+   * top-right of the header via shadcn's `CardAction` slot. Additive-only —
+   * every existing caller that omits it renders exactly as before. First
+   * used by the Purelymail estate's Mailboxes/Routing rules sections
+   * (loxep-4xo) for a section-level CREATE next to their own row-level
+   * "Delete…" (Rule P10: mounts an existing service-layer write, same as
+   * every other estate action; Rule P14 blocked-state rendering is the
+   * caller's own responsibility, same as any other button here).
+   */
+  headerAction?: ReactNode;
   children: (data: T) => ReactNode;
 }) {
   return (
@@ -73,6 +92,7 @@ export function EstateSection<T>({
             <> — read just now ({formatRelativeTime(result.readAt)}), never stored.</>
           )}
         </CardDescription>
+        {headerAction !== undefined && <CardAction>{headerAction}</CardAction>}
       </CardHeader>
       <CardContent>
         {isPending ? (

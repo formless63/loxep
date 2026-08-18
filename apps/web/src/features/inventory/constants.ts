@@ -343,6 +343,62 @@ export function movementIsInbound(kind: string): boolean {
   return INBOUND_MOVEMENT_KINDS.has(kind as MovementKind);
 }
 
+/**
+ * PROVISIONAL (loxep-8e2, priority 1): collapses the twelve `MovementKind`
+ * values into five chart series for `/inventory/movements`' stacked area.
+ * Frontend Standards caps chart series colors at `--chart-1`..`--chart-5`
+ * (only five tokens exist in the theme) — a literal one-series-per-kind
+ * chart would need twelve, which is renderable only by inventing colors
+ * (banned) or reusing tokens across series (banned: "never skipped
+ * around"). This grouping is chosen to answer the two questions the bead
+ * poses directly, not to minimize kinds for their own sake: `received` vs.
+ * `sold` answers "receiving faster than selling?", and `shrinkage` is its
+ * own isolated series (not folded into a generic "outbound" bucket)
+ * because "is shrinkage trending up" is exactly the signal the schema
+ * keeps `shrinkage`/`disposal` separate from other outbound kinds to
+ * preserve.
+ */
+export type MovementTrendGroup = 'received' | 'sold' | 'shrinkage' | 'adjusted' | 'reversed';
+
+export const MOVEMENT_TREND_GROUP_VALUES: readonly MovementTrendGroup[] = [
+  'received',
+  'sold',
+  'shrinkage',
+  'adjusted',
+  'reversed'
+];
+
+const MOVEMENT_TREND_GROUPS = {
+  receipt: 'received',
+  transfer_in: 'received',
+  return_in: 'received',
+  adjustment_in: 'adjusted',
+  found: 'adjusted',
+  transfer_out: 'adjusted',
+  depletion_sale: 'sold',
+  adjustment_out: 'adjusted',
+  shrinkage: 'shrinkage',
+  disposal: 'shrinkage',
+  consumption: 'adjusted',
+  reversal: 'reversed'
+} satisfies Record<MovementKind, MovementTrendGroup>;
+
+export function movementTrendGroup(kind: string): MovementTrendGroup {
+  return MOVEMENT_TREND_GROUPS[kind as MovementKind] ?? 'adjusted';
+}
+
+const MOVEMENT_TREND_GROUP_LABELS = {
+  received: 'Received',
+  sold: 'Sold',
+  shrinkage: 'Shrinkage / disposal',
+  adjusted: 'Adjustments',
+  reversed: 'Reversals'
+} satisfies Record<MovementTrendGroup, string>;
+
+export function movementTrendGroupLabel(group: MovementTrendGroup): string {
+  return MOVEMENT_TREND_GROUP_LABELS[group];
+}
+
 /** `inventory_locations.kind` — closed, `CHECK`ed. */
 export type InventoryLocationKind =
   | 'site'

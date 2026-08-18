@@ -11,6 +11,7 @@ import { toastError } from '@/lib/errors';
 import { formatDateTime } from '@/lib/format';
 import { InfrastructurePage } from '@/features/infrastructure/components/infrastructure-page';
 import RunStepsList from '@/features/infrastructure/components/run-steps-list';
+import { SubjectCell } from '@/features/infrastructure/components/runs-table/columns';
 import { reconcileRunQuery, reconcileRunsQuery } from '@/features/infrastructure/api/queries';
 import { RUN_MODE_LABELS, RUN_STATUS_TONE } from '@/features/infrastructure/constants';
 import { ToneBadge } from '@/features/settings/components/status-tone';
@@ -62,11 +63,11 @@ function RunDetailData({ id }: { id: string }) {
             <CardTitle className='text-base'>{data.kind}</CardTitle>
             <ToneBadge tone={RUN_STATUS_TONE[data.status] ?? 'secondary'}>{data.status}</ToneBadge>
           </div>
-          <CardDescription>
-            {data.subjectLabel ?? data.subjectId} ({data.subjectType}) ·{' '}
-            {RUN_MODE_LABELS[data.mode] ?? data.mode} · triggered by {data.trigger} · started{' '}
-            {formatDateTime(data.startedAt)}
+          <CardDescription className='flex flex-wrap items-center gap-x-1'>
+            <SubjectCell run={data} /> · {RUN_MODE_LABELS[data.mode] ?? data.mode} · triggered by{' '}
+            {data.trigger} · started {formatDateTime(data.startedAt)}
             {data.finishedAt && ` · finished ${formatDateTime(data.finishedAt)}`}
+            {` · ${data.stepCount} step${data.stepCount === 1 ? '' : 's'}`}
           </CardDescription>
         </CardHeader>
         <CardContent className='flex flex-col gap-3'>

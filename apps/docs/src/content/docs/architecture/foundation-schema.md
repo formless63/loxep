@@ -692,6 +692,8 @@ metadata              jsonb not null default '{}'
 
 Secrets must be redacted before audit serialization. Secret-change events record metadata/status, never plaintext values.
 
+Every write into this table goes through `@loxep/domain`'s `createAuditService`, typed `Pick<LoxepDb, "insert">` so a writer cannot read the table back. Reading it is a SEPARATE service, `createAuditReader` (loxep-161), over its own `Pick<LoxepDb, "query">` executor — deliberately not a widened `AuditService`, so the ~165 write call-sites across settings/entities/connections/secrets/inventory/counterparties/accounting/infrastructure keep no read access they were never reviewed for. `/settings/audit` (admin-only) is its one caller: a paged, filtered (actor/resource type/action/date range) table with a per-row diff viewer, the first UI over this ledger — before it, "who changed this connection, and what was it before?" was answerable only in `psql`.
+
 ## Relationship overview
 
 The first schema is intentionally narrow. The important relationships are:

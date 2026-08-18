@@ -43,6 +43,24 @@ import {
   movementKindLabel
 } from '@/features/inventory/constants';
 
+/**
+ * `acquisition_opportunity_links.link_kind` (loxep-759) — closed, `CHECK`ed
+ * (`OPPORTUNITY_LINK_KINDS`, `packages/db/src/schema/inventory.ts`): mirrors
+ * `acquisition-detail.tsx`'s identical helper — `sourced_from` means the
+ * observation drove the purchase, `evaluated_against` means we priced our
+ * decision using it, `comparable` means it is a reference point found later,
+ * unrelated to why we bought.
+ */
+const OPPORTUNITY_LINK_KIND_LABELS: Record<string, string> = {
+  sourced_from: 'Sourced from',
+  evaluated_against: 'Priced against',
+  comparable: 'Comparable (found later)'
+};
+
+function opportunityLinkKindLabel(kind: string): string {
+  return OPPORTUNITY_LINK_KIND_LABELS[kind] ?? kind.replace(/_/g, ' ');
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className='flex flex-col gap-0.5'>
@@ -219,12 +237,14 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
       {data.sourcedFrom.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className='text-base'>Sourced from /market</CardTitle>
+            <CardTitle className='text-base'>/market relationships</CardTitle>
           </CardHeader>
           <CardContent className='flex flex-col gap-2'>
             {data.sourcedFrom.map((link) => (
               <div key={link.id} className='flex flex-wrap items-center gap-2 text-sm'>
-                <Badge variant='secondary'>{link.linkKind.replace(/_/g, ' ')}</Badge>
+                <Badge variant={link.linkKind === 'sourced_from' ? 'secondary' : 'outline'}>
+                  {opportunityLinkKindLabel(link.linkKind)}
+                </Badge>
                 {link.marketplaceItemId ? (
                   <Link
                     to='/market/items/$itemId'
@@ -239,6 +259,11 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
                 {link.scoreAtLink && (
                   <span className='text-muted-foreground'>
                     score {formatScore(Number(link.scoreAtLink))} at link time
+                  </span>
+                )}
+                {link.targetPriceAmount && link.targetCurrency && (
+                  <span className='text-muted-foreground'>
+                    target {formatMoney(link.targetPriceAmount, link.targetCurrency)} at link time
                   </span>
                 )}
                 <span className='text-muted-foreground text-xs'>
