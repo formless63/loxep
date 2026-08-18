@@ -54,6 +54,7 @@
         "@hookform/resolvers": "5.7.1",
         "@loxep/accounting": "workspace:*",
         "@loxep/auth": "workspace:*",
+        "@loxep/commerce": "workspace:*",
         "@loxep/config": "workspace:*",
         "@loxep/counterparties": "workspace:*",
         "@loxep/db": "workspace:*",
