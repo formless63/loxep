@@ -201,6 +201,28 @@ export function createAuth({ config, db, sendMagicLinkEmail }: CreateAuthOptions
     (config.smtp ? createSmtpMagicLinkSender(config.smtp) : undefined);
   const bootstrapAdminEmail = config.bootstrapAdminEmail;
 
+  // Session freshness (loxep-u8c A18): deliberately no `session` block here —
+  // `expiresIn`/`updateAge` stay at Better Auth's defaults and
+  // `cookieCache` stays OFF (its own default). Verified against the
+  // installed better-auth 1.6.26 dist:
+  //   - `cookieCache` is opt-in and off by default, so `auth.api.getSession()`
+  //     already re-reads `session` AND `user` (hence `role`/`banned`) from
+  //     PostgreSQL on every call — enabling it would be the regression here,
+  //     not the fix: a cached cookie would keep serving a just-revoked role
+  //     for up to `cookieCache.maxAge`.
+  //   - The admin plugin's `banned` check only runs in
+  //     `session.create.before` (sign-in time, `admin.mjs`) — it does NOT
+  //     re-validate already-issued sessions, which is why a ban must
+  //     explicitly revoke sessions to take effect immediately. The admin
+  //     plugin's own `/admin/ban-user` route already does this
+  //     (`internalAdapter.deleteUserSessions`, `routes.mjs:303`), and
+  //     `setUserRole` (`apps/web/src/server/admin-functions.ts`) now calls
+  //     `auth.api.revokeUserSessions` right after `auth.api.setRole` for the
+  //     same reason — `setRole` has no such built-in revoke.
+  // Net effect: every admin-driven access change (ban, role change) is made
+  // to take effect immediately through explicit revocation at the call
+  // site, so shortening `expiresIn`/`updateAge` here would only trade one
+  // knob for a slower, less certain version of the same guarantee.
   return betterAuth({
     database: drizzleAdapter(db.db, {
       provider: "pg",

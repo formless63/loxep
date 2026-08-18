@@ -1,9 +1,11 @@
+import * as React from 'react';
 import type { ReactNode } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useTable } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
@@ -40,6 +42,8 @@ import {
   refundStatusTone
 } from '@/features/commerce/constants';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import OrderAttributionDialog from '@/features/commerce/components/order-attribution-dialog';
+import ShipmentsPanel from '@/features/inventory/components/shipments-panel';
 import type {
   OrderDetailDto,
   OrderFeeDto,
@@ -411,6 +415,7 @@ function ProvenanceTable({ provenance }: { provenance: OrderDetailDto['provenanc
 
 export default function OrderDetail({ orderId }: { orderId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(orderQuery(orderId));
+  const [attributionOpen, setAttributionOpen] = React.useState(false);
 
   if (isPending) {
     return <div className='text-muted-foreground text-sm'>Loading…</div>;
@@ -486,9 +491,22 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
             )}
           </DetailRow>
           <DetailRow label='Attribution'>
-            {data.economicEntityName ?? 'Unattributed'}
-            <span className='text-muted-foreground block text-xs capitalize'>
-              {data.entityAttributionSource.replaceAll('_', ' ')}
+            <span className='flex items-center gap-1.5'>
+              <span>
+                {data.economicEntityName ?? 'Unattributed'}
+                <span className='text-muted-foreground block text-xs capitalize'>
+                  {data.entityAttributionSource.replaceAll('_', ' ')}
+                </span>
+              </span>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                aria-label='Edit attribution'
+                onClick={() => setAttributionOpen(true)}
+              >
+                <Icons.edit className='size-3.5' />
+              </Button>
             </span>
           </DetailRow>
           <DetailRow label='Provider order id'>{data.externalOrderId}</DetailRow>
@@ -568,6 +586,16 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
         </CardContent>
       </Card>
 
+      <ShipmentsPanel
+        orderId={data.id}
+        currency={data.currency}
+        lines={data.lines.map((line) => ({
+          id: line.id,
+          title: line.title,
+          quantity: line.quantity
+        }))}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle className='flex items-center gap-2 text-base'>
@@ -578,6 +606,13 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
           <ProvenanceTable provenance={data.provenance} />
         </CardContent>
       </Card>
+
+      <OrderAttributionDialog
+        open={attributionOpen}
+        onOpenChange={setAttributionOpen}
+        orderId={data.id}
+        currentEconomicEntityId={data.economicEntityId}
+      />
     </div>
   );
 }

@@ -177,3 +177,69 @@ export const disablePurchaseSync = createServerFn({ method: 'POST' })
     const row = await monitor.updateTarget(existing.id, { enabled: false });
     return toPurchaseSyncStatusDto(row);
   });
+
+/**
+ * "Sync now" (loxep-u8c A25). The registry's own doc calls a "sync now"
+ * button exactly this task's on-demand entry point, and `@loxep/app` already
+ * exports `enqueueEbayPurchaseSync`/`ebayPurchaseSyncJobKey` for precisely
+ * this — this function is the first caller.
+ *
+ * `enqueueEbayPurchaseSync` takes a raw Graphile `addJob(identifier,
+ * payload?, spec?)`-shaped callback (`RawAddJob`, `@loxep/commerce`), not
+ * `@loxep/infrastructure`'s `TransactionalEnqueue` (`(tx, taskName, payload,
+ * options?)`) every OTHER apps/web "sync now" action uses. Rather than fork
+ * a second enqueue path (or import `@loxep/jobs`'s real `addJob`, which must
+ * never reach the web bundle), the adapter below wraps `getSyncNowEnqueue()`
+ * in a `RawAddJob`-shaped closure over one transaction — every write still
+ * goes through the same `graphile_worker.add_job` SQL insert
+ * `TransactionalEnqueue` always uses, so this reuses
+ * `enqueueEbayPurchaseSync`'s own payload/job-key construction instead of
+ * duplicating it, while staying on the sanctioned transactional seam.
+ * `spec?.jobKeyMode` is hardcoded to `'replace'` rather than forwarded,
+ * because `enqueueEbayPurchaseSync` only ever passes that literal — see its
+ * source in `packages/app/src/inventory-ebay.ts`.
+ *
+ * Requires an existing, ENABLED `ebay_purchases` target — this never
+ * creates or enables one (that stays `enablePurchaseSync`'s job).
+ */
+export const syncPurchasesNow = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ connectionId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const { requireAdmin, getAdminServices, getSyncNowEnqueue, getFleetModule } =
+      await import('@/server/admin');
+    await requireAdmin();
+    const { connections, handle } = getAdminServices();
+    const connection = await connections.getConnection(data.connectionId);
+
+    if (connection.provider !== EBAY_PROVIDER) {
+      throw new Error('Purchase sync is only supported for eBay accounts');
+    }
+
+    const existing = await handle.db.query.monitorTargets.findFirst({
+      where: (table, { and, eq }) =>
+        and(
+          eq(table.connectionId, connection.id),
+          eq(table.targetType, EBAY_PURCHASES_TARGET_TYPE)
+        ),
+      orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)]
+    });
+    if (existing === undefined || !existing.enabled) {
+      throw new Error('Enable purchase sync before syncing on demand');
+    }
+
+    const enqueue = getSyncNowEnqueue();
+    const fleet = await getFleetModule();
+    await handle.db.transaction(async (tx) => {
+      await fleet.enqueueEbayPurchaseSync(
+        (identifier, payload, spec) =>
+          enqueue(
+            tx,
+            identifier,
+            (payload ?? {}) as Record<string, unknown>,
+            spec?.jobKey === undefined ? undefined : { jobKey: spec.jobKey, jobKeyMode: 'replace' }
+          ),
+        { connectionId: connection.id }
+      );
+    });
+    return { enqueued: true };
+  });

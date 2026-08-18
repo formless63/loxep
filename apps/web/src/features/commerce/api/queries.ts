@@ -3,9 +3,10 @@ import {
   fetchCatalogItems,
   fetchChannelListing,
   fetchChannelListings,
+  fetchCommerceOverviewReports,
   fetchListingsForInventoryItem
 } from '@/server/commerce-functions';
-import { fetchOrder, fetchOrders } from '@/server/orders-functions';
+import { fetchDuplicateOrderCandidates, fetchOrder, fetchOrders } from '@/server/orders-functions';
 
 export interface ListingFilterParams {
   status?: string;
@@ -28,6 +29,12 @@ export const channelListingQuery = (id: string) =>
 export const catalogItemsQuery = queryOptions({
   queryKey: ['commerce', 'catalog'],
   queryFn: () => fetchCatalogItems()
+});
+
+/** `orderSummary`/`entityAttributionReport` for `/commerce/overview` (loxep-7fs, A22). */
+export const commerceOverviewReportsQuery = queryOptions({
+  queryKey: ['commerce', 'overview-reports'],
+  queryFn: () => fetchCommerceOverviewReports()
 });
 
 /** The item-detail panel's read — "the weave": item detail gains a listings panel. */
@@ -57,3 +64,9 @@ export const orderQuery = (id: string) =>
     queryKey: ['commerce', 'order', id],
     queryFn: () => fetchOrder({ data: { id } })
   });
+
+/** The cross-connection duplicate diagnostic worklist (loxep-7fs, A22). */
+export const duplicateOrderCandidatesQuery = queryOptions({
+  queryKey: ['commerce', 'orders', 'duplicates'],
+  queryFn: () => fetchDuplicateOrderCandidates()
+});

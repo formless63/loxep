@@ -1299,6 +1299,52 @@ export const applyStorageBackendAction = createServerFn({ method: 'POST' })
     return { id: data.id };
   });
 
+/**
+ * "Test backend" (loxep-u8c A20). `driver.list()`/`exists()` are conformance-
+ * tested against both drivers but had zero call sites in the app — a wrong
+ * bucket/endpoint/key was previously discovered only when a real upload
+ * 500'd. This resolves the SAME driver `resolveDriver` builds for every real
+ * read/write (S3 credentials decrypted only inside that call, per the
+ * service's own doc) and performs one harmless read: `list('', { limit: 1 })`
+ * — at most one key, never an upload, delete, or credential exposure.
+ *
+ * Deliberately does not throw: the row action needs to report the REAL
+ * driver/provider error verbatim (a wrong endpoint, an expired key, a
+ * missing bucket), and the error's own `message` already carries that text
+ * from the AWS SDK or the local filesystem call, so it is returned as data
+ * rather than re-thrown-and-toasted, matching `DeleteConnectionResultDto`'s
+ * "a refusal is data" precedent elsewhere in this file.
+ */
+export interface StorageBackendTestResultDto {
+  ok: boolean;
+  /** Success summary, or the real error message verbatim. */
+  message: string;
+}
+
+export const testStorageBackend = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<StorageBackendTestResultDto> => {
+    const { requireAdmin, getStorageBackendsService } = await import('@/server/admin');
+    await requireAdmin();
+    const storageBackends = await getStorageBackendsService();
+    try {
+      const driver = await storageBackends.resolveDriver(data.id);
+      const result = await driver.list('', { limit: 1 });
+      return {
+        ok: true,
+        message:
+          result.keys.length > 0
+            ? `Connected — found ${result.keys.length === 1 ? '1 object' : `${result.keys.length} objects`}`
+            : 'Connected — backend is reachable and empty'
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error)
+      };
+    }
+  });
+
 // ---------------------------------------------------------------------------
 // Users (loxep-nyl.3) — Better Auth admin API, admin-only including listing
 // ---------------------------------------------------------------------------
@@ -1309,6 +1355,10 @@ export interface UserDto {
   name: string;
   role: string;
   banned: boolean;
+  /** Never null when `banned` — the reason an admin gave when banning. */
+  banReason: string | null;
+  /** `null` means the ban is permanent (or the user isn't banned). */
+  banExpires: string | null;
   createdAt: string;
 }
 
@@ -1330,6 +1380,8 @@ export const fetchUsers = createServerFn({ method: 'GET' }).handler(
       name: user.name,
       role: user.role ?? 'member',
       banned: user.banned ?? false,
+      banReason: user.banReason ?? null,
+      banExpires: iso(user.banExpires ?? null),
       createdAt: iso(user.createdAt)
     }));
   }
@@ -1344,8 +1396,105 @@ export const setUserRole = createServerFn({ method: 'POST' })
       import('@tanstack/react-start/server')
     ]);
     await requireAdmin();
+    const headers = getRequestHeaders();
     await getAuth().api.setRole({
       body: { userId: data.userId, role: data.role },
+      headers
+    });
+    // loxep-u8c A18: unlike `/admin/ban-user` (which already revokes every
+    // session for the target user — verified against the installed
+    // better-auth 1.6.26 dist, `admin/routes.mjs:303`), `/admin/set-role`
+    // does not touch sessions at all. Without this explicit revoke, a
+    // demoted admin keeps admin-level authorization on their existing
+    // session until it expires on Better Auth's own defaults (see
+    // `create-auth.ts`'s session-freshness note). Revoking here makes the
+    // new role take effect on the user's very next request instead.
+    await getAuth().api.revokeUserSessions({ body: { userId: data.userId }, headers });
+    return { userId: data.userId };
+  });
+
+/**
+ * Ban a user (loxep-u8c A17). Sets `banned`/`banReason`/optional
+ * `banExpires` through Better Auth's own admin API. `/admin/ban-user`
+ * already revokes every existing session for that user
+ * (`internalAdapter.deleteUserSessions`, verified against the installed
+ * better-auth 1.6.26 dist, `admin/routes.mjs:303`), so access ends
+ * immediately rather than on the session's natural expiry (loxep-u8c A18).
+ *
+ * Self-ban guard: Better Auth's own route already refuses
+ * `userId === session.user.id` (`YOU_CANNOT_BAN_YOURSELF`), but this checks
+ * first so the failure is a clear, on-brand message rather than a raw API
+ * error surfacing through the mutation's toast — the same lockout-proof
+ * posture ADR-0024's bootstrap window and last-administrator guard already
+ * take: there is never a click path that leaves the installation with no
+ * way in.
+ */
+export const banUser = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      userId: z.string().min(1),
+      reason: z.string().trim().min(1),
+      /** Seconds until the ban lifts; omitted means permanent. */
+      banExpiresInSeconds: z.number().int().positive().optional()
+    })
+  )
+  .handler(async ({ data }): Promise<{ userId: string }> => {
+    const [{ requireAdmin }, { getAuth }, { getRequestHeaders }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/auth'),
+      import('@tanstack/react-start/server')
+    ]);
+    const session = await requireAdmin();
+    if (data.userId === session.user.id) {
+      throw new Error('You cannot ban your own account');
+    }
+    await getAuth().api.banUser({
+      body: {
+        userId: data.userId,
+        banReason: data.reason,
+        ...(data.banExpiresInSeconds === undefined
+          ? {}
+          : { banExpiresIn: data.banExpiresInSeconds })
+      },
+      headers: getRequestHeaders()
+    });
+    return { userId: data.userId };
+  });
+
+/** Lift a ban. `/admin/unban-user` touches no sessions — a ban already revoked them all. */
+export const unbanUser = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ userId: z.string().min(1) }))
+  .handler(async ({ data }): Promise<{ userId: string }> => {
+    const [{ requireAdmin }, { getAuth }, { getRequestHeaders }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/auth'),
+      import('@tanstack/react-start/server')
+    ]);
+    await requireAdmin();
+    await getAuth().api.unbanUser({
+      body: { userId: data.userId },
+      headers: getRequestHeaders()
+    });
+    return { userId: data.userId };
+  });
+
+/**
+ * Standalone "Sign out everywhere" (loxep-u8c A18): revokes every session
+ * for a user without changing role or ban state — for an admin who wants a
+ * user re-authenticated (a reported-lost device, a suspected session
+ * compromise) without demoting or banning them.
+ */
+export const signOutUserEverywhere = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ userId: z.string().min(1) }))
+  .handler(async ({ data }): Promise<{ userId: string }> => {
+    const [{ requireAdmin }, { getAuth }, { getRequestHeaders }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/auth'),
+      import('@tanstack/react-start/server')
+    ]);
+    await requireAdmin();
+    await getAuth().api.revokeUserSessions({
+      body: { userId: data.userId },
       headers: getRequestHeaders()
     });
     return { userId: data.userId };

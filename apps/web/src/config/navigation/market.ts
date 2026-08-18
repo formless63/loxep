@@ -67,6 +67,14 @@ export const marketNavGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['g', 'p'],
         items: []
+      },
+      {
+        title: 'Rules',
+        url: '/market/rules',
+        icon: 'sparkles',
+        isActive: false,
+        shortcut: ['g', 'r'],
+        items: []
       }
     ]
   }

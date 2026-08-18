@@ -66,6 +66,33 @@ export type OrderSyncTargetType =
 /** Mirrors `@loxep/commerce`'s `DEFAULT_SYNC_INTERVAL_SECONDS`. */
 const DEFAULT_ORDER_SYNC_INTERVAL_SECONDS = 900;
 
+/**
+ * Mirrors `@loxep/market`'s `POLL_TARGET_TASK_NAME` (`packages/market/src/
+ * tasks.ts`) — re-declared, not imported at the top level, for the same
+ * reason every other cross-boundary constant in this file is (see the
+ * module doc): apps/web reaches `@loxep/market` only through the dynamic
+ * `getMarketModule()`/`getMonitorService()` accessors, never a static
+ * top-level import. `market.dispatch-due-monitors`'s own dispatcher enqueues
+ * exactly this task, with exactly this job-key shape, for every DUE
+ * `monitor_targets` row regardless of `targetType` — `woo_orders`/
+ * `ebay_orders`/`medusa_orders` included — so "Sync now" reuses the same
+ * task rather than inventing a second, order-sync-specific one.
+ */
+const MARKET_POLL_TARGET_TASK_NAME = 'market.poll-target';
+
+/**
+ * Mirrors `@loxep/jobs`'s `jobKeyFor(taskName, stableId)` convention
+ * (`taskName:stableId`) — re-declared rather than imported, since importing
+ * `@loxep/jobs` here would pull graphile-worker into the web bundle (the one
+ * thing this codebase's job-enqueue conventions forbid apps/web from doing).
+ * Using the SAME key the dispatcher's own `enqueuePollJob` builds means a
+ * manual "Sync now" click and the next scheduled poll dedupe against each
+ * other (`jobKeyMode: 'replace'`) instead of double-queuing.
+ */
+function marketPollTargetJobKey(monitorTargetId: string): string {
+  return `${MARKET_POLL_TARGET_TASK_NAME}:${monitorTargetId}`;
+}
+
 const WOOCOMMERCE_PROVIDER = 'woocommerce';
 const EBAY_PROVIDER = 'ebay';
 /** Mirrors `@loxep/commerce`'s `MEDUSA_PROVIDER`. */
@@ -241,4 +268,53 @@ export const disableOrderSync = createServerFn({ method: 'POST' })
     const monitor = await getMonitorService();
     const row = await monitor.updateTarget(existing.id, { enabled: false });
     return toOrderSyncStatusDto(row);
+  });
+
+/**
+ * "Sync now" (loxep-u8c A25). Order-sync's registry entry describes exactly
+ * this as its on-demand entry point, but nothing wired one up. Re-enqueues
+ * `market.poll-target` for the connection's EXISTING order-sync target —
+ * the same task/job-key `market.dispatch-due-monitors` already uses for its
+ * regular polling, so a manual click and the next scheduled poll dedupe
+ * against each other (`jobKeyMode: 'replace'`) rather than double-queuing,
+ * and this function never creates or enables a target (that stays
+ * `enableOrderSync`'s job) — it only wakes one up early.
+ *
+ * Goes through `getSyncNowEnqueue()` (`@loxep/infrastructure`'s
+ * `TransactionalEnqueue`, a plain `graphile_worker.add_job` INSERT run
+ * inside a transaction) rather than a raw Graphile `addJob` — `@loxep/jobs`
+ * never reaches the web bundle this way.
+ */
+export const syncOrdersNow = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ connectionId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ enqueued: true }> => {
+    const { requireAdmin, getAdminServices, getSyncNowEnqueue } = await import('@/server/admin');
+    await requireAdmin();
+    const { connections, handle } = getAdminServices();
+    const connection = await connections.getConnection(data.connectionId);
+
+    const targetType = orderSyncTargetTypeForProvider(connection.provider);
+    if (targetType === null) {
+      throw new Error(`Order sync is not supported for provider "${connection.provider}"`);
+    }
+
+    const existing = await handle.db.query.monitorTargets.findFirst({
+      where: (table, { and, eq }) =>
+        and(eq(table.connectionId, connection.id), eq(table.targetType, targetType)),
+      orderBy: (table, { asc }) => [asc(table.createdAt), asc(table.id)]
+    });
+    if (existing === undefined || !existing.enabled) {
+      throw new Error('Enable order sync before syncing on demand');
+    }
+
+    const enqueue = getSyncNowEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        MARKET_POLL_TARGET_TASK_NAME,
+        { monitorTargetId: existing.id },
+        { jobKey: marketPollTargetJobKey(existing.id), jobKeyMode: 'replace' }
+      );
+    });
+    return { enqueued: true };
   });

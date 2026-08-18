@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@tanstack/react-router';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
@@ -23,6 +22,7 @@ import {
 import { storageBackendsQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import StorageBackendDialog from '@/features/settings/components/storage-backend-dialog';
+import StorageMigrationPanel from '@/features/settings/components/storage-migration-panel';
 import type { StorageBackendDto } from '@/server/admin-functions';
 import { getColumns } from './columns';
 
@@ -89,13 +89,7 @@ export default function StorageBackendsTable({ isAdmin }: { isAdmin: boolean }) 
     <div className='flex flex-col gap-4'>
       {body}
 
-      <Alert>
-        <AlertTitle>Backend migration</AlertTitle>
-        <AlertDescription>
-          Moving objects between backends uses the resumable copy → verify → cutover → cleanup
-          workflow at the service level; a migration UI arrives in a later phase.
-        </AlertDescription>
-      </Alert>
+      {isAdmin && <StorageMigrationPanel />}
 
       {dialogOpen && <StorageBackendDialog open={dialogOpen} onOpenChange={setDialogOpen} />}
     </div>

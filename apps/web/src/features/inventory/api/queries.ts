@@ -6,7 +6,9 @@ import {
   fetchInventoryItems,
   fetchInventoryLocations,
   fetchInventoryMovements,
-  fetchMarketItemAcquisitionLinks
+  fetchInventoryProfitability,
+  fetchMarketItemAcquisitionLinks,
+  fetchShipmentsForOrder
 } from '@/server/inventory-functions';
 
 export interface ItemFilterParams {
@@ -60,6 +62,19 @@ export const acquisitionQuery = (id: string) =>
   queryOptions({
     queryKey: ['inventory', 'acquisition', id],
     queryFn: () => fetchAcquisition({ data: { id } })
+  });
+
+/** `/inventory/profitability` (loxep-7fs, A11) — one combined DTO, one round trip. */
+export const inventoryProfitabilityQuery = queryOptions({
+  queryKey: ['inventory', 'profitability'],
+  queryFn: () => fetchInventoryProfitability()
+});
+
+/** `/commerce/orders/$id`'s shipments section (loxep-7fs, A14). */
+export const shipmentsForOrderQuery = (orderId: string) =>
+  queryOptions({
+    queryKey: ['inventory', 'shipments', 'order', orderId],
+    queryFn: () => fetchShipmentsForOrder({ data: { orderId } })
   });
 
 /** The "we bought one" panel on `/market/items/$itemId`. */

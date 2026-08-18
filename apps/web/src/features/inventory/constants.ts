@@ -389,11 +389,13 @@ export const locationKindOptions = INVENTORY_LOCATION_KIND_VALUES.map((value) =>
 export type AcquisitionCostClass = 'goods' | 'ancillary';
 
 /**
- * Phase 4's one label for realized profitability — never "profit". Not
- * currently computed by any surface in this milestone (the six read models
- * live in `@loxep/inventory/profitability.ts`, which this workspace does not
- * yet reach — see the M2 report), kept here so a future wiring pass has the
- * exact wording to hand.
+ * Phase 4's one label for realized profitability — never "profit". As of
+ * loxep-7fs (A11), `/inventory/profitability` renders this figure and
+ * reads the authoritative label off `InventoryProfitabilityDto.contributionLabel`
+ * (sourced from `@loxep/inventory/profitability.ts`'s own `CONTRIBUTION_LABEL`
+ * export at request time), not this constant — this copy is kept only as a
+ * fallback/reference for any future surface that needs the exact wording
+ * before its own request has resolved.
  */
 export const CONTRIBUTION_LABEL = 'contribution after goods, fees, and shipping';
 

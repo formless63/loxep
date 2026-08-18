@@ -77,5 +77,18 @@ export const inventoryNavGroups: NavGroup[] = [
         items: []
       }
     ]
+  },
+  {
+    label: 'Profitability',
+    items: [
+      {
+        title: 'Profitability',
+        url: '/inventory/profitability',
+        icon: 'trendingUp',
+        isActive: false,
+        shortcut: ['g', 'p'],
+        items: []
+      }
+    ]
   }
 ];

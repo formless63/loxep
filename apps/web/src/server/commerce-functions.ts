@@ -6,32 +6,38 @@
  * this surface wants lives in `@loxep/commerce` (`catalog.ts`'s
  * `createManualListing`/`findOrCreateCatalogItemBySku`, `manual-sales.ts`'s
  * `createManualSalesService`, `listing-draft.ts`'s pure mapping function —
- * all real, tested, and exported from the package). `apps/web/package.json`
- * does not yet declare `"@loxep/commerce": "workspace:*"` — unlike
- * `@loxep/inventory`, which IS a declared dependency (see
- * `@/server/inventory-functions.ts`'s own bootstrapping history: writes went
- * through a stub until that dependency line landed). Until an orchestrator
- * adds the line, this file cannot `import`/dynamic-`import()` `@loxep/commerce`
- * at all (Node module resolution needs the package hoisted into
- * `apps/web/node_modules/@loxep`, and it is not — verified empirically: it
- * is absent even though `@loxep/inventory` transitively depends on it).
+ * all real, tested, and exported from the package).
  *
- * So, mirroring exactly what `@loxep/commerce`'s own service functions do —
- * duplicated here rather than imported, pending the dependency add:
+ * UPDATE (loxep-7fs, A22): `apps/web/package.json` now declares
+ * `"@loxep/commerce": "workspace:*"` (it previously did not — see git
+ * history on this doc for the prior bootstrapping note, same shape
+ * `@/server/inventory-functions.ts` once carried for `@loxep/inventory`).
+ * The catalog-item create/update/archive and `linkMarketplaceItem` writes
+ * below call the REAL `CatalogService` via `@/server/admin.ts`'s
+ * `getCatalogService()` — genuinely new capability (catalog CRUD did not
+ * exist before this pass), not a rewrite.
+ *
+ * The PRE-EXISTING write handlers in this file —
+ * `createManualChannelListing` and `recordManualListingSale` — are LEFT AS
+ * IS in this pass: they duplicate `@loxep/commerce/src/catalog.ts`'s
+ * `createManualListing`/`findOrCreateCatalogItemBySku` and
+ * `@loxep/commerce/src/manual-sales.ts`'s `recordManualSale` field-for-field
+ * against `@loxep/db`'s schema objects directly, written when the
+ * dependency was still absent. They work and are not this pass's fence to
+ * rewrite; now that the dependency exists, a future pass can delete this SQL
+ * twin and call `createCatalogService`/`createManualSalesService` instead —
+ * tracked here so that follow-up isn't lost.
  *
  *  - READS go straight through `@loxep/db` (`getAdminServices().handle.db.query.<table>`),
  *    the same pattern every other `*-functions.ts` file in this directory
  *    uses for a flat/joined select with no business rule attached.
- *  - WRITES to `catalog_items` / `channel_listings` / `orders` / `order_lines`
- *    go through the Drizzle insert builder directly against `@loxep/db`'s
- *    schema objects (a real dependency), reproducing
- *    `@loxep/commerce/src/catalog.ts`'s `createManualListing`/
- *    `findOrCreateCatalogItemBySku` and `@loxep/commerce/src/manual-sales.ts`'s
- *    `recordManualSale` field-for-field. THE REAL, TESTED VERSION OF THIS
- *    LOGIC LIVES IN `@loxep/commerce` — this is a thin, intentionally minimal
- *    duplicate, not a redesign. Once the dependency line is added, this
- *    file's write handlers should be rewritten to call
- *    `createCatalogService`/`createManualSalesService` instead.
+ *  - The pre-existing WRITES to `catalog_items` / `channel_listings` /
+ *    `orders` / `order_lines` (manual listing creation, manual sale
+ *    recording) go through the Drizzle insert builder directly — the SQL
+ *    twin described above.
+ *  - The NEW catalog CRUD writes (`createCatalogItem`/`updateCatalogItem`/
+ *    `archiveCatalogItem`/`linkChannelListingMarketplaceItem`) call the real
+ *    `CatalogService`.
  *  - The INVENTORY side effects (`markListed`, `reserve` +
  *    `depleteOnFulfillment`) go through the REAL `@loxep/inventory` services
  *    via `@/server/admin.ts`'s `getItemsService()`/`getAllocationsService()`,
@@ -318,6 +324,7 @@ export interface CatalogItemListItemDto {
   name: string;
   kind: string;
   status: string;
+  economicEntityId: string | null;
   defaultCurrency: string | null;
   defaultPrice: string | null;
   createdAt: string;
@@ -338,12 +345,192 @@ export const fetchCatalogItems = createServerFn({ method: 'GET' }).handler(
       name: row.name,
       kind: row.kind,
       status: row.status,
+      economicEntityId: row.economicEntityId,
       defaultCurrency: row.defaultCurrency,
       defaultPrice: row.defaultPrice,
       createdAt: iso(row.createdAt)
     }));
   }
 );
+
+// ---------------------------------------------------------------------------
+// Writes — catalog item create/update/archive (loxep-7fs, A22).
+//
+// `CatalogService`'s 14 verbs were entirely unreachable (`/commerce/catalog`
+// was strictly read-only: no create, edit, or archive), even though catalog
+// items are Loxep's internal SKU identity and exist before anything is ever
+// listed or sold. These call the REAL service via
+// `@/server/admin.ts`'s `getCatalogService()` — new capability, not a
+// rewrite of the raw-SQL reads above, so there is no SQL twin to remove.
+// ---------------------------------------------------------------------------
+
+const createCatalogItemInput = z.strictObject({
+  sku: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1),
+  kind: z.enum(['simple', 'variant_group']).default('simple'),
+  status: z.enum(['draft', 'active', 'archived']).default('active'),
+  economicEntityId: z.uuid().nullish(),
+  defaultCurrency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/)
+    .nullish(),
+  defaultPrice: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?$/)
+    .nullish()
+});
+
+export const createCatalogItem = createServerFn({ method: 'POST' })
+  .inputValidator(createCatalogItemInput)
+  .handler(async ({ data }): Promise<{ id: string; sku: string }> => {
+    const { requireSession, getCatalogService } = await import('@/server/admin');
+    const session = await requireSession();
+    const catalogService = await getCatalogService();
+    const item = await catalogService.createCatalogItem({
+      sku: data.sku,
+      name: data.name,
+      kind: data.kind,
+      status: data.status,
+      economicEntityId: data.economicEntityId,
+      defaultCurrency: data.defaultCurrency,
+      defaultPrice: data.defaultPrice,
+      createdByUserId: session.user.id
+    });
+    return { id: item.id, sku: item.sku };
+  });
+
+const updateCatalogItemInput = z.strictObject({
+  id: z.uuid(),
+  name: z.string().trim().min(1).optional(),
+  status: z.enum(['draft', 'active', 'archived']).optional(),
+  economicEntityId: z.uuid().nullish(),
+  defaultCurrency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/)
+    .nullish(),
+  defaultPrice: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?$/)
+    .nullish()
+});
+
+export const updateCatalogItem = createServerFn({ method: 'POST' })
+  .inputValidator(updateCatalogItemInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getCatalogService } = await import('@/server/admin');
+    await requireSession();
+    const catalogService = await getCatalogService();
+    const { id, ...patch } = data;
+    const item = await catalogService.updateCatalogItem(id, patch);
+    return { id: item.id };
+  });
+
+/** Archive, never delete — order lines may reference the item forever (`CatalogService.archiveCatalogItem`'s own doc). */
+export const archiveCatalogItem = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getCatalogService } = await import('@/server/admin');
+    await requireSession();
+    const catalogService = await getCatalogService();
+    const item = await catalogService.archiveCatalogItem(data.id);
+    return { id: item.id };
+  });
+
+// ---------------------------------------------------------------------------
+// Reads — cross-channel/profitability reports (`/commerce/overview`, loxep-7fs, A22).
+//
+// `orderSummary`/`entityAttributionReport` are finished, tested read models
+// with zero callers — `/commerce/overview` (a routed page) rendered stat
+// cards over list lengths, never these. Called through the real
+// `@loxep/commerce` module (`getCommerceModule()`) since both are plain
+// exported functions, not a service-factory method.
+// ---------------------------------------------------------------------------
+
+export interface OrderSummaryGroupDto {
+  currency: string;
+  orderCount: number;
+  grossAmount: string;
+  refundedAmount: string;
+  feeAmount: string;
+  sellerChargeFeeAmount: string;
+  netAmount: string;
+}
+
+export interface EntityAttributionGroupDto {
+  economicEntityId: string | null;
+  economicEntityName: string | null;
+  currency: string;
+  orderCount: number;
+  grossAmount: string;
+  netAmount: string;
+}
+
+export interface CommerceOverviewReportsDto {
+  /** Never "profit" — see `@loxep/commerce/src/reports.ts`'s module doc. */
+  contributionLabel: string;
+  orderSummary: OrderSummaryGroupDto[];
+  entityAttribution: EntityAttributionGroupDto[];
+}
+
+export const fetchCommerceOverviewReports = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<CommerceOverviewReportsDto> => {
+    const { requireSession, getAdminServices, getCommerceModule } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const commerce = await getCommerceModule();
+
+    const [summary, attribution] = await Promise.all([
+      commerce.orderSummary(handle.db),
+      commerce.entityAttributionReport(handle.db)
+    ]);
+
+    return {
+      contributionLabel: commerce.CONTRIBUTION_LABEL,
+      orderSummary: summary.map((row) => ({
+        currency: row.currency,
+        orderCount: row.orderCount,
+        grossAmount: row.grossAmount,
+        refundedAmount: row.refundedAmount,
+        feeAmount: row.feeAmount,
+        sellerChargeFeeAmount: row.sellerChargeFeeAmount,
+        netAmount: row.netAmount
+      })),
+      entityAttribution: attribution.map((row) => ({
+        economicEntityId: row.economicEntityId,
+        economicEntityName: row.economicEntityName,
+        currency: row.currency,
+        orderCount: row.orderCount,
+        grossAmount: row.grossAmount,
+        netAmount: row.netAmount
+      }))
+    };
+  }
+);
+
+/**
+ * `CatalogService.linkMarketplaceItem` — the only designed bridge from
+ * `/market` observations to the catalog (`suggestChannelLinks` proposes,
+ * this writes). Resolves the opportunistic, nullable
+ * `channel_listings.marketplace_item_id` link; passing `null` clears it.
+ */
+export const linkChannelListingMarketplaceItem = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({ channelListingId: z.uuid(), marketplaceItemId: z.uuid().nullable() })
+  )
+  .handler(async ({ data }): Promise<{ id: string; marketplaceItemId: string | null }> => {
+    const { requireSession, getCatalogService } = await import('@/server/admin');
+    await requireSession();
+    const catalogService = await getCatalogService();
+    const listing = await catalogService.linkMarketplaceItem(
+      data.channelListingId,
+      data.marketplaceItemId
+    );
+    return { id: listing.id, marketplaceItemId: listing.marketplaceItemId };
+  });
 
 // ---------------------------------------------------------------------------
 // Writes — manual channel listing creation

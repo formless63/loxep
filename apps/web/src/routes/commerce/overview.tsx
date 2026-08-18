@@ -19,6 +19,7 @@ import {
   channelListingStatusTone,
   MANUAL_PROVIDER
 } from '@/features/commerce/constants';
+import CommerceOverviewReports from '@/features/commerce/components/overview-reports';
 
 const CARD_LINK_CLASS =
   'block rounded-xl outline-none focus-visible:ring-ring focus-visible:ring-offset-background focus-visible:ring-[3px] focus-visible:ring-offset-2';
@@ -177,6 +178,8 @@ function CommerceOverview() {
           )}
         </CardContent>
       </Card>
+
+      <CommerceOverviewReports />
     </CommercePage>
   );
 }

@@ -32,8 +32,12 @@ import {
   type ConnectionDto,
   type ConnectionReferenceDto
 } from '@/server/admin-functions';
-import { disableOrderSync, enableOrderSync } from '@/server/order-sync-functions';
-import { disablePurchaseSync, enablePurchaseSync } from '@/server/purchase-sync-functions';
+import { disableOrderSync, enableOrderSync, syncOrdersNow } from '@/server/order-sync-functions';
+import {
+  disablePurchaseSync,
+  enablePurchaseSync,
+  syncPurchasesNow
+} from '@/server/purchase-sync-functions';
 import { connectionsQuery } from '@/features/settings/api/queries';
 import { EbayConnectionActions } from '@/features/settings/components/ebay-connection-actions';
 import { estateHref } from '@/features/estate/provider-registry';
@@ -128,6 +132,23 @@ export function CellAction({ data }: { data: ConnectionDto }) {
     onError: (error) => toastError(error, 'Failed to update purchase sync')
   });
 
+  // loxep-u8c A25: the registry's own doc calls a "sync now" button the
+  // on-demand entry point for both tasks; these were the missing wiring.
+  // Idempotent-safe by construction — both server functions enqueue with a
+  // stable per-target job key (`jobKeyMode: 'replace'`), so a double-click
+  // updates the queued run in place rather than queuing two.
+  const syncOrdersNowMutation = useMutation({
+    mutationFn: () => syncOrdersNow({ data: { connectionId: data.id } }),
+    onSuccess: () => toast.success('Order sync queued'),
+    onError: (error) => toastError(error, 'Failed to queue order sync')
+  });
+
+  const syncPurchasesNowMutation = useMutation({
+    mutationFn: () => syncPurchasesNow({ data: { connectionId: data.id } }),
+    onSuccess: () => toast.success('Purchase sync queued'),
+    onError: (error) => toastError(error, 'Failed to queue purchase sync')
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => deleteConnection({ data: { id: data.id } }),
     onSuccess: (result) => {
@@ -210,6 +231,14 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 )}
               </DropdownMenuItem>
             )}
+          {!archived && supportsOrderSync(data) && orderSyncEnabled && (
+            <DropdownMenuItem
+              disabled={syncOrdersNowMutation.isPending}
+              onClick={() => syncOrdersNowMutation.mutate()}
+            >
+              <Icons.refresh className='mr-2 h-4 w-4' /> Sync orders now
+            </DropdownMenuItem>
+          )}
           {!archived &&
             supportsPurchaseSync(data) &&
             (isPurchaseSyncEligible(data) || purchaseSyncEnabled) && (
@@ -230,6 +259,14 @@ export function CellAction({ data }: { data: ConnectionDto }) {
                 )}
               </DropdownMenuItem>
             )}
+          {!archived && supportsPurchaseSync(data) && purchaseSyncEnabled && (
+            <DropdownMenuItem
+              disabled={syncPurchasesNowMutation.isPending}
+              onClick={() => syncPurchasesNowMutation.mutate()}
+            >
+              <Icons.refresh className='mr-2 h-4 w-4' /> Sync purchases now
+            </DropdownMenuItem>
+          )}
           {estateLink !== null &&
             !archived && (
               // loxep-47o.1 (Rule N1): "Open estate" is the universal entry

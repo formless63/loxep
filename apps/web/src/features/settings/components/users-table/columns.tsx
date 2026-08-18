@@ -48,7 +48,19 @@ export function getColumns(currentUserId: string): ColumnDef<DataTableFeatures, 
           <ToneBadge tone={row.original.role.includes('admin') ? 'default' : 'outline'}>
             {row.original.role}
           </ToneBadge>
-          {row.original.banned && <ToneBadge tone='destructive'>banned</ToneBadge>}
+          {row.original.banned && (
+            <ToneBadge
+              tone='destructive'
+              title={[
+                row.original.banReason ?? 'No reason recorded',
+                row.original.banExpires
+                  ? `Until ${formatDateTime(row.original.banExpires)}`
+                  : 'Permanent'
+              ].join(' — ')}
+            >
+              banned
+            </ToneBadge>
+          )}
         </div>
       ),
       enableColumnFilter: true,

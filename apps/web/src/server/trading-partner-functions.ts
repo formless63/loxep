@@ -6,51 +6,51 @@
  * partner" is vocabulary, not a table — a counterparty holding a `vendor` or
  * `payee` relationship row (`counterparty_entity_roles`).
  *
- * ## Why this file talks to `@loxep/db` directly instead of `@loxep/counterparties`
+ * ## `createTradingPartner` now routes through the real `@loxep/counterparties` service (loxep-u8c A19)
  *
- * `@loxep/counterparties` (the real domain service — `create`, `contacts.
- * addContact`, `roles.grant`, `listByEntityRole`, `listForPicker`,
- * `pickerPredicate`) is NOT wired into `apps/web`: no `apps/web/package.json`
- * dependency exists, and this bead's write fence is `packages/db/**`,
- * `packages/counterparties/**`, `packages/accounting/**` (linkage only),
- * `packages/integrations/invoiceninja/**` (mapping only), and `apps/web/src`
- * — explicitly NOT `package.json`/`bun.lock`. Adding the dependency is
- * therefore out of scope for this bead and is the natural next step for
- * whoever picks up M2/M3 or a dedicated follow-up.
+ * This file originally talked to `@loxep/db` directly and hand-rolled a
+ * slice of `@loxep/counterparties`' own logic — reference-code generation,
+ * counterparty/contact/channel/role inserts, and a WEAKER `normalizedName`
+ * (`.trim().toLowerCase()`, no legal-suffix/diacritic folding) than
+ * `normalizeName` produces — because no `apps/web/package.json` dependency
+ * on `@loxep/counterparties` existed at the time. That dependency has
+ * existed since loxep-cd3.1's own commit (verified against git history and
+ * the live symlink in `node_modules/@loxep`) and `@/server/admin`'s
+ * `counterparties`/`counterpartyContacts`/`counterpartyRoles` accessors wrap
+ * the real `createCounterpartiesService`/`createContactsService`/
+ * `createRolesService` (loxep-l49, `partners-functions.ts`). The weaker
+ * normalization was a live data-quality leak even though counterparty
+ * merge/dedupe stays unbuilt (loxep-u8c's own A19 finding): a row created
+ * from THIS inline form would not match a duplicate created through
+ * `/finance/partners` once dedupe ships, because `dedupe.ts` groups by
+ * `normalized_name` and the two paths were computing two different values
+ * for the same input.
  *
- * This mirrors the exact situation `finance-billing.ts`'s own module doc
- * already documents for `@loxep/integration-invoiceninja`/`@loxep/work`
- * earlier in that issue's history: build the composition against
- * `@loxep/db` (already a real dependency) with the minimum domain logic
- * duplicated and clearly marked, rather than block the milestone on a
- * dependency-wiring pass. Concretely, duplicated here (kept intentionally
- * tiny and pure, matching `@loxep/counterparties/{codes,normalize}.ts`):
- * reference-code generation with unique-violation retry, and a light
- * ILIKE-based search rather than `normalizeName`'s fuller matching
- * normalization (which only matters for the dedupe/duplicate-candidate
- * report this surface does not need). `@loxep/domain`'s `createAuditService`
- * IS used directly below — that package IS a real `apps/web` dependency —
- * so the audit trail this writes matches what the real service would have
- * produced.
+ * `createTradingPartner` now calls `CounterpartiesService.create` (which
+ * calls `normalizeName` itself and handles reference-code retry via
+ * `withCodeRetry`), then `ContactsService.addContact`/`addChannel`, then
+ * `RolesService.grant` — the exact sequence the original hand-rolled
+ * transaction performed, now delegated to the real, tested, audited
+ * services instead of duplicating their logic. This is no longer one atomic
+ * transaction (each service call commits its own) — a genuine, small
+ * trade-off: a mid-sequence failure (e.g. the role grant failing after the
+ * counterparty and contact already committed) leaves a real, findable
+ * counterparty with no role yet, rather than nothing at all. That is the
+ * same shape every other multi-step domain composition in this app already
+ * accepts (e.g. `createStoreConnection` in `admin-functions.ts`, which
+ * creates a connection then sets its credential as two separate service
+ * calls) and is strictly better than the leak it replaces.
  *
- * Every write goes through ONE transaction and stays inside the exact
- * `counterparties` / `counterparty_contacts` / `contact_channels` /
- * `counterparty_entity_roles` shape `@loxep/db/schema/counterparties.ts`
- * defines — the same tables the real service would write, so wiring the
- * real package in later is a pure refactor with no data-shape change.
+ * `searchTradingPartners` (the picker read) is UNCHANGED — still direct SQL
+ * over `@loxep/db`, since it needs no create-path fidelity and
+ * `CounterpartiesService` has no picker read shaped exactly like it
+ * (`listForPicker` doesn't rank trading-partner roles first the way this
+ * search does).
  *
  * Role gate: `requireSession` (ordinary operator work), matching
- * `expense-functions.ts`. `session.user.id` becomes `created_by_user_id` /
- * the audit actor.
+ * `expense-functions.ts`.
  */
 import { createServerFn } from '@tanstack/react-start';
-import { createAuditService } from '@loxep/domain';
-import {
-  contactChannels,
-  counterpartyContacts,
-  counterpartyEntityRoles,
-  counterparties
-} from '@loxep/db/schema';
 import { z } from 'zod';
 
 const uuidSchema = z.uuid();
@@ -154,148 +154,60 @@ export interface CreateTradingPartnerResultDto {
   displayName: string;
 }
 
-/** `CP-2026-0117` — the same shape `@loxep/counterparties/codes.ts` generates. */
-function counterpartyReferenceCode(year: number, sequence: number): string {
-  return `CP-${year}-${String(sequence).padStart(4, '0')}`;
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null) return false;
-  const code = (error as { code?: unknown }).code;
-  if (code === '23505') return true;
-  const cause = (error as { cause?: unknown }).cause;
-  return cause === undefined ? false : isUniqueViolation(cause);
-}
-
 export const createTradingPartner = createServerFn({ method: 'POST' })
   .inputValidator(createTradingPartnerInput)
   .handler(async ({ data }): Promise<CreateTradingPartnerResultDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const {
+      requireSession,
+      getCounterpartiesService,
+      getCounterpartyContactsService,
+      getCounterpartyRolesService
+    } = await import('@/server/admin');
     const session = await requireSession();
-    const { handle } = getAdminServices();
-    const year = new Date().getUTCFullYear();
     const email = data.email ?? null;
     const economicEntityId = data.economicEntityId ?? null;
 
-    const ATTEMPTS = 5;
-    let lastError: unknown;
-    for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
-      try {
-        return await handle.db.transaction(async (tx) => {
-          const maxSeq = await tx.execute(
-            `select coalesce(max(
-                      (substring(reference_code from '^CP-[0-9]{4}-([0-9]+)$'))::integer
-                    ), 0)::text as max_seq
-               from counterparties
-              where reference_code like ${textLiteral(`CP-${year}-%`)}`
-          );
-          const nextSeq = Number(maxSeq.rows[0]?.['max_seq'] ?? '0') + 1;
-          const referenceCode = counterpartyReferenceCode(year, nextSeq);
+    // `CounterpartiesService.create` normalizes through the real
+    // `normalizeName` (legal-suffix/diacritic folding) and generates the
+    // reference code with its own `withCodeRetry` — both previously
+    // duplicated by hand here, the second one more weakly. See the module
+    // doc for why this is no longer one atomic transaction.
+    const counterparty = await getCounterpartiesService().create({
+      kind: data.kind,
+      displayName: data.displayName,
+      legalName: data.legalName ?? null,
+      createdByUserId: session.user.id
+    });
 
-          const inserted = await tx
-            .insert(counterparties)
-            .values({
-              referenceCode,
-              kind: data.kind,
-              displayName: data.displayName,
-              legalName: data.legalName ?? null,
-              // A lightweight fold, not @loxep/counterparties/normalize.ts's
-              // fuller legal-suffix/diacritic normalization — see this
-              // file's module doc. Good enough to satisfy the NOT NULL
-              // column and support a basic search; the dedupe report is not
-              // a consumer of anything created through this narrow path.
-              normalizedName: (data.legalName ?? data.displayName).trim().toLowerCase(),
-              createdByUserId: session.user.id
-            })
-            .returning();
-          const counterparty = inserted[0];
-          if (counterparty === undefined) {
-            throw new Error('counterparties insert returned no row');
-          }
-
-          const audit = createAuditService({ db: tx });
-          await audit.append({
-            actorUserId: session.user.id,
-            action: 'counterparty.created',
-            resourceType: 'counterparty',
-            resourceId: counterparty.id,
-            after: {
-              referenceCode: counterparty.referenceCode,
-              kind: counterparty.kind,
-              displayName: counterparty.displayName,
-              status: counterparty.status
-            },
-            metadata: { source: 'trading-partner-inline-create' }
-          });
-
-          if (email !== null) {
-            const contactInserted = await tx
-              .insert(counterpartyContacts)
-              .values({
-                counterpartyId: counterparty.id,
-                displayName: 'Primary contact',
-                isPrimary: true
-              })
-              .returning();
-            const contact = contactInserted[0];
-            if (contact === undefined) {
-              throw new Error('counterparty_contacts insert returned no row');
-            }
-            await audit.append({
-              actorUserId: session.user.id,
-              action: 'counterparty.contact_added',
-              resourceType: 'counterparty',
-              resourceId: counterparty.id,
-              after: { contactId: contact.id, displayName: contact.displayName, isPrimary: true }
-            });
-
-            await tx.insert(contactChannels).values({
-              counterpartyContactId: contact.id,
-              channelKind: 'email',
-              value: email,
-              normalizedValue: email.toLowerCase(),
-              isPrimary: true
-            });
-            await audit.append({
-              actorUserId: session.user.id,
-              action: 'counterparty.channel_added',
-              resourceType: 'counterparty',
-              resourceId: counterparty.id,
-              after: { channelKind: 'email', isPrimary: true, counterpartyContactId: contact.id }
-            });
-          }
-
-          await tx.insert(counterpartyEntityRoles).values({
-            counterpartyId: counterparty.id,
-            economicEntityId,
-            role: data.role,
-            status: 'active',
-            createdByUserId: session.user.id
-          });
-          await audit.append({
-            actorUserId: session.user.id,
-            action: 'counterparty.role_granted',
-            resourceType: 'counterparty',
-            resourceId: counterparty.id,
-            after: { role: data.role, economicEntityId }
-          });
-
-          return {
-            id: counterparty.id,
-            referenceCode: counterparty.referenceCode,
-            displayName: counterparty.displayName
-          };
-        });
-      } catch (error) {
-        if (!isUniqueViolation(error)) throw error;
-        lastError = error;
-      }
+    if (email !== null) {
+      const contact = await getCounterpartyContactsService().addContact({
+        counterpartyId: counterparty.id,
+        displayName: 'Primary contact',
+        isPrimary: true,
+        actorUserId: session.user.id
+      });
+      await getCounterpartyContactsService().addChannel({
+        counterpartyContactId: contact.id,
+        channelKind: 'email',
+        value: email,
+        isPrimary: true,
+        actorUserId: session.user.id
+      });
     }
-    throw new Error(
-      `could not generate a unique trading-partner reference code after ${ATTEMPTS} attempts: ${
-        lastError instanceof Error ? lastError.message : String(lastError)
-      }`
-    );
+
+    await getCounterpartyRolesService().grant({
+      counterpartyId: counterparty.id,
+      economicEntityId,
+      role: data.role,
+      status: 'active',
+      createdByUserId: session.user.id
+    });
+
+    return {
+      id: counterparty.id,
+      referenceCode: counterparty.referenceCode,
+      displayName: counterparty.displayName
+    };
   });
 
 // ---------------------------------------------------------------------------

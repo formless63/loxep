@@ -1449,3 +1449,185 @@ export const fetchOpportunityEvents = createServerFn({ method: 'GET' })
       pageSize
     };
   });
+
+// ---------------------------------------------------------------------------
+// Opportunity rules (loxep-7fs, A16) — `/market/rules`.
+//
+// `createOpportunityRulesService` (`packages/market/src/opportunities.ts`)
+// had zero consumers; `/market/opportunities` renders scored events from
+// rules nobody could author, edit, prioritize, or delete. Mirrors the
+// monitors CRUD above field-for-field: `requireAdmin` for writes,
+// `requireSession` for the read, `@loxep/market` reached only through
+// `getMarketModule()`/`getOpportunityRulesService()`.
+//
+// Auditing: `OpportunityRulesService`'s mutating methods return
+// `before`/`after` snapshots for the CALLER to write an `audit_events` record
+// from (the package takes no `@loxep/domain` dependency to do this itself —
+// see the service's own doc). This file does not write that record — the
+// existing monitor create/update/remove handlers above establish the same
+// precedent (no audit write either) — so both surfaces sit at the same
+// baseline rather than one silently gaining coverage the other lacks.
+// ---------------------------------------------------------------------------
+
+export interface OpportunityRuleDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  conditions: Record<string, JsonValue>;
+  scoreWeight: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const fetchOpportunityRules = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<OpportunityRuleDto[]> => {
+    const { requireSession, getOpportunityRulesService } = await import('@/server/admin');
+    await requireSession();
+    const opportunityRulesService = await getOpportunityRulesService();
+    const rows = await opportunityRulesService.listRules();
+    return rows
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        enabled: row.enabled,
+        priority: row.priority,
+        conditions: row.conditions as Record<string, JsonValue>,
+        scoreWeight: row.scoreWeight,
+        createdAt: iso(row.createdAt),
+        updatedAt: iso(row.updatedAt)
+      }))
+      .toSorted((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
+  }
+);
+
+const decimalString = z
+  .string()
+  .trim()
+  .regex(/^-?\d+(\.\d+)?$/);
+
+/** Duplicated from `@loxep/market/events.ts`'s `MARKET_EVENT_TYPES` — same "closed set as a local literal union" convention every other `*-functions.ts` file in this directory follows, so a future addition fails typecheck here instead of silently drifting. */
+const MARKET_EVENT_TYPES_LOCAL = [
+  'price_changed',
+  'price_dropped',
+  'restocked',
+  'sold_out',
+  'quantity_changed',
+  'listing_ended',
+  'new_listing'
+] as const;
+
+/**
+ * The subset of `opportunityConditionsSchema`'s grammar this form exposes —
+ * every group and predicate mirrors the package schema's own shape
+ * (`packages/market/src/opportunities.ts`), field-for-field, so the server's
+ * `createRule`/`updateRule` remain the sole validation authority. `listing.
+ * availabilityIn` and `scope.marketplaceItemIds` are omitted from THIS
+ * form's input (an editing affordance for them can be added later without
+ * a schema change) — see this pass's report.
+ */
+const opportunityRuleConditionsInput = z.strictObject({
+  eventTypes: z.array(z.enum(MARKET_EVENT_TYPES_LOCAL)).optional(),
+  price: z
+    .strictObject({
+      maxPrice: decimalString.optional(),
+      minDropAmount: decimalString.optional(),
+      minDropPercent: z.number().gt(0).lte(100).optional()
+    })
+    .optional(),
+  quantity: z
+    .strictObject({
+      minAvailable: z.number().int().nonnegative().optional(),
+      maxAvailable: z.number().int().nonnegative().optional(),
+      minIncrease: z.number().int().positive().optional()
+    })
+    .optional(),
+  listing: z
+    .strictObject({
+      stateIn: z.array(z.string().min(1)).optional(),
+      stateNotIn: z.array(z.string().min(1)).optional(),
+      transitionedTo: z.string().min(1).optional()
+    })
+    .optional(),
+  scope: z
+    .strictObject({
+      monitorTargetIds: z.array(z.uuid()).optional()
+    })
+    .optional()
+});
+
+const createOpportunityRuleInput = z.strictObject({
+  name: z.string().trim().min(1),
+  enabled: z.boolean().optional(),
+  priority: z.number().int().optional(),
+  scoreWeight: z
+    .string()
+    .trim()
+    .regex(/^\d{1,6}(\.\d{1,4})?$/)
+    .optional(),
+  conditions: opportunityRuleConditionsInput
+});
+
+export const createOpportunityRule = createServerFn({ method: 'POST' })
+  .inputValidator(createOpportunityRuleInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getOpportunityRulesService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const opportunityRulesService = await getOpportunityRulesService();
+    const { rule } = await opportunityRulesService.createRule({
+      name: data.name,
+      enabled: data.enabled,
+      priority: data.priority,
+      scoreWeight: data.scoreWeight,
+      conditions: data.conditions,
+      createdByUserId: session.user.id
+    });
+    return { id: rule.id };
+  });
+
+const updateOpportunityRuleInput = z
+  .strictObject({
+    id: z.uuid(),
+    name: z.string().trim().min(1).optional(),
+    enabled: z.boolean().optional(),
+    priority: z.number().int().optional(),
+    scoreWeight: z
+      .string()
+      .trim()
+      .regex(/^\d{1,6}(\.\d{1,4})?$/)
+      .optional(),
+    conditions: opportunityRuleConditionsInput.optional()
+  })
+  .refine((patch) => Object.keys(patch).length > 1, { message: 'empty update' });
+
+export const updateOpportunityRule = createServerFn({ method: 'POST' })
+  .inputValidator(updateOpportunityRuleInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getOpportunityRulesService } = await import('@/server/admin');
+    await requireAdmin();
+    const opportunityRulesService = await getOpportunityRulesService();
+    const { id, ...patch } = data;
+    const { rule } = await opportunityRulesService.updateRule(id, patch);
+    return { id: rule.id };
+  });
+
+export const setOpportunityRuleEnabled = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid(), enabled: z.boolean() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getOpportunityRulesService } = await import('@/server/admin');
+    await requireAdmin();
+    const opportunityRulesService = await getOpportunityRulesService();
+    const { rule } = await opportunityRulesService.updateRule(data.id, { enabled: data.enabled });
+    return { id: rule.id };
+  });
+
+/** Hard delete — `market_events.rule_id` is deliberately NOT a foreign key (a historical attribution stamp), so removal never blocks on or rewrites event history. */
+export const removeOpportunityRule = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ id: z.uuid() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireAdmin, getOpportunityRulesService } = await import('@/server/admin');
+    await requireAdmin();
+    const opportunityRulesService = await getOpportunityRulesService();
+    await opportunityRulesService.deleteRule(data.id);
+    return { id: data.id };
+  });

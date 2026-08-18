@@ -44,6 +44,7 @@ import { randomUUID } from 'node:crypto';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
+import type { ShipmentRow } from '@loxep/inventory';
 
 function iso(date: Date): string;
 function iso(date: Date | null | undefined): string | null;
@@ -1954,3 +1955,374 @@ export const createAcquisitionFromMarketItem = createServerFn({ method: 'POST' }
       linkId: link.id
     };
   });
+
+// ---------------------------------------------------------------------------
+// Profitability — /inventory/profitability (loxep-7fs, A11).
+//
+// `@loxep/inventory/profitability.ts` shipped ten exported read models
+// (acquisitionRoi, sourcingChannelPerformance, inventoryOnHandAtCost,
+// inventoryAging, unmatchedDepletions, oversells, plus
+// itemRealizedContribution/orderRealizedContribution/openLots/
+// costReconciliation) with zero callers repo-wide — this is the entire "did
+// flipping make money" question. This handler wires the six read models this
+// milestone's page surfaces: ROI per acquisition, sourcing-channel
+// performance, on-hand-at-cost + aging, and the two integrity worklists
+// (oversells, unmatchedDepletions). `itemRealizedContribution`/
+// `orderRealizedContribution` (per-sale-line/per-order granularity) and
+// `openLots`/`costReconciliation` (lot-hygiene worklists) remain unwired —
+// see this pass's report.
+//
+// One combined DTO, one server function: every read here is independent
+// (no read depends on another's result) and each is already cheap/bounded,
+// so composing them into a single round trip is simpler than six separate
+// queries for a page that always wants all of them together. No filter
+// UI in this pass — every read runs unfiltered (`{}`), matching the
+// module's own default.
+// ---------------------------------------------------------------------------
+
+export interface AcquisitionRoiDto {
+  acquisitionId: string;
+  referenceCode: string;
+  sourceKind: string;
+  currency: string;
+  acquiredAt: string;
+  costAllocationStatus: string;
+  landedCostAmount: string;
+  nonCapitalizedAmount: string;
+  itemCount: number;
+  depletedItemCount: number;
+  onHandItemCount: number;
+  onHandCostAmount: string;
+  realizedContributionAmount: string;
+}
+
+export interface SourcingChannelDto {
+  sourceKind: string;
+  currency: string;
+  acquisitionCount: number;
+  landedCostAmount: string;
+  realizedContributionAmount: string;
+  onHandCostAmount: string;
+}
+
+export interface OnHandAtCostDto {
+  economicEntityId: string | null;
+  locationId: string | null;
+  locationPath: string | null;
+  currency: string;
+  itemCount: number;
+  quantityOnHand: string;
+  onHandCostAmount: string;
+  consignmentItemCount: number;
+}
+
+export interface AgingBucketDto {
+  bucket: string;
+  currency: string;
+  itemCount: number;
+  onHandCostAmount: string;
+}
+
+export interface OversellDto {
+  inventoryItemId: string;
+  itemCode: string;
+  quantityOnHand: string;
+}
+
+export interface UnmatchedDepletionDto {
+  orderId: string;
+  orderLineId: string;
+  title: string | null;
+  quantityFulfilled: string;
+  currency: string;
+  lineTotal: string;
+}
+
+export interface InventoryProfitabilityDto {
+  /** Never "profit" — see `@loxep/inventory/profitability.ts`'s module doc. Render wherever a contribution figure appears. */
+  contributionLabel: string;
+  acquisitionRoi: AcquisitionRoiDto[];
+  sourcingChannelPerformance: SourcingChannelDto[];
+  onHandAtCost: OnHandAtCostDto[];
+  aging: AgingBucketDto[];
+  oversells: OversellDto[];
+  unmatchedDepletions: UnmatchedDepletionDto[];
+  /** `ShipmentsService.unlinkedShippingLabelFees` (A14) — folded into this combined DTO since the route already treats the whole page as one round trip. */
+  unlinkedShippingLabelFees: UnlinkedShippingLabelFeeDto[];
+}
+
+export const fetchInventoryProfitability = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<InventoryProfitabilityDto> => {
+    const { requireSession, getInventoryModule, getAdminServices, getShipmentsService } =
+      await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const inventory = await getInventoryModule();
+    const shipmentsService = await getShipmentsService();
+
+    const [
+      acquisitionRoi,
+      sourcingChannelPerformance,
+      onHandAtCost,
+      aging,
+      oversells,
+      unmatchedDepletions,
+      unlinkedShippingLabelFees
+    ] = await Promise.all([
+      inventory.acquisitionRoi(handle.db),
+      inventory.sourcingChannelPerformance(handle.db),
+      inventory.inventoryOnHandAtCost(handle.db),
+      inventory.inventoryAging(handle.db),
+      inventory.oversells(handle.db),
+      inventory.unmatchedDepletions(handle.db),
+      shipmentsService.unlinkedShippingLabelFees()
+    ]);
+
+    return {
+      contributionLabel: inventory.CONTRIBUTION_LABEL,
+      acquisitionRoi: acquisitionRoi.map((row) => ({
+        acquisitionId: row.acquisitionId,
+        referenceCode: row.referenceCode,
+        sourceKind: row.sourceKind,
+        currency: row.currency,
+        acquiredAt: iso(row.acquiredAt),
+        costAllocationStatus: row.costAllocationStatus,
+        landedCostAmount: row.landedCostAmount,
+        nonCapitalizedAmount: row.nonCapitalizedAmount,
+        itemCount: row.itemCount,
+        depletedItemCount: row.depletedItemCount,
+        onHandItemCount: row.onHandItemCount,
+        onHandCostAmount: row.onHandCostAmount,
+        realizedContributionAmount: row.realizedContributionAmount
+      })),
+      sourcingChannelPerformance: sourcingChannelPerformance.map((row) => ({
+        sourceKind: row.sourceKind,
+        currency: row.currency,
+        acquisitionCount: row.acquisitionCount,
+        landedCostAmount: row.landedCostAmount,
+        realizedContributionAmount: row.realizedContributionAmount,
+        onHandCostAmount: row.onHandCostAmount
+      })),
+      onHandAtCost: onHandAtCost.map((row) => ({
+        economicEntityId: row.economicEntityId,
+        locationId: row.locationId,
+        locationPath: row.locationPath,
+        currency: row.currency,
+        itemCount: row.itemCount,
+        quantityOnHand: row.quantityOnHand,
+        onHandCostAmount: row.onHandCostAmount,
+        consignmentItemCount: row.consignmentItemCount
+      })),
+      aging: aging.map((row) => ({
+        bucket: row.bucket,
+        currency: row.currency,
+        itemCount: row.itemCount,
+        onHandCostAmount: row.onHandCostAmount
+      })),
+      oversells: oversells.map((row) => ({
+        inventoryItemId: row.inventoryItemId,
+        itemCode: row.itemCode,
+        quantityOnHand: row.quantityOnHand
+      })),
+      unmatchedDepletions: unmatchedDepletions.map((row) => ({
+        orderId: row.orderId,
+        orderLineId: row.orderLineId,
+        title: row.title,
+        quantityFulfilled: row.quantityFulfilled,
+        currency: row.currency,
+        lineTotal: row.lineTotal
+      })),
+      unlinkedShippingLabelFees: unlinkedShippingLabelFees.map((row) => ({
+        orderFeeId: row.orderFeeId,
+        orderId: row.orderId,
+        currency: row.currency,
+        amount: row.amount
+      }))
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Shipments — outbound carrier reality (loxep-7fs, A14).
+//
+// `ShipmentsService` (`@loxep/inventory/shipments.ts`) was dead in its
+// entirety: zero references repo-wide, not even a `getShipmentsService` on
+// the admin registry. `adjustment_amount` — the carrier post-audit reweigh,
+// "one of the most reliably underestimated costs in resale" per the
+// module's own doc — was therefore silently missing from every margin
+// figure. Mounted here: record a shipment (from an order detail), record a
+// cost adjustment against one, and the `unlinkedShippingLabelFees`
+// money-leak worklist (rendered on `/inventory/profitability`).
+// ---------------------------------------------------------------------------
+
+export interface ShipmentDto {
+  id: string;
+  shipmentKind: string;
+  orderId: string | null;
+  orderFeeId: string | null;
+  status: string;
+  carrierCode: string | null;
+  carrierName: string | null;
+  serviceCode: string | null;
+  trackingNumber: string | null;
+  trackingUrl: string | null;
+  currency: string | null;
+  postageAmount: string;
+  insuranceAmount: string;
+  surchargeAmount: string;
+  adjustmentAmount: string;
+  refundAmount: string;
+  netCostAmount: string;
+  costSource: string;
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * `netCostAmount` goes through `@loxep/inventory`'s own `netShipmentCost` —
+ * exact decimal (`numeric`-safe) arithmetic, never `Number()` on a
+ * persisted-adjacent money figure — so this needs the dynamically-imported
+ * module (`getInventoryModule()`), not a plain sync mapper.
+ */
+function toShipmentDto(
+  row: ShipmentRow,
+  netShipmentCost: (shipment: ShipmentRow) => string
+): ShipmentDto {
+  return {
+    id: row.id,
+    shipmentKind: row.shipmentKind,
+    orderId: row.orderId,
+    orderFeeId: row.orderFeeId,
+    status: row.status,
+    carrierCode: row.carrierCode,
+    carrierName: row.carrierName,
+    serviceCode: row.serviceCode,
+    trackingNumber: row.trackingNumber,
+    trackingUrl: row.trackingUrl,
+    currency: row.currency,
+    postageAmount: row.postageAmount,
+    insuranceAmount: row.insuranceAmount,
+    surchargeAmount: row.surchargeAmount,
+    adjustmentAmount: row.adjustmentAmount,
+    refundAmount: row.refundAmount,
+    netCostAmount: netShipmentCost(row),
+    costSource: row.costSource,
+    shippedAt: iso(row.shippedAt),
+    deliveredAt: iso(row.deliveredAt),
+    createdAt: iso(row.createdAt)
+  };
+}
+
+export const fetchShipmentsForOrder = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ orderId: z.uuid() }))
+  .handler(async ({ data }): Promise<ShipmentDto[]> => {
+    const { requireSession, getAdminServices, getInventoryModule } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    const inventory = await getInventoryModule();
+    const rows = await handle.db.query.shipments.findMany({
+      where: (table, { eq }) => eq(table.orderId, data.orderId),
+      orderBy: (table, { desc }) => [desc(table.createdAt)]
+    });
+    return rows.map((row) => toShipmentDto(row, inventory.netShipmentCost));
+  });
+
+const recordShipmentInput = z.strictObject({
+  shipmentKind: z
+    .enum(['outbound_sale', 'return_to_vendor', 'transfer', 'replacement', 'other'])
+    .default('outbound_sale'),
+  orderId: z.uuid().nullish(),
+  carrierCode: z.string().trim().min(1).nullish(),
+  carrierName: z.string().trim().min(1).nullish(),
+  serviceCode: z.string().trim().min(1).nullish(),
+  trackingNumber: z.string().trim().min(1).nullish(),
+  trackingUrl: z.string().trim().min(1).nullish(),
+  currency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/)
+    .nullish(),
+  postageAmount: decimalInput.default('0'),
+  insuranceAmount: decimalInput.default('0'),
+  surchargeAmount: decimalInput.default('0'),
+  /** The order lines this shipment fulfilled, each at its full order quantity — the profitability engine's `gatherShipping` allocates net cost across these. */
+  orderLineIds: z.array(z.uuid()).default([]),
+  shippedAt: z.iso.datetime().nullish()
+});
+
+export const recordShipment = createServerFn({ method: 'POST' })
+  .inputValidator(recordShipmentInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getShipmentsService, getAdminServices } =
+      await import('@/server/admin');
+    const session = await requireSession();
+    const { handle } = getAdminServices();
+    const shipmentsService = await getShipmentsService();
+
+    let items: { orderLineId: string; quantity: string }[] = [];
+    if (data.orderLineIds.length > 0) {
+      const lineRows = await handle.db.query.orderLines.findMany({
+        where: (table, { inArray }) => inArray(table.id, data.orderLineIds)
+      });
+      items = lineRows.map((line) => ({ orderLineId: line.id, quantity: line.quantity }));
+    }
+
+    const { shipment } = await shipmentsService.record({
+      shipmentKind: data.shipmentKind,
+      orderId: data.orderId,
+      carrierCode: data.carrierCode,
+      carrierName: data.carrierName,
+      serviceCode: data.serviceCode,
+      trackingNumber: data.trackingNumber,
+      trackingUrl: data.trackingUrl,
+      currency: data.currency,
+      postageAmount: data.postageAmount,
+      insuranceAmount: data.insuranceAmount,
+      surchargeAmount: data.surchargeAmount,
+      costSource: 'manual',
+      shippedAt: data.shippedAt ? new Date(data.shippedAt) : undefined,
+      createdByUserId: session.user.id,
+      items
+    });
+    return { id: shipment.id };
+  });
+
+const recordShipmentCostAdjustmentInput = z
+  .strictObject({
+    shipmentId: z.uuid(),
+    adjustmentAmount: decimalInput.optional(),
+    refundAmount: decimalInput.optional(),
+    note: z.string().trim().min(1).nullish()
+  })
+  .refine((input) => input.adjustmentAmount !== undefined || input.refundAmount !== undefined, {
+    message: 'a cost adjustment must change the adjustment or the refund amount'
+  });
+
+/**
+ * `ShipmentsService.recordCostAdjustment` — the ONLY way to enter a carrier
+ * post-audit reweigh charge or a label refund arriving after the shipment
+ * was first recorded. Accumulates; never replaces.
+ */
+export const recordShipmentCostAdjustment = createServerFn({ method: 'POST' })
+  .inputValidator(recordShipmentCostAdjustmentInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getShipmentsService } = await import('@/server/admin');
+    await requireSession();
+    const shipmentsService = await getShipmentsService();
+    const shipment = await shipmentsService.recordCostAdjustment({
+      shipmentId: data.shipmentId,
+      adjustmentAmount: data.adjustmentAmount,
+      refundAmount: data.refundAmount,
+      note: data.note
+    });
+    return { id: shipment.id };
+  });
+
+/** The design's recommended reconciliation for the shipping double-count guard (open question 6) — see `InventoryProfitabilityDto.unlinkedShippingLabelFees`'s doc, which is where this DTO is populated (folded into that combined read rather than its own round trip). */
+export interface UnlinkedShippingLabelFeeDto {
+  orderFeeId: string;
+  orderId: string;
+  currency: string;
+  amount: string;
+}

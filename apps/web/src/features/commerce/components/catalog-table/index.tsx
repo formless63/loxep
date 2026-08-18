@@ -18,21 +18,24 @@ import { catalogItemsQuery } from '@/features/commerce/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { sortRows } from '@/features/market/lib/sort-rows';
 import type { CatalogItemListItemDto } from '@/server/commerce-functions';
+import CatalogItemFormDialog from '@/features/commerce/components/catalog-item-form-dialog';
 import { createColumns } from './columns';
 
 const COLUMN_IDS = ['sku', 'defaultPrice', 'createdAt'];
 const DEFAULT_PAGE_SIZE = 10;
 
 /**
- * Read-only for this milestone: catalog items are minted automatically at
- * listing time (design 4b's "cheap answer" to open question 5), never
- * authored directly.
+ * `CatalogService.createCatalogItem`/`updateCatalogItem`/`archiveCatalogItem`
+ * (loxep-7fs, A22) — items are still minted automatically at manual-listing
+ * time (design 4b's "cheap answer"), but an operator can now also create,
+ * edit, and archive one directly.
  */
 export default function CatalogTable() {
   const { data, isPending, isError, error, refetch } = useQuery(catalogItemsQuery);
+  const [editing, setEditing] = React.useState<CatalogItemListItemDto | null>(null);
 
   if (isPending) {
-    return <DataTableSkeleton columnCount={5} filterCount={1} />;
+    return <DataTableSkeleton columnCount={6} filterCount={1} />;
   }
   if (isError) {
     return (
@@ -48,22 +51,38 @@ export default function CatalogTable() {
           </EmptyMedia>
           <EmptyTitle>No catalog items yet</EmptyTitle>
           <EmptyDescription>
-            A catalog item is minted automatically the first time an inventory item is listed.
+            A catalog item is minted automatically the first time an inventory item is listed, or
+            create one directly with &ldquo;New catalog item&rdquo; above.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
   }
-  return <CatalogDataTable items={data} />;
+  return (
+    <>
+      <CatalogDataTable items={data} onEdit={setEditing} />
+      <CatalogItemFormDialog
+        open={editing !== null}
+        onOpenChange={(open) => !open && setEditing(null)}
+        item={editing}
+      />
+    </>
+  );
 }
 
-function CatalogDataTable({ items }: { items: CatalogItemListItemDto[] }) {
+function CatalogDataTable({
+  items,
+  onEdit
+}: {
+  items: CatalogItemListItemDto[];
+  onEdit: (item: CatalogItemListItemDto) => void;
+}) {
   const search = useSearch({ strict: false }) as Record<string, unknown>;
   const page = (search.page as number) ?? 1;
   const perPage = (search.perPage as number) ?? DEFAULT_PAGE_SIZE;
   const sortStr = search.sort as string | undefined;
 
-  const columns = React.useMemo(() => createColumns(), []);
+  const columns = React.useMemo(() => createColumns(onEdit), [onEdit]);
   const sorting = parseSortingState<CatalogItemListItemDto>(sortStr, COLUMN_IDS);
   const sorted = sortRows(items, sorting, {
     sku: (row) => row.sku,
@@ -82,7 +101,8 @@ function CatalogDataTable({ items }: { items: CatalogItemListItemDto[] }) {
     shallow: true,
     debounceMs: 500,
     initialState: {
-      pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE }
+      pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
+      columnPinning: { start: [], end: ['actions'] }
     }
   });
 

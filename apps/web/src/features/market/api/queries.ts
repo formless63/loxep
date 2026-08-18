@@ -12,6 +12,7 @@ import {
   fetchMonitorDefaults,
   fetchMonitors,
   fetchOpportunityEvents,
+  fetchOpportunityRules,
   fetchSearchDashboard
 } from '@/server/market-functions';
 
@@ -121,3 +122,9 @@ export const opportunityEventsQuery = (params: OpportunityEventsQueryParams) =>
     queryFn: () => fetchOpportunityEvents({ data: params }),
     refetchInterval: 30_000
   });
+
+/** `/market/rules` (loxep-7fs, A16) — the only way to author scoring rules. */
+export const opportunityRulesQuery = queryOptions({
+  queryKey: ['market', 'rules'],
+  queryFn: () => fetchOpportunityRules()
+});

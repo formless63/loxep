@@ -569,3 +569,61 @@ export const fetchOrder = createServerFn({ method: 'GET' })
       provenance
     };
   });
+
+// ---------------------------------------------------------------------------
+// Writes — order attribution + duplicates (loxep-7fs, A22).
+//
+// `@loxep/commerce`'s `OrderIngestionService.setOrderAttribution`/
+// `reattributeOrders`/`findDuplicateOrderCandidates` had zero callers: every
+// order's economic entity was whatever resolved at ingest FOREVER, and it
+// feeds every downstream financial figure (this module's own `fetchOrder`
+// above, plus every `@loxep/inventory/profitability.ts` read model). These
+// call the REAL service via `@/server/admin.ts`'s `getOrderIngestionService()`
+// (now that `@loxep/commerce` is a declared `apps/web` dependency) — unlike
+// this file's reads, there is no raw-SQL twin to note for later removal.
+//
+// `reattributeOrders` (the bulk, connection-scoped correction) is NOT mounted
+// in this pass — see this bead's report.
+// ---------------------------------------------------------------------------
+
+const setOrderAttributionInput = z.strictObject({
+  orderId: z.uuid(),
+  economicEntityId: z.uuid().nullable()
+});
+
+export const setOrderAttribution = createServerFn({ method: 'POST' })
+  .inputValidator(setOrderAttributionInput)
+  .handler(async ({ data }): Promise<{ orderId: string; economicEntityId: string | null }> => {
+    const { requireSession, getOrderIngestionService } = await import('@/server/admin');
+    const session = await requireSession();
+    const orderIngestionService = await getOrderIngestionService();
+    return orderIngestionService.setOrderAttribution({
+      orderId: data.orderId,
+      economicEntityId: data.economicEntityId,
+      actorUserId: session.user.id
+    });
+  });
+
+export interface DuplicateOrderCandidateDto {
+  provider: string;
+  sourceAccountKey: string;
+  externalOrderId: string;
+  orderIds: string[];
+  connectionIds: string[];
+}
+
+/**
+ * The cross-connection duplicate diagnostic (design open question 2,
+ * `orders.ts`'s own `markDuplicate` doc) — READ-ONLY: it reports candidates,
+ * it does not mark them. Duplicates are already silently excluded from every
+ * profitability figure (`duplicate_of_order_id is null` in every predicate);
+ * this is the worklist that makes the exclusion visible instead of silent.
+ */
+export const fetchDuplicateOrderCandidates = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<DuplicateOrderCandidateDto[]> => {
+    const { requireSession, getOrderIngestionService } = await import('@/server/admin');
+    await requireSession();
+    const orderIngestionService = await getOrderIngestionService();
+    return orderIngestionService.findDuplicateOrderCandidates();
+  }
+);

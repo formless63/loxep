@@ -78,8 +78,9 @@ import {
   type MediaService,
   type StorageBackendsService
 } from '@loxep/storage';
+import type { StorageMigrationService } from '@loxep/storage/migration';
 import type { NotificationService } from '@loxep/notifications';
-import type { MonitorService } from '@loxep/market';
+import type { MonitorService, OpportunityRulesService } from '@loxep/market';
 import {
   ProviderCallError,
   createContainerHostsService,
@@ -118,8 +119,10 @@ import type {
   LocationsService,
   MovementsService,
   OpportunityLinksService,
+  ShipmentsService,
   SpecificsService
 } from '@loxep/inventory';
+import type { CatalogService, OrderIngestionService } from '@loxep/commerce';
 import { AuthorizationError, requireRole } from '@loxep/auth';
 import { getRequestHeaders, setResponseStatus } from '@tanstack/react-start/server';
 import { getAuth } from '@/server/auth';
@@ -225,6 +228,21 @@ interface AdminRegistry {
   /** Contacts/contact-channels (loxep-l49) — used for the partners table's primary-contact summary column. Same package, same reasoning. */
   counterpartyContacts: ContactsService;
   storageBackendsPromise?: Promise<StorageBackendsService>;
+  /**
+   * The resumable copy→verify→cutover→cleanup local↔S3 migration workflow
+   * (loxep-7fs, A15) — `@loxep/storage/migration`'s subpath split (see
+   * {@link getStorageBackendsService}'s own doc) exists precisely so this can
+   * be built lazily behind `@vite-ignore`, the same `@loxep/jobs`-reaches-
+   * graphile-worker hazard {@link getInventoryModule} documents. Its worker
+   * task (`storage.migrate-object`) is registered by `@loxep/app`'s
+   * `createStorageMigrationTasks` (loxep-vdt); this registry builds its OWN
+   * `StorageMigrationService` instance for `startMigration`/`resumeMigration`/
+   * `getMigrationStatus` reads and enqueues, using `@loxep/jobs`' standalone
+   * `addJob` against the shared pool — the same "no started runner required"
+   * closure `createStorageMigrationTasks` itself uses, so a request never
+   * needs a live worker to start or resume a migration.
+   */
+  storageMigrationServicePromise?: Promise<StorageMigrationService>;
   mediaServicePromise?: Promise<MediaService>;
   /** Receipt attach/list/detach (loxep-dgf.1) — depends on `getMediaService()`, so it is built lazily like it. */
   receiptsServicePromise?: Promise<ReceiptsService>;
@@ -234,6 +252,8 @@ interface AdminRegistry {
   notificationsServicePromise?: Promise<NotificationService>;
   marketModulePromise?: Promise<typeof import('@loxep/market')>;
   monitorServicePromise?: Promise<MonitorService>;
+  /** Opportunity rule CRUD (`/market/rules`, loxep-7fs, A16) — the only way to author the rules `/market/opportunities` scores events against. */
+  opportunityRulesServicePromise?: Promise<OpportunityRulesService>;
   /**
    * `/inventory` (loxep-dgf.2). `@loxep/inventory/decimal.ts` imports from
    * bare `@loxep/commerce`, whose index re-exports `tasks.ts`/`retention.ts`
@@ -254,10 +274,34 @@ interface AdminRegistry {
   /** Reservations + depletion-on-fulfillment (`/commerce` manual sale recording, loxep-dgf.6). */
   allocationsServicePromise?: Promise<AllocationsService>;
   opportunityLinksServicePromise?: Promise<OpportunityLinksService>;
+  /**
+   * Outbound carrier reality (loxep-7fs, A14) — `record`/`recordCostAdjustment`/
+   * `netCost`/`unlinkedShippingLabelFees`, authoritative for actual shipping
+   * cost (`order_fulfillments` records what the CHANNEL said; this records
+   * what the CARRIER and we actually did). Had zero references repo-wide,
+   * not even a getter on this registry, before this pass.
+   */
+  shipmentsServicePromise?: Promise<ShipmentsService>;
   /** Typed key/value item specifics (`/inventory/stock/$id`, loxep-dgf.3). */
   specificsServicePromise?: Promise<SpecificsService>;
   /** Item image gallery links over `media_links` (loxep-dgf.3). */
   inventoryMediaServicePromise?: Promise<InventoryMediaService>;
+  /**
+   * `@loxep/commerce` (loxep-7fs, A22) — declared as an `apps/web` dependency
+   * this session (it was previously absent, forcing `commerce-functions.ts`/
+   * `orders-functions.ts` to re-implement `CatalogService`/
+   * `OrderIngestionService` logic in raw SQL; see those files' own module
+   * docs). Its index re-exports `tasks.ts`, which reaches `graphile-worker`
+   * via `@loxep/jobs` — the same SSR-bundling hazard `@loxep/market`/
+   * `@loxep/inventory` carry, so this uses the identical `@vite-ignore`
+   * lazy-module pattern as {@link getInventoryModule}, not the eager
+   * `db`-only pattern.
+   */
+  commerceModulePromise?: Promise<typeof import('@loxep/commerce')>;
+  /** Catalog items + channel listings (`/commerce/catalog`) — create/update/archive and the channel-listing link verbs. */
+  catalogServicePromise?: Promise<CatalogService>;
+  /** Order attribution correction + the cross-connection duplicate diagnostic (`/commerce/orders`). Ingestion verbs are not called from this registry — ingestion runs from sync workers, never a request. */
+  orderIngestionServicePromise?: Promise<OrderIngestionService>;
   /**
    * `/infrastructure` (Phase 7 milestone 3, loxep-lmy.3). `@loxep/infrastructure`
    * depends only on `@loxep/db` + `@loxep/domain` (verified against its own
@@ -282,6 +326,23 @@ interface AdminRegistry {
   dnsProviderTokens: DnsProviderTokensService;
   /** Transactional `graphile_worker.add_job`, for ad hoc "sync now" actions. */
   infrastructureEnqueue: TransactionalEnqueue;
+  /**
+   * The market/commerce-domain instance of the same `TransactionalEnqueue`
+   * pattern `infrastructureEnqueue`/`accountingEnqueue` already use
+   * (loxep-u8c A25) — `createTransactionalEnqueue` is a stateless wrapper
+   * around `graphile_worker.add_job` with no domain-specific behaviour, so
+   * this is a SEPARATE field only so a reader never has to wonder whether a
+   * connections-table "Sync now" click is secretly sharing state with an
+   * infrastructure or accounting one, matching `accountingEnqueue`'s own
+   * documented reasoning. Used by `order-sync-functions.ts`'s
+   * `syncOrdersNow` (enqueues `market.poll-target`, scoped by monitor-target
+   * id) and `purchase-sync-functions.ts`'s `syncPurchasesNow` (wraps
+   * `@loxep/app`'s `enqueueEbayPurchaseSync`, reached through
+   * {@link getFleetModule} the same way every other `@loxep/app` access on
+   * this file is) — never called synchronously from a request, matching
+   * every other enqueue field on this registry.
+   */
+  syncNowEnqueue: TransactionalEnqueue;
   /**
    * Dockhand host-registration intent + its reconciler (loxep-hb7 Milestone C):
    * `declareIntent` (the create dialog / fleet-detail registration panel's
@@ -547,6 +608,7 @@ function buildRegistry(): AdminRegistry {
       providerName: 'cloudflare'
     }),
     infrastructureEnqueue: createTransactionalEnqueue(),
+    syncNowEnqueue: createTransactionalEnqueue(),
     containerHosts: createContainerHostsService({
       db: handle.db,
       readSecret: async (secretKey) => {
@@ -617,6 +679,35 @@ export function getMediaService(): Promise<MediaService> {
     return createMediaService({ db: registry.handle.db, backends });
   })();
   return registry.mediaServicePromise;
+}
+
+/**
+ * Storage migration service (`/settings/storage`'s migrate-objects
+ * affordance) — see the `storageMigrationServicePromise` field doc above.
+ */
+export function getStorageMigrationService(): Promise<StorageMigrationService> {
+  const registry = getAdminServices();
+  registry.storageMigrationServicePromise ??= (async () => {
+    const [{ createStorageMigrationService }, { addJob }, backends] = await Promise.all([
+      (async () => {
+        const specifier = '@loxep/storage/migration';
+        return (await import(
+          /* @vite-ignore */ specifier
+        )) as typeof import('@loxep/storage/migration');
+      })(),
+      (async () => {
+        const specifier = '@loxep/jobs';
+        return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/jobs');
+      })(),
+      getStorageBackendsService()
+    ]);
+    return createStorageMigrationService({
+      db: registry.handle.db,
+      backends,
+      addJob: (task, payload, options) => addJob(registry.handle.pool, task, payload, options)
+    });
+  })();
+  return registry.storageMigrationServicePromise;
 }
 
 /** Expense lifecycle service (`/finance/expenses`), loxep-dgf.1. */
@@ -732,6 +823,11 @@ export function getDnsProviderTokensService(): DnsProviderTokensService {
 /** Transactional `graphile_worker.add_job`, for a manual "sync now" action. */
 export function getInfrastructureEnqueue(): TransactionalEnqueue {
   return getAdminServices().infrastructureEnqueue;
+}
+
+/** Transactional `graphile_worker.add_job`, for market/commerce "Sync now" actions (loxep-u8c A25). */
+export function getSyncNowEnqueue(): TransactionalEnqueue {
+  return getAdminServices().syncNowEnqueue;
 }
 
 /** Dockhand host-registration intent + reconciler (loxep-hb7 Milestone C). */
@@ -1209,6 +1305,16 @@ export function getMonitorService(): Promise<MonitorService> {
   return registry.monitorServicePromise;
 }
 
+/** Opportunity rule CRUD (`/market/rules`), loaded through the module above. */
+export function getOpportunityRulesService(): Promise<OpportunityRulesService> {
+  const registry = getAdminServices();
+  registry.opportunityRulesServicePromise ??= (async () => {
+    const market = await getMarketModule();
+    return market.createOpportunityRulesService({ db: registry.handle.db });
+  })();
+  return registry.opportunityRulesServicePromise;
+}
+
 /**
  * Dynamically-loaded `@loxep/inventory` module, cached on the registry.
  *
@@ -1312,6 +1418,16 @@ export function getAllocationsService(): Promise<AllocationsService> {
   return registry.allocationsServicePromise;
 }
 
+/** Shipments service (`/commerce/orders/$id`'s shipments section, `/inventory/profitability`'s money-leak worklist) — outbound carrier reality, authoritative for actual shipping cost. */
+export function getShipmentsService(): Promise<ShipmentsService> {
+  const registry = getAdminServices();
+  registry.shipmentsServicePromise ??= (async () => {
+    const inventory = await getInventoryModule();
+    return inventory.createShipmentsService({ db: registry.handle.db });
+  })();
+  return registry.shipmentsServicePromise;
+}
+
 /** Opportunity-links service — the `/market` → `/inventory` "I bought this" handoff's write side. */
 export function getOpportunityLinksService(): Promise<OpportunityLinksService> {
   const registry = getAdminServices();
@@ -1346,6 +1462,40 @@ export function getInventoryMediaService(): Promise<InventoryMediaService> {
     return inventory.createInventoryMediaService({ db: registry.handle.db });
   })();
   return registry.inventoryMediaServicePromise;
+}
+
+/**
+ * Dynamically-loaded `@loxep/commerce` module, cached on the registry — see
+ * the `commerceModulePromise` field doc above for why this needs the
+ * `@vite-ignore` treatment rather than an eager `db`-only build.
+ */
+export function getCommerceModule(): Promise<typeof import('@loxep/commerce')> {
+  const registry = getAdminServices();
+  registry.commerceModulePromise ??= (async () => {
+    const specifier = '@loxep/commerce';
+    return (await import(/* @vite-ignore */ specifier)) as typeof import('@loxep/commerce');
+  })();
+  return registry.commerceModulePromise;
+}
+
+/** Catalog service (`/commerce/catalog`) — item CRUD, channel-listing upsert/link, `suggestChannelLinks`. */
+export function getCatalogService(): Promise<CatalogService> {
+  const registry = getAdminServices();
+  registry.catalogServicePromise ??= (async () => {
+    const commerce = await getCommerceModule();
+    return commerce.createCatalogService({ db: registry.handle.db });
+  })();
+  return registry.catalogServicePromise;
+}
+
+/** Order ingestion service, called from a request only for its non-ingestion verbs — `setOrderAttribution`/`reattributeOrders`/`findDuplicateOrderCandidates` (`/commerce/orders`). */
+export function getOrderIngestionService(): Promise<OrderIngestionService> {
+  const registry = getAdminServices();
+  registry.orderIngestionServicePromise ??= (async () => {
+    const commerce = await getCommerceModule();
+    return commerce.createOrderIngestionService({ db: registry.handle.db });
+  })();
+  return registry.orderIngestionServicePromise;
 }
 
 /** Current request's Better Auth session, or `null` when unauthenticated. */

@@ -22,6 +22,10 @@ import {
 } from '@/server/admin-functions';
 import { fetchEbayCallbackUrl, fetchEbayKeysetStatus } from '@/server/ebay-oauth';
 import { fetchEtsyCallbackUrl, fetchEtsyKeysetStatus } from '@/server/etsy-oauth';
+import {
+  fetchStorageBackendOptions,
+  fetchStorageMigrationStatus
+} from '@/server/storage-migration-functions';
 
 export const healthReportQuery = queryOptions({
   queryKey: ['settings', 'health'],
@@ -88,6 +92,19 @@ export const storageBackendsQuery = queryOptions({
   queryKey: ['settings', 'storage-backends'],
   queryFn: () => fetchStorageBackends()
 });
+
+/** The migrate-objects dialog's source/destination pickers (loxep-7fs, A15). */
+export const storageBackendOptionsQuery = queryOptions({
+  queryKey: ['settings', 'storage-backend-options'],
+  queryFn: () => fetchStorageBackendOptions()
+});
+
+/** Live progress for one storage migration — polled while it is `running`. */
+export const storageMigrationStatusQuery = (id: string) =>
+  queryOptions({
+    queryKey: ['settings', 'storage-migration', id],
+    queryFn: () => fetchStorageMigrationStatus({ data: { id } })
+  });
 
 export const usersQuery = queryOptions({
   queryKey: ['settings', 'users'],

@@ -3,6 +3,7 @@ import { zodValidator } from '@tanstack/zod-adapter';
 import { z } from 'zod';
 import { CommercePage } from '@/features/commerce/components/commerce-page';
 import OrdersTable from '@/features/commerce/components/orders-table';
+import DuplicateOrdersPanel from '@/features/commerce/components/duplicate-orders-panel';
 
 /**
  * List route named `orders.index.tsx`, not `orders.tsx` — `orders.$id.tsx`
@@ -31,7 +32,10 @@ function CommerceOrders() {
       title='Orders'
       description='Every order — connector-synced and manually recorded alike — with the lines, fees, refunds, and fulfillments the dashboard aggregate never showed.'
     >
-      <OrdersTable />
+      <div className='flex flex-col gap-4'>
+        <DuplicateOrdersPanel />
+        <OrdersTable />
+      </div>
     </CommercePage>
   );
 }

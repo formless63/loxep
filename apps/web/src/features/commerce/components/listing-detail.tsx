@@ -25,6 +25,7 @@ import {
 } from '@/features/commerce/constants';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import RecordSaleForm from '@/features/commerce/components/record-sale-form';
+import LinkMarketplaceItemDialog from '@/features/commerce/components/link-marketplace-item-dialog';
 import type { RecordManualSaleResultDto } from '@/server/commerce-functions';
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -45,6 +46,7 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
   // column, so this remains the non-transient surface for it past the toast
   // (loxep-0l5).
   const [lastSale, setLastSale] = React.useState<RecordManualSaleResultDto | null>(null);
+  const [linkOpen, setLinkOpen] = React.useState(false);
 
   if (isPending) {
     return <div className='text-muted-foreground text-sm'>Loading…</div>;
@@ -106,17 +108,30 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
             )}
           </DetailRow>
           <DetailRow label='Market listing'>
-            {data.marketplaceItemId ? (
-              <Link
-                to='/market/items/$itemId'
-                params={{ itemId: data.marketplaceItemId }}
-                className='hover:underline'
+            <span className='flex items-center gap-1.5'>
+              {data.marketplaceItemId ? (
+                <Link
+                  to='/market/items/$itemId'
+                  params={{ itemId: data.marketplaceItemId }}
+                  className='hover:underline'
+                >
+                  View observed listing
+                </Link>
+              ) : (
+                <span className='text-muted-foreground'>not linked</span>
+              )}
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                aria-label={
+                  data.marketplaceItemId ? 'Edit market listing link' : 'Link to catalog item'
+                }
+                onClick={() => setLinkOpen(true)}
               >
-                View observed listing
-              </Link>
-            ) : (
-              <span className='text-muted-foreground'>not linked</span>
-            )}
+                <Icons.edit className='size-3.5' />
+              </Button>
+            </span>
           </DetailRow>
           {data.listingUrl && (
             <DetailRow label='Listing URL'>
@@ -221,6 +236,13 @@ export default function ListingDetail({ listingId }: { listingId: string }) {
           onRecorded={setLastSale}
         />
       )}
+
+      <LinkMarketplaceItemDialog
+        open={linkOpen}
+        onOpenChange={setLinkOpen}
+        channelListingId={data.id}
+        currentMarketplaceItemId={data.marketplaceItemId}
+      />
     </div>
   );
 }

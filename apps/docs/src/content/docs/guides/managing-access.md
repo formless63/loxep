@@ -62,7 +62,17 @@ Two things to know:
 
 Change somebody's role later from the row actions in the same user table. Loxep is deliberately not an invitation system: there are no pending invites to chase and no half-created accounts.
 
-## 4. Administrators from your identity provider (optional)
+## 4. Revoking a departing user's access
+
+The same row actions in **Settings → Users** cover someone leaving, not just someone joining:
+
+- **Ban** sets a reason (required) and an optional expiry, then immediately revokes every active session for that user — they are signed out everywhere and cannot sign back in, whether they were already logged in or not, until you unban them or the ban expires. You cannot ban your own account, so there is no click path that locks you out of your own installation.
+- **Unban** restores the ability to sign in through their normal method. It does not touch any session, since a ban already revoked them all.
+- **Sign out everywhere** revokes every session for a user without changing their role or ban state — useful for a reported-lost device or a suspected compromised session when you don't want to ban or demote them.
+
+Promoting or demoting someone also signs them out everywhere as part of the same action, so a role change takes effect on their very next request instead of waiting for their existing session to expire on its own.
+
+## 5. Administrators from your identity provider (optional)
 
 If your identity provider already knows who your administrators are, Loxep can read that instead of you maintaining the role by hand. In the **Account provisioning** card:
 

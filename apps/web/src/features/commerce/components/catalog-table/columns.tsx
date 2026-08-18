@@ -4,8 +4,11 @@ import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-h
 import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { CatalogItemListItemDto } from '@/server/commerce-functions';
+import { CellAction } from './cell-action';
 
-export function createColumns(): ColumnDef<DataTableFeatures, CatalogItemListItemDto>[] {
+export function createColumns(
+  onEdit: (item: CatalogItemListItemDto) => void
+): ColumnDef<DataTableFeatures, CatalogItemListItemDto>[] {
   return [
     {
       id: 'sku',
@@ -61,6 +64,10 @@ export function createColumns(): ColumnDef<DataTableFeatures, CatalogItemListIte
           {formatDate(cell.getValue<string>())}
         </span>
       )
+    },
+    {
+      id: 'actions',
+      cell: ({ row }) => <CellAction data={row.original} onEdit={onEdit} />
     }
   ];
 }
