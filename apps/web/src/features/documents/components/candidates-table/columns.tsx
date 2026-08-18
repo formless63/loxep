@@ -4,6 +4,7 @@ import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -24,13 +25,15 @@ import {
 } from '@/features/documents/constants';
 
 /**
- * A26 (loxep-wx3) — always-editable inline `Input`, committed on blur (only
- * when the value actually changed), rather than a separate edit mode: this
- * is a small, in-memory review table, and a click-to-edit affordance would
- * be one more state to manage for no real benefit here. Disabled once
- * confirmed — `updateCandidateLine`'s own refusal ("a confirmed line is
- * evidence of a domain write") would just bounce back as an error toast
- * otherwise.
+ * A26 (loxep-wx3) — click-to-edit, committed on blur or Enter, escape to
+ * abandon. Deliberately NOT an always-mounted `Input`: a review queue is
+ * read far more often than it is corrected, a column of input boxes reads
+ * as a form rather than a table (the density doctrine this app follows),
+ * and rendering the value as text keeps the row's own text matchable —
+ * an always-on input turns the cell's content into an input VALUE, which
+ * is invisible to text queries and broke two document-import specs.
+ * Disabled once confirmed: `updateCandidateLine` refuses a confirmed line
+ * ("evidence of a domain write") and would only bounce back a toast.
  */
 function EditableTextCell({
   value,
@@ -45,6 +48,7 @@ function EditableTextCell({
   ariaLabel: string;
   onCommit: (next: string) => void;
 }) {
+  const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => setDraft(value), [value]);
 
@@ -54,12 +58,38 @@ function EditableTextCell({
     );
   }
 
+  if (!editing) {
+    return (
+      <button
+        type='button'
+        onClick={() => setEditing(true)}
+        aria-label={`Edit ${ariaLabel}`}
+        className={cn(
+          'hover:bg-accent focus-visible:ring-ring/50 -mx-1 w-full rounded-sm px-1 text-left focus-visible:ring-[3px] focus-visible:outline-none',
+          align === 'right' && 'text-right tabular-nums'
+        )}
+      >
+        {value || <span className='text-muted-foreground'>—</span>}
+      </button>
+    );
+  }
+
   return (
     <Input
+      autoFocus
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => {
+        setEditing(false);
         if (draft !== value) onCommit(draft);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur();
+        } else if (event.key === 'Escape') {
+          setDraft(value);
+          setEditing(false);
+        }
       }}
       aria-label={ariaLabel}
       className={align === 'right' ? 'text-right tabular-nums' : undefined}

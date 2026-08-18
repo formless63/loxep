@@ -89,7 +89,14 @@ test('the market item detail page renders the watch-count, sell-through, and lan
   await page.goto('/market/items');
   await expect(page.getByRole('heading', { name: 'Watched items' })).toBeVisible();
 
-  const itemLinks = page.locator("a[href^='/market/items/']");
+  // Scoped to main and settled first: a bare page-wide locator also matches
+  // chrome outside the table and counts hidden nodes, so it reported items
+  // this harness does not have and then timed out clicking one.
+  await page.waitForLoadState('networkidle');
+  const itemLinks = page
+    .getByRole('main')
+    .locator("a[href^='/market/items/']")
+    .filter({ visible: true });
   const itemCount = await itemLinks.count();
   test.skip(itemCount === 0, 'no marketplace items seeded in this e2e environment');
 
