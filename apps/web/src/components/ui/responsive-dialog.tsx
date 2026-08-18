@@ -105,7 +105,18 @@ function ResponsiveDialogContent({
   }
 
   return (
-    <DialogContent className={className} showCloseButton={showCloseButton} {...props}>
+    // `max-h-[85vh] overflow-y-auto` for the same reason the Drawer branch
+    // above carries its own scroll: the donor `DialogContent` sets NO height
+    // bound, so a form taller than the viewport simply extends past it and
+    // its submit button becomes unreachable — found live when the trading-
+    // partner dialog (kind, name, legal name, currency, notes, eight role
+    // checkboxes) pushed "Create" off-screen at 1280x720 (2026-08-18). A
+    // caller's own className still composes last.
+    <DialogContent
+      className={cn('max-h-[85vh] overflow-y-auto', className)}
+      showCloseButton={showCloseButton}
+      {...props}
+    >
       {children}
     </DialogContent>
   );
