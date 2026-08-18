@@ -77,7 +77,7 @@ export default function OrdersTable() {
   const { data, isPending, isError, error, refetch } = useQuery(ordersQuery(filter));
 
   if (isPending) {
-    return <DataTableSkeleton columnCount={7} filterCount={3} />;
+    return <DataTableSkeleton columnCount={8} filterCount={3} />;
   }
   if (isError) {
     return (

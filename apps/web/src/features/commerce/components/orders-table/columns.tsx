@@ -7,6 +7,8 @@ import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatMoney } from '@/lib/format';
 import type { OrderListItemDto } from '@/server/orders-functions';
 import {
+  orderFulfillmentStatusLabel,
+  orderFulfillmentStatusTone,
   orderPaymentStatusLabel,
   orderPaymentStatusTone,
   orderProviderOptions,
@@ -83,6 +85,20 @@ export function createColumns(): ColumnDef<DataTableFeatures, OrderListItemDto>[
         const status = cell.getValue<string>();
         return (
           <Badge variant={orderPaymentStatusTone(status)}>{orderPaymentStatusLabel(status)}</Badge>
+        );
+      }
+    },
+    {
+      id: 'fulfillmentStatus',
+      accessorKey: 'fulfillmentStatus',
+      enableSorting: false,
+      header: 'Fulfillment',
+      cell: ({ cell }) => {
+        const status = cell.getValue<string>();
+        return (
+          <Badge variant={orderFulfillmentStatusTone(status)}>
+            {orderFulfillmentStatusLabel(status)}
+          </Badge>
         );
       }
     },

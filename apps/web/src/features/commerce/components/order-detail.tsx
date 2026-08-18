@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useTable } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
@@ -12,11 +14,15 @@ import {
   TableHeader,
   TableRow
 } from '@/components/ui/table';
+import { DataTable } from '@/components/ui/table/data-table';
 import { Icons } from '@/components/icons';
+import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
+import { sumMoneyBy } from '@/lib/aggregate';
 import { formatDateTime, formatMoney, formatQuantity } from '@/lib/format';
 import { orderQuery } from '@/features/commerce/api/queries';
 import {
   feeDirectionLabel,
+  feeDirectionTone,
   fulfillmentRecordStatusLabel,
   fulfillmentRecordStatusTone,
   humanizeSnakeCase,
@@ -131,46 +137,120 @@ function LinesTable({ lines, currency }: { lines: OrderLineDto[]; currency: stri
   );
 }
 
+/**
+ * `fee_direction`/currency composite bucket key for the per-direction
+ * subtotals below — never sum across currencies (`sumMoneyBy`'s own rule),
+ * so a direction with mixed-currency fees (unusual, but not precluded by the
+ * schema) still gets one subtotal per currency rather than one fabricated
+ * cross-currency total.
+ */
+const FEE_BUCKET_SEPARATOR = '::';
+
+function feeBucketKey(fee: OrderFeeDto): string {
+  return `${fee.feeDirection}${FEE_BUCKET_SEPARATOR}${fee.currency}`;
+}
+
+function splitFeeBucketKey(key: string): { direction: string; currency: string } {
+  const [direction, currency] = key.split(FEE_BUCKET_SEPARATOR);
+  return { direction: direction ?? key, currency: currency ?? '' };
+}
+
+const feeColumns: ColumnDef<DataTableFeatures, OrderFeeDto>[] = [
+  {
+    id: 'feeType',
+    accessorKey: 'feeType',
+    header: 'Type',
+    cell: ({ row }) => (
+      <div className='flex flex-col'>
+        <span>{humanizeSnakeCase(row.original.feeType)}</span>
+        {row.original.providerFeeCode && (
+          <span className='text-muted-foreground text-xs'>{row.original.providerFeeCode}</span>
+        )}
+      </div>
+    )
+  },
+  {
+    id: 'feeDirection',
+    accessorKey: 'feeDirection',
+    header: 'Direction',
+    cell: ({ cell }) => {
+      const direction = cell.getValue<string>();
+      return <Badge variant={feeDirectionTone(direction)}>{feeDirectionLabel(direction)}</Badge>;
+    }
+  },
+  {
+    id: 'feeScope',
+    accessorKey: 'feeScope',
+    header: 'Scope',
+    cell: ({ cell }) => (
+      <span className='text-muted-foreground capitalize'>{cell.getValue<string>()}</span>
+    )
+  },
+  {
+    id: 'chargedAt',
+    accessorKey: 'chargedAt',
+    header: 'Charged',
+    cell: ({ cell }) => (
+      <span className='text-muted-foreground tabular-nums'>
+        {formatDateTime(cell.getValue<string | null>())}
+      </span>
+    )
+  },
+  {
+    id: 'amount',
+    accessorKey: 'amount',
+    header: () => <div className='text-right'>Amount</div>,
+    cell: ({ row }) => (
+      <div className='text-right tabular-nums'>
+        {formatMoney(row.original.amount, row.original.currency)}
+      </div>
+    )
+  }
+];
+
+/**
+ * `FEE_DIRECTIONS` exists precisely so `seller_charge` (a deduction from
+ * proceeds) and `buyer_surcharge` (already inside `orders.total`, never
+ * subtracted) are never conflated — this table renders a Direction badge per
+ * row and a per-direction (per-currency) subtotal in the `DataTable` summary
+ * slot, rather than one undifferentiated amount column with no sum.
+ */
 function FeesTable({ fees }: { fees: OrderFeeDto[] }) {
+  const table = useTable({
+    data: fees,
+    columns: feeColumns,
+    features: dataTableFeatures,
+    getRowId: (fee) => fee.id,
+    manualPagination: true
+  });
+
   if (fees.length === 0) {
     return <p className='text-muted-foreground text-sm'>No fees reported for this order.</p>;
   }
+
+  const totalsByBucket = sumMoneyBy(fees, (fee) => fee.amount, feeBucketKey);
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Type</TableHead>
-          <TableHead>Direction</TableHead>
-          <TableHead>Scope</TableHead>
-          <TableHead>Charged</TableHead>
-          <TableHead className='text-right'>Amount</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {fees.map((fee) => (
-          <TableRow key={fee.id}>
-            <TableCell>
-              <div className='flex flex-col'>
-                <span>{humanizeSnakeCase(fee.feeType)}</span>
-                {fee.providerFeeCode && (
-                  <span className='text-muted-foreground text-xs'>{fee.providerFeeCode}</span>
-                )}
-              </div>
-            </TableCell>
-            <TableCell className='text-muted-foreground'>
-              {feeDirectionLabel(fee.feeDirection)}
-            </TableCell>
-            <TableCell className='text-muted-foreground capitalize'>{fee.feeScope}</TableCell>
-            <TableCell className='text-muted-foreground tabular-nums'>
-              {fee.chargedAt ? formatDateTime(fee.chargedAt) : '—'}
-            </TableCell>
-            <TableCell className='text-right tabular-nums'>
-              {formatMoney(fee.amount, fee.currency)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <DataTable
+      table={table}
+      summary={
+        <>
+          {[...totalsByBucket.entries()].map(([bucketKey, total]) => {
+            const { direction, currency } = splitFeeBucketKey(bucketKey);
+            return (
+              <TableRow key={bucketKey}>
+                <TableCell colSpan={4} className='font-medium'>
+                  {feeDirectionLabel(direction)} subtotal
+                </TableCell>
+                <TableCell className='text-right font-medium tabular-nums'>
+                  {formatMoney(total, currency)}
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </>
+      }
+    />
   );
 }
 
@@ -392,9 +472,10 @@ export default function OrderDetail({ orderId }: { orderId: string }) {
         </CardHeader>
         <CardContent className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
           <DetailRow label='Placed'>{formatDateTime(data.placedAt)}</DetailRow>
-          <DetailRow label='Last synced'>
+          <DetailRow label='Provider updated'>
             {data.providerUpdatedAt ? formatDateTime(data.providerUpdatedAt) : '—'}
           </DetailRow>
+          <DetailRow label='Last synced'>{formatDateTime(data.lastSyncedAt)}</DetailRow>
           <DetailRow label='Cancelled'>
             {data.cancelledAt ? formatDateTime(data.cancelledAt) : '—'}
           </DetailRow>

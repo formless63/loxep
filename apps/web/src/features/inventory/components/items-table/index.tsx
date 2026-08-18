@@ -8,11 +8,14 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
 import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
 import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
+import { countByKey, sumMoneyBy } from '@/lib/aggregate';
+import { formatMoney, formatQuantity } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import {
   inventoryItemsQuery,
@@ -132,8 +135,37 @@ function ItemsDataTable({
     }
   });
 
+  // Totals over the FULL filtered result (`items`), not `pageRows` — same
+  // "honest over the full dataset" reasoning as `ExpensesTable`'s totals row.
+  const landedCostByCurrency = sumMoneyBy(
+    items,
+    (item) => item.landedCostAmount,
+    (item) => item.currency
+  );
+  const countsByCurrency = countByKey(items, (item) => item.currency);
+
   return (
-    <DataTable table={table}>
+    <DataTable
+      table={table}
+      summary={
+        <>
+          {[...countsByCurrency.entries()].map(([currency, count]) => (
+            <TableRow key={currency}>
+              <TableCell colSpan={5} className='font-medium'>
+                Total ({currency})
+              </TableCell>
+              <TableCell className='text-right font-medium tabular-nums'>
+                {formatQuantity(count)} item{count === 1 ? '' : 's'}
+              </TableCell>
+              <TableCell className='text-right font-medium tabular-nums'>
+                {formatMoney(landedCostByCurrency.get(currency), currency)}
+              </TableCell>
+              <TableCell colSpan={3} />
+            </TableRow>
+          ))}
+        </>
+      }
+    >
       <DataTableToolbar table={table} />
     </DataTable>
   );

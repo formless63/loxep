@@ -93,6 +93,8 @@ export interface ChannelListingListItemDto {
   endedAt: string | null;
   listingUrl: string | null;
   createdAt: string;
+  /** `channel_listings.last_synced_at` — Loxep's own fetch watermark, distinct from any provider-reported timestamp (loxep-egl). */
+  lastSyncedAt: string;
 }
 
 /**
@@ -155,7 +157,8 @@ export const fetchChannelListings = createServerFn({ method: 'GET' })
         listedAt: iso(row.listedAt),
         endedAt: iso(row.endedAt),
         listingUrl: row.listingUrl,
-        createdAt: iso(row.createdAt)
+        createdAt: iso(row.createdAt),
+        lastSyncedAt: iso(row.lastSyncedAt)
       };
     });
   });
@@ -232,6 +235,7 @@ export const fetchChannelListing = createServerFn({ method: 'GET' })
       endedAt: iso(row.endedAt),
       listingUrl: row.listingUrl,
       createdAt: iso(row.createdAt),
+      lastSyncedAt: iso(row.lastSyncedAt),
       inventoryItemId: inventoryItem?.id ?? null,
       inventoryItemCode: inventoryItem?.itemCode ?? null,
       marketplaceItemId: row.marketplaceItemId,
@@ -299,7 +303,8 @@ export const fetchListingsForInventoryItem = createServerFn({ method: 'GET' })
       listedAt: iso(row.listedAt),
       endedAt: iso(row.endedAt),
       listingUrl: row.listingUrl,
-      createdAt: iso(row.createdAt)
+      createdAt: iso(row.createdAt),
+      lastSyncedAt: iso(row.lastSyncedAt)
     }));
   });
 

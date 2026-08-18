@@ -91,6 +91,12 @@ test('creates an acquisition, adds an item to it, and the item lands in the stoc
   await expect(stockRow.getByText('Intake')).toBeVisible();
   await expect(stockRow.getByRole('button', { name: 'Complete review' })).toBeVisible();
 
+  // Stock table totals footer (loxep-egl E1/E2: the DataTable summary slot,
+  // per-currency count + landed cost). Not asserting an exact amount — other
+  // seeded/parallel-worker items share this currency group — only that the
+  // per-currency totals row itself renders.
+  await expect(page.getByText(/^Total \(USD\)$/)).toBeVisible();
+
   // Complete review from the item's own detail page: the intake-filtered
   // list drops the row the moment it leaves `intake`, so asserting the
   // Available badge has to happen somewhere that keeps showing the item

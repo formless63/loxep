@@ -111,4 +111,8 @@ test('creates a manual listing for an item and it shows Listed, and the listing 
   await page.goto('/commerce/listings');
   await expect(main(page).getByRole('heading', { name: 'Listings' })).toBeVisible();
   await expect(tableRow(page, listingCode as string)).toBeVisible();
+
+  // --- Synced column (loxep-egl E2): `channel_listings.last_synced_at`
+  // is now surfaced (previously dropped from the DTO entirely).
+  await expect(main(page).getByRole('columnheader', { name: 'Synced' })).toBeVisible();
 });

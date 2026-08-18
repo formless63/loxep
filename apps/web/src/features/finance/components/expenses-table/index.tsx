@@ -12,11 +12,14 @@ import {
   EmptyTitle
 } from '@/components/ui/empty';
 import { Button } from '@/components/ui/button';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { DataTable } from '@/components/ui/table/data-table';
 import { DataTableSkeleton } from '@/components/ui/table/data-table-skeleton';
 import { DataTableToolbar } from '@/components/ui/table/data-table-toolbar';
 import { Icons } from '@/components/icons';
 import { useDataTable } from '@/hooks/use-data-table';
+import { countByKey, sumMoneyBy } from '@/lib/aggregate';
+import { formatMoney } from '@/lib/format';
 import { parseSortingState } from '@/lib/parsers';
 import { expensesQuery, type ExpenseFilterParams } from '@/features/finance/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
@@ -237,8 +240,47 @@ function ExpensesDataTable({
     }
   });
 
+  // Totals are computed over the FULL filtered result (`expenses`), not
+  // `pageRows` — a per-currency total that silently reflected only the
+  // current page would be misleading the moment there is a second page
+  // (Frontend Standards' "honest over the full dataset" rule for the
+  // unbounded-fetch exception this table already relies on for sort/filter).
+  const amountByCurrency = sumMoneyBy(
+    expenses,
+    (expense) => expense.amount,
+    (expense) => expense.currency
+  );
+  const taxByCurrency = sumMoneyBy(
+    expenses,
+    (expense) => expense.taxAmount,
+    (expense) => expense.currency
+  );
+  const countsByCurrency = countByKey(expenses, (expense) => expense.currency);
+
   return (
-    <DataTable table={table}>
+    <DataTable
+      table={table}
+      summary={
+        <>
+          {[...countsByCurrency.entries()].map(([currency, count]) => (
+            <TableRow key={currency}>
+              <TableCell colSpan={5} className='font-medium'>
+                Total — {count} expense{count === 1 ? '' : 's'} ({currency})
+              </TableCell>
+              <TableCell className='text-right font-medium tabular-nums'>
+                <div className='flex flex-col items-end'>
+                  <span>{formatMoney(amountByCurrency.get(currency), currency)}</span>
+                  <span className='text-muted-foreground text-xs font-normal'>
+                    + {formatMoney(taxByCurrency.get(currency), currency)} tax
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell colSpan={3} />
+            </TableRow>
+          ))}
+        </>
+      }
+    >
       <DataTableToolbar table={table} />
     </DataTable>
   );

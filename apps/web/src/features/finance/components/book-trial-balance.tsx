@@ -1,3 +1,5 @@
+import type { ColumnDef } from '@tanstack/react-table';
+import { useTable } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,27 +10,80 @@ import {
   EmptyMedia,
   EmptyTitle
 } from '@/components/ui/empty';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow
-} from '@/components/ui/table';
+import { DataTable } from '@/components/ui/table/data-table';
+import { TableCell, TableRow } from '@/components/ui/table';
 import { Icons } from '@/components/icons';
+import { dataTableFeatures, type DataTableFeatures } from '@/lib/table-features';
 import { formatMoney } from '@/lib/format';
 import { trialBalanceQuery } from '@/features/finance/api/books-queries';
+import type { TrialBalanceDto, TrialBalanceRowDto } from '@/server/books-functions';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+
+function createColumns(
+  functionalCurrency: string
+): ColumnDef<DataTableFeatures, TrialBalanceRowDto>[] {
+  return [
+    {
+      id: 'account',
+      accessorKey: 'name',
+      header: 'Account',
+      cell: ({ row }) => (
+        <div className='flex items-center gap-2'>
+          <span className='text-muted-foreground tabular-nums'>{row.original.code}</span>
+          <span className={row.original.lineCount === 0 ? 'text-muted-foreground' : undefined}>
+            {row.original.name}
+          </span>
+          {row.original.systemKey && (
+            <Badge variant='outline' className='text-xs'>
+              {row.original.systemKey}
+            </Badge>
+          )}
+        </div>
+      )
+    },
+    {
+      id: 'debit',
+      accessorKey: 'debit',
+      header: () => <div className='text-right'>Debit</div>,
+      cell: ({ row }) => (
+        <div className='text-right tabular-nums'>
+          {formatMoney(row.original.debit, functionalCurrency)}
+        </div>
+      )
+    },
+    {
+      id: 'credit',
+      accessorKey: 'credit',
+      header: () => <div className='text-right'>Credit</div>,
+      cell: ({ row }) => (
+        <div className='text-right tabular-nums'>
+          {formatMoney(row.original.credit, functionalCurrency)}
+        </div>
+      )
+    },
+    {
+      id: 'balance',
+      accessorKey: 'balance',
+      header: () => <div className='text-right'>Balance</div>,
+      cell: ({ row }) => (
+        <div className='text-right font-medium tabular-nums'>
+          {formatMoney(row.original.balance, functionalCurrency)}
+        </div>
+      )
+    }
+  ];
+}
 
 /**
  * Read-only financial statement, not a sortable/filterable data grid: the
  * order (account code) and the row set (every account in the book) are both
- * fixed by the read model, and the required balances-to-zero footer is what
- * `TableFooter` exists for — the sanctioned `DataTable` stack has no
- * equivalent, and adding pagination/sort machinery here would only hide the
- * one property a trial balance must visibly have.
+ * fixed by the read model. It still renders through the sanctioned
+ * `DataTable` shell — `useTable` + `features: dataTableFeatures` +
+ * `manualPagination: true` (the same local-table pattern
+ * `expense-reports.tsx`'s `MissingReceiptsList` uses) skips sort/filter/page
+ * machinery this surface has no use for — with the required balances-to-zero
+ * footer rendered through `DataTable`'s `summary` slot rather than a
+ * hand-rolled `<Table>`.
  */
 export default function BookTrialBalance({ accountingBookId }: { accountingBookId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(
@@ -66,64 +121,42 @@ export default function BookTrialBalance({ accountingBookId }: { accountingBookI
             </EmptyHeader>
           </Empty>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Account</TableHead>
-                <TableHead className='text-right'>Debit</TableHead>
-                <TableHead className='text-right'>Credit</TableHead>
-                <TableHead className='text-right'>Balance</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.rows.map((row) => (
-                <TableRow key={row.ledgerAccountId}>
-                  <TableCell>
-                    <div className='flex items-center gap-2'>
-                      <span className='text-muted-foreground tabular-nums'>{row.code}</span>
-                      <span className={row.lineCount === 0 ? 'text-muted-foreground' : undefined}>
-                        {row.name}
-                      </span>
-                      {row.systemKey && (
-                        <Badge variant='outline' className='text-xs'>
-                          {row.systemKey}
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className='text-right tabular-nums'>
-                    {formatMoney(row.debit, data.functionalCurrency)}
-                  </TableCell>
-                  <TableCell className='text-right tabular-nums'>
-                    {formatMoney(row.credit, data.functionalCurrency)}
-                  </TableCell>
-                  <TableCell className='text-right font-medium tabular-nums'>
-                    {formatMoney(row.balance, data.functionalCurrency)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell className='font-medium'>Total</TableCell>
-                <TableCell className='text-right font-medium tabular-nums'>
-                  {formatMoney(data.totalDebit, data.functionalCurrency)}
-                </TableCell>
-                <TableCell className='text-right font-medium tabular-nums'>
-                  {formatMoney(data.totalCredit, data.functionalCurrency)}
-                </TableCell>
-                <TableCell className='text-right'>
-                  <Badge variant={Number(data.difference) === 0 ? 'success' : 'destructive'}>
-                    {Number(data.difference) === 0
-                      ? 'Balances to zero'
-                      : `Off by ${data.difference}`}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            </TableFooter>
-          </Table>
+          <TrialBalanceDataTable data={data} />
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function TrialBalanceDataTable({ data }: { data: TrialBalanceDto }) {
+  const columns = createColumns(data.functionalCurrency);
+  const table = useTable({
+    data: data.rows,
+    columns,
+    features: dataTableFeatures,
+    getRowId: (row) => row.ledgerAccountId,
+    manualPagination: true
+  });
+
+  return (
+    <DataTable
+      table={table}
+      summary={
+        <TableRow>
+          <TableCell className='font-medium'>Total</TableCell>
+          <TableCell className='text-right font-medium tabular-nums'>
+            {formatMoney(data.totalDebit, data.functionalCurrency)}
+          </TableCell>
+          <TableCell className='text-right font-medium tabular-nums'>
+            {formatMoney(data.totalCredit, data.functionalCurrency)}
+          </TableCell>
+          <TableCell className='text-right'>
+            <Badge variant={Number(data.difference) === 0 ? 'success' : 'destructive'}>
+              {Number(data.difference) === 0 ? 'Balances to zero' : `Off by ${data.difference}`}
+            </Badge>
+          </TableCell>
+        </TableRow>
+      }
+    />
   );
 }

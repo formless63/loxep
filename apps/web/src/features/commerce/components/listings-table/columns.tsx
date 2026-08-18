@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
 import type { DataTableFeatures } from '@/lib/table-features';
-import { formatDate, formatMoney } from '@/lib/format';
+import { formatDate, formatDateTime, formatMoney, formatRelativeTime } from '@/lib/format';
 import type { ChannelListingListItemDto } from '@/server/commerce-functions';
 import {
   channelListingStatusLabel,
@@ -112,6 +112,23 @@ export function createColumns(): ColumnDef<DataTableFeatures, ChannelListingList
           {formatDate(cell.getValue<string>())}
         </span>
       )
+    },
+    {
+      id: 'lastSyncedAt',
+      accessorKey: 'lastSyncedAt',
+      header: ({
+        column
+      }: {
+        column: Column<DataTableFeatures, ChannelListingListItemDto, unknown>;
+      }) => <DataTableColumnHeader column={column} title='Synced' />,
+      cell: ({ cell }) => {
+        const value = cell.getValue<string>();
+        return (
+          <span className='text-muted-foreground tabular-nums' title={formatDateTime(value)}>
+            {formatRelativeTime(value)}
+          </span>
+        );
+      }
     }
   ];
 }

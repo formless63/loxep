@@ -321,6 +321,22 @@ export function feeDirectionLabel(direction: string): string {
   return FEE_DIRECTION_LABELS[direction as FeeDirection] ?? direction;
 }
 
+/**
+ * `order_fees.fee_direction` badge tone (loxep-egl) — a purely categorical
+ * split (neither direction is a failure/warning state), so this reaches for
+ * distinct neutral variants rather than the success/warning/destructive
+ * trio, matching Frontend Standards' "categorical rather than good/bad"
+ * guidance.
+ */
+const FEE_DIRECTION_TONES = {
+  seller_charge: 'secondary',
+  buyer_surcharge: 'outline'
+} satisfies Record<FeeDirection, BadgeVariant>;
+
+export function feeDirectionTone(direction: string): BadgeVariant {
+  return FEE_DIRECTION_TONES[direction as FeeDirection] ?? 'outline';
+}
+
 /** Turns a `snake_case` fact (a fee type, a provider fee code, a carrier code) into a readable label, without a per-value map. */
 export function humanizeSnakeCase(value: string): string {
   if (value.length === 0) return value;

@@ -20,7 +20,7 @@ import { sortRows } from '@/features/market/lib/sort-rows';
 import type { ChannelListingListItemDto } from '@/server/commerce-functions';
 import { createColumns } from './columns';
 
-const COLUMN_IDS = ['listingCode', 'status', 'price', 'createdAt'];
+const COLUMN_IDS = ['listingCode', 'status', 'price', 'createdAt', 'lastSyncedAt'];
 const DEFAULT_PAGE_SIZE = 10;
 
 /**
@@ -45,7 +45,7 @@ export default function ListingsTable() {
   const { data, isPending, isError, error, refetch } = useQuery(channelListingsQuery(filter));
 
   if (isPending) {
-    return <DataTableSkeleton columnCount={6} filterCount={2} />;
+    return <DataTableSkeleton columnCount={7} filterCount={2} />;
   }
   if (isError) {
     return (
@@ -82,7 +82,8 @@ function ListingsDataTable({ listings }: { listings: ChannelListingListItemDto[]
   const sorted = sortRows(listings, sorting, {
     listingCode: (row) => row.listingCode,
     price: (row) => (row.price ? Number(row.price) : 0),
-    createdAt: (row) => row.createdAt
+    createdAt: (row) => row.createdAt,
+    lastSyncedAt: (row) => row.lastSyncedAt
   });
 
   const pageCount = Math.max(1, Math.ceil(sorted.length / perPage));

@@ -263,6 +263,8 @@ export interface OrderDetailDto {
   buyerDisplayName: string | null;
   placedAt: string;
   providerUpdatedAt: string | null;
+  /** `orders.last_synced_at` — Loxep's own fetch watermark, distinct from `providerUpdatedAt` (the provider's watermark) — see `order-detail.tsx`'s "Provider updated"/"Last synced" split (loxep-egl). */
+  lastSyncedAt: string;
   cancelledAt: string | null;
   economicEntityId: string | null;
   economicEntityName: string | null;
@@ -553,6 +555,7 @@ export const fetchOrder = createServerFn({ method: 'GET' })
       buyerDisplayName: order.buyerDisplayName,
       placedAt: iso(order.placedAt),
       providerUpdatedAt: iso(order.providerUpdatedAt),
+      lastSyncedAt: iso(order.lastSyncedAt),
       cancelledAt: iso(order.cancelledAt),
       economicEntityId: order.economicEntityId,
       economicEntityName: economicEntityRow?.name ?? null,

@@ -92,6 +92,32 @@ Rules:
 
 Non-data uses of `<Table>` (a two-column key/value spec sheet, a static reference grid) are fine — the rule is about *data* the user will want to sort, filter, or page.
 
+### Totals rows: the DataTable `summary` slot
+
+`DataTable` takes an optional `summary?: React.ReactNode` prop — one or more `<TableRow>`/`<TableCell>` rows rendered inside a `<TableFooter>` right after `<TableBody>`, sticky-bottom (`sticky bottom-0 z-10 bg-muted`, the same `position: sticky` mechanism the header already uses against the `ScrollArea` `Viewport`). This is the **one sanctioned path for a totals/balances row** — a balances-to-zero trial balance footer, a per-currency amount/tax total, a per-direction fee subtotal. Do not hand-roll a bare `<Table>` to get a `<tfoot>`; `DataTable` has one.
+
+```tsx
+<DataTable
+  table={table}
+  summary={
+    <TableRow>
+      <TableCell colSpan={5} className='font-medium'>Total (USD)</TableCell>
+      <TableCell className='text-right font-medium tabular-nums'>{formatMoney(total, 'USD')}</TableCell>
+      <TableCell colSpan={3} />
+    </TableRow>
+  }
+>
+  <DataTableToolbar table={table} />
+</DataTable>
+```
+
+Rules:
+
+- Compute the summary over the **full filtered result set**, never `pageRows` — a totals row that only reflects the current page is misleading the moment there is a second page. This is the same "honest over the full dataset" posture the unbounded-fetch client-side sort/filter exception already requires.
+- **Never sum across currencies.** Group by currency (or another dimension that must not be conflated, e.g. `order_fees.fee_direction`) first, and render one summary row per group — `@/lib/aggregate`'s `sumMoneyBy`/`countByKey` are the sanctioned grouping helpers (decimal-safe `BigInt` money math, mirroring `features/finance/lib/line-item-derive.ts`; never a JS `number` for a persisted amount). `sumMoney` is the plain, ungrouped sum.
+- A row with no filterable/sortable columns and a fixed row set (a financial statement, not a data grid) can skip `useDataTable` entirely and drive `DataTable` with a local `useTable({ data, columns, features: dataTableFeatures, getRowId, manualPagination: true })` instead — see `book-trial-balance.tsx`, the reference implementation for both the `summary` slot and this local-table shape.
+- Reference implementations: `book-trial-balance.tsx` (fixed statement, balances-to-zero badge), `expenses-table/index.tsx` and `items-table/index.tsx` (per-currency totals over a `useDataTable`-paginated table), `order-detail.tsx`'s `FeesTable` (per-direction, per-currency fee subtotals).
+
 The repository contains the ideal before/after pair, two components with the same name: `src/features/settings/components/users-table.tsx` (bare `<Table>`, no sorting, no paging) and `src/features/users/components/users-table/index.tsx` (`useDataTable` + `columns.tsx` + toolbar). Read both.
 
 ### Before / after

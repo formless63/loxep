@@ -6,6 +6,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow
@@ -17,11 +18,31 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 interface DataTableProps<TData extends RowData> extends React.ComponentProps<'div'> {
   table: ReactTable<DataTableFeatures, TData>;
   actionBar?: React.ReactNode;
+  /**
+   * Optional totals/summary row(s), rendered inside a `<TableFooter>` right
+   * after `<TableBody>` — the sanctioned path for a balances-to-zero row, a
+   * per-currency totals row, or per-direction fee subtotals (Frontend
+   * Standards, "Tables"). Pass `<TableRow>`/`<TableCell>` markup shaped like
+   * one more body row (same column count/alignment); `TableFooter` already
+   * carries `border-t bg-muted/50 font-medium` so a summary row reads as a
+   * total without extra styling at the call site.
+   *
+   * Sticky-bottom, mirroring the header's `sticky top-0 z-10`: this only
+   * works because the ScrollArea `Viewport` above is the one scrolling
+   * ancestor (the donor `Table`'s own `overflow-x-auto` wrapper is
+   * neutralized by the `[&_[data-slot=table-container]]:overflow-x-visible`
+   * override on that same ScrollArea) — `position: sticky` resolves against
+   * its nearest scrolling ancestor, which is this Viewport for both the
+   * header and the footer. A solid `bg-muted` (not the default `/50`) keeps
+   * scrolled-past body rows from showing through while the footer is pinned.
+   */
+  summary?: React.ReactNode;
 }
 
 export function DataTable<TData extends RowData>({
   table,
   actionBar,
+  summary,
   children
 }: DataTableProps<TData>) {
   return (
@@ -89,6 +110,9 @@ export function DataTable<TData extends RowData>({
                   </TableRow>
                 )}
               </TableBody>
+              {summary && (
+                <TableFooter className='sticky bottom-0 z-10 bg-muted'>{summary}</TableFooter>
+              )}
             </Table>
             <ScrollBar orientation='horizontal' />
           </ScrollArea>

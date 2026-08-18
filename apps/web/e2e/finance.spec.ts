@@ -78,6 +78,12 @@ test('recording an expense through the entry page appears in the expenses table'
   await expect(row.getByText(category)).toBeVisible();
   await expect(row.getByText('$42.50')).toBeVisible();
   await expect(row.getByText('Recorded')).toBeVisible();
+
+  // Expenses table totals footer (loxep-egl E1/E2: the DataTable summary
+  // slot, per-currency amount + tax sums). Not asserting an exact amount —
+  // other seeded/parallel-worker expenses share this currency group — only
+  // that the per-currency totals row itself renders.
+  await expect(page.getByText(/^Total — \d+ expenses? \(USD\)$/)).toBeVisible();
 });
 
 test('void-and-re-record relocates the corrected fact to the entry page, prefilled', async ({
