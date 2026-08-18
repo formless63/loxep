@@ -15,6 +15,14 @@ export const settingsNavGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['g', 's'],
         items: []
+      },
+      {
+        title: 'Diagnostics',
+        url: '/settings/diagnostics',
+        icon: 'server',
+        isActive: false,
+        shortcut: ['g', 'j'],
+        items: []
       }
     ]
   },

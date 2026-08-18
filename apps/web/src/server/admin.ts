@@ -26,7 +26,10 @@ import {
   createFiscalPeriodsService,
   createJournalService,
   createLedgerReports,
+  createPostingEngine,
+  createPostingRulesService,
   createReceiptsService,
+  createStatements,
   type AccountsService,
   type BooksService,
   type ExpenseConfirmService,
@@ -36,7 +39,10 @@ import {
   type FiscalPeriodsService,
   type JournalService,
   type LedgerReports,
-  type ReceiptsService
+  type PostingEngine,
+  type PostingRulesService,
+  type ReceiptsService,
+  type Statements
 } from '@loxep/accounting';
 import {
   createContactsService,
@@ -161,6 +167,48 @@ interface AdminRegistry {
    * Depends only on `db`, so it is built eagerly too.
    */
   journal: JournalService;
+  /**
+   * The declarative posting-rule model (`/finance/posting-rules`, loxep-6ea):
+   * read verbs only from this registry — `listRules`/`listVersions`/
+   * `getVersion`/`getRule`/`findRuleByCode`. Rule authoring
+   * (`createRule`/`addVersion`/`activateVersion`/`setRuleStatus`) is out of
+   * this bead's scope; the surface built on this field is read-only.
+   * Depends only on `db` (verified against `posting-rules.ts`'s own
+   * `createPostingRulesService` signature), so it is built eagerly like
+   * `journal`/`accounts` above.
+   */
+  postingRules: PostingRulesService;
+  /**
+   * The rule engine (`/finance/overview`'s Posting card, loxep-6ea):
+   * `unpostableBacklog`/`explainFact`, the purpose-built "why didn't this
+   * post" diagnostic that had zero callers before this bead. This registry
+   * never calls `evaluateFact(s)` — posting itself only ever happens through
+   * the `accounting.post-facts` worker task (via {@link accountingEnqueue}
+   * below), never synchronously from a request. Depends only on `db`
+   * (`createPostingEngine`'s own signature), so it is built eagerly.
+   */
+  postingEngine: PostingEngine;
+  /**
+   * Income statement and balance sheet (`/finance/books/$id`'s Statements
+   * section, loxep-6ea) — the real service `dashboard-functions.ts`'s
+   * period income-statement SQL restates and must stay in sync with (see
+   * that file's own module doc). Depends only on `db`, so it is built
+   * eagerly.
+   */
+  statements: Statements;
+  /**
+   * The accounting instance of the same generic `TransactionalEnqueue`
+   * pattern {@link infrastructureEnqueue} below uses — `createTransactionalEnqueue`
+   * is a stateless wrapper around `graphile_worker.add_job` with no
+   * infrastructure-specific behaviour, so this is a SEPARATE field only so a
+   * reader never has to wonder whether an accounting "Post now" action is
+   * secretly sharing state with an infrastructure sync-now action. Used by
+   * `/finance/overview`'s "Post now" trigger to enqueue
+   * `accounting.post-facts` (`ACCOUNTING_POST_FACTS_TASK_NAME`, reached via
+   * {@link getFleetModule} since it is defined in `@loxep/app`) — never
+   * called synchronously from a request.
+   */
+  accountingEnqueue: TransactionalEnqueue;
   /**
    * Counterparties — the outside parties Loxep's economic entities do
    * business with (`/finance/partners`, loxep-l49). `@loxep/counterparties`
@@ -470,6 +518,10 @@ function buildRegistry(): AdminRegistry {
     ledgerReports: createLedgerReports({ db: handle.db }),
     accounts: createAccountsService({ db: handle.db }),
     journal: createJournalService({ db: handle.db }),
+    postingRules: createPostingRulesService({ db: handle.db }),
+    postingEngine: createPostingEngine({ db: handle.db }),
+    statements: createStatements({ db: handle.db }),
+    accountingEnqueue: createTransactionalEnqueue(),
     counterparties: createCounterpartiesService({ db: handle.db }),
     counterpartyRoles: createCounterpartyRolesService({ db: handle.db }),
     counterpartyContacts: createContactsService({ db: handle.db }),
@@ -605,6 +657,26 @@ export function getAccountsService(): AccountsService {
 /** The double-entry journal, READ verbs only from this registry (`/finance/books/$id`'s Journal section), loxep-l49. */
 export function getJournalService(): JournalService {
   return getAdminServices().journal;
+}
+
+/** Posting rules — READ verbs only (`/finance/posting-rules`), loxep-6ea. */
+export function getPostingRulesService(): PostingRulesService {
+  return getAdminServices().postingRules;
+}
+
+/** The posting engine's `unpostableBacklog`/`explainFact` diagnostics (`/finance/overview`'s Posting card), loxep-6ea. */
+export function getPostingEngine(): PostingEngine {
+  return getAdminServices().postingEngine;
+}
+
+/** Income statement and balance sheet (`/finance/books/$id`'s Statements section), loxep-6ea. */
+export function getStatements(): Statements {
+  return getAdminServices().statements;
+}
+
+/** The accounting `TransactionalEnqueue` instance — `/finance/overview`'s "Post now" trigger, loxep-6ea. */
+export function getAccountingEnqueue(): TransactionalEnqueue {
+  return getAdminServices().accountingEnqueue;
 }
 
 /** Counterparties (`/finance/partners`), loxep-l49. */

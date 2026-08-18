@@ -1109,6 +1109,16 @@ export const fetchDashboardFinancial = createServerFn({ method: 'GET' }).handler
     // revenue flips and expense does not, and net income is the negation of
     // the sum over BOTH — which is why it can never disagree with the two
     // sections above it.
+    //
+    // loxep-6ea: `@loxep/accounting` IS now an `apps/web` dependency (added
+    // for `books-functions.ts`/`expense-functions.ts`/`journal-functions.ts`
+    // — this module's own top-of-file claim that neither is a dependency is
+    // stale for accounting specifically), so a future pass COULD call
+    // `createStatements(...).incomeStatement` directly instead of restating
+    // its SQL here. Out of this bead's fence to do that refactor now — see
+    // `/finance/books/$id`'s Statements section (`@/server/statements-functions`)
+    // for the real service mounted as the authority for user-facing
+    // statements; this band stays a hand-copy until someone does that pass.
     const [totals, lines] = await Promise.all([
       handle.db.execute(
         `select coalesce(-sum(l.functional_amount)

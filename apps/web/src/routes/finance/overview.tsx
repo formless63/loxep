@@ -12,6 +12,7 @@ import {
   UnallocatedExpensesList
 } from '@/features/finance/components/expense-reports';
 import PushDraftInvoiceDialog from '@/features/finance/components/push-draft-invoice-dialog';
+import PostingCard from '@/features/finance/components/posting-card';
 import {
   invoiceNinjaConnectionsQuery,
   missingReceiptsQuery,
@@ -109,15 +110,24 @@ function InvoiceNinjaPushAction() {
 }
 
 function FinanceOverview() {
+  const { auth } = Route.useRouteContext();
+  const isAdmin = auth?.roles.includes('admin') ?? false;
+
   return (
     <FinancePage
       title='Finance'
       description='Expense capture, receipts, and the expense reports. Money spent on goods for resale is not an expense — it belongs to the acquisition, arriving in a later milestone.'
       actions={<InvoiceNinjaPushAction />}
     >
-      <React.Suspense fallback={<OverviewSkeleton />}>
-        <OverviewData />
-      </React.Suspense>
+      <div className='flex flex-col gap-4'>
+        <React.Suspense fallback={<OverviewSkeleton />}>
+          <OverviewData />
+        </React.Suspense>
+        {/* Own query/skeleton/error boundary — a genuinely independent data
+            source from the receipts/unallocated pair above (Frontend
+            Standards, "one boundary per data source"). */}
+        <PostingCard isAdmin={isAdmin} />
+      </div>
     </FinancePage>
   );
 }

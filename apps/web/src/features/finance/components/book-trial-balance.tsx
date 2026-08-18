@@ -1,3 +1,4 @@
+import * as React from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useTable } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
@@ -18,9 +19,13 @@ import { formatMoney } from '@/lib/format';
 import { trialBalanceQuery } from '@/features/finance/api/books-queries';
 import type { TrialBalanceDto, TrialBalanceRowDto } from '@/server/books-functions';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
+import AccountActivityDialog, {
+  type AccountActivityTarget
+} from '@/features/finance/components/account-activity-dialog';
 
 function createColumns(
-  functionalCurrency: string
+  functionalCurrency: string,
+  onDrillThrough: (target: AccountActivityTarget) => void
 ): ColumnDef<DataTableFeatures, TrialBalanceRowDto>[] {
   return [
     {
@@ -28,7 +33,17 @@ function createColumns(
       accessorKey: 'name',
       header: 'Account',
       cell: ({ row }) => (
-        <div className='flex items-center gap-2'>
+        <button
+          type='button'
+          className='flex items-center gap-2 rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring'
+          onClick={() =>
+            onDrillThrough({
+              ledgerAccountId: row.original.ledgerAccountId,
+              code: row.original.code,
+              name: row.original.name
+            })
+          }
+        >
           <span className='text-muted-foreground tabular-nums'>{row.original.code}</span>
           <span className={row.original.lineCount === 0 ? 'text-muted-foreground' : undefined}>
             {row.original.name}
@@ -38,7 +53,7 @@ function createColumns(
               {row.original.systemKey}
             </Badge>
           )}
-        </div>
+        </button>
       )
     },
     {
@@ -84,11 +99,17 @@ function createColumns(
  * machinery this surface has no use for — with the required balances-to-zero
  * footer rendered through `DataTable`'s `summary` slot rather than a
  * hand-rolled `<Table>`.
+ *
+ * Each account row is a drill-through (loxep-6ea, audit finding A12) into
+ * `LedgerReports.accountActivity` via `AccountActivityDialog` — before this,
+ * a trial-balance row was a dead end with no way to see the lines behind a
+ * balance.
  */
 export default function BookTrialBalance({ accountingBookId }: { accountingBookId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(
     trialBalanceQuery(accountingBookId)
   );
+  const [drillThrough, setDrillThrough] = React.useState<AccountActivityTarget | null>(null);
 
   return (
     <Card>
@@ -96,7 +117,8 @@ export default function BookTrialBalance({ accountingBookId }: { accountingBookI
         <CardTitle>Trial balance</CardTitle>
         <CardDescription>
           Every account, summed over posted and reversed entries. A healthy book&rsquo;s difference
-          is zero — non-zero is a bug in the ledger code, never in the data.
+          is zero — non-zero is a bug in the ledger code, never in the data. Click an account to see
+          its activity.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -121,15 +143,27 @@ export default function BookTrialBalance({ accountingBookId }: { accountingBookI
             </EmptyHeader>
           </Empty>
         ) : (
-          <TrialBalanceDataTable data={data} />
+          <TrialBalanceDataTable data={data} onDrillThrough={setDrillThrough} />
         )}
       </CardContent>
+      <AccountActivityDialog
+        accountingBookId={accountingBookId}
+        functionalCurrency={data?.functionalCurrency ?? 'USD'}
+        target={drillThrough}
+        onOpenChange={(open) => !open && setDrillThrough(null)}
+      />
     </Card>
   );
 }
 
-function TrialBalanceDataTable({ data }: { data: TrialBalanceDto }) {
-  const columns = createColumns(data.functionalCurrency);
+function TrialBalanceDataTable({
+  data,
+  onDrillThrough
+}: {
+  data: TrialBalanceDto;
+  onDrillThrough: (target: AccountActivityTarget) => void;
+}) {
+  const columns = createColumns(data.functionalCurrency, onDrillThrough);
   const table = useTable({
     data: data.rows,
     columns,

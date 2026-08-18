@@ -23,6 +23,7 @@ import BookAccounts from '@/features/finance/components/book-accounts';
 import BookEntityLinks from '@/features/finance/components/book-entity-links';
 import BookJournal from '@/features/finance/components/book-journal';
 import BookPeriods from '@/features/finance/components/book-periods';
+import BookStatements from '@/features/finance/components/book-statements';
 import BookTrialBalance from '@/features/finance/components/book-trial-balance';
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -129,6 +130,7 @@ export default function BookDetail({ bookId, isAdmin }: { bookId: string; isAdmi
       <BookEntityLinks accountingBookId={bookId} links={data.links} />
       <BookPeriods accountingBookId={bookId} periods={data.periods} />
       <BookAccounts accountingBookId={bookId} isAdmin={isAdmin} />
+      <BookStatements accountingBookId={bookId} periods={data.periods} />
       <BookTrialBalance accountingBookId={bookId} />
       <BookJournal accountingBookId={bookId} functionalCurrency={data.functionalCurrency} />
 

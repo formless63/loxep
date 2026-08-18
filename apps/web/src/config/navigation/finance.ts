@@ -86,6 +86,14 @@ export const financeNavGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['g', 'b'],
         items: []
+      },
+      {
+        title: 'Posting rules',
+        url: '/finance/posting-rules',
+        icon: 'adjustments',
+        isActive: false,
+        shortcut: ['g', 'r'],
+        items: []
       }
     ]
   },
