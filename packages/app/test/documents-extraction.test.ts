@@ -62,7 +62,7 @@ function noopHelpers(): TaskContext["helpers"] {
 async function seedMediaObject(handle: DbHandle, filename = "receipt.jpg"): Promise<string> {
   const backendRows = await handle.db
     .insert(storageBackends)
-    .values({ name: "app-test-local", driver: "local", config: { root: "/tmp/loxep-app-test" } })
+    .values({ name: "app-test-local", driver: "local", config: { rootDir: "/tmp/loxep-app-test" } })
     .returning({ id: storageBackends.id });
   const backendId = backendRows[0]?.id;
   if (backendId === undefined) throw new Error("storage backend insert returned no row");
@@ -141,7 +141,17 @@ describe("documents.extract-text", () => {
     );
   });
 
-  it("runs the shipped default (manualParser only) end to end: parser_id/parsed_at land, parsed_text stays null", async () => {
+  it("with parser_id 'manual', the manual backend records the run and leaves parsed_text null", async () => {
+    // `documents.parser_id` ships as `ocr_tesseract` since the owner's
+    // 2026-08-17 ruling, so this case — the manual-assisted backend, which
+    // deliberately extracts nothing — must SET the setting rather than lean
+    // on a default that no longer selects it. (The default's own end-to-end
+    // proof is the ocr_tesseract case below.)
+    await services.settings.set(
+      documentsParserIdSetting,
+      { parserId: "manual" },
+      { actorUserId: null, requestId: "documents-extraction-test" },
+    );
     const mediaObjectId = await seedMediaObject(handle);
     const document = await documentsService.attachMedia({
       documentKind: "receipt",
