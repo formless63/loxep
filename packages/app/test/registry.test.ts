@@ -23,13 +23,16 @@ import {
 import type { MedusaAdapter } from "@loxep/integration-medusa";
 import {
   ENSURE_MAIL_DOMAIN_TASK,
+  MATERIALIZE_RECORDS_TASK,
   POLL_MAIL_OWNERSHIP_TASK,
   RECONCILE_CONTAINER_HOST_TASK,
   RUN_PROVISIONING_TEMPLATE_TASK,
   SYNC_MAILBOXES_TASK,
   SYNC_PROXY_RESOURCE_TASK,
+  SYNC_RECORDS_TASK,
   SYNC_TOKEN_POLICY_TASK,
 } from "@loxep/infrastructure";
+import { STORAGE_MIGRATE_OBJECT_TASK_NAME } from "@loxep/storage/migration";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
@@ -167,6 +170,17 @@ describe("buildWorkerRegistry", () => {
         // on-demand text extraction, enqueued transactionally at upload —
         // never claimed by the dispatcher, no cron item.
         DOCUMENTS_EXTRACT_TEXT_TASK_NAME,
+        // loxep-vdt: the three names that were ENQUEUED in production with no
+        // registered handler at all. `materialize-records` is event-driven
+        // (`domains.ts`'s create/updateIntent, `mail-sync.ts`'s ownership
+        // code) and chains `sync-records`, which is also what "Sync now" and
+        // a run "Retry" enqueue. `storage.migrate-object` was built with
+        // `defineTask` inside `@loxep/storage` and simply never composed.
+        // None of the three takes a cron item or a poll route.
+        // `registry-completeness.test.ts` is the general guard.
+        MATERIALIZE_RECORDS_TASK,
+        SYNC_RECORDS_TASK,
+        STORAGE_MIGRATE_OBJECT_TASK_NAME,
       ].sort(),
     );
 

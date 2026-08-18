@@ -22,6 +22,23 @@
  * | `infrastructure.sync-token-policy` | @loxep/app (mechanics in @loxep/infrastructure) | Phase 7 m3 DNS-token zone-scope policy rebuild (on-demand, scope-change-triggered) |
  * | `integration-health.project-ingest-evidence` | @loxep/app | Phase 8 m7 fleet evidence webhook projection into integration_health (on-demand) |
  * | `documents.extract-text` | @loxep/app (mechanics in @loxep/documents) | loxep-cd3.4 M4 OCR tier A text extraction, enqueued transactionally at upload (on-demand) |
+ * | `infrastructure.materialize-records` | @loxep/app (mechanics in @loxep/infrastructure) | loxep-vdt: intent -> `dns_records`, then chains the sync (on-demand) |
+ * | `infrastructure.sync-records` | @loxep/app (mechanics in @loxep/infrastructure) | loxep-vdt: the reconcile run behind "Sync now"/"Retry" and the materialize chain (on-demand) |
+ * | `storage.migrate-object`     | @loxep/storage       | loxep-vdt: one resumable local->S3 object copy+verify+cutover (on-demand) |
+ *
+ * ## The three names that were enqueued with no handler (loxep-vdt)
+ *
+ * `infrastructure.materialize-records`, `infrastructure.sync-records`, and
+ * `storage.migrate-object` were all reachable from product code — the first
+ * two from `@loxep/infrastructure`'s own `domains.ts`/`mail-sync.ts` and
+ * `apps/web`'s domain-detail buttons, the third from
+ * `StorageMigrationService.startMigration` — while none of the three was ever
+ * passed to `createTaskRegistry`. Graphile Worker cannot resolve an
+ * unregistered identifier, so each enqueue burned its retry budget and died
+ * silently behind a success toast. All three are registered below, and
+ * `test/registry-completeness.test.ts` now asserts the general property
+ * (every exported `*_TASK`/`*_TASK_NAME` constant in the workspace has a
+ * registered handler) so the class of bug cannot recur.
  *
  * `infrastructure.sync-proxy-resource` (Phase 7 m3's OTHER reserved task
  * name, `@loxep/infrastructure`'s `tasks.ts`) is NOW REGISTERED — the
@@ -220,6 +237,7 @@ import { createFleetEvidenceTasks } from "./fleet-evidence.ts";
 import { createGatusPushTasks } from "./gatus-push.ts";
 import { createHealthSweepTasks } from "./health-sweep.ts";
 import { createInfrastructureContainerHostTasks } from "./infrastructure-container-host.ts";
+import { createInfrastructureDomainTasks } from "./infrastructure-domains.ts";
 import { createInfrastructureMailTasks } from "./infrastructure-mail.ts";
 import { createInfrastructureProvisioningTasks } from "./infrastructure-provisioning.ts";
 import { createInfrastructureProxyTasks } from "./infrastructure-proxy.ts";
@@ -241,6 +259,7 @@ import type { CreateEbayPollExecutorOptions } from "./poll-executor.ts";
 import { createEbayTokenRefreshTasks } from "./refresh-tokens.ts";
 import type { AppCronItem } from "./refresh-tokens.ts";
 import { createReverbPollExecutor } from "./reverb-poll-executor.ts";
+import { createStorageMigrationTasks } from "./storage-migration.ts";
 import { buildAppServices } from "./services.ts";
 import type { AppServices } from "./services.ts";
 
@@ -526,6 +545,18 @@ export function buildWorkerRegistry(
   // target type is registered here.
   const infrastructureMail = createInfrastructureMailTasks({ services });
 
+  // --- infrastructure managed-domain records (loxep-vdt) -----------------
+  // `infrastructure.materialize-records` + `infrastructure.sync-records` —
+  // the design's job-graph pair that has been ENQUEUED since Phase 7
+  // milestone 1 (`domains.ts`'s create/updateIntent, `mail-sync.ts`'s
+  // ownership-code step, and `apps/web`'s "Sync now"/"Retry") with no
+  // handler on either name. No cron item and no poll route: materialize is
+  // event-driven and sync is chained from it (the RECURRING drift sweep is
+  // `infrastructure_domain_reconcile`, wired above, and stays `check`-only).
+  // See `infrastructure-domains.ts`'s module doc for why the chained sync
+  // runs `mode: 'apply'` while the sweep never does, and for the zone gate.
+  const infrastructureDomains = createInfrastructureDomainTasks({ services });
+
   // --- infrastructure DNS-token policy sync (Phase 7 milestone 3, loxep-lmy.3)
   // One on-demand task, no poll-executor route and no cron item — it is
   // enqueued transactionally by `@loxep/infrastructure`'s `tokens.ts`
@@ -618,6 +649,14 @@ export function buildWorkerRegistry(
   // `documents` row rather than rethrown.
   const documentsExtraction = createDocumentsExtractionTasks({ services });
 
+  // --- storage migration (ADR-0012/ADR-0014, registered by loxep-vdt) -----
+  // `@loxep/storage` built `storage.migrate-object` with `defineTask` and
+  // told this file to register it; nothing ever did. One task, no cron item
+  // and no poll route — a migration is started by an operator and its jobs
+  // are enqueued per media object by the service itself. See
+  // `storage-migration.ts`'s module doc for the `addJob` cycle.
+  const storageMigration = createStorageMigrationTasks({ services });
+
   const registry = createTaskRegistry([
     heartbeatTask,
     ...market.tasks,
@@ -625,6 +664,7 @@ export function buildWorkerRegistry(
     refresh.refreshTokensTask,
     ...commerce.tasks,
     inventoryPurchases.syncEbayPurchasesTask,
+    ...infrastructureDomains.tasks,
     ...infrastructureMail.tasks,
     ...infrastructureTokens.tasks,
     ...infrastructureContainerHosts.tasks,
@@ -636,6 +676,7 @@ export function buildWorkerRegistry(
     accountingPostFacts.accountingPostFactsTask,
     ...fleetEvidence.tasks,
     documentsExtraction.extractTextTask,
+    ...storageMigration.tasks,
   ]);
 
   return {

@@ -1208,6 +1208,15 @@ export const applyDefaultMailboxTemplate = createServerFn({ method: 'POST' })
  * mode. Enqueues rather than running inline — the same asynchronous shape
  * every intent-changing action here uses; the run's result shows up on
  * `/infrastructure/runs` once the worker processes it.
+ *
+ * REFUSES a domain with no `external_zone_id` (loxep-vdt). Until this bead
+ * the task had no registered handler at all, so this button's success toast
+ * was a lie in every case; now that a handler exists, one case is STILL not
+ * actionable — `createRecordSyncService.run()` throws on a zoneless domain
+ * before it can even record a `reconcile_runs` row, so the operator would
+ * get a success toast and a run list that never gains a row. Only
+ * provisioning a zone fixes that, so it is reported here, synchronously,
+ * instead of being queued.
  */
 export const requestDomainResync = createServerFn({ method: 'POST' })
   .inputValidator(z.strictObject({ domainId: z.uuid() }))
@@ -1216,6 +1225,18 @@ export const requestDomainResync = createServerFn({ method: 'POST' })
       await Promise.all([import('@/server/admin'), import('@loxep/infrastructure')]);
     await requireAdmin();
     const { handle } = getAdminServices();
+    const domain = await handle.db.query.managedDomains.findFirst({
+      where: (table, { eq }) => eq(table.id, data.domainId)
+    });
+    if (domain === undefined) {
+      throw new Error(`Managed domain "${data.domainId}" not found`);
+    }
+    if (domain.externalZoneId === null) {
+      throw new Error(
+        `"${domain.name}" has no provider zone yet, so there is nothing to reconcile against. ` +
+          'Provision the zone first — a sync run cannot start without one.'
+      );
+    }
     const enqueue = getInfrastructureEnqueue();
     await handle.db.transaction(async (tx) => {
       await enqueue(

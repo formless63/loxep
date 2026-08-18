@@ -190,6 +190,30 @@ export {
 } from "./infrastructure-poll-executor.ts";
 export type { CreateInfrastructureReconcilePollExecutorOptions } from "./infrastructure-poll-executor.ts";
 
+// loxep-vdt: the managed-domain record pair. Exported for the same reason
+// `infrastructure-mail.ts`'s and `infrastructure-proxy.ts`'s wiring is — the
+// handler bodies are directly callable, so a test (and any future
+// request-scoped admin action) can drive the real service verbs without
+// going through Graphile Worker.
+export {
+  MATERIALIZE_CHAINED_SYNC_MODE,
+  MATERIALIZE_CHAINED_SYNC_TRIGGER,
+  buildMaterializeInput,
+  createInfrastructureDomainTasks,
+  createRecordSyncForDomain,
+  materializeDomainRecords,
+} from "./infrastructure-domains.ts";
+export type {
+  InfrastructureDomainTasks,
+  MaterializeRecordsOutcome,
+  MaterializeSyncSkipReason,
+} from "./infrastructure-domains.ts";
+
+// loxep-vdt: `@loxep/storage`'s own `storage.migrate-object` task, finally
+// composed into the worker registry.
+export { createStorageMigrationTasks } from "./storage-migration.ts";
+export type { StorageMigrationTasks } from "./storage-migration.ts";
+
 export {
   BESZEL_CONNECTION_PROVIDER,
   BESZEL_CREDENTIAL_TYPE,
