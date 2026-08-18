@@ -121,6 +121,17 @@ export interface StorageMigrationService {
    */
   task: LoxepTask<typeof migrateObjectPayloadSchema>;
   startMigration(input: StartMigrationInput): Promise<StorageMigrationRecord>;
+  /**
+   * Every migration this installation has started, newest first — the read
+   * `/settings/storage`'s migration panel needs to survive a page reload.
+   * Without it the UI could only track a migration it had started in the
+   * same React session, so a refresh lost the pointer while the migration
+   * itself kept running (loxep-4wa). Optionally narrowed to one status.
+   */
+  listMigrations(filter?: {
+    status?: string;
+    limit?: number;
+  }): Promise<StorageMigrationRecord[]>;
   /** Re-enqueues jobs for still-pending objects (jobKey dedupe: no dupes). */
   resumeMigration(migrationId: string): Promise<{ enqueued: number }>;
   getMigrationStatus(migrationId: string): Promise<MigrationStatus>;
@@ -541,9 +552,23 @@ export function createStorageMigrationService(options: {
     return result;
   }
 
+  /** See the interface doc: the panel must survive a reload (loxep-4wa). */
+  async function listMigrations(filter?: {
+    status?: string;
+    limit?: number;
+  }): Promise<StorageMigrationRecord[]> {
+    return db.query.storageMigrations.findMany({
+      where: (table, { eq }) =>
+        filter?.status === undefined ? undefined : eq(table.status, filter.status),
+      orderBy: (table, { desc }) => [desc(table.createdAt)],
+      limit: filter?.limit ?? 50,
+    });
+  }
+
   return {
     task,
     startMigration,
+    listMigrations,
     resumeMigration,
     getMigrationStatus,
     cleanupMigrationSources,
