@@ -85,7 +85,8 @@ function MovementsDataTable({ movements }: { movements: InventoryMovementListIte
     debounceMs: 500,
     initialState: {
       pagination: { pageIndex: 0, pageSize: DEFAULT_PAGE_SIZE },
-      sorting: [{ id: 'occurredAt', desc: true }]
+      sorting: [{ id: 'occurredAt', desc: true }],
+      columnPinning: { start: [], end: ['actions'] }
     }
   });
 

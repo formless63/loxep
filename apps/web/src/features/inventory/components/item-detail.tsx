@@ -1,9 +1,16 @@
+import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
 import {
   Table,
   TableBody,
@@ -22,6 +29,12 @@ import ItemEnrichmentPanel from '@/features/inventory/components/item-enrichment
 import SpecificsEditor from '@/features/inventory/components/specifics-editor';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { completeItemIntakeReview } from '@/server/inventory-functions';
+import { RecordMovementDialog } from '@/features/inventory/components/movement-dialogs';
+import {
+  MoveItemLocationDialog,
+  SetItemConditionDialog,
+  TransferItemEntityDialog
+} from '@/features/inventory/components/item-action-dialogs';
 import {
   itemConditionLabel,
   itemStatusLabel,
@@ -42,6 +55,10 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 export default function ItemDetail({ itemId }: { itemId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(inventoryItemQuery(itemId));
   const queryClient = useQueryClient();
+  const [recordOpen, setRecordOpen] = React.useState(false);
+  const [moveOpen, setMoveOpen] = React.useState(false);
+  const [conditionOpen, setConditionOpen] = React.useState(false);
+  const [transferOpen, setTransferOpen] = React.useState(false);
 
   const completeReviewMutation = useMutation({
     mutationFn: () => completeItemIntakeReview({ data: { id: itemId } }),
@@ -71,16 +88,40 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
             </CardTitle>
             <p className='text-muted-foreground text-sm'>{data.label}</p>
           </div>
-          {data.status === 'intake' && (
-            <Button
-              size='sm'
-              disabled={completeReviewMutation.isPending}
-              onClick={() => completeReviewMutation.mutate()}
-            >
-              <Icons.check />
-              Complete review
-            </Button>
-          )}
+          <div className='flex items-center gap-2'>
+            {data.status === 'intake' && (
+              <Button
+                size='sm'
+                disabled={completeReviewMutation.isPending}
+                onClick={() => completeReviewMutation.mutate()}
+              >
+                <Icons.check />
+                Complete review
+              </Button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size='sm' variant='outline'>
+                  Actions
+                  <Icons.chevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end'>
+                <DropdownMenuItem onSelect={() => setRecordOpen(true)}>
+                  Record adjustment…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setMoveOpen(true)}>
+                  Move to location…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setConditionOpen(true)}>
+                  Set condition…
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setTransferOpen(true)}>
+                  Transfer to entity…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardHeader>
         <CardContent className='grid grid-cols-2 gap-4 sm:grid-cols-4'>
           <DetailRow label='Condition'>
@@ -287,6 +328,29 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
           )}
         </CardContent>
       </Card>
+
+      <RecordMovementDialog
+        open={recordOpen}
+        onOpenChange={setRecordOpen}
+        defaultInventoryItemId={data.id}
+      />
+      <MoveItemLocationDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        inventoryItemId={data.id}
+      />
+      <SetItemConditionDialog
+        open={conditionOpen}
+        onOpenChange={setConditionOpen}
+        inventoryItemId={data.id}
+        currentConditionCode={data.conditionCode}
+        currentConditionNotes={data.conditionNotes}
+      />
+      <TransferItemEntityDialog
+        open={transferOpen}
+        onOpenChange={setTransferOpen}
+        inventoryItemId={data.id}
+      />
     </div>
   );
 }

@@ -27,6 +27,8 @@ import { formatDate, formatDateTime, formatMoney, formatQuantity, formatScore } 
 import { acquisitionQuery } from '@/features/inventory/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { allocateAcquisitionCosts } from '@/server/inventory-functions';
+import AddAcquisitionCostDialog from '@/features/inventory/components/add-acquisition-cost-dialog';
+import ReattributeItemsDialog from '@/features/inventory/components/reattribute-items-dialog';
 import {
   acquisitionSourceKindLabel,
   acquisitionStatusLabel,
@@ -97,6 +99,8 @@ function CostAllocationPanel({ acquisitionId }: { acquisitionId: string }) {
 
 export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: string }) {
   const { data, isPending, isError, error, refetch } = useQuery(acquisitionQuery(acquisitionId));
+  const [addCostOpen, setAddCostOpen] = React.useState(false);
+  const [reattributeOpen, setReattributeOpen] = React.useState(false);
 
   if (isPending) {
     return <div className='text-muted-foreground text-sm'>Loading…</div>;
@@ -227,6 +231,12 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
       <Card>
         <CardHeader>
           <CardTitle className='text-base'>Landed cost, by currency</CardTitle>
+          <CardAction>
+            <Button size='sm' variant='outline' onClick={() => setAddCostOpen(true)}>
+              <Icons.add />
+              Add cost
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent className='flex flex-col gap-4'>
           {data.landedCost.length === 0 ? (
@@ -382,7 +392,10 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
       <Card>
         <CardHeader>
           <CardTitle className='text-base'>Items in this lot</CardTitle>
-          <CardAction>
+          <CardAction className='flex items-center gap-3'>
+            <Button size='sm' variant='outline' onClick={() => setReattributeOpen(true)}>
+              Reattribute items
+            </Button>
             {/*
               `fetchInventoryMovements`'s `acquisitionId` filter had no
               caller (loxep-1zg) — every movement sourced from this lot,
@@ -443,6 +456,23 @@ export default function AcquisitionDetail({ acquisitionId }: { acquisitionId: st
           )}
         </CardContent>
       </Card>
+
+      <AddAcquisitionCostDialog
+        open={addCostOpen}
+        onOpenChange={setAddCostOpen}
+        acquisitionId={data.id}
+        defaultCurrency={data.currency}
+        items={data.items.map((item) => ({
+          id: item.id,
+          itemCode: item.itemCode,
+          label: item.label
+        }))}
+      />
+      <ReattributeItemsDialog
+        open={reattributeOpen}
+        onOpenChange={setReattributeOpen}
+        acquisitionId={data.id}
+      />
     </div>
   );
 }

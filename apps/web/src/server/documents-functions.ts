@@ -510,6 +510,141 @@ export const setLineDisposition = createServerFn({ method: 'POST' })
     });
   });
 
+/**
+ * `CandidatesService.updateLine`/`removeLine`/`bulkSetDisposition`
+ * (`@loxep/documents/candidates.ts:174-197`, loxep-wx3, A26) had no web
+ * equivalent — a misread amount could not be fixed, a junk line could not be
+ * removed, and `setLineDisposition` above is strictly single-candidate, so a
+ * 40-line receipt was one dropdown at a time. Hand-rolled SQL for the SAME
+ * reason `setLineDisposition`/`discardDocument` above already are — see this
+ * file's own top doc ("no `@loxep/documents` dependency here"): the
+ * assignment-list shape and the `confirmed_at is not null` refusal are
+ * DELIBERATELY IDENTICAL to `CandidatesService.updateLine`/`removeLine`/
+ * `bulkSetDisposition`, so a future `package.json` edit can delete this and
+ * call the real service with no behavior change.
+ */
+export const updateCandidateLine = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      candidateId: uuid,
+      description: z.string().trim().min(1).nullish(),
+      lineAmount: decimalString.nullish(),
+      currency: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z]{3}$/)
+        .nullish(),
+      lineDate: calendarDate.nullish()
+    })
+  )
+  .handler(async ({ data }): Promise<CandidateDto> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    await requireSession();
+    const { handle } = getAdminServices();
+    return handle.db.transaction(async (tx) => {
+      const before = await tx.execute(
+        `select confirmed_at from document_line_candidates where id = ${uuidLiteral(data.candidateId)}`
+      );
+      const beforeRow = before.rows[0];
+      if (beforeRow === undefined) throw new Error(`unknown candidate "${data.candidateId}"`);
+      if (beforeRow['confirmed_at'] !== null) {
+        throw new Error(
+          'this line is already confirmed — a confirmed line is evidence of a domain write and is never edited in place'
+        );
+      }
+
+      const assignments: string[] = ['updated_at = now()'];
+      if (data.description !== undefined) {
+        assignments.push(
+          `description = ${data.description === null ? 'null' : textLiteral(data.description)}`
+        );
+      }
+      if (data.lineAmount !== undefined) {
+        assignments.push(
+          `line_amount = ${data.lineAmount === null ? 'null' : `${data.lineAmount}::numeric(20,6)`}`
+        );
+      }
+      if (data.currency !== undefined) {
+        assignments.push(
+          `currency = ${data.currency === null ? 'null' : textLiteral(data.currency.toUpperCase())}`
+        );
+      }
+      if (data.lineDate !== undefined) {
+        assignments.push(
+          `line_date = ${data.lineDate === null ? 'null' : `'${data.lineDate}'::date`}`
+        );
+      }
+
+      await tx.execute(
+        `update document_line_candidates set ${assignments.join(', ')}
+          where id = ${uuidLiteral(data.candidateId)}`
+      );
+      const after = await tx.execute(
+        `select * from document_line_candidates where id = ${uuidLiteral(data.candidateId)}`
+      );
+      const row = after.rows[0];
+      if (row === undefined) throw new Error('candidate vanished mid-update');
+      return rowToCandidateDto(row);
+    });
+  });
+
+export const removeCandidateLine = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ candidateId: uuid }))
+  .handler(async ({ data }): Promise<{ documentId: string }> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const session = await requireSession();
+    const { handle } = getAdminServices();
+    return handle.db.transaction(async (tx) => {
+      const before = await tx.execute(
+        `select document_id::text as document_id, confirmed_at
+           from document_line_candidates where id = ${uuidLiteral(data.candidateId)}`
+      );
+      const beforeRow = before.rows[0];
+      if (beforeRow === undefined) throw new Error(`unknown candidate "${data.candidateId}"`);
+      if (beforeRow['confirmed_at'] !== null) {
+        throw new Error(
+          'this line is already confirmed — a confirmed line is evidence of a domain write and is never removed'
+        );
+      }
+      await tx.execute(
+        `delete from document_line_candidates where id = ${uuidLiteral(data.candidateId)}`
+      );
+      const documentId = beforeRow['document_id'] as string;
+      await recomputeDocumentCounters(tx, documentId, session.user.id);
+      return { documentId };
+    });
+  });
+
+export const bulkSetLineDisposition = createServerFn({ method: 'POST' })
+  .inputValidator(
+    z.strictObject({
+      candidateIds: z.array(uuid).min(1),
+      disposition: z.enum(LINE_DISPOSITION_VALUES)
+    })
+  )
+  .handler(async ({ data }): Promise<{ updated: number; skipped: number }> => {
+    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const session = await requireSession();
+    const { handle } = getAdminServices();
+    return handle.db.transaction(async (tx) => {
+      const idList = data.candidateIds.map((id) => uuidLiteral(id)).join(', ');
+      const result = await tx.execute(
+        `update document_line_candidates
+            set disposition = ${textLiteral(data.disposition)}, updated_at = now()
+          where id in (${idList}) and confirmed_at is null
+        returning document_id`
+      );
+      const documentIds = new Set(result.rows.map((row) => row['document_id'] as string));
+      for (const documentId of documentIds) {
+        await recomputeDocumentCounters(tx, documentId, session.user.id);
+      }
+      return {
+        updated: result.rows.length,
+        skipped: data.candidateIds.length - result.rows.length
+      };
+    });
+  });
+
 export const discardDocument = createServerFn({ method: 'POST' })
   .inputValidator(z.strictObject({ documentId: uuid, reason: z.string().trim().min(1).nullish() }))
   .handler(async ({ data }): Promise<{ status: string }> => {

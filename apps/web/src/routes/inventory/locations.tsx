@@ -1,12 +1,21 @@
+import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
-  EmptyTitle
+  EmptyTitle,
+  EmptyContent
 } from '@/components/ui/empty';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -22,6 +31,11 @@ import { InventoryPage } from '@/features/inventory/components/inventory-page';
 import { inventoryLocationsQuery } from '@/features/inventory/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { locationKindLabel } from '@/features/inventory/constants';
+import {
+  AddLocationDialog,
+  MoveLocationDialog
+} from '@/features/inventory/components/location-dialogs';
+import type { InventoryLocationDto } from '@/server/inventory-functions';
 
 export const Route = createFileRoute('/inventory/locations')({
   component: InventoryLocations
@@ -36,11 +50,19 @@ export const Route = createFileRoute('/inventory/locations')({
  */
 function InventoryLocations() {
   const { data, isPending, isError, error, refetch } = useQuery(inventoryLocationsQuery);
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [moveTarget, setMoveTarget] = React.useState<InventoryLocationDto | null>(null);
 
   return (
     <InventoryPage
       title='Locations'
       description='Where stock physically is — a tree, not a warehouse management system.'
+      actions={
+        <Button size='sm' onClick={() => setAddOpen(true)}>
+          <Icons.add />
+          Add location
+        </Button>
+      }
     >
       {isPending ? (
         <Skeleton className='h-64 w-full' />
@@ -57,6 +79,12 @@ function InventoryLocations() {
               Sites, rooms, shelves, bins — as fine-grained as your operation needs, and no finer.
             </EmptyDescription>
           </EmptyHeader>
+          <EmptyContent>
+            <Button size='sm' onClick={() => setAddOpen(true)}>
+              <Icons.add />
+              Add location
+            </Button>
+          </EmptyContent>
         </Empty>
       ) : (
         <Table>
@@ -66,6 +94,7 @@ function InventoryLocations() {
               <TableHead>Kind</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className='w-10' />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -88,11 +117,39 @@ function InventoryLocations() {
                     {location.active ? 'Active' : 'Inactive'}
                   </Badge>
                 </TableCell>
+                <TableCell>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant='ghost'
+                        size='icon'
+                        className='size-8'
+                        aria-label={`Actions for ${location.name}`}
+                      >
+                        <Icons.ellipsis />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='end'>
+                      <DropdownMenuItem onSelect={() => setMoveTarget(location)}>
+                        Move to parent…
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
+      <AddLocationDialog open={addOpen} onOpenChange={setAddOpen} locations={data ?? []} />
+      <MoveLocationDialog
+        open={moveTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) setMoveTarget(null);
+        }}
+        location={moveTarget}
+        locations={data ?? []}
+      />
     </InventoryPage>
   );
 }

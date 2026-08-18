@@ -1,6 +1,10 @@
+import * as React from 'react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -19,10 +23,82 @@ import {
   dispositionOptions
 } from '@/features/documents/constants';
 
+/**
+ * A26 (loxep-wx3) — always-editable inline `Input`, committed on blur (only
+ * when the value actually changed), rather than a separate edit mode: this
+ * is a small, in-memory review table, and a click-to-edit affordance would
+ * be one more state to manage for no real benefit here. Disabled once
+ * confirmed — `updateCandidateLine`'s own refusal ("a confirmed line is
+ * evidence of a domain write") would just bounce back as an error toast
+ * otherwise.
+ */
+function EditableTextCell({
+  value,
+  confirmed,
+  align = 'left',
+  ariaLabel,
+  onCommit
+}: {
+  value: string;
+  confirmed: boolean;
+  align?: 'left' | 'right';
+  ariaLabel: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = React.useState(value);
+  React.useEffect(() => setDraft(value), [value]);
+
+  if (confirmed) {
+    return (
+      <span className={align === 'right' ? 'block text-right' : undefined}>{value || '—'}</span>
+    );
+  }
+
+  return (
+    <Input
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== value) onCommit(draft);
+      }}
+      aria-label={ariaLabel}
+      className={align === 'right' ? 'text-right tabular-nums' : undefined}
+    />
+  );
+}
+
 export function createColumns(
-  onDispositionChange: (candidateId: string, disposition: string) => void
+  onDispositionChange: (candidateId: string, disposition: string) => void,
+  onUpdateLine: (
+    candidateId: string,
+    patch: { description?: string | null; lineAmount?: string | null }
+  ) => void,
+  onRemoveLine: (candidateId: string) => void
 ): ColumnDef<DataTableFeatures, CandidateDto>[] {
   return [
+    {
+      id: 'select',
+      enableSorting: false,
+      enableHiding: false,
+      header: ({ table }) => (
+        <Checkbox
+          checked={
+            table.getIsAllPageRowsSelected() ||
+            (table.getIsSomePageRowsSelected() && 'indeterminate')
+          }
+          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          aria-label='Select all rows'
+        />
+      ),
+      cell: ({ row }) =>
+        row.original.confirmedAt === null ? (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={`Select line ${row.original.lineNumber}`}
+          />
+        ) : null
+    },
     {
       id: 'lineNumber',
       accessorKey: 'lineNumber',
@@ -52,8 +128,16 @@ export function createColumns(
       accessorKey: 'description',
       enableSorting: false,
       header: 'Description',
-      cell: ({ cell }) =>
-        cell.getValue<string | null>() ?? <span className='text-muted-foreground'>—</span>
+      cell: ({ row }) => (
+        <EditableTextCell
+          value={row.original.description ?? ''}
+          confirmed={row.original.confirmedAt !== null}
+          ariaLabel={`Line ${row.original.lineNumber} description`}
+          onCommit={(next) =>
+            onUpdateLine(row.original.id, { description: next.trim() === '' ? null : next.trim() })
+          }
+        />
+      )
     },
     {
       id: 'lineAmount',
@@ -62,14 +146,27 @@ export function createColumns(
         <DataTableColumnHeader column={column} title='Amount' />
       ),
       cell: ({ row }) => {
-        const amount = row.original.lineAmount;
-        if (amount === null) {
-          return <span className='text-destructive text-right block'>missing</span>;
+        const confirmed = row.original.confirmedAt !== null;
+        if (confirmed) {
+          const amount = row.original.lineAmount;
+          return amount === null ? (
+            <span className='text-destructive block text-right'>missing</span>
+          ) : (
+            <div className='text-right font-medium tabular-nums'>
+              {formatMoney(amount, row.original.currency ?? 'USD')}
+            </div>
+          );
         }
         return (
-          <div className='text-right font-medium tabular-nums'>
-            {formatMoney(amount, row.original.currency ?? 'USD')}
-          </div>
+          <EditableTextCell
+            value={row.original.lineAmount ?? ''}
+            confirmed={false}
+            align='right'
+            ariaLabel={`Line ${row.original.lineNumber} amount`}
+            onCommit={(next) =>
+              onUpdateLine(row.original.id, { lineAmount: next.trim() === '' ? null : next.trim() })
+            }
+          />
         );
       }
     },
@@ -186,6 +283,24 @@ export function createColumns(
           <Badge variant='success'>Confirmed</Badge>
         ) : (
           <Badge variant='outline'>Unresolved</Badge>
+        )
+    },
+    {
+      id: 'actions',
+      enableSorting: false,
+      header: '',
+      cell: ({ row }) =>
+        row.original.confirmedAt === null && (
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='size-8'
+            aria-label={`Remove line ${row.original.lineNumber}`}
+            onClick={() => onRemoveLine(row.original.id)}
+          >
+            <Icons.trash />
+          </Button>
         )
     }
   ];

@@ -35,11 +35,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import {
+  bulkSetLineDisposition,
   confirmLinesAsAcquisition,
   confirmLinesAsExpense,
   confirmLinesAsIntake,
   discardDocument,
-  setLineDisposition
+  removeCandidateLine,
+  setLineDisposition,
+  updateCandidateLine
 } from '@/server/documents-functions';
 import { documentQuery } from '@/features/documents/api/queries';
 import { entitiesQuery } from '@/features/settings/api/queries';
@@ -139,6 +142,41 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
       }),
     onSuccess: invalidate,
     onError: (error) => toastError(error, 'Could not update the disposition')
+  });
+
+  const updateLineMutation = useMutation({
+    mutationFn: (input: {
+      candidateId: string;
+      description?: string | null;
+      lineAmount?: string | null;
+    }) => updateCandidateLine({ data: input }),
+    onSuccess: invalidate,
+    onError: (error) => toastError(error, 'Could not update the line')
+  });
+
+  const removeLineMutation = useMutation({
+    mutationFn: (candidateId: string) => removeCandidateLine({ data: { candidateId } }),
+    onSuccess: () => {
+      toast.success('Line removed');
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Could not remove the line')
+  });
+
+  const bulkDispositionMutation = useMutation({
+    mutationFn: (input: { candidateIds: string[]; disposition: string }) =>
+      bulkSetLineDisposition({
+        data: { candidateIds: input.candidateIds, disposition: input.disposition as never }
+      }),
+    onSuccess: (result) => {
+      toast.success(
+        result.skipped > 0
+          ? `${result.updated} line(s) updated, ${result.skipped} already confirmed`
+          : `${result.updated} line(s) updated`
+      );
+      invalidate();
+    },
+    onError: (error) => toastError(error, 'Could not apply the disposition to the selected lines')
   });
 
   const confirmMutation = useMutation({
@@ -382,6 +420,13 @@ export default function DocumentReviewPanel({ documentId }: { documentId: string
             <CandidatesTable
               candidates={document.candidates}
               onDispositionChange={handleDispositionChange}
+              onUpdateLine={(candidateId, patch) =>
+                updateLineMutation.mutate({ candidateId, ...patch })
+              }
+              onRemoveLine={(candidateId) => removeLineMutation.mutate(candidateId)}
+              onBulkDispositionChange={(candidateIds, disposition) =>
+                bulkDispositionMutation.mutate({ candidateIds, disposition })
+              }
             />
           )}
 

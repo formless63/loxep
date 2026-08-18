@@ -851,6 +851,43 @@ export const createExpenseWithEvidence = createServerFn({ method: 'POST' })
     }
   );
 
+// ---------------------------------------------------------------------------
+// Update — draft-only edit-in-place (loxep-wx3, A4). `ExpensesService.update`
+// (`@loxep/accounting/expenses.ts:322`) already enforces the draft-only lock
+// server-side ("only a draft expense may be edited") and already refuses a
+// currency change once a line exists — this handler adds no rule of its own,
+// it only exposes the fields the service already accepts. A `recorded`
+// expense stays edit-proof through the SAME service call; the UI additionally
+// gates the affordance on `status === 'draft'` so the operator never sees an
+// edit action that would just come back as a refusal.
+// ---------------------------------------------------------------------------
+
+const updateExpenseInput = z.strictObject({
+  expenseId: z.uuid(),
+  expenseDate: calendarDate.optional(),
+  payeeName: z.string().trim().min(1).nullish(),
+  category: z.string().trim().min(1).optional(),
+  currency: currencyCode.optional(),
+  amount: decimalString.optional(),
+  taxAmount: decimalString.optional(),
+  paymentMethod: z.enum(EXPENSE_PAYMENT_METHOD_VALUES).optional(),
+  notes: z.string().trim().min(1).nullish()
+});
+
+export const updateExpense = createServerFn({ method: 'POST' })
+  .inputValidator(updateExpenseInput)
+  .handler(async ({ data }): Promise<{ status: string }> => {
+    const { requireSession, getExpensesService } = await import('@/server/admin');
+    const session = await requireSession();
+    const { expenseId, ...rest } = data;
+    const after = await getExpensesService().update({
+      expenseId,
+      ...rest,
+      actorUserId: session.user.id
+    });
+    return { status: after.status };
+  });
+
 /**
  * `draft` -> `recorded`. Draft stays reachable from quick entry ("save as
  * draft") for the deliberate "finish this later" case; this is how it later
@@ -1079,6 +1116,110 @@ export const removeExpenseLine = createServerFn({ method: 'POST' })
     const session = await requireSession();
     await getExpenseLinesService().removeLine({
       lineId: data.lineId,
+      actorUserId: session.user.id
+    });
+    return { ok: true };
+  });
+
+// ---------------------------------------------------------------------------
+// Allocations (loxep-wx3, A5) — WHERE THE MONEY IS CHARGED, separate from
+// `expense_lines` (WHAT WAS BOUGHT, above). `listAllocations`/`addAllocation`/
+// `removeAllocation` (`@loxep/accounting/expenses.ts:422-436`) had zero
+// callers; only `allocationSummary` was ever read. Add/remove are draft-only
+// (`ExpensesService.assertEditable`, same lock as `expense_lines`); listing
+// itself has no lock, since a `recorded` expense may already carry
+// allocations written at create time.
+// ---------------------------------------------------------------------------
+
+export interface ExpenseAllocationDto {
+  id: string;
+  lineNumber: number;
+  amount: string;
+  economicEntityId: string | null;
+  economicEntityName: string | null;
+  acquisitionId: string | null;
+  acquisitionReferenceCode: string | null;
+  catalogItemId: string | null;
+  channel: string | null;
+  ledgerAccountId: string | null;
+  dimensionValueId: string | null;
+  note: string | null;
+}
+
+export const fetchExpenseAllocations = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ expenseId: z.uuid() }))
+  .handler(async ({ data }): Promise<ExpenseAllocationDto[]> => {
+    const { requireSession, getAdminServices, getExpensesService } = await import('@/server/admin');
+    await requireSession();
+    const rows = await getExpensesService().listAllocations(data.expenseId);
+    const { handle } = getAdminServices();
+    return Promise.all(
+      rows.map(async (row): Promise<ExpenseAllocationDto> => {
+        const [entity, acquisition] = await Promise.all([
+          row.economicEntityId
+            ? handle.db.query.economicEntities.findFirst({
+                where: (table, { eq }) => eq(table.id, row.economicEntityId as string),
+                columns: { name: true }
+              })
+            : null,
+          row.acquisitionId
+            ? handle.db.query.acquisitions.findFirst({
+                where: (table, { eq }) => eq(table.id, row.acquisitionId as string),
+                columns: { referenceCode: true }
+              })
+            : null
+        ]);
+        return {
+          id: row.id,
+          lineNumber: row.lineNumber,
+          amount: row.amount,
+          economicEntityId: row.economicEntityId,
+          economicEntityName: entity?.name ?? null,
+          acquisitionId: row.acquisitionId,
+          acquisitionReferenceCode: acquisition?.referenceCode ?? null,
+          catalogItemId: row.catalogItemId,
+          channel: row.channel,
+          ledgerAccountId: row.ledgerAccountId,
+          dimensionValueId: row.dimensionValueId,
+          note: row.note
+        };
+      })
+    );
+  });
+
+const addExpenseAllocationInput = z.strictObject({
+  expenseId: z.uuid(),
+  amount: decimalString,
+  economicEntityId: z.uuid().nullish(),
+  channel: z.string().trim().min(1).nullish(),
+  note: z.string().trim().min(1).nullish()
+});
+
+export const addExpenseAllocation = createServerFn({ method: 'POST' })
+  .inputValidator(addExpenseAllocationInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getExpensesService } = await import('@/server/admin');
+    const session = await requireSession();
+    const row = await getExpensesService().addAllocation({
+      expenseId: data.expenseId,
+      allocation: {
+        amount: data.amount,
+        economicEntityId: data.economicEntityId ?? null,
+        channel: data.channel ?? null,
+        note: data.note ?? null
+      },
+      actorUserId: session.user.id
+    });
+    return { id: row.id };
+  });
+
+export const removeExpenseAllocation = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ allocationId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ ok: true }> => {
+    const { requireSession, getExpensesService } = await import('@/server/admin');
+    const session = await requireSession();
+    await getExpensesService().removeAllocation({
+      allocationId: data.allocationId,
       actorUserId: session.user.id
     });
     return { ok: true };

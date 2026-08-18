@@ -40,6 +40,7 @@
  * recording stock or a lot is ordinary operator work, not an administrative
  * action.
  */
+import { randomUUID } from 'node:crypto';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
@@ -524,7 +525,15 @@ const createInventoryItemInput = z.strictObject({
     .string()
     .trim()
     .regex(/^\d+(\.\d{1,6})?$/)
-    .nullish()
+    .nullish(),
+  /**
+   * A27 (loxep-wx3) — `ItemsService.create`'s own schema already accepts
+   * this (`packages/inventory/src/items.ts:108`); see `createAcquisitionInput`'s
+   * `economicEntityId` doc above for the same undefined-vs-null distinction.
+   * Without it, every item created through the UI landed
+   * `entity_attribution_source: 'unattributed'` permanently.
+   */
+  economicEntityId: z.uuid().nullish()
 });
 
 export const createInventoryItem = createServerFn({ method: 'POST' })
@@ -547,6 +556,7 @@ export const createInventoryItem = createServerFn({ method: 'POST' })
         ? { acquisitionCostAmount: data.acquisitionCostAmount }
         : {}),
       estimatedValueAmount: data.estimatedValueAmount,
+      economicEntityId: data.economicEntityId,
       createdByUserId: session.user.id
     });
     return { id: item.id, itemCode: item.itemCode };
@@ -829,6 +839,66 @@ export const fetchInventoryLocations = createServerFn({ method: 'GET' }).handler
   }
 );
 
+/**
+ * `createLocationsService({ db }).create(...)` (loxep-wx3, A6) —
+ * `LocationsService.create`/`setParent`/`subtree`/`getDefault`/
+ * `reconcilePaths` all had zero callers, and `getLocationsService` was
+ * referenced only in a doc comment: `/inventory/locations` was read-only and
+ * a fresh install could never create the first location, which left the
+ * `locationId` field on intake and the location filter on `/inventory/stock`
+ * permanently empty. Mounts the existing `create` verb; `code`'s validation
+ * (scannable label, no `/`) mirrors `@loxep/inventory/locations.ts`'s own
+ * `codeSchema` exactly, since the service's own error is the only refusal
+ * surfaced to the operator either way.
+ */
+const createLocationInput = z.strictObject({
+  code: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/)
+    .refine((value) => !value.includes('/')),
+  name: z.string().trim().min(1),
+  kind: z.enum(['site', 'room', 'area', 'shelf', 'bin', 'container', 'vehicle', 'in_transit']),
+  parentLocationId: z.uuid().nullish(),
+  isDefault: z.boolean().optional(),
+  active: z.boolean().optional(),
+  notes: z.string().trim().min(1).nullish()
+});
+
+export const createLocation = createServerFn({ method: 'POST' })
+  .inputValidator(createLocationInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getLocationsService } = await import('@/server/admin');
+    await requireSession();
+    const locationsService = await getLocationsService();
+    const location = await locationsService.create({
+      code: data.code,
+      name: data.name,
+      kind: data.kind,
+      parentLocationId: data.parentLocationId,
+      isDefault: data.isDefault,
+      active: data.active,
+      notes: data.notes
+    });
+    return { id: location.id };
+  });
+
+/** `createLocationsService({ db }).setParent(...)` — the "Move to parent" row action. */
+export const setLocationParent = createServerFn({ method: 'POST' })
+  .inputValidator(z.strictObject({ locationId: z.uuid(), parentLocationId: z.uuid().nullable() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getLocationsService } = await import('@/server/admin');
+    await requireSession();
+    const locationsService = await getLocationsService();
+    const location = await locationsService.setParent({
+      locationId: data.locationId,
+      parentLocationId: data.parentLocationId
+    });
+    return { id: location.id };
+  });
+
 // ---------------------------------------------------------------------------
 // Movements ledger (all items, filterable) — `/inventory/movements`
 // ---------------------------------------------------------------------------
@@ -916,6 +986,237 @@ export const fetchInventoryMovements = createServerFn({ method: 'GET' })
         };
       })
       .filter((row): row is InventoryMovementListItemDto => row !== null);
+  });
+
+/**
+ * `createMovementsService({ db }).record(...)` (loxep-wx3, A8) —
+ * `record`/`reverse`/`ledgerBalance`/`reconcile` had zero callers: no
+ * cycle-count adjustment, found stock, shrinkage, disposal, or consumption
+ * could be entered, and the ledger is append-only by trigger, so `reverse`
+ * is the ONLY correction path once a bad row exists. This exposes the
+ * "manual adjustment" subset of `movementKind` — `adjustment_in`/
+ * `adjustment_out` (cycle counts), `found`, `shrinkage`, `disposal`,
+ * `consumption` — never `receipt`/`transfer_*`/`depletion_sale`/`reversal`,
+ * which are written by other flows (intake, `moveToLocation`, a sale,
+ * `reverse` itself) and would double-book if entered here too.
+ * `deduplicationKey` is generated per submission (`randomUUID()`) — an
+ * operator-typed adjustment is, by construction, a new fact each time, never
+ * a replay of a prior one.
+ */
+const MANUAL_MOVEMENT_KINDS = [
+  'adjustment_in',
+  'adjustment_out',
+  'found',
+  'shrinkage',
+  'disposal',
+  'consumption'
+] as const;
+
+const recordInventoryMovementInput = z.strictObject({
+  inventoryItemId: z.uuid(),
+  movementKind: z.enum(MANUAL_MOVEMENT_KINDS),
+  /** SIGNED. Positive increases on-hand, negative decreases it — validated against `movementKind`'s own sign requirement server-side by `@loxep/inventory`. */
+  quantity: z
+    .string()
+    .trim()
+    .regex(/^-?\d+(\.\d+)?$/),
+  locationId: z.uuid().nullish(),
+  reasonCode: z.string().trim().min(1).nullish(),
+  note: z.string().trim().min(1).nullish()
+});
+
+export interface RecordInventoryMovementResultDto {
+  id: string;
+  created: boolean;
+  quantityOnHand: string;
+  oversell: boolean;
+}
+
+export const recordInventoryMovement = createServerFn({ method: 'POST' })
+  .inputValidator(recordInventoryMovementInput)
+  .handler(async ({ data }): Promise<RecordInventoryMovementResultDto> => {
+    const { requireSession, getMovementsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const movementsService = await getMovementsService();
+    const result = await movementsService.record({
+      inventoryItemId: data.inventoryItemId,
+      movementKind: data.movementKind,
+      quantity: data.quantity,
+      locationId: data.locationId,
+      reasonCode: data.reasonCode,
+      note: data.note,
+      deduplicationKey: randomUUID(),
+      actorUserId: session.user.id
+    });
+    return {
+      id: result.movement.id,
+      created: result.created,
+      quantityOnHand: result.quantityOnHand,
+      oversell: result.oversell
+    };
+  });
+
+/**
+ * `createMovementsService({ db }).reverse(...)` — the ONLY correction path
+ * for an append-only ledger row: writes a `reversal` movement of the
+ * opposite sign, deterministically deduplicated on the original movement's
+ * own id (`@loxep/inventory/movements.ts`'s `movementKeys.reversal`), so
+ * reversing the same movement twice is a no-op rather than a double
+ * correction.
+ */
+const reverseInventoryMovementInput = z.strictObject({
+  movementId: z.uuid(),
+  reasonCode: z.string().trim().min(1).nullish(),
+  note: z.string().trim().min(1).nullish()
+});
+
+export const reverseInventoryMovement = createServerFn({ method: 'POST' })
+  .inputValidator(reverseInventoryMovementInput)
+  .handler(async ({ data }): Promise<RecordInventoryMovementResultDto> => {
+    const { requireSession, getMovementsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const movementsService = await getMovementsService();
+    const result = await movementsService.reverse({
+      movementId: data.movementId,
+      reasonCode: data.reasonCode,
+      note: data.note,
+      actorUserId: session.user.id
+    });
+    return {
+      id: result.movement.id,
+      created: result.created,
+      quantityOnHand: result.quantityOnHand,
+      oversell: result.oversell
+    };
+  });
+
+// ---------------------------------------------------------------------------
+// Item actions — row/detail actions on `/inventory/stock/$id` (loxep-wx3, A8):
+// `ItemsService.moveToLocation`/`setCondition`/`transferEntity` had zero
+// callers. `correctCostBasis` (the ONLY way a locked cost basis changes,
+// audited) is deliberately NOT mounted here — see this pass's own report.
+// ---------------------------------------------------------------------------
+
+const moveItemToLocationInput = z.strictObject({
+  inventoryItemId: z.uuid(),
+  toLocationId: z.uuid(),
+  quantity: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?$/)
+    .nullish(),
+  note: z.string().trim().min(1).nullish()
+});
+
+export const moveItemToLocation = createServerFn({ method: 'POST' })
+  .inputValidator(moveItemToLocationInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const itemsService = await getItemsService();
+    const result = await itemsService.moveToLocation({
+      inventoryItemId: data.inventoryItemId,
+      toLocationId: data.toLocationId,
+      quantity: data.quantity ?? undefined,
+      note: data.note,
+      actorUserId: session.user.id
+    });
+    return { id: result.destinationItem.id };
+  });
+
+const setItemConditionInput = z.strictObject({
+  inventoryItemId: z.uuid(),
+  conditionCode: z.enum([
+    'new_sealed',
+    'new_open_box',
+    'like_new',
+    'very_good',
+    'good',
+    'acceptable',
+    'for_parts',
+    'damaged',
+    'unknown'
+  ]),
+  conditionNotes: z.string().trim().min(1).nullish()
+});
+
+export const setItemCondition = createServerFn({ method: 'POST' })
+  .inputValidator(setItemConditionInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    await requireSession();
+    const itemsService = await getItemsService();
+    const item = await itemsService.setCondition({
+      inventoryItemId: data.inventoryItemId,
+      conditionCode: data.conditionCode,
+      conditionNotes: data.conditionNotes
+    });
+    return { id: item.id };
+  });
+
+const transferItemEntityInput = z.strictObject({
+  inventoryItemId: z.uuid(),
+  toEconomicEntityId: z.uuid(),
+  basisTreatment: z.enum(['carryover', 'fair_market_value']),
+  fairMarketValueAmount: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,6})?$/)
+    .nullish(),
+  quantity: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?$/)
+    .nullish(),
+  toLocationId: z.uuid().nullish(),
+  note: z.string().trim().min(1).nullish()
+});
+
+export const transferItemEntity = createServerFn({ method: 'POST' })
+  .inputValidator(transferItemEntityInput)
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const itemsService = await getItemsService();
+    const result = await itemsService.transferEntity({
+      inventoryItemId: data.inventoryItemId,
+      toEconomicEntityId: data.toEconomicEntityId,
+      basisTreatment: data.basisTreatment,
+      fairMarketValueAmount: data.fairMarketValueAmount ?? undefined,
+      quantity: data.quantity ?? undefined,
+      toLocationId: data.toLocationId,
+      note: data.note,
+      actorUserId: session.user.id
+    });
+    return { id: result.destinationItem.id };
+  });
+
+/**
+ * `createItemsService({ db }).reattribute(...)` (loxep-wx3, A27) — the
+ * bulk correction for a default that was never a decision (rewrites only
+ * rows whose `entity_attribution_source` is `installation_default`/
+ * `acquisition_default`/`connection_default`/`unattributed`; a `manual` row
+ * is never touched, per `@loxep/inventory/attribution.ts`'s own module doc).
+ * Mounted scoped to one lot's items — the acquisition detail page's own
+ * "Reattribute this lot's items" action — since `reattribute` has no
+ * single-item filter of its own, only `acquisitionId`/`acquiredBefore`.
+ */
+const reattributeInventoryItemsInput = z.strictObject({
+  economicEntityId: z.uuid().nullable(),
+  acquisitionId: z.uuid()
+});
+
+export const reattributeInventoryItems = createServerFn({ method: 'POST' })
+  .inputValidator(reattributeInventoryItemsInput)
+  .handler(async ({ data }): Promise<{ updated: number }> => {
+    const { requireSession, getItemsService } = await import('@/server/admin');
+    const session = await requireSession();
+    const itemsService = await getItemsService();
+    return itemsService.reattribute({
+      economicEntityId: data.economicEntityId,
+      acquisitionId: data.acquisitionId,
+      actorUserId: session.user.id
+    });
   });
 
 // ---------------------------------------------------------------------------
@@ -1322,7 +1623,20 @@ const createAcquisitionInput = z.strictObject({
   costAllocationBasis: z
     .enum(['equal', 'relative_value', 'weight', 'manual', 'direct'])
     .default('relative_value'),
-  notes: z.string().trim().min(1).nullish()
+  notes: z.string().trim().min(1).nullish(),
+  /**
+   * A27 (loxep-wx3) — `AcquisitionsService.create`'s own schema already
+   * accepts this (`packages/inventory/src/acquisitions.ts:132`); it was
+   * simply never exposed here, which is why every acquisition created
+   * through the UI landed `entity_attribution_source: 'unattributed'`
+   * permanently (the `installation_default` rung has no registered setting
+   * to resolve from — see this pass's own report). `undefined` (field
+   * omitted) falls through the resolution ladder same as before; explicit
+   * `null` is an operator deliberately choosing "Unattributed", which is NOT
+   * the same as omitting the field (`resolveAcquisitionAttribution`'s own
+   * `!== undefined && !== null` check).
+   */
+  economicEntityId: z.uuid().nullish()
 });
 
 export const createAcquisition = createServerFn({ method: 'POST' })
@@ -1339,12 +1653,22 @@ export const createAcquisition = createServerFn({ method: 'POST' })
       externalReference: data.externalReference,
       costAllocationBasis: data.costAllocationBasis,
       notes: data.notes,
+      economicEntityId: data.economicEntityId,
       createdByUserId: session.user.id
     });
     return { id: acquisition.id, referenceCode: acquisition.referenceCode };
   });
 
-/** `createAcquisitionsService({ db }).addCost(...)`. */
+/**
+ * `createAcquisitionsService({ db }).addCost(...)`. Exposes the fields the
+ * underlying service's own `addCostSchema` (`@loxep/inventory/acquisitions.ts:148`)
+ * already accepts — `currency` (defaults to the acquisition's own currency
+ * when omitted) and `incurredAt` were previously left off this DTO, which is
+ * why the ONLY entry path into this function
+ * (`promoteExpenseToAcquisitionCost`) had to hard-code `costType: 'goods'`
+ * and leave shipping/buyer's-premium/sales-tax unenterable (loxep-wx3, A7).
+ * No new domain logic — this mounts the existing verb's real input shape.
+ */
 const addAcquisitionCostInput = z.strictObject({
   acquisitionId: z.uuid(),
   costType: z.string().trim().min(1),
@@ -1353,27 +1677,38 @@ const addAcquisitionCostInput = z.strictObject({
     .string()
     .trim()
     .regex(/^\d+(\.\d{1,6})?$/),
+  currency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/)
+    .nullish(),
+  /** `null`/omitted is lot scope; a uuid scopes the cost to one item, bypassing allocation. */
   inventoryItemId: z.uuid().nullish(),
   capitalize: z.boolean().default(true),
   description: z.string().trim().min(1).nullish(),
-  vendorName: z.string().trim().min(1).nullish()
+  vendorName: z.string().trim().min(1).nullish(),
+  /** ISO datetime string on the wire, mirroring `@/server/market-functions.ts`'s own `detectedAtFrom`/`detectedAtTo` — converted to a `Date` below for the service's own `z.date()` field. */
+  incurredAt: z.string().trim().min(1).nullish()
 });
 
 export const addAcquisitionCost = createServerFn({ method: 'POST' })
   .inputValidator(addAcquisitionCostInput)
   .handler(async ({ data }): Promise<{ id: string }> => {
     const { requireSession, getAcquisitionsService } = await import('@/server/admin');
-    await requireSession();
+    const session = await requireSession();
     const acquisitionsService = await getAcquisitionsService();
     const cost = await acquisitionsService.addCost({
       acquisitionId: data.acquisitionId,
       costType: data.costType,
       costClass: data.costClass,
       amount: data.amount,
+      currency: data.currency ?? undefined,
       inventoryItemId: data.inventoryItemId,
       capitalize: data.capitalize,
       description: data.description,
-      vendorName: data.vendorName
+      vendorName: data.vendorName,
+      incurredAt: data.incurredAt ? new Date(data.incurredAt) : undefined,
+      createdByUserId: session.user.id
     });
     return { id: cost.id };
   });

@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,8 @@ import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { acquisitionSourceKindOptions } from '@/features/inventory/constants';
 import { createAcquisition } from '@/server/inventory-functions';
+import { entitiesQuery } from '@/features/settings/api/queries';
+import { UNATTRIBUTED_ENTITY_VALUE } from '@/features/finance/constants';
 import type { AcquisitionSourceKind } from '@/features/inventory/constants';
 
 const DEFAULT_CURRENCY = 'USD';
@@ -26,7 +28,8 @@ const acquisitionSchema = z.object({
   currency: z
     .string()
     .trim()
-    .regex(/^[A-Za-z]{3}$/, 'A 3-letter currency code, e.g. USD')
+    .regex(/^[A-Za-z]{3}$/, 'A 3-letter currency code, e.g. USD'),
+  economicEntityId: z.string()
 });
 
 type AcquisitionFormValues = z.infer<typeof acquisitionSchema>;
@@ -45,6 +48,7 @@ export default function AcquisitionForm({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: entities } = useQuery(entitiesQuery);
 
   const mutation = useMutation({
     mutationFn: (values: AcquisitionFormValues) =>
@@ -53,7 +57,9 @@ export default function AcquisitionForm({
           title: values.title,
           sourceKind: values.sourceKind as AcquisitionSourceKind,
           currency: values.currency.toUpperCase(),
-          vendorName: values.vendorName.trim() === '' ? null : values.vendorName.trim()
+          vendorName: values.vendorName.trim() === '' ? null : values.vendorName.trim(),
+          economicEntityId:
+            values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE ? null : values.economicEntityId
         }
       }),
     onSuccess: () => {
@@ -69,7 +75,8 @@ export default function AcquisitionForm({
       title: '',
       sourceKind: 'thrift_retail',
       vendorName: '',
-      currency: DEFAULT_CURRENCY
+      currency: DEFAULT_CURRENCY,
+      economicEntityId: UNATTRIBUTED_ENTITY_VALUE
     } as AcquisitionFormValues,
     validators: { onSubmit: acquisitionSchema },
     onSubmit: async ({ value }) => {
@@ -122,6 +129,19 @@ export default function AcquisitionForm({
                 )}
               />
             </div>
+            <form.AppField
+              name='economicEntityId'
+              children={(field) => (
+                <field.SelectField
+                  label='Entity'
+                  options={[
+                    { value: UNATTRIBUTED_ENTITY_VALUE, label: 'Unattributed' },
+                    ...(entities ?? []).map((entity) => ({ value: entity.id, label: entity.name }))
+                  ]}
+                  description='Empty stays Unattributed — a deliberate choice, correctable later.'
+                />
+              )}
+            />
           </FieldGroup>
           <div className='flex justify-end gap-2'>
             <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>

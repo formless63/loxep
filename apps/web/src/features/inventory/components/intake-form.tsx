@@ -17,6 +17,8 @@ import { useAppForm } from '@/lib/form';
 import { acquisitionsQuery, inventoryLocationsQuery } from '@/features/inventory/api/queries';
 import { itemConditionOptions } from '@/features/inventory/constants';
 import { createInventoryItem } from '@/server/inventory-functions';
+import { entitiesQuery } from '@/features/settings/api/queries';
+import { UNATTRIBUTED_ENTITY_VALUE } from '@/features/finance/constants';
 
 const DEFAULT_CURRENCY = 'USD';
 
@@ -34,7 +36,8 @@ const intakeSchema = z.object({
     .trim()
     .regex(/^\d+(\.\d{1,6})?$/, 'Enter a positive quantity, e.g. 1'),
   acquisitionCostAmount: z.string(),
-  estimatedValueAmount: z.string()
+  estimatedValueAmount: z.string(),
+  economicEntityId: z.string()
 });
 
 type IntakeFormValues = z.infer<typeof intakeSchema>;
@@ -72,6 +75,7 @@ export default function IntakeForm({
   const queryClient = useQueryClient();
   const { data: acquisitions } = useQuery(acquisitionsQuery({}));
   const { data: locations } = useQuery(inventoryLocationsQuery);
+  const { data: entities } = useQuery(entitiesQuery);
 
   const acquisitionOptions = [
     { value: NO_LOT_VALUE, label: 'No lot (found stock)' },
@@ -112,7 +116,9 @@ export default function IntakeForm({
             : { acquisitionCostAmount: values.acquisitionCostAmount }),
           ...(values.estimatedValueAmount.trim() === ''
             ? {}
-            : { estimatedValueAmount: values.estimatedValueAmount })
+            : { estimatedValueAmount: values.estimatedValueAmount }),
+          economicEntityId:
+            values.economicEntityId === UNATTRIBUTED_ENTITY_VALUE ? null : values.economicEntityId
         }
       }),
     onSuccess: () => {
@@ -132,7 +138,8 @@ export default function IntakeForm({
       conditionCode: 'unknown',
       quantity: '1',
       acquisitionCostAmount: '',
-      estimatedValueAmount: ''
+      estimatedValueAmount: '',
+      economicEntityId: UNATTRIBUTED_ENTITY_VALUE
     } as IntakeFormValues,
     validators: { onSubmit: intakeSchema },
     onSubmit: async ({ value }) => {
@@ -221,6 +228,19 @@ export default function IntakeForm({
                   inputMode='decimal'
                   placeholder='0.00'
                   description='Target resale price — not a valuation. Feeds relative-value cost allocation.'
+                />
+              )}
+            />
+            <form.AppField
+              name='economicEntityId'
+              children={(field) => (
+                <field.SelectField
+                  label='Entity'
+                  options={[
+                    { value: UNATTRIBUTED_ENTITY_VALUE, label: 'Unattributed' },
+                    ...(entities ?? []).map((entity) => ({ value: entity.id, label: entity.name }))
+                  ]}
+                  description='Empty stays Unattributed — a deliberate choice, correctable later via Transfer to entity.'
                 />
               )}
             />

@@ -1,11 +1,39 @@
+import * as React from 'react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Link } from '@tanstack/react-router';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
+import { Icons } from '@/components/icons';
 import type { DataTableFeatures } from '@/lib/table-features';
 import { formatDateTime, formatQuantity } from '@/lib/format';
 import type { InventoryMovementListItemDto } from '@/server/inventory-functions';
 import { movementIsInbound, movementKindLabel } from '@/features/inventory/constants';
+import { ReverseMovementDialog } from '@/features/inventory/components/movement-dialogs';
+
+/**
+ * A8 (loxep-wx3) — "Reverse", the only correction path for an append-only
+ * ledger row. Self-contained (owns its own confirm-dialog state), matching
+ * `items-table/columns.tsx`'s `CompleteReviewCell` precedent for a row
+ * action that needs no state lifted to the table wrapper.
+ */
+function ReverseActionCell({ movement }: { movement: InventoryMovementListItemDto }) {
+  const [confirming, setConfirming] = React.useState(false);
+  return (
+    <>
+      <Button
+        variant='ghost'
+        size='icon'
+        className='size-8'
+        aria-label={`Reverse movement ${movement.id}`}
+        onClick={() => setConfirming(true)}
+      >
+        <Icons.undo />
+      </Button>
+      <ReverseMovementDialog open={confirming} onOpenChange={setConfirming} movement={movement} />
+    </>
+  );
+}
 
 export const columns: ColumnDef<DataTableFeatures, InventoryMovementListItemDto>[] = [
   {
@@ -136,6 +164,12 @@ export const columns: ColumnDef<DataTableFeatures, InventoryMovementListItemDto>
         {formatDateTime(cell.getValue<string>())}
       </span>
     )
+  },
+  {
+    id: 'actions',
+    enableSorting: false,
+    header: '',
+    cell: ({ row }) => <ReverseActionCell movement={row.original} />
   }
 ];
 

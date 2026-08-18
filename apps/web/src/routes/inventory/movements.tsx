@@ -1,8 +1,12 @@
+import * as React from 'react';
 import { createFileRoute } from '@tanstack/react-router';
 import { zodValidator } from '@tanstack/zod-adapter';
 import { z } from 'zod';
+import { Button } from '@/components/ui/button';
+import { Icons } from '@/components/icons';
 import { InventoryPage } from '@/features/inventory/components/inventory-page';
 import MovementsTable from '@/features/inventory/components/movements-table';
+import { RecordMovementDialog } from '@/features/inventory/components/movement-dialogs';
 
 const movementsSearchSchema = z.object({
   page: z.number().optional().default(1),
@@ -23,6 +27,7 @@ export const Route = createFileRoute('/inventory/movements')({
 
 function InventoryMovements() {
   const { acquisitionId } = Route.useSearch();
+  const [recordOpen, setRecordOpen] = React.useState(false);
   return (
     <InventoryPage
       title='Movements'
@@ -31,8 +36,15 @@ function InventoryMovements() {
           ? 'The append-only ledger, filtered to movements sourced from this lot.'
           : 'The append-only ledger — every quantity or location change, across every item.'
       }
+      actions={
+        <Button size='sm' onClick={() => setRecordOpen(true)}>
+          <Icons.add />
+          Record adjustment
+        </Button>
+      }
     >
       <MovementsTable acquisitionId={acquisitionId} />
+      <RecordMovementDialog open={recordOpen} onOpenChange={setRecordOpen} />
     </InventoryPage>
   );
 }

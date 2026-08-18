@@ -22,6 +22,7 @@ import { formatDate, formatMoney } from '@/lib/format';
 import {
   promoteExpenseToAcquisitionCost,
   submitExpense,
+  updateExpense,
   voidExpense
 } from '@/server/expense-functions';
 import { linkExpensePayee } from '@/server/trading-partner-functions';
@@ -30,14 +31,17 @@ import { entitiesQuery } from '@/features/settings/api/queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import ReceiptGallery from '@/features/finance/components/receipt-gallery';
 import ExpenseLinesCard from '@/features/finance/components/expense-lines-card';
+import ExpenseAllocationsCard from '@/features/finance/components/expense-allocations-card';
 import {
   NO_TRADING_PARTNER_VALUE,
   PayeeComboboxField
 } from '@/features/finance/components/payee-combobox-field';
+import { CategoryComboboxField } from '@/features/finance/components/category-combobox-field';
 import {
   expenseStatusLabel,
   expenseStatusTone,
-  paymentMethodLabel
+  paymentMethodLabel,
+  paymentMethodOptions
 } from '@/features/finance/constants';
 import AcquisitionLotPickerDialog, {
   type AcquisitionLotTarget
@@ -318,6 +322,198 @@ function LinkPayeeDialog({
   );
 }
 
+const editExpenseSchema = z.object({
+  expenseDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date'),
+  payeeName: z.string(),
+  category: z.string().trim().min(1, 'Category is required'),
+  currency: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{3}$/, 'A 3-letter currency code, e.g. USD'),
+  amount: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,6})?$/, 'Enter a positive amount, e.g. 12.50'),
+  taxAmount: z.string().trim(),
+  paymentMethod: z.enum([
+    'card',
+    'cash',
+    'bank_transfer',
+    'marketplace_balance',
+    'direct_debit',
+    'other'
+  ]),
+  notes: z.string()
+});
+
+type EditExpenseFormValues = z.infer<typeof editExpenseSchema>;
+
+/**
+ * A4 (loxep-wx3) — `ExpensesService.update` had zero callers; "Save as
+ * draft" wrote a record the operator could only void. Mounted here rather
+ * than reusing `new-expense-page.tsx` in edit mode: that page's evidence
+ * pane, drag-to-line-items weave, and pinned-candidate state are all about
+ * ORIGINATING an expense from a receipt, none of which applies to editing a
+ * few header fields on an already-created draft, and the service's own
+ * `update` input is a flat field set with no lines/evidence in it at all —
+ * a focused dialog matches the shape of what can actually change. Gated by
+ * the caller on `status === 'draft'`, matching the service's own lock.
+ */
+function EditExpenseDialog({
+  open,
+  onOpenChange,
+  expenseId,
+  referenceCode,
+  expense
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expenseId: string;
+  referenceCode: string;
+  expense: {
+    expenseDate: string;
+    payeeName: string | null;
+    category: string;
+    currency: string;
+    amount: string;
+    taxAmount: string;
+    paymentMethod: string;
+    notes: string | null;
+  };
+}) {
+  const queryClient = useQueryClient();
+
+  const mutation = useMutation({
+    mutationFn: (values: EditExpenseFormValues) =>
+      updateExpense({
+        data: {
+          expenseId,
+          expenseDate: values.expenseDate,
+          payeeName: values.payeeName.trim() === '' ? null : values.payeeName.trim(),
+          category: values.category,
+          currency: values.currency.toUpperCase(),
+          amount: values.amount,
+          taxAmount: values.taxAmount.trim() === '' ? '0' : values.taxAmount.trim(),
+          paymentMethod: values.paymentMethod,
+          notes: values.notes.trim() === '' ? null : values.notes.trim()
+        }
+      }),
+    onSuccess: () => {
+      toast.success(`${referenceCode} updated`);
+      void queryClient.invalidateQueries({ queryKey: ['finance'] });
+      onOpenChange(false);
+    },
+    onError: (error) => toastError(error, 'Failed to update expense')
+  });
+
+  const form = useAppForm({
+    defaultValues: {
+      expenseDate: expense.expenseDate,
+      payeeName: expense.payeeName ?? '',
+      category: expense.category,
+      currency: expense.currency,
+      amount: expense.amount,
+      taxAmount: expense.taxAmount,
+      paymentMethod: expense.paymentMethod as EditExpenseFormValues['paymentMethod'],
+      notes: expense.notes ?? ''
+    } as EditExpenseFormValues,
+    validators: { onSubmit: editExpenseSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await mutation.mutateAsync(value);
+      } catch {
+        // Reported through mutation.onError's toast.
+      }
+    }
+  });
+
+  return (
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className='sm:max-w-[480px]'>
+        <ResponsiveDialogHeader>
+          <ResponsiveDialogTitle>Edit {referenceCode}</ResponsiveDialogTitle>
+          <ResponsiveDialogDescription>
+            Only a draft can be edited in place — once recorded, the correction path is void-and-
+            re-record.
+          </ResponsiveDialogDescription>
+        </ResponsiveDialogHeader>
+        <form
+          className='space-y-6'
+          onSubmit={(event) => {
+            event.preventDefault();
+            form.handleSubmit();
+          }}
+        >
+          <FieldGroup>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+              <form.AppField
+                name='expenseDate'
+                children={(field) => <field.TextField label='Date' required type='date' />}
+              />
+              <form.AppField
+                name='payeeName'
+                children={(field) => <field.TextField label='Payee name' placeholder='e.g. USPS' />}
+              />
+            </div>
+            <form.Field name='category'>
+              {(field) => (
+                <CategoryComboboxField
+                  label='Category'
+                  name='category'
+                  required
+                  value={field.state.value}
+                  onChange={field.handleChange}
+                  onBlur={field.handleBlur}
+                  invalid={field.state.meta.isTouched && !field.state.meta.isValid}
+                  errors={field.state.meta.errors}
+                />
+              )}
+            </form.Field>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+              <form.AppField
+                name='amount'
+                children={(field) => (
+                  <field.TextField label='Amount' required inputMode='decimal' placeholder='0.00' />
+                )}
+              />
+              <form.AppField
+                name='taxAmount'
+                children={(field) => (
+                  <field.TextField label='Tax' inputMode='decimal' placeholder='0.00' />
+                )}
+              />
+              <form.AppField
+                name='currency'
+                children={(field) => (
+                  <field.TextField label='Currency' required placeholder='USD' maxLength={3} />
+                )}
+              />
+            </div>
+            <form.AppField
+              name='paymentMethod'
+              children={(field) => (
+                <field.SelectField label='Payment' required options={paymentMethodOptions} />
+              )}
+            />
+            <form.AppField
+              name='notes'
+              children={(field) => <field.TextareaField label='Notes' />}
+            />
+          </FieldGroup>
+          <div className='flex justify-end gap-2'>
+            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <form.AppForm>
+              <form.SubmitButton>Save changes</form.SubmitButton>
+            </form.AppForm>
+          </div>
+        </form>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
+  );
+}
+
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className='flex flex-col gap-0.5'>
@@ -341,6 +537,7 @@ export default function ExpenseDetail({
   const navigate = useNavigate();
 
   const [voidOpen, setVoidOpen] = React.useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
   const [linkPayeeOpen, setLinkPayeeOpen] = React.useState(false);
   const [promoteLotPickerOpen, setPromoteLotPickerOpen] = React.useState(false);
   const [promoteTarget, setPromoteTarget] = React.useState<AcquisitionLotTarget | null>(null);
@@ -386,14 +583,20 @@ export default function ExpenseDetail({
           </div>
           <div className='flex gap-2'>
             {data.status === 'draft' && (
-              <Button
-                size='sm'
-                variant='outline'
-                disabled={submitMutation.isPending}
-                onClick={() => submitMutation.mutate()}
-              >
-                Record now
-              </Button>
+              <>
+                <Button size='sm' variant='outline' onClick={() => setEditOpen(true)}>
+                  <Icons.edit />
+                  Edit
+                </Button>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  disabled={submitMutation.isPending}
+                  onClick={() => submitMutation.mutate()}
+                >
+                  Record now
+                </Button>
+              </>
             )}
             {data.status === 'recorded' && (
               <>
@@ -497,9 +700,40 @@ export default function ExpenseDetail({
 
       <Card>
         <CardContent className='pt-6'>
+          <ExpenseAllocationsCard
+            expenseId={expenseId}
+            status={data.status}
+            currency={data.currency}
+            amount={data.amount}
+            allocatedAmount={data.allocatedAmount}
+            unallocatedAmount={data.unallocatedAmount}
+            fullyAllocated={data.fullyAllocated}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className='pt-6'>
           <ReceiptGallery expenseId={expenseId} receipts={data.receipts} />
         </CardContent>
       </Card>
+
+      <EditExpenseDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        expenseId={expenseId}
+        referenceCode={data.referenceCode}
+        expense={{
+          expenseDate: data.expenseDate,
+          payeeName: data.payeeName,
+          category: data.category,
+          currency: data.currency,
+          amount: data.amount,
+          taxAmount: data.taxAmount,
+          paymentMethod: data.paymentMethod,
+          notes: data.notes
+        }}
+      />
 
       <LinkPayeeDialog
         open={linkPayeeOpen}

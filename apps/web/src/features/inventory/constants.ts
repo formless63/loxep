@@ -354,6 +354,17 @@ export type InventoryLocationKind =
   | 'vehicle'
   | 'in_transit';
 
+export const INVENTORY_LOCATION_KIND_VALUES: readonly InventoryLocationKind[] = [
+  'site',
+  'room',
+  'area',
+  'shelf',
+  'bin',
+  'container',
+  'vehicle',
+  'in_transit'
+];
+
 const LOCATION_KIND_LABELS = {
   site: 'Site',
   room: 'Room',
@@ -368,6 +379,11 @@ const LOCATION_KIND_LABELS = {
 export function locationKindLabel(kind: string): string {
   return LOCATION_KIND_LABELS[kind as InventoryLocationKind] ?? kind;
 }
+
+export const locationKindOptions = INVENTORY_LOCATION_KIND_VALUES.map((value) => ({
+  value,
+  label: locationKindLabel(value)
+}));
 
 /** `acquisition_costs.cost_class` — closed, `CHECK`ed: capitalized `goods` vs. `ancillary`. */
 export type AcquisitionCostClass = 'goods' | 'ancillary';
