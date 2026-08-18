@@ -33,7 +33,12 @@ The repository already has the first workspace roots:
 /finance/*      finance workspace — expense capture, receipts, and expense reports live
                (M1); books/chart-of-accounts/fiscal-period administration
                (`/finance/books`) lives too — create a book, link entities, generate
-               fiscal years, open/close/reopen periods, and read the trial balance;
+               fiscal years, open/close/reopen periods, manage the chart of accounts,
+               read the journal (read-only — the posting engine is the only writer),
+               and read the trial balance; `/finance/partners` is the trading-partner
+               directory over `@loxep/counterparties` (customers, vendors, and every
+               other outside party, with role management) — previously reachable only
+               through the expense payee combobox's inline create (loxep-l49);
                CSV import and the acquisition seam arrive in a later milestone
 /settings/*     settings workspace — administration & diagnostics
 /starter/*      preserved UI-donor/reference workspace
@@ -149,7 +154,7 @@ It is **not** `/settings`. `/settings` configures Loxep — its users, connectio
 | **Money** | ingested `orders` and `order_fees`: revenue, order count (naming the manual/offline subset rather than burying it), seller-charge fees, net proceeds, refunds, a daily revenue/order series, a 7-day-versus-prior-7-day trend, and the `channel_listings` draft→active→ended→sold funnel | `/settings/connections` (order sync is enabled per connection), `/commerce/listings` |
 | **Market pulse** | derived `market_events` over the trailing 24h, the highest-scoring rule-stamped opportunity, and the biggest price movers | `/market/*` |
 | **Operations health** | provider connections by status **and by health status** (failing, degraded, and unknown counted distinctly — "Loxep could not determine" is not "healthy"), the market-monitor fleet, purchase-sync and DNS-reconcile freshness, infrastructure counts (hosting targets, unresolved DNS drift, reconcile failures, domains), the fleet-tool signal chips, and notification delivery success over 7 days | `/settings/*`, `/market/monitors`, `/infrastructure/*` |
-| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts — and the two upstream-of-ledger backlogs (draft acquisitions awaiting intake, documents awaiting confirmation), which render whether or not a book exists | `/finance/books` (create/archive a book, link entities, generate fiscal years, open/close/reopen periods, trial balance), `/inventory`, `/finance/documents` |
+| **Financial** | the income statement for the fiscal period covering today, from the installation's default accounting book, plus its largest expense accounts — and the two upstream-of-ledger backlogs (draft acquisitions awaiting intake, documents awaiting confirmation), which render whether or not a book exists | `/finance/books` (create/archive a book, link entities, generate fiscal years, open/close/reopen periods, manage the chart of accounts, read the journal, trial balance), `/finance/partners`, `/inventory`, `/finance/documents` |
 
 Which target types count as the **market-monitor fleet** is derived, not
 listed: every `MonitorTargetType` maps to its owning domain through a

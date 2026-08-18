@@ -936,6 +936,8 @@ NEW  /commerce     channel listings incl. manual, the draft-listing authoring su
 
 Three new workspace roots is less work than it sounds, because the shell is data-driven: an entry in `src/config/workspaces.ts`, a `src/config/navigation/<id>.ts` nav group, and a guarded layout route each. The `add-workspace-surface` project skill encodes that path.
 
+**Status update (loxep-l49):** `/finance/books/$id` gained an Accounts section (`AccountsService`'s create/update/archive/reactivate verbs, none of which had a caller before) and a read-only Journal section (`JournalService.listEntries`/`getLines`, also previously uncalled from `apps/web`) — both additions to the `/finance` root this design already reserved, not new workspace roots. `/finance/partners` is a new page on the same root: the trading-partner directory over `@loxep/counterparties` (customers, vendors, and every other outside party this design's expenses flow already references as a payee), previously reachable only through the expense payee combobox's inline "+ New trading partner" create.
+
 `/commerce` is the last of the three to arrive, and that ordering is deliberate: listings depend on enrichment, which depends on the inventory workspace existing.
 
 ### Cross-checked against Domain Boundaries

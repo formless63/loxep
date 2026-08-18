@@ -234,3 +234,35 @@ test("the connections row action opens an Invoice Ninja connection's estate page
     estateMain.getByRole('button', { name: /new client|new invoice|edit|send|mark sent/i })
   ).toHaveCount(0);
 });
+
+/**
+ * `/finance/partners` (loxep-l49): the trading-partner directory, the first
+ * caller of `@loxep/counterparties` from `apps/web`. Creates a partner
+ * through the "New trading partner" dialog with one role granted, and
+ * confirms both the identity fields and the role badge land in the table —
+ * `partnersQuery`'s own bulk role/contact/billing-link reads round-tripping
+ * for real.
+ */
+test('creating a trading partner through the dialog shows it, with its role, in the directory', async ({
+  page
+}) => {
+  const partnerName = `E2E Partner ${runId}`;
+
+  await page.goto('/finance/partners');
+  await expect(page.getByRole('heading', { name: 'Trading partners' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'New trading partner' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('New trading partner')).toBeVisible();
+  await dialog.getByLabel('Name *').fill(partnerName);
+  await dialog.getByRole('checkbox', { name: 'Vendor' }).check();
+  // Kind (Organization) keeps its sensible default — see `PartnerFormDialog`.
+  await dialog.getByRole('button', { name: 'Create trading partner' }).click();
+  await expect(dialog).toBeHidden();
+
+  const row = tableRow(page, partnerName);
+  await expect(row).toBeVisible();
+  await expect(row.getByText('Organization')).toBeVisible();
+  await expect(row.getByText('Vendor')).toBeVisible();
+  await expect(row.getByText('Active')).toBeVisible();
+});

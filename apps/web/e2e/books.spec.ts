@@ -72,6 +72,24 @@ test('creating a book seeds its chart and first fiscal year, and the dashboard F
   // zero.
   await expect(page.getByText('Balances to zero')).toBeVisible();
 
+  // Accounts section (loxep-l49): `createBook`'s own `seedDefaultChart` call
+  // already populated the chart, so the seeded accounts are visible without
+  // any action here — the section renders read data, it doesn't create it.
+  await expect(page.getByText('Accounts', { exact: true })).toBeVisible();
+  await expect(page.getByText('Business Checking', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Sales Revenue', { exact: true }).first()).toBeVisible();
+
+  // Journal section (loxep-l49): read-only, and honestly empty — nothing has
+  // posted to a book nobody has recorded activity against yet. Assert the
+  // empty message, never a fabricated entry.
+  await expect(page.getByText('Journal', { exact: true })).toBeVisible();
+  await expect(page.getByText('No journal entries')).toBeVisible();
+  // No write affordance anywhere in the Journal section — the posting engine
+  // is the only writer (`journal-functions.ts`'s own module doc).
+  await expect(
+    page.getByRole('button', { name: /new entry|post entry|create entry/i })
+  ).toHaveCount(0);
+
   // Generate an additional fiscal year through the UI (not implied by
   // createBook's own composition) and confirm its periods appear.
   const nextYear = new Date().getUTCFullYear() + 1;
