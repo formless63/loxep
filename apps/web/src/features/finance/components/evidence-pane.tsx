@@ -192,84 +192,75 @@ export default function EvidencePane({
       })) ?? [];
 
   return (
-    <div className={cn('flex flex-col gap-4', className)}>
-      <div>
+    <div className={cn('flex flex-col gap-3', className)}>
+      {/* One condensed row (owner directive 2026-08-18): the pane title,
+          the drop target, and the attached-file chips share a line so every
+          reclaimed pixel goes to the preview below. The full guidance
+          ("uploads immediately; nothing links until save") lives on the
+          chips' own tooltips and the uploader's zero-state copy. */}
+      <div className='flex flex-wrap items-center gap-2'>
         <h2 className='text-sm font-medium'>Evidence</h2>
-        <p className='text-muted-foreground text-xs'>
-          Drop receipts, invoices, or packing slips here, or click to choose. Each file uploads
-          immediately; nothing is linked to this expense until you save.
-        </p>
-      </div>
-      <FileUploader
-        value={pendingFiles}
-        onValueChange={setPendingFiles}
-        onUpload={handleUpload}
-        multiple
-        maxFiles={MAX_ATTACHMENTS}
-        accept={ACCEPTED_ATTACHMENT_TYPES}
-        maxSize={DEFAULT_MAX_ATTACHMENT_BYTES}
-        compact={attachments.length > 0}
-      />
-      {attachments.length > 0 && (
-        <ul className='flex flex-col gap-1'>
-          {attachments.map((attachment) => {
-            const StatusIcon = attachmentStatusIcon(attachment.status);
-            const isSelected = attachment.key === selectedKey;
-            const name = attachment.originalFilename ?? attachment.file.name;
-            return (
-              <li
-                key={attachment.key}
-                className={cn(
-                  'flex items-center gap-2 rounded-md border p-2 text-sm',
-                  isSelected && 'border-primary bg-accent'
-                )}
+        <div className={cn('min-w-40', attachments.length > 0 ? 'flex-none' : 'flex-1')}>
+          <FileUploader
+            value={pendingFiles}
+            onValueChange={setPendingFiles}
+            onUpload={handleUpload}
+            multiple
+            maxFiles={MAX_ATTACHMENTS}
+            accept={ACCEPTED_ATTACHMENT_TYPES}
+            maxSize={DEFAULT_MAX_ATTACHMENT_BYTES}
+            compact={attachments.length > 0}
+          />
+        </div>
+        {attachments.map((attachment) => {
+          const StatusIcon = attachmentStatusIcon(attachment.status);
+          const isSelected = attachment.key === selectedKey;
+          const name = attachment.originalFilename ?? attachment.file.name;
+          const detail =
+            attachment.status === 'error'
+              ? attachment.errorMessage
+              : attachment.status === 'uploading'
+                ? 'Uploading…'
+                : `${formatBytes(attachment.sizeBytes ?? attachment.file.size)} · uploaded — linked to this expense when you save`;
+          return (
+            <span
+              key={attachment.key}
+              title={`${name}${detail ? ` — ${detail}` : ''}`}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md border py-1 pr-1 pl-2 text-xs',
+                isSelected && 'border-primary bg-accent'
+              )}
+            >
+              <button
+                type='button'
+                className='flex min-w-0 items-center gap-1.5 disabled:cursor-default'
+                disabled={attachment.status !== 'uploaded'}
+                onClick={() => setSelectedKey(attachment.key)}
               >
-                <button
-                  type='button'
-                  className='flex min-w-0 flex-1 items-center gap-2 text-left disabled:cursor-default'
-                  disabled={attachment.status !== 'uploaded'}
-                  onClick={() => setSelectedKey(attachment.key)}
-                >
-                  <StatusIcon
-                    className={cn(
-                      'size-4 shrink-0',
-                      attachment.status === 'uploading' && 'text-muted-foreground animate-spin',
-                      attachment.status === 'error' && 'text-destructive',
-                      attachment.status === 'uploaded' && 'text-primary'
-                    )}
-                    aria-hidden='true'
-                  />
-                  <span className='min-w-0 flex-1'>
-                    <span className='block truncate font-medium'>{name}</span>
-                    {attachment.status === 'error' && (
-                      <span className='text-destructive block text-xs'>
-                        {attachment.errorMessage}
-                      </span>
-                    )}
-                    {attachment.status === 'uploading' && (
-                      <span className='text-muted-foreground block text-xs'>Uploading…</span>
-                    )}
-                    {attachment.status === 'uploaded' && (
-                      <span className='text-muted-foreground block text-xs'>
-                        {formatBytes(attachment.sizeBytes ?? attachment.file.size)} · Uploaded
-                      </span>
-                    )}
-                  </span>
-                </button>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon'
-                  aria-label={`Remove ${name}`}
-                  onClick={() => handleRemove(attachment.key)}
-                >
-                  <Icons.close className='text-muted-foreground' />
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                <StatusIcon
+                  className={cn(
+                    'size-3.5 shrink-0',
+                    attachment.status === 'uploading' && 'text-muted-foreground animate-spin',
+                    attachment.status === 'error' && 'text-destructive',
+                    attachment.status === 'uploaded' && 'text-primary'
+                  )}
+                  aria-hidden='true'
+                />
+                <span className='max-w-44 truncate font-medium'>{name}</span>
+              </button>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-xs'
+                aria-label={`Remove ${name}`}
+                onClick={() => handleRemove(attachment.key)}
+              >
+                <Icons.close className='text-muted-foreground' />
+              </Button>
+            </span>
+          );
+        })}
+      </div>
       {selected && (
         <DocumentPreview
           mimeType={selected.mimeType ?? null}

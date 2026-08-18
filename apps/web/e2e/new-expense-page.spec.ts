@@ -105,8 +105,10 @@ test('drop one file, preview it, and record the expense with evidence attached',
 
   // Uploads immediately, before anything is typed — the design's own
   // "upload order of operations" decision. Wait for the attachment to
-  // finish (never assert on "Uploading…", which is a race).
-  await expect(main.getByText('Uploaded', { exact: false })).toBeVisible();
+  // finish (never assert on "Uploading…", which is a race). The condensed
+  // chip row (2026-08-18) moved the status text into the chip's tooltip;
+  // "uploaded" in the title attribute is the settled-state marker.
+  await expect(main.locator('[title*="uploaded"]').first()).toBeVisible();
 
   // The per-file preview renders inline — a real <img> against the object's
   // own servingUrl, not a broken-image placeholder.

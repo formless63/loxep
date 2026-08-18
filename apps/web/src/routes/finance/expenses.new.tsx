@@ -71,10 +71,7 @@ function FinanceExpensesNew() {
   const search = Route.useSearch();
 
   return (
-    <FinancePage
-      title='New expense'
-      description='Form on the left, evidence on the right — visible at once.'
-    >
+    <FinancePage title='New expense'>
       <React.Suspense fallback={<Skeleton className='h-96 w-full' />}>
         <NewExpensePage prefill={search} reRecordFrom={search.reRecordFrom} />
       </React.Suspense>

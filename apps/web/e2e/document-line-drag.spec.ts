@@ -140,7 +140,7 @@ test('a real OCR run produces a highlight overlay with detected lines', async ({
     mimeType: 'image/png',
     buffer: syntheticReceiptPng()
   });
-  await expect(main.getByText('Uploaded', { exact: false })).toBeVisible();
+  await expect(main.locator('[title*="uploaded"]').first()).toBeVisible();
 
   // Extraction runs asynchronously (a Graphile Worker task the harness's
   // `--mode=all` process actually runs) — poll for the overlay's own
@@ -176,7 +176,7 @@ test('dragging a detected line onto a line-item field fills it — pure UI, noth
     mimeType: 'image/png',
     buffer: syntheticReceiptPng()
   });
-  await expect(main.getByText('Uploaded', { exact: false })).toBeVisible();
+  await expect(main.locator('[title*="uploaded"]').first()).toBeVisible();
   await expect(main.getByText('Detected lines', { exact: false })).toBeVisible({
     timeout: 60_000
   });
