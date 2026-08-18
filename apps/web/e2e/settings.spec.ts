@@ -223,5 +223,7 @@ test('audit log records an earlier action and shows its before/after diff', asyn
   // Field-level diff: the "name" key's After value is the entity this suite
   // just created — not a raw JSON blob.
   await expect(sheet.getByText('name', { exact: true })).toBeVisible();
-  await expect(sheet.getByText(childEntityName)).toBeVisible();
+  // A diff shows a value on BOTH sides for an unchanged/created key, so
+  // this name legitimately appears more than once in the sheet.
+  await expect(sheet.getByText(childEntityName).first()).toBeVisible();
 });

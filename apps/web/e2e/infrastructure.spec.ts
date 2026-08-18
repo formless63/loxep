@@ -152,7 +152,10 @@ test('creates a hosting target with no fronting node, then shows it with an empt
 test('reconcile runs list shows the empty state', async ({ page }) => {
   await page.goto('/infrastructure/runs');
   await expect(page.getByRole('heading', { name: 'Reconcile runs' })).toBeVisible();
-  await expect(page.getByText('No reconcile runs yet')).toBeVisible();
+  // Two honest empty states now render on this page: the table's own and
+  // the run-outcome chart's (loxep-8e2). Assert at least one is visible
+  // rather than asserting the page has exactly one way of saying it.
+  await expect(page.getByText('No reconcile runs yet').first()).toBeVisible();
 });
 
 /**
