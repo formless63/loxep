@@ -12,6 +12,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "typecheck": "tsc --noEmit",
+    "test": "bun test src",
     "test:e2e": "playwright test"
   },
   "dependencies": {
