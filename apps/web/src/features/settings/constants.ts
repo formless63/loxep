@@ -153,13 +153,25 @@ const NON_MARKET_EVENT_TYPE_LABELS: Record<string, string> = {
   document_confirmed: 'Document confirmed',
   manual_sale_recorded: 'Sale recorded',
   health_degraded: 'Degraded',
-  health_recovered: 'Recovered'
+  health_recovered: 'Recovered',
+  drift_found: 'DNS drift found',
+  drift_disappeared: 'DNS drift disappeared',
+  reconcile_run_failed: 'Reconcile run failed',
+  ip_alias_changed: 'IP alias changed'
 };
 
 /**
- * Event types each class permits. `infrastructure` is seeded in the schema
- * CHECK but emits nothing yet, so it has no types and is not offered as a
- * rule class — a rule for it could never match.
+ * Event types each class permits — the browser-side mirror of
+ * `@loxep/domain`'s `NOTIFICATION_EVENT_CLASSES` registry (which the browser
+ * cannot import: the barrel re-exports server-only code).
+ *
+ * `infrastructure` was `[]` behind a comment claiming it "emits nothing yet"
+ * long after `@loxep/infrastructure` started emitting all four of its types,
+ * so the class was filtered out of the rule dialog and no operator could
+ * route a DNS-drift or reconcile-failure alert anywhere (audit 2026-08-18).
+ * The `satisfies` guard below does not catch that class of drift, because an
+ * empty array satisfies `readonly string[]` — `constants.test.ts` asserts the
+ * mirror against the real registry instead.
  */
 const NOTIFICATION_EVENT_TYPES_BY_CLASS = {
   market: MARKET_EVENT_TYPE_VALUES as readonly string[],
@@ -167,7 +179,7 @@ const NOTIFICATION_EVENT_TYPES_BY_CLASS = {
   document: ['document_confirmed'],
   sale: ['manual_sale_recorded'],
   health: ['health_degraded', 'health_recovered'],
-  infrastructure: []
+  infrastructure: ['drift_found', 'drift_disappeared', 'reconcile_run_failed', 'ip_alias_changed']
 } satisfies Record<NotificationEventClass, readonly string[]>;
 
 export const NOTIFICATION_EVENT_CLASS_VALUES = (

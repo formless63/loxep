@@ -19,7 +19,9 @@ import { formatDate } from '@/lib/format';
 import { bookDetailQuery, booksQuery } from '@/features/finance/api/books-queries';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { archiveBook } from '@/server/books-functions';
+import BookAccounts from '@/features/finance/components/book-accounts';
 import BookEntityLinks from '@/features/finance/components/book-entity-links';
+import BookJournal from '@/features/finance/components/book-journal';
 import BookPeriods from '@/features/finance/components/book-periods';
 import BookTrialBalance from '@/features/finance/components/book-trial-balance';
 
@@ -76,7 +78,7 @@ function ArchiveBookDialog({
   );
 }
 
-export default function BookDetail({ bookId }: { bookId: string }) {
+export default function BookDetail({ bookId, isAdmin }: { bookId: string; isAdmin: boolean }) {
   const { data, isPending, isError, error, refetch } = useQuery(bookDetailQuery(bookId));
   const [archiveOpen, setArchiveOpen] = React.useState(false);
 
@@ -126,7 +128,9 @@ export default function BookDetail({ bookId }: { bookId: string }) {
 
       <BookEntityLinks accountingBookId={bookId} links={data.links} />
       <BookPeriods accountingBookId={bookId} periods={data.periods} />
+      <BookAccounts accountingBookId={bookId} isAdmin={isAdmin} />
       <BookTrialBalance accountingBookId={bookId} />
+      <BookJournal accountingBookId={bookId} functionalCurrency={data.functionalCurrency} />
 
       <ArchiveBookDialog
         open={archiveOpen}

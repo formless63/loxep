@@ -88,5 +88,18 @@ export const financeNavGroups: NavGroup[] = [
         items: []
       }
     ]
+  },
+  {
+    label: 'Partners',
+    items: [
+      {
+        title: 'Trading partners',
+        url: '/finance/partners',
+        icon: 'teams',
+        isActive: false,
+        shortcut: ['g', 'p'],
+        items: []
+      }
+    ]
   }
 ];

@@ -9,11 +9,13 @@ export const Route = createFileRoute('/finance/books/$id')({
 
 function FinanceBookDetail() {
   const { id } = Route.useParams();
+  const { auth } = Route.useRouteContext();
+  const isAdmin = auth?.roles.includes('admin') ?? false;
 
   return (
     <FinancePage
       title='Book'
-      description='Entity links, fiscal periods, and the trial balance for this book.'
+      description='Entity links, fiscal periods, the chart of accounts, the trial balance, and the journal for this book.'
       actions={
         <Link to='/finance/books' className='text-muted-foreground text-sm hover:underline'>
           <Icons.arrowRight className='mr-1 inline-block rotate-180 align-text-bottom' />
@@ -21,7 +23,7 @@ function FinanceBookDetail() {
         </Link>
       }
     >
-      <BookDetail bookId={id} />
+      <BookDetail bookId={id} isAdmin={isAdmin} />
     </FinancePage>
   );
 }

@@ -216,3 +216,170 @@ export const expenseLineUnitOptions = [
   { value: NO_UNIT_VALUE, label: '—' },
   ...EXPENSE_LINE_UNIT_VALUES.map((value) => ({ value, label: expenseLineUnitLabel(value) }))
 ];
+
+// -----------------------------------------------------------------------
+// Trading partners (`/finance/partners`, loxep-l49) — mirrors
+// `@loxep/counterparties`' closed sets as local literal unions, same
+// reasoning as the expense unions above.
+// -----------------------------------------------------------------------
+
+/** Mirrors `counterparties.kind` (`@loxep/db/schema/counterparties.ts`) — closed, CHECKed. */
+export type PartnerKind = 'person' | 'organization';
+
+const PARTNER_KIND_LABELS = {
+  person: 'Person',
+  organization: 'Organization'
+} satisfies Record<PartnerKind, string>;
+
+export function partnerKindLabel(kind: string): string {
+  return PARTNER_KIND_LABELS[kind as PartnerKind] ?? kind;
+}
+
+export const partnerKindOptions = (Object.keys(PARTNER_KIND_LABELS) as PartnerKind[]).map(
+  (value) => ({ value, label: partnerKindLabel(value) })
+);
+
+/** Mirrors `counterparties.status` — closed, CHECKed. Distinct from `ExpenseStatus` above. */
+export type PartnerStatus = 'active' | 'inactive' | 'archived';
+
+const PARTNER_STATUS_LABELS = {
+  active: 'Active',
+  inactive: 'Inactive',
+  archived: 'Archived'
+} satisfies Record<PartnerStatus, string>;
+
+export function partnerStatusLabel(status: string): string {
+  return PARTNER_STATUS_LABELS[status as PartnerStatus] ?? status;
+}
+
+const PARTNER_STATUS_TONES = {
+  active: 'success',
+  inactive: 'outline',
+  archived: 'secondary'
+} satisfies Record<PartnerStatus, BadgeVariant>;
+
+export function partnerStatusTone(status: string): BadgeVariant {
+  return PARTNER_STATUS_TONES[status as PartnerStatus] ?? 'outline';
+}
+
+export const partnerStatusOptions = (Object.keys(PARTNER_STATUS_LABELS) as PartnerStatus[]).map(
+  (value) => ({ value, label: partnerStatusLabel(value) })
+);
+
+/** Mirrors `counterparty_entity_roles.role` (`@loxep/db/schema/counterparties.ts`) — closed, CHECKed. */
+export type PartnerRole =
+  | 'customer'
+  | 'vendor'
+  | 'payer'
+  | 'payee'
+  | 'consignor'
+  | 'subcontractor'
+  | 'partner'
+  | 'other';
+
+export const PARTNER_ROLE_VALUES: readonly PartnerRole[] = [
+  'customer',
+  'vendor',
+  'payer',
+  'payee',
+  'consignor',
+  'subcontractor',
+  'partner',
+  'other'
+];
+
+const PARTNER_ROLE_LABELS = {
+  customer: 'Customer',
+  vendor: 'Vendor',
+  payer: 'Payer',
+  payee: 'Payee',
+  consignor: 'Consignor',
+  subcontractor: 'Subcontractor',
+  partner: 'Partner',
+  other: 'Other'
+} satisfies Record<PartnerRole, string>;
+
+export function partnerRoleLabel(role: string): string {
+  return PARTNER_ROLE_LABELS[role as PartnerRole] ?? role;
+}
+
+export const partnerRoleOptions = PARTNER_ROLE_VALUES.map((value) => ({
+  value,
+  label: partnerRoleLabel(value)
+}));
+
+// -----------------------------------------------------------------------
+// Chart of accounts (`/finance/books/$id`'s Accounts section, loxep-l49) —
+// mirrors `LEDGER_ACCOUNT_TYPES` (`@loxep/db/schema/accounting.ts`).
+// -----------------------------------------------------------------------
+
+export type LedgerAccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
+
+export const LEDGER_ACCOUNT_TYPE_VALUES: readonly LedgerAccountType[] = [
+  'asset',
+  'liability',
+  'equity',
+  'revenue',
+  'expense'
+];
+
+const LEDGER_ACCOUNT_TYPE_LABELS = {
+  asset: 'Asset',
+  liability: 'Liability',
+  equity: 'Equity',
+  revenue: 'Revenue',
+  expense: 'Expense'
+} satisfies Record<LedgerAccountType, string>;
+
+export function ledgerAccountTypeLabel(type: string): string {
+  return LEDGER_ACCOUNT_TYPE_LABELS[type as LedgerAccountType] ?? type;
+}
+
+export const ledgerAccountTypeOptions = LEDGER_ACCOUNT_TYPE_VALUES.map((value) => ({
+  value,
+  label: ledgerAccountTypeLabel(value)
+}));
+
+// -----------------------------------------------------------------------
+// Journal (`/finance/books/$id`'s Journal section, loxep-l49) — mirrors
+// `journal_entries.status`/`entry_source` (`@loxep/db/schema/accounting.ts`).
+// -----------------------------------------------------------------------
+
+export type JournalEntryStatus = 'draft' | 'posted' | 'reversed' | 'void';
+
+const JOURNAL_ENTRY_STATUS_LABELS = {
+  draft: 'Draft',
+  posted: 'Posted',
+  reversed: 'Reversed',
+  void: 'Void'
+} satisfies Record<JournalEntryStatus, string>;
+
+export function journalEntryStatusLabel(status: string): string {
+  return JOURNAL_ENTRY_STATUS_LABELS[status as JournalEntryStatus] ?? status;
+}
+
+const JOURNAL_ENTRY_STATUS_TONES = {
+  draft: 'outline',
+  posted: 'success',
+  reversed: 'secondary',
+  void: 'destructive'
+} satisfies Record<JournalEntryStatus, BadgeVariant>;
+
+export function journalEntryStatusTone(status: string): BadgeVariant {
+  return JOURNAL_ENTRY_STATUS_TONES[status as JournalEntryStatus] ?? 'outline';
+}
+
+export const journalEntryStatusOptions = (
+  Object.keys(JOURNAL_ENTRY_STATUS_LABELS) as JournalEntryStatus[]
+).map((value) => ({ value, label: journalEntryStatusLabel(value) }));
+
+const JOURNAL_ENTRY_SOURCE_LABELS = {
+  posting_rule: 'Posting rule',
+  manual: 'Manual',
+  import: 'Import',
+  opening_balance: 'Opening balance'
+} satisfies Record<string, string>;
+
+export function journalEntrySourceLabel(source: string): string {
+  return JOURNAL_ENTRY_SOURCE_LABELS[source as keyof typeof JOURNAL_ENTRY_SOURCE_LABELS] ?? source;
+}

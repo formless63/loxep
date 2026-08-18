@@ -17,23 +17,35 @@
  * import so nothing here leaks into the client bundle.
  */
 import {
+  createAccountsService,
   createBooksService,
   createExpenseConfirmService,
   createExpenseLinesService,
   createExpenseReports,
   createExpensesService,
   createFiscalPeriodsService,
+  createJournalService,
   createLedgerReports,
   createReceiptsService,
+  type AccountsService,
   type BooksService,
   type ExpenseConfirmService,
   type ExpenseLinesService,
   type ExpenseReports,
   type ExpensesService,
   type FiscalPeriodsService,
+  type JournalService,
   type LedgerReports,
   type ReceiptsService
 } from '@loxep/accounting';
+import {
+  createContactsService,
+  createCounterpartiesService,
+  createRolesService as createCounterpartyRolesService,
+  type ContactsService,
+  type CounterpartiesService,
+  type RolesService as CounterpartyRolesService
+} from '@loxep/counterparties';
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createDb, type DbHandle } from '@loxep/db';
 import {
@@ -133,6 +145,37 @@ interface AdminRegistry {
   ledgerReports: LedgerReports;
   /** `expense_lines` CRUD (loxep-cd3.3, M3) — depends only on `db`, built eagerly like `expenses` above. */
   expenseLines: ExpenseLinesService;
+  /**
+   * The per-book chart of accounts (`/finance/books/$id`'s Accounts section,
+   * loxep-l49): `createAccount`/`updateAccount`/`archiveAccount`/
+   * `reactivateAccount`/`listAccounts`. Depends only on `db`, so it is built
+   * eagerly like `books`/`ledgerReports` above.
+   */
+  accounts: AccountsService;
+  /**
+   * The double-entry journal read path (`/finance/books/$id`'s Journal
+   * section, loxep-l49): `listEntries`/`getEntry`/`getLines`. This registry
+   * never calls the WRITE verbs (`postEntry`/`createDraft`/`reverseEntry`,
+   * …) — the posting engine is the only caller of those, and the Journal
+   * section is read-only by design (its own module doc explains why).
+   * Depends only on `db`, so it is built eagerly too.
+   */
+  journal: JournalService;
+  /**
+   * Counterparties — the outside parties Loxep's economic entities do
+   * business with (`/finance/partners`, loxep-l49). `@loxep/counterparties`
+   * has been a real `apps/web` dependency since loxep-cd3.1 (see that
+   * package's own `package.json` entry) but was never wired into this
+   * registry — `trading-partner-functions.ts`'s duplicated
+   * create/search logic predates this and is left as-is (a working, tested
+   * surface; not this bead's fence to touch). `partners-functions.ts` is the
+   * first caller of the real service. Depends only on `db`.
+   */
+  counterparties: CounterpartiesService;
+  /** `counterparty_entity_roles` grant/revoke/list (loxep-l49) — same package, same reasoning as `counterparties` above. */
+  counterpartyRoles: CounterpartyRolesService;
+  /** Contacts/contact-channels (loxep-l49) — used for the partners table's primary-contact summary column. Same package, same reasoning. */
+  counterpartyContacts: ContactsService;
   storageBackendsPromise?: Promise<StorageBackendsService>;
   mediaServicePromise?: Promise<MediaService>;
   /** Receipt attach/list/detach (loxep-dgf.1) — depends on `getMediaService()`, so it is built lazily like it. */
@@ -425,6 +468,11 @@ function buildRegistry(): AdminRegistry {
     books: createBooksService({ db: handle.db }),
     fiscalPeriods: createFiscalPeriodsService({ db: handle.db }),
     ledgerReports: createLedgerReports({ db: handle.db }),
+    accounts: createAccountsService({ db: handle.db }),
+    journal: createJournalService({ db: handle.db }),
+    counterparties: createCounterpartiesService({ db: handle.db }),
+    counterpartyRoles: createCounterpartyRolesService({ db: handle.db }),
+    counterpartyContacts: createContactsService({ db: handle.db }),
     managedDomains: createManagedDomainsService({
       db: handle.db,
       enqueue: createTransactionalEnqueue()
@@ -547,6 +595,31 @@ export function getFiscalPeriodsService(): FiscalPeriodsService {
 /** Trial balance and the other ledger read models (`/finance/books`), loxep-cmo. */
 export function getLedgerReports(): LedgerReports {
   return getAdminServices().ledgerReports;
+}
+
+/** Chart of accounts (`/finance/books/$id`'s Accounts section), loxep-l49. */
+export function getAccountsService(): AccountsService {
+  return getAdminServices().accounts;
+}
+
+/** The double-entry journal, READ verbs only from this registry (`/finance/books/$id`'s Journal section), loxep-l49. */
+export function getJournalService(): JournalService {
+  return getAdminServices().journal;
+}
+
+/** Counterparties (`/finance/partners`), loxep-l49. */
+export function getCounterpartiesService(): CounterpartiesService {
+  return getAdminServices().counterparties;
+}
+
+/** Counterparty entity-role grants (`/finance/partners`), loxep-l49. */
+export function getCounterpartyRolesService(): CounterpartyRolesService {
+  return getAdminServices().counterpartyRoles;
+}
+
+/** Counterparty contacts/channels (`/finance/partners`' primary-contact column), loxep-l49. */
+export function getCounterpartyContactsService(): ContactsService {
+  return getAdminServices().counterpartyContacts;
 }
 
 /** Durable per-user preferences (loxep-lbj) — `dashboard.pinned_pages` and any future per-user setting. */

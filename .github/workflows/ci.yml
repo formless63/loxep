@@ -37,6 +37,13 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
+      # apps/web's own unit tests (bun:test) — 9 files including the
+      # settings-registry allowlist guard and the notification class mirror,
+      # none of which ran in CI before 2026-08-18. Package suites need a live
+      # PostgreSQL and stay out of this job; these are pure and fast.
+      - name: Web unit tests
+        run: bun --cwd apps/web test
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
