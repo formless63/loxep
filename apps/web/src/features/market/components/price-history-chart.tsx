@@ -15,6 +15,10 @@ const chartConfig = {
   price: {
     label: 'Last price',
     color: 'var(--chart-1)'
+  },
+  landedPrice: {
+    label: 'Landed price (+ shipping)',
+    color: 'var(--chart-2)'
   }
 } satisfies ChartConfig;
 
@@ -23,20 +27,34 @@ const chartConfig = {
  * Decimal-string prices are parsed to `number` here only for the chart's Y
  * axis — never for stored/compared amounts. Gaps in the underlying data are
  * absent buckets, not zero-filled, so the line does not connect across them.
+ *
+ * **Landed price (loxep-48v):** rendered as a SECOND line rather than a
+ * stacked/area treatment, computed server-side as `price + shipping_price`
+ * (SQL numeric addition — never JS money arithmetic) in `priceHistory`
+ * itself. A second line was chosen over a stacked total because the raw
+ * price line stays independently readable (it is what the listing itself
+ * quotes) while the gap between the two lines makes the shipping cost's
+ * contribution visually obvious — an operator comparing listings needs
+ * both "what does the listing say" and "what do I actually pay." The line
+ * is absent for any bucket whose most recent priced observation had no
+ * shipping price recorded (never fabricated as free shipping).
  */
 export default function PriceHistoryChart({ marketplaceItemId }: { marketplaceItemId: string }) {
   const { data, isPending } = useQuery(itemPriceHistoryQuery(marketplaceItemId));
 
   const points = (data ?? []).map((bucket) => ({
     bucketStart: bucket.bucketStart,
-    price: bucket.lastPrice === null ? null : Number(bucket.lastPrice)
+    price: bucket.lastPrice === null ? null : Number(bucket.lastPrice),
+    landedPrice: bucket.lastLandedPrice === null ? null : Number(bucket.lastLandedPrice)
   }));
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className='text-base'>Price history</CardTitle>
-        <CardDescription>Hourly-bucketed last observed price.</CardDescription>
+        <CardDescription>
+          Hourly-bucketed last observed price, plus landed price (price + shipping).
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {isPending ? (
@@ -67,6 +85,15 @@ export default function PriceHistoryChart({ marketplaceItemId }: { marketplaceIt
                 type='monotone'
                 stroke='var(--color-price)'
                 strokeWidth={2}
+                dot={false}
+                connectNulls={false}
+              />
+              <Line
+                dataKey='landedPrice'
+                type='monotone'
+                stroke='var(--color-landedPrice)'
+                strokeWidth={2}
+                strokeDasharray='4 3'
                 dot={false}
                 connectNulls={false}
               />

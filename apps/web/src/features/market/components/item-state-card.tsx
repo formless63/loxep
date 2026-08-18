@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Icons } from '@/components/icons';
 import { itemActivitySummaryQuery } from '@/features/market/api/queries';
 import { marketEventTypeLabel } from '@/features/settings/constants';
-import { formatDateTime, formatMoney, formatPercent } from '@/lib/format';
+import { formatDateTime, formatMoney, formatPercent, formatRate } from '@/lib/format';
 import type { MarketItemDetailDto } from '@/server/market-functions';
 
 /** Current-state card: item identity, latest observation, and 7-day activity summary. */
@@ -70,6 +70,46 @@ export default function ItemStateCard({ item }: { item: MarketItemDetailDto }) {
             <CardTitle className='text-base tabular-nums'>
               {formatDateTime(item.listingEndsAt)}
             </CardTitle>
+          </div>
+          <div>
+            <CardDescription>Listing started</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {formatDateTime(item.listingStartedAt)}
+            </CardTitle>
+          </div>
+          <div>
+            <CardDescription>Category</CardDescription>
+            <CardTitle className='text-base tabular-nums'>
+              {item.categoryExternalId ?? '—'}
+            </CardTitle>
+          </div>
+        </div>
+
+        <div className='flex flex-wrap items-center gap-4 border-t pt-4 text-sm'>
+          <div className='flex items-center gap-1'>
+            <span className='text-muted-foreground'>Seller</span>
+            <span className='tabular-nums'>{item.sellerExternalId ?? '—'}</span>
+          </div>
+          {/* Seller feedback (score + pct) is per-observation, not per-item
+              identity — a compact header stat beside the seller reference,
+              never a chart (loxep-48v). `sellerFeedbackPct` is a decimal
+              STRING (PostgreSQL `numeric`); parsed to `number` below for
+              display only (`formatRate`), never for arithmetic. */}
+          <div className='flex items-center gap-1'>
+            <span className='text-muted-foreground'>Feedback score</span>
+            <span className='tabular-nums'>{observation?.sellerFeedbackScore ?? '—'}</span>
+          </div>
+          <div className='flex items-center gap-1'>
+            <span className='text-muted-foreground'>Feedback %</span>
+            <span className='tabular-nums'>
+              {/* A feedback percentage is a magnitude (a rate), not a
+                  signed delta — formatRate, not formatPercent (see
+                  lib/format.ts's doc on the distinction). */}
+              {observation?.sellerFeedbackPct === null ||
+              observation?.sellerFeedbackPct === undefined
+                ? '—'
+                : formatRate(Number(observation.sellerFeedbackPct))}
+            </span>
           </div>
         </div>
 

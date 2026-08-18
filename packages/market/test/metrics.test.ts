@@ -14,13 +14,14 @@ import {
   availabilityHistory,
   computePriceChangePercent,
   deriveRestockSelloutIntervals,
+  deriveSellThroughDeltas,
   itemActivitySummary,
   priceHistory,
   recordObservationBatch,
   restockSellout,
   upsertMarketplaceItem,
 } from "../src/index.ts";
-import type { RestockSelloutEvent } from "../src/index.ts";
+import type { RestockSelloutEvent, SellThroughBucket } from "../src/index.ts";
 import {
   createScratchDb,
   dropScratchDb,
@@ -58,7 +59,10 @@ async function observe(options: {
   marketplaceItemId: string;
   observedAt: Date;
   price?: string;
+  shippingPrice?: string;
   quantityAvailable?: number;
+  quantitySold?: number;
+  watchCount?: number;
   availability?: string;
   listingState?: string;
 }): Promise<void> {
@@ -72,9 +76,16 @@ async function observe(options: {
         {
           marketplaceItemId: options.marketplaceItemId,
           ...(options.price !== undefined ? { price: options.price } : {}),
+          ...(options.shippingPrice !== undefined
+            ? { shippingPrice: options.shippingPrice }
+            : {}),
           ...(options.quantityAvailable !== undefined
             ? { quantityAvailable: options.quantityAvailable }
             : {}),
+          ...(options.quantitySold !== undefined
+            ? { quantitySold: options.quantitySold }
+            : {}),
+          ...(options.watchCount !== undefined ? { watchCount: options.watchCount } : {}),
           ...(options.availability !== undefined
             ? { availability: options.availability }
             : {}),
@@ -143,6 +154,41 @@ describe("priceHistory", () => {
     expect(bucketC?.observationCount).toBe(1);
   });
 
+  it("lastLandedPrice is price+shipping from the SAME observation as lastPrice, and null when that observation has no shipping price", async () => {
+    const item = await makeItem("price-hist-landed");
+    const base = new Date("2026-08-11T00:00:00.000Z");
+    // Earlier in the bucket: priced with shipping.
+    await observe({
+      marketplaceItemId: item.id,
+      observedAt: new Date(base.getTime() + 5 * MIN),
+      price: "10.00",
+      shippingPrice: "3.50",
+    });
+    // Most recent priced observation in the bucket has NO shipping price
+    // recorded — lastLandedPrice must be null, not fabricated as lastPrice+0.
+    await observe({
+      marketplaceItemId: item.id,
+      observedAt: new Date(base.getTime() + 45 * MIN),
+      price: "8.00",
+    });
+
+    const buckets = await priceHistory(handle.db, { marketplaceItemId: item.id, bucketSeconds: 3600 });
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]?.lastPrice).toBe("8.000000");
+    expect(buckets[0]?.lastLandedPrice).toBeNull();
+
+    // A second bucket where the last priced observation DOES carry shipping.
+    const item2 = await makeItem("price-hist-landed-2");
+    await observe({
+      marketplaceItemId: item2.id,
+      observedAt: new Date(base.getTime() + 45 * MIN),
+      price: "8.00",
+      shippingPrice: "4.25",
+    });
+    const buckets2 = await priceHistory(handle.db, { marketplaceItemId: item2.id, bucketSeconds: 3600 });
+    expect(buckets2[0]?.lastLandedPrice).toBe("12.250000");
+  });
+
   it("half-open range filtering: from inclusive, to exclusive", async () => {
     const item = await makeItem("price-hist-range");
     const base = new Date("2026-08-11T00:00:00.000Z");
@@ -209,6 +255,106 @@ describe("availabilityHistory", () => {
     expect(buckets).toHaveLength(1);
     expect(buckets[0]?.wentUnavailable).toBe(false);
     expect(buckets[0]?.lastQuantityAvailable).toBe(4);
+  });
+
+  it("reports lastWatchCount/lastQuantitySold from the bucket's most recent observation of each, independently", async () => {
+    const item = await makeItem("avail-hist-demand");
+    const base = new Date("2026-08-11T00:00:00.000Z");
+    await observe({
+      marketplaceItemId: item.id,
+      observedAt: new Date(base.getTime() + 5 * MIN),
+      watchCount: 3,
+      quantitySold: 12,
+    });
+    // A later poll in the same bucket updates watchCount but omits
+    // quantitySold entirely — NULL preservation means the earlier
+    // quantitySold reading (12) still wins as "most recent NON-NULL".
+    await observe({
+      marketplaceItemId: item.id,
+      observedAt: new Date(base.getTime() + 40 * MIN),
+      watchCount: 7,
+    });
+
+    const buckets = await availabilityHistory(handle.db, { marketplaceItemId: item.id, bucketSeconds: 3600 });
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0]?.lastWatchCount).toBe(7);
+    expect(buckets[0]?.lastQuantitySold).toBe(12);
+  });
+
+  it("lastWatchCount/lastQuantitySold are null for a bucket that never observed them", async () => {
+    const item = await makeItem("avail-hist-no-demand");
+    const base = new Date("2026-08-11T00:00:00.000Z");
+    await observe({ marketplaceItemId: item.id, observedAt: new Date(base.getTime() + 5 * MIN), quantityAvailable: 2 });
+
+    const buckets = await availabilityHistory(handle.db, { marketplaceItemId: item.id, bucketSeconds: 3600 });
+    expect(buckets[0]?.lastWatchCount).toBeNull();
+    expect(buckets[0]?.lastQuantitySold).toBeNull();
+  });
+});
+
+describe("deriveSellThroughDeltas (pure cumulative→delta conversion)", () => {
+  const at = (minutesFromEpoch: number) => new Date(minutesFromEpoch * MIN);
+
+  it("empty series", () => {
+    expect(deriveSellThroughDeltas([])).toEqual([]);
+  });
+
+  it("a single point has no prior baseline, so its delta is null", () => {
+    const buckets: SellThroughBucket[] = [{ bucketStart: at(0), lastQuantitySold: 5 }];
+    expect(deriveSellThroughDeltas(buckets)).toEqual([{ bucketStart: at(0), unitsSold: null }]);
+  });
+
+  it("a rising cumulative series produces per-bucket deltas from the previous known value", () => {
+    const buckets: SellThroughBucket[] = [
+      { bucketStart: at(0), lastQuantitySold: 5 },
+      { bucketStart: at(60), lastQuantitySold: 9 },
+      { bucketStart: at(120), lastQuantitySold: 9 }, // unchanged: 0 units this bucket
+      { bucketStart: at(180), lastQuantitySold: 15 },
+    ];
+    expect(deriveSellThroughDeltas(buckets)).toEqual([
+      { bucketStart: at(0), unitsSold: null },
+      { bucketStart: at(60), unitsSold: 4 },
+      { bucketStart: at(120), unitsSold: 0 },
+      { bucketStart: at(180), unitsSold: 6 },
+    ]);
+  });
+
+  it("a null reading mid-series gets a null delta and does not corrupt the running baseline", () => {
+    const buckets: SellThroughBucket[] = [
+      { bucketStart: at(0), lastQuantitySold: 5 },
+      { bucketStart: at(60), lastQuantitySold: null }, // poll recorded no quantitySold that bucket
+      { bucketStart: at(120), lastQuantitySold: 8 }, // delta measured against the last KNOWN value (5), not null
+    ];
+    expect(deriveSellThroughDeltas(buckets)).toEqual([
+      { bucketStart: at(0), unitsSold: null },
+      { bucketStart: at(60), unitsSold: null },
+      { bucketStart: at(120), unitsSold: 3 },
+    ]);
+  });
+
+  it("a downward reset (relist/correction) never produces a negative delta, and re-baselines going forward", () => {
+    const buckets: SellThroughBucket[] = [
+      { bucketStart: at(0), lastQuantitySold: 20 },
+      { bucketStart: at(60), lastQuantitySold: 2 }, // reset: counter dropped
+      { bucketStart: at(120), lastQuantitySold: 6 }, // genuine post-reset sale, measured from the new baseline (2)
+    ];
+    expect(deriveSellThroughDeltas(buckets)).toEqual([
+      { bucketStart: at(0), unitsSold: null },
+      { bucketStart: at(60), unitsSold: null },
+      { bucketStart: at(120), unitsSold: 4 },
+    ]);
+  });
+
+  it("a gap between buckets (an absent hour, per the module's gaps-are-absent-rows convention) still yields a correct delta across the gap", () => {
+    const buckets: SellThroughBucket[] = [
+      { bucketStart: at(0), lastQuantitySold: 5 },
+      // Buckets at(60)/at(120) are simply absent — no observations that hour.
+      { bucketStart: at(180), lastQuantitySold: 11 },
+    ];
+    expect(deriveSellThroughDeltas(buckets)).toEqual([
+      { bucketStart: at(0), unitsSold: null },
+      { bucketStart: at(180), unitsSold: 6 },
+    ]);
   });
 });
 

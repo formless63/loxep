@@ -345,6 +345,14 @@ export interface LatestObservationDto {
   availability: string | null;
   quantityAvailable: number | null;
   listingState: string | null;
+  /**
+   * Seller feedback score/percentage as of this observation (loxep-48v — a
+   * compact header stat beside the seller reference, not a chart; these are
+   * per-observation facts, not per-item identity). `sellerFeedbackPct` is a
+   * decimal STRING (PostgreSQL `numeric`), display-only here.
+   */
+  sellerFeedbackScore: number | null;
+  sellerFeedbackPct: string | null;
 }
 
 export interface LinkedMonitorDto {
@@ -448,6 +456,8 @@ function toObservationDto(
     availability: string | null;
     quantityAvailable: number | null;
     listingState: string | null;
+    sellerFeedbackScore: number | null;
+    sellerFeedbackPct: string | null;
   } | null
 ): LatestObservationDto | null {
   if (row === null) return null;
@@ -457,7 +467,9 @@ function toObservationDto(
     currency: row.currency,
     availability: row.availability,
     quantityAvailable: row.quantityAvailable,
-    listingState: row.listingState
+    listingState: row.listingState,
+    sellerFeedbackScore: row.sellerFeedbackScore,
+    sellerFeedbackPct: row.sellerFeedbackPct
   };
 }
 
@@ -661,6 +673,8 @@ export interface PriceHistoryPointDto {
   minPrice: string | null;
   maxPrice: string | null;
   lastPrice: string | null;
+  /** `price + shipping_price` from the same observation as `lastPrice`; null when that observation had no shipping price (loxep-48v). */
+  lastLandedPrice: string | null;
   observationCount: number;
 }
 
@@ -685,6 +699,7 @@ export const fetchItemPriceHistory = createServerFn({ method: 'GET' })
       minPrice: bucket.minPrice,
       maxPrice: bucket.maxPrice,
       lastPrice: bucket.lastPrice,
+      lastLandedPrice: bucket.lastLandedPrice,
       observationCount: bucket.observationCount
     }));
   });
@@ -693,6 +708,19 @@ export interface AvailabilityHistoryPointDto {
   bucketStart: string;
   lastQuantityAvailable: number | null;
   lastListingState: string | null;
+  /** Most recently observed `watch_count` in the bucket (loxep-48v). */
+  lastWatchCount: number | null;
+  /** Most recently observed CUMULATIVE `quantity_sold` in the bucket (loxep-48v), verbatim from the provider — not a per-bucket rate. */
+  lastQuantitySold: number | null;
+  /**
+   * Units sold DURING this bucket — `@loxep/market`'s
+   * `deriveSellThroughDeltas` applied to `lastQuantitySold` across the whole
+   * series (loxep-48v). Null when no honest delta could be computed for
+   * this bucket (unknown reading, first known point, or a downward
+   * "reset"); see that function's doc for the exact rules. Computed
+   * server-side so the client never re-derives this itself.
+   */
+  unitsSold: number | null;
   wentUnavailable: boolean;
 }
 
@@ -712,10 +740,19 @@ export const fetchItemAvailabilityHistory = createServerFn({ method: 'GET' })
       marketplaceItemId: data.marketplaceItemId,
       ...(data.bucketSeconds !== undefined ? { bucketSeconds: data.bucketSeconds } : {})
     });
-    return buckets.map((bucket) => ({
+    const sellThrough = market.deriveSellThroughDeltas(
+      buckets.map((bucket) => ({
+        bucketStart: bucket.bucketStart,
+        lastQuantitySold: bucket.lastQuantitySold
+      }))
+    );
+    return buckets.map((bucket, index) => ({
       bucketStart: iso(bucket.bucketStart),
       lastQuantityAvailable: bucket.lastQuantityAvailable,
       lastListingState: bucket.lastListingState,
+      lastWatchCount: bucket.lastWatchCount,
+      lastQuantitySold: bucket.lastQuantitySold,
+      unitsSold: sellThrough[index]?.unitsSold ?? null,
       wentUnavailable: bucket.wentUnavailable
     }));
   });

@@ -177,6 +177,7 @@ export {
   biggestPriceMovers,
   computePriceChangePercent,
   deriveRestockSelloutIntervals,
+  deriveSellThroughDeltas,
   itemActivitySummary,
   priceHistory,
   restockSellout,
@@ -194,6 +195,8 @@ export type {
   RestockSelloutInterval,
   RestockSelloutOptions,
   RestockSelloutResult,
+  SellThroughBucket,
+  SellThroughDeltaPoint,
   StockState,
 } from "./metrics.ts";
 

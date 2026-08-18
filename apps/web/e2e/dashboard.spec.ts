@@ -71,3 +71,39 @@ test('pinning a page from another workspace surfaces it on the dashboard Pinned 
   await page.goto('/dashboard/overview');
   await expect(page.getByText('Pin pages from any sidebar for one-tap access')).toBeVisible();
 });
+
+/**
+ * Market item detail charts (loxep-48v): watch-count trend, sell-through
+ * velocity, and landed price (price + shipping) — three of the five
+ * `marketplace_item_observations` columns that were captured but had zero
+ * readers before this pass. No spec seeds a real marketplace item (items
+ * only arrive via a live provider poll, which this harness does not run),
+ * so this test skips itself when the watched-items table is empty rather
+ * than asserting on data that cannot exist here; when an item DOES exist
+ * (e.g. a harness that has run a real poll), it asserts the new chart
+ * cards render — the "no data yet" state counts as rendering.
+ */
+test('the market item detail page renders the watch-count, sell-through, and landed-price series (or their honest empty states) when an item exists', async ({
+  page
+}) => {
+  await page.goto('/market/items');
+  await expect(page.getByRole('heading', { name: 'Watched items' })).toBeVisible();
+
+  const itemLinks = page.locator("a[href^='/market/items/']");
+  const itemCount = await itemLinks.count();
+  test.skip(itemCount === 0, 'no marketplace items seeded in this e2e environment');
+
+  await itemLinks.first().click();
+  await page.waitForURL('**/market/items/**');
+
+  // Each chart is its own Card (CardTitle renders a styled <div>, not a
+  // heading role — plain text assertions match how these render); the
+  // empty state ("No ... yet.") IS the rendered state when the item has no
+  // history for that series, so these hold whether or not the item has
+  // real observations.
+  await expect(page.getByText('Price history')).toBeVisible();
+  await expect(page.getByText('Watch count')).toBeVisible();
+  await expect(page.getByText('Sell-through velocity')).toBeVisible();
+  await expect(page.getByText('Feedback score')).toBeVisible();
+  await expect(page.getByText('Feedback %')).toBeVisible();
+});

@@ -6,6 +6,13 @@
  * (`observations.ts`) and event derivation (`events.ts`) modules already
  * write. No schema changes; no continuous aggregates (see below).
  *
+ * `priceHistory` also carries `lastLandedPrice` (`price + shipping_price`)
+ * and `availabilityHistory` also carries `lastWatchCount`/`lastQuantitySold`
+ * per bucket (loxep-48v) — three of the five `marketplace_item_observations`
+ * columns that were captured but had zero readers in `apps/web/src` before
+ * this pass; see `deriveSellThroughDeltas` below for turning the latter's
+ * cumulative `quantity_sold` into a per-bucket sell-through rate.
+ *
  * ## Bucketing (`priceHistory`, `availabilityHistory`)
  *
  * Buckets use TimescaleDB's `time_bucket(interval, timestamptz)` with the
@@ -177,14 +184,24 @@ export interface PriceHistoryBucket {
   maxPrice: string | null;
   /** Most recently observed price in the bucket (by `observed_at`). */
   lastPrice: string | null;
+  /**
+   * `price + shipping_price` from the SAME observation as {@link lastPrice}
+   * (the bucket's most recent priced observation) — the "landed price" an
+   * operator actually compares against other listings. Computed in SQL
+   * (`numeric + numeric`), never in JS, so it stays exact decimal math. NULL
+   * whenever that same observation did not also record a shipping price —
+   * shipping absence is never coalesced to 0, because a missing shipping
+   * price is "unknown," not "free" (loxep-48v).
+   */
+  lastLandedPrice: string | null;
   /** Every observation in the bucket, not only ones with a non-null price. */
   observationCount: number;
 }
 
 /**
- * Time-bucketed price series for one item. `min`/`max`/`last` ignore
- * observations with a NULL price (an unpriced poll never counts as a $0
- * price); `observationCount` counts every observation in the bucket
+ * Time-bucketed price series for one item. `min`/`max`/`last`/`lastLanded`
+ * ignore observations with a NULL price (an unpriced poll never counts as a
+ * $0 price); `observationCount` counts every observation in the bucket
  * regardless, so callers can tell "polled but unpriced" apart from "not
  * polled at all" (an absent bucket).
  */
@@ -200,6 +217,7 @@ export async function priceHistory(
         min(price) as min_price,
         max(price) as max_price,
         (array_agg(price order by observed_at desc) filter (where price is not null))[1] as last_price,
+        (array_agg(price + shipping_price order by observed_at desc) filter (where price is not null))[1] as last_landed_price,
         count(*)::int as observation_count
       from marketplace_item_observations
       where marketplace_item_id = ${uuidLiteral(parsed.marketplaceItemId)}
@@ -212,6 +230,7 @@ export async function priceHistory(
     minPrice: (row["min_price"] as string | null) ?? null,
     maxPrice: (row["max_price"] as string | null) ?? null,
     lastPrice: (row["last_price"] as string | null) ?? null,
+    lastLandedPrice: (row["last_landed_price"] as string | null) ?? null,
     observationCount: Number(row["observation_count"]),
   }));
 }
@@ -236,6 +255,19 @@ export interface AvailabilityHistoryBucket {
   /** Most recently observed `listing_state` in the bucket, if any. */
   lastListingState: string | null;
   /**
+   * Most recently observed `watch_count` in the bucket, if any (loxep-48v —
+   * "is demand building on this listing?").
+   */
+  lastWatchCount: number | null;
+  /**
+   * Most recently observed `quantity_sold` in the bucket, if any (loxep-48v).
+   * This is the RAW, provider-reported CUMULATIVE total-sold-to-date value
+   * (eBay's `estimatedSoldQuantity`), not a per-bucket delta — callers that
+   * want "units moved this bucket" (sell-through velocity) must derive it
+   * with {@link deriveSellThroughDeltas}, which this module also exports.
+   */
+  lastQuantitySold: number | null;
+  /**
    * True when ANY observation in the bucket recorded `availability =
    * "out_of_stock"` or `quantity_available = 0` — i.e. the item was seen
    * unavailable at some point during the bucket, even if it later recovered
@@ -245,7 +277,7 @@ export interface AvailabilityHistoryBucket {
   wentUnavailable: boolean;
 }
 
-/** Time-bucketed availability/quantity series for one item. */
+/** Time-bucketed availability/quantity/demand series for one item. */
 export async function availabilityHistory(
   db: LoxepDb,
   options: AvailabilityHistoryOptions,
@@ -257,6 +289,8 @@ export async function availabilityHistory(
         ${bucketExpression(bucketSeconds)} as bucket_start,
         (array_agg(quantity_available order by observed_at desc) filter (where quantity_available is not null))[1] as last_quantity_available,
         (array_agg(listing_state order by observed_at desc) filter (where listing_state is not null))[1] as last_listing_state,
+        (array_agg(watch_count order by observed_at desc) filter (where watch_count is not null))[1] as last_watch_count,
+        (array_agg(quantity_sold order by observed_at desc) filter (where quantity_sold is not null))[1] as last_quantity_sold,
         bool_or(
           availability = ${textLiteral(AVAILABILITY_OUT_OF_STOCK)}
           or quantity_available = 0
@@ -271,8 +305,73 @@ export async function availabilityHistory(
     bucketStart: toDate(row["bucket_start"]),
     lastQuantityAvailable: (row["last_quantity_available"] as number | null) ?? null,
     lastListingState: (row["last_listing_state"] as string | null) ?? null,
+    lastWatchCount:
+      row["last_watch_count"] === null ? null : Number(row["last_watch_count"]),
+    lastQuantitySold:
+      row["last_quantity_sold"] === null ? null : Number(row["last_quantity_sold"]),
     wentUnavailable: Boolean(row["went_unavailable"]),
   }));
+}
+
+/* ------------------------------------------------------------------------ */
+/* deriveSellThroughDeltas                                                  */
+/* ------------------------------------------------------------------------ */
+
+export interface SellThroughBucket {
+  bucketStart: Date;
+  /** Raw cumulative `quantity_sold` reading for this bucket; null when unknown. */
+  lastQuantitySold: number | null;
+}
+
+export interface SellThroughDeltaPoint {
+  bucketStart: Date;
+  /**
+   * Units sold DURING this bucket — the delta from the previous KNOWN
+   * cumulative reading. Null (not zero) when no honest delta can be
+   * computed for this bucket:
+   *
+   * - this bucket's own `lastQuantitySold` is unknown (null);
+   * - it is the first known reading in the series, so there is no prior
+   *   baseline to subtract; or
+   * - the cumulative counter went DOWN from the previous known reading (a
+   *   relist or provider correction "reset") — the delta is never rendered
+   *   as negative. The lower reading becomes the new baseline going
+   *   forward, so a genuine post-reset sale still produces a correct delta
+   *   on the NEXT bucket.
+   */
+  unitsSold: number | null;
+}
+
+/**
+ * Pure cumulative→delta conversion for `quantity_sold`
+ * (`AvailabilityHistoryBucket.lastQuantitySold`). No I/O; unit-tested on its
+ * own (empty input, a single point, a mid-series reset, and a bucket gap —
+ * see `metrics.test.ts`). `buckets` is assumed already ordered oldest-first,
+ * matching `availabilityHistory`'s `order by bucket_start` — this function
+ * does not re-sort, since unlike {@link deriveRestockSelloutIntervals}'s
+ * event list, bucket order is a query-level guarantee here, not a caller
+ * concern.
+ */
+export function deriveSellThroughDeltas(
+  buckets: readonly SellThroughBucket[],
+): SellThroughDeltaPoint[] {
+  let previousKnown: number | null = null;
+  const points: SellThroughDeltaPoint[] = [];
+  for (const bucket of buckets) {
+    const current = bucket.lastQuantitySold;
+    if (current === null) {
+      points.push({ bucketStart: bucket.bucketStart, unitsSold: null });
+      continue; // unknown reading: leave `previousKnown` untouched.
+    }
+    if (previousKnown === null || current < previousKnown) {
+      // No prior baseline, or a downward "reset" — never a negative delta.
+      points.push({ bucketStart: bucket.bucketStart, unitsSold: null });
+    } else {
+      points.push({ bucketStart: bucket.bucketStart, unitsSold: current - previousKnown });
+    }
+    previousKnown = current;
+  }
+  return points;
 }
 
 /* ------------------------------------------------------------------------ */

@@ -11,6 +11,8 @@ import EventHistoryList from '@/features/market/components/event-history-list';
 import ItemStateCard from '@/features/market/components/item-state-card';
 import { MarketPage } from '@/features/market/components/market-page';
 import PriceHistoryChart from '@/features/market/components/price-history-chart';
+import SellThroughChart from '@/features/market/components/sell-through-chart';
+import WatchCountChart from '@/features/market/components/watch-count-chart';
 import WeBoughtOnePanel from '@/features/market/components/we-bought-one-panel';
 import { marketItemQuery } from '@/features/market/api/queries';
 import { formatDateTime } from '@/lib/format';
@@ -29,8 +31,12 @@ function MarketItemDetail() {
       <MarketPage title='Item' description='Loading item details…'>
         <div className='flex flex-col gap-4'>
           <Skeleton className='h-40 w-full' />
-          <Skeleton className='h-64 w-full' />
-          <Skeleton className='h-64 w-full' />
+          <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+            <Skeleton className='aspect-video w-full' />
+            <Skeleton className='aspect-video w-full' />
+            <Skeleton className='aspect-video w-full' />
+            <Skeleton className='aspect-video w-full' />
+          </div>
         </div>
       </MarketPage>
     );
@@ -66,6 +72,8 @@ function MarketItemDetail() {
         <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
           <PriceHistoryChart marketplaceItemId={item.id} />
           <AvailabilityTimeline marketplaceItemId={item.id} />
+          <WatchCountChart marketplaceItemId={item.id} />
+          <SellThroughChart marketplaceItemId={item.id} />
         </div>
         <EventHistoryList marketplaceItemId={item.id} />
       </div>
