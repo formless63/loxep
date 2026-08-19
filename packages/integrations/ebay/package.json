@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "ebay-api": "10.0.0",
+    "ebay-api": "10.0.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

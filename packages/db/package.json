@@ -15,7 +15,7 @@
     "generate:auth": "better-auth generate --config src/auth.ts --output src/schema/auth.ts --yes"
   },
   "dependencies": {
-    "better-auth": "1.6.26",
+    "better-auth": "1.6.29",
     "drizzle-orm": "0.45.2",
     "pg": "8.23.0"
   },
