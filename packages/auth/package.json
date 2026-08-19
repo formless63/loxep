@@ -13,7 +13,7 @@
   "dependencies": {
     "@loxep/config": "workspace:*",
     "@loxep/db": "workspace:*",
-    "better-auth": "1.6.26",
+    "better-auth": "1.6.29",
     "nodemailer": "9.0.5"
   },
   "devDependencies": {
