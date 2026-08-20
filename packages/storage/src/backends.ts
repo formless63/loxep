@@ -108,6 +108,27 @@ export interface StorageBackendsService {
    * decrypted only inside this call.
    */
   resolveDriver(backendId: string): Promise<StorageDriver>;
+  /**
+   * Replaces an `s3` backend's stored credentials in place (loxep-4wa).
+   *
+   * Rotation had no verb at all, and the register-new/set-default/
+   * disable-old cutover an operator could otherwise assemble does NOT
+   * retire the old key: {@link resolveDriver} deliberately still works on
+   * disabled backends, so a rotated-out credential stayed live and
+   * resolvable indefinitely. This writes a NEW VERSION of the same logical
+   * secret through the secrets service, so the backend id, every
+   * `media_objects.storage_backend_id` pointing at it, and any in-flight
+   * migration all keep working while the old key stops being used.
+   *
+   * Refuses a `local` backend (nothing to rotate) and an `s3` backend with
+   * no existing credential secret (that is a broken registration, not a
+   * rotation — re-register instead).
+   */
+  rotateCredentials(
+    backendId: string,
+    credentials: { accessKeyId: string; secretAccessKey: string },
+    options?: { actorUserId?: string | null; requestId?: string | null },
+  ): Promise<void>;
 }
 
 /** Logical secret key convention for a backend's S3 credentials. */
@@ -295,6 +316,29 @@ export function createStorageBackendsService(options: {
     );
   }
 
+  /** See the interface doc: rotation in place, so nothing repoints (loxep-4wa). */
+  async function rotateCredentials(
+    backendId: string,
+    credentials: { accessKeyId: string; secretAccessKey: string },
+    options: { actorUserId?: string | null; requestId?: string | null } = {},
+  ): Promise<void> {
+    const row = await getBackend(backendId);
+    if (row.driver !== "s3") {
+      throw new StorageBackendError(
+        `storage backend "${backendId}" is a ${row.driver} backend and has no credentials to rotate`,
+      );
+    }
+    if (row.secretId === null) {
+      throw new StorageBackendError(
+        `s3 backend "${backendId}" has no credentials secret to rotate — re-register it instead`,
+      );
+    }
+    await secrets.rotateSecret(backendSecretKey(backendId), credentials, {
+      actorUserId: options.actorUserId ?? null,
+      requestId: options.requestId ?? null,
+    });
+  }
+
   return {
     registerBackend,
     listBackends,
@@ -304,5 +348,6 @@ export function createStorageBackendsService(options: {
     setDefaultBackend,
     getDefaultBackend,
     resolveDriver,
+    rotateCredentials,
   };
 }

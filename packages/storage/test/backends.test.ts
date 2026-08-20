@@ -11,6 +11,7 @@ import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CreateBucketCommand, S3Client } from "@aws-sdk/client-s3";
 import { closeDb, createDb, runMigrations } from "@loxep/db";
+import { createSecretsService } from "@loxep/domain";
 import type { DbHandle } from "@loxep/db";
 import {
   MediaObjectNotFoundError,
@@ -224,6 +225,57 @@ describe("storage backends + media services", () => {
     await expect(
       media.upload({ backendId: disabled.id, data: Buffer.from("x") }),
     ).rejects.toThrow(/disabled/);
+  });
+
+  describe("rotateCredentials (loxep-4wa)", () => {
+    it("replaces an s3 backend's stored credentials in place, keeping its id", async () => {
+      const backend = await backends.registerBackend({
+        name: `rotatable ${randomUUID().slice(0, 8)}`,
+        driver: "s3",
+        config: {
+          endpoint: "https://s3.example.test",
+          region: "us-east-1",
+          bucket: "loxep-rotate-test",
+        },
+        credentials: { accessKeyId: "AKIA_OLD", secretAccessKey: "old-secret" },
+        createdByUserId: actorId,
+      });
+
+      await backends.rotateCredentials(
+        backend.id,
+        { accessKeyId: "AKIA_NEW", secretAccessKey: "new-secret" },
+        { actorUserId: actorId },
+      );
+
+      // Same backend row, same secret pointer — only the payload version
+      // moved, which is what keeps every media_objects row and any
+      // in-flight migration pointing at a backend that still works.
+      const after = await backends.getBackend(backend.id);
+      expect(after.id).toBe(backend.id);
+      expect(after.secretId).toBe(backend.secretId);
+
+      const secrets = createSecretsService({
+        db: handle.db,
+        keyring: testKeyring(),
+      });
+      const { payload } = await secrets.getSecretPayload(
+        backendSecretKey(backend.id),
+        "s3_credentials",
+      );
+      expect(payload).toMatchObject({
+        accessKeyId: "AKIA_NEW",
+        secretAccessKey: "new-secret",
+      });
+    });
+
+    it("refuses a local backend — there is nothing to rotate", async () => {
+      await expect(
+        backends.rotateCredentials(localBackendId, {
+          accessKeyId: "AKIA",
+          secretAccessKey: "s",
+        }),
+      ).rejects.toThrow(/has no credentials to rotate/);
+    });
   });
 
   describe.runIf(s3Available)("s3 backend with encrypted credentials", () => {
