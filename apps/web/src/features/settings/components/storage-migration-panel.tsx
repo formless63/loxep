@@ -25,8 +25,10 @@ import { Icons } from '@/components/icons';
 import { formatDateTime, formatQuantity } from '@/lib/format';
 import {
   storageBackendOptionsQuery,
+  storageMigrationsQuery,
   storageMigrationStatusQuery
 } from '@/features/settings/api/queries';
+import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import { STORAGE_DRIVER_LABELS } from '@/features/settings/constants';
 import type { StorageDriverFamily } from '@loxep/storage';
 import {
@@ -67,6 +69,7 @@ function StartMigrationDialog({
   onStarted: (migrationId: string) => void;
 }) {
   const { data: backends } = useQuery({ ...storageBackendOptionsQuery, enabled: open });
+  const queryClient = useQueryClient();
   const [sourceBackendId, setSourceBackendId] = React.useState<string | undefined>(undefined);
   const [destinationBackendId, setDestinationBackendId] = React.useState<string | undefined>(
     undefined
@@ -81,6 +84,7 @@ function StartMigrationDialog({
     },
     onSuccess: (result) => {
       toast.success('Migration started');
+      void queryClient.invalidateQueries({ queryKey: storageMigrationsQuery.queryKey });
       onStarted(result.id);
       onOpenChange(false);
     },
@@ -285,6 +289,80 @@ function MigrationStatusCard({ migrationId }: { migrationId: string }) {
 }
 
 /**
+ * Past and running migrations, newest first — `StorageMigrationService.listMigrations`
+ * (added this session precisely so this panel could survive a reload,
+ * loxep-4wa) via `fetchStorageMigrations`. Selecting a row loads its live
+ * progress below through the existing `MigrationStatusCard`.
+ */
+function MigrationHistoryList({
+  selectedId,
+  onSelect
+}: {
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const { data: backends } = useQuery(storageBackendOptionsQuery);
+  const { data, isPending, isError, error, refetch } = useQuery(storageMigrationsQuery);
+
+  if (isPending) {
+    return <p className='text-muted-foreground text-sm'>Loading migration history…</p>;
+  }
+
+  if (isError) {
+    return (
+      <QueryErrorAlert
+        error={error}
+        title='Could not load migration history'
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <Alert>
+        <Icons.info />
+        <AlertTitle>No migrations yet</AlertTitle>
+        <AlertDescription>
+          Start one above. Every migration this installation runs is listed here, newest first, so a
+          page reload never loses track of one still in flight.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  return (
+    <div className='flex flex-col gap-1'>
+      {data.map((migration) => (
+        <button
+          key={migration.id}
+          type='button'
+          onClick={() => onSelect(migration.id)}
+          className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground ${
+            migration.id === selectedId ? 'border-primary bg-accent/50' : 'border-border'
+          }`}
+        >
+          <span className='flex items-center gap-2'>
+            {backendLabel(backends, migration.sourceBackendId)}
+            <Icons.arrowRight className='size-3.5' />
+            {backendLabel(backends, migration.destinationBackendId)}
+          </span>
+          <span className='flex items-center gap-2'>
+            <span className='text-muted-foreground text-xs tabular-nums'>
+              {formatQuantity(migration.counts.done)}/{formatQuantity(migration.counts.total)} done
+              · {formatDateTime(migration.createdAt)}
+            </span>
+            <Badge variant={migrationStatusTone(migration.status)}>
+              {migration.status.replaceAll('_', ' ')}
+            </Badge>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
  * `StorageMigrationService` (loxep-7fs, A15) — a complete, tested, resumable
  * copy→verify→cutover→cleanup workflow with zero importers before this
  * pass, and this exact spot was a placeholder Alert promising "a migration
@@ -292,17 +370,28 @@ function MigrationStatusCard({ migrationId }: { migrationId: string }) {
  * default silently splits the corpus without this — the old backend can
  * never be retired otherwise (ADR-0012, ADR-0014).
  *
- * LIMITATION (see this bead's report): `StorageMigrationService` exposes no
- * `listMigrations` read — only `getMigrationStatus(id)`. This panel tracks
- * whatever migration it just started (or was told about) in local state; a
- * page reload loses track of an in-flight migration's id (the migration
- * itself, and its worker jobs, keep running regardless — only this UI's
- * pointer to it is lost). Adding a list read is a `packages/storage` change
- * outside this pass's fence.
+ * `listMigrations` (loxep-rh0) lets `MigrationHistoryList` above read every
+ * past/running migration from the server, so a page reload no longer loses
+ * track of one still in flight — only the ACTIVE selection (which row is
+ * expanded below) is local UI state, not the migration list itself.
  */
 export default function StorageMigrationPanel() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [migrationId, setMigrationId] = React.useState<string | null>(null);
+  const { data: migrations } = useQuery(storageMigrationsQuery);
+
+  // Default the selection to the newest running migration (or, failing
+  // that, the newest migration at all) the first time the list loads —
+  // never overrides an explicit user selection afterward.
+  const defaultedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (defaultedRef.current || migrations === undefined) return;
+    defaultedRef.current = true;
+    if (migrationId !== null) return;
+    const running = migrations.find((migration) => migration.status === 'running');
+    const fallback = running ?? migrations[0];
+    if (fallback) setMigrationId(fallback.id);
+  }, [migrations, migrationId]);
 
   return (
     <div className='flex flex-col gap-4'>
@@ -320,18 +409,9 @@ export default function StorageMigrationPanel() {
             Migrate objects
           </Button>
         </CardHeader>
-        {migrationId === null && (
-          <CardContent>
-            <Alert>
-              <Icons.info />
-              <AlertTitle>No migration tracked right now</AlertTitle>
-              <AlertDescription>
-                Start one above. This panel shows the live progress of whichever migration you just
-                started, in this browser session.
-              </AlertDescription>
-            </Alert>
-          </CardContent>
-        )}
+        <CardContent>
+          <MigrationHistoryList selectedId={migrationId} onSelect={setMigrationId} />
+        </CardContent>
       </Card>
 
       {migrationId !== null && <MigrationStatusCard migrationId={migrationId} />}

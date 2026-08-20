@@ -263,6 +263,17 @@ export interface UnbilledWorkLineDto {
   /** Decimal string — the unit price, `null` when the fact has nothing to compute one from (see `@loxep/work`'s honest-gap rule). */
   unitCost: string | null;
   currency: string | null;
+  /**
+   * `time_entries.minutes` — the raw worked duration, `null` for a
+   * `project_material_use` row (loxep-rh0). Kept alongside `quantity`
+   * (which is `billable_minutes / 60`, already write-down-adjusted) so a
+   * caller can render the write-down gap the schema deliberately preserves
+   * — `minutes` vs `billable_minutes` — instead of it collapsing silently
+   * at this DTO boundary the way it did before this field existed.
+   */
+  workedMinutes: number | null;
+  /** `time_entries.billable_minutes` — what `quantity` above is actually derived from. `null` for a `project_material_use` row. */
+  billedMinutes: number | null;
 }
 
 /**
@@ -299,7 +310,9 @@ export const listUnbilledWorkForBilling = createServerFn({ method: 'GET' })
         description: entry.description ?? `${entry.workedByLabel} — ${entry.workedOn}`,
         quantity: (entry.billableMinutes / 60).toFixed(6),
         unitCost: entry.billRateAmount,
-        currency: entry.currency
+        currency: entry.currency,
+        workedMinutes: entry.minutes,
+        billedMinutes: entry.billableMinutes
       })),
       ...materials.map((use): UnbilledWorkLineDto => ({
         sourceFactType: 'project_material_use',
@@ -307,7 +320,9 @@ export const listUnbilledWorkForBilling = createServerFn({ method: 'GET' })
         description: use.description,
         quantity: use.quantity,
         unitCost: use.unitChargeAmount,
-        currency: use.currency
+        currency: use.currency,
+        workedMinutes: null,
+        billedMinutes: null
       }))
     ];
   });

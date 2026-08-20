@@ -25,6 +25,7 @@ import { formatDate, formatDateTime, formatMoney, formatQuantity, formatScore } 
 import { inventoryItemQuery } from '@/features/inventory/api/queries';
 import InventoryItemListingsPanel from '@/features/commerce/components/inventory-item-listings-panel';
 import ImageGallery from '@/features/inventory/components/image-gallery';
+import ItemAllocationsTable from '@/features/inventory/components/item-allocations-table';
 import ItemEnrichmentPanel from '@/features/inventory/components/item-enrichment-panel';
 import SpecificsEditor from '@/features/inventory/components/specifics-editor';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
@@ -274,6 +275,18 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className='text-base'>Allocations</CardTitle>
+          <p className='text-muted-foreground text-sm'>
+            Every reservation against this item — the rows behind &quot;available to sell&quot;.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <ItemAllocationsTable allocations={data.allocations} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

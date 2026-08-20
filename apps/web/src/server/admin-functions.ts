@@ -1346,6 +1346,97 @@ export const testStorageBackend = createServerFn({ method: 'POST' })
   });
 
 // ---------------------------------------------------------------------------
+// Pending provider operations (loxep-rh0) — the `provider_operations`
+// outbound idempotency ledger's "needs a decision" worklist.
+//
+// `@loxep/infrastructure/operations.ts` writes a `pending` row before every
+// non-idempotent provider create (a zone, a token, a mailbox, a mail-domain
+// registration) so a worker crash mid-call can never be mistaken for
+// success. `ProviderOperationsLedger.listPending()` shipped with zero web
+// references — a stuck `pending` row was invisible, and per that module's
+// own doc it means "we may or may not have created something at the
+// provider," resolved only by an operator reading the provider back, never
+// by a blind retry. This surface makes the stuck rows visible.
+//
+// Read-only, deliberately: the ledger's only write verbs are `succeed`/`fail`,
+// and both require a REDACTED `responseSummary` a read-back reconciler
+// produces from the provider's own state — never a token value, per the
+// module's own highest-risk-line warning. There is no `resolve`/`abandon`
+// verb an admin click could safely drive, so this worklist has no actions.
+//
+// Home: `/settings/diagnostics` — already the "what is pending, what
+// failed, and why, across every LOXEP_MODE" surface for `graphile_worker`'s
+// dead letters; a stuck provider-operation row is the same shape of problem
+// one layer out (a provider call, not a job), so it joins that page rather
+// than opening a new nav entry. `provider_operations` carries no
+// `connection_id` column (the schema's own note: "nothing about this table
+// is infrastructure-specific... promoting it to shared foundation later is
+// a Domain Boundaries edit") — the closest available context is `run_id`
+// (a `reconcile_runs` row, itself keyed by a deliberately-not-FK'd
+// `subject_type`/`subject_id` pair) plus the idempotency key itself, which
+// embeds the operation's natural subject (a domain name, a
+// `hostingTargetId:name` pair, …) by construction.
+// ---------------------------------------------------------------------------
+
+export interface PendingProviderOperationDto {
+  idempotencyKey: string;
+  provider: string;
+  operation: string;
+  attempts: number;
+  startedAt: string;
+  /** `reconcile_runs.id` this operation ran under, when one exists. */
+  runId: string | null;
+  /** Best-effort context from the linked run — `reconcile_runs` deliberately does not FK `subject_id`, so this is read-only context, not a resolved reference. */
+  runSubjectType: string | null;
+  runSubjectId: string | null;
+}
+
+/**
+ * Every operation still `pending` — `ProviderOperationsLedger.listPending()`
+ * — newest-attempt-first is not meaningful here (the ledger keeps no
+ * "last attempted" column beyond `started_at`), so this sorts oldest first:
+ * the row that has been stuck longest is the one most likely to need a human.
+ */
+export const fetchPendingProviderOperations = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<PendingProviderOperationDto[]> => {
+    const { requireAdmin, getAdminServices, getProviderOperationsLedger } =
+      await import('@/server/admin');
+    await requireAdmin();
+    const ledger = getProviderOperationsLedger();
+    const rows = await ledger.listPending();
+
+    const runIds = [
+      ...new Set(rows.map((row) => row.runId).filter((id): id is string => id !== null))
+    ];
+    const { handle } = getAdminServices();
+    const runs =
+      runIds.length > 0
+        ? await handle.db.query.reconcileRuns.findMany({
+            where: (table, { inArray }) => inArray(table.id, runIds),
+            columns: { id: true, subjectType: true, subjectId: true }
+          })
+        : [];
+    const runById = new Map(runs.map((run) => [run.id, run]));
+
+    return rows
+      .toSorted((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+      .map((row) => {
+        const run = row.runId !== null ? runById.get(row.runId) : undefined;
+        return {
+          idempotencyKey: row.idempotencyKey,
+          provider: row.provider,
+          operation: row.operation,
+          attempts: row.attempts,
+          startedAt: row.startedAt.toISOString(),
+          runId: row.runId,
+          runSubjectType: run?.subjectType ?? null,
+          runSubjectId: run?.subjectId ?? null
+        };
+      });
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Users (loxep-nyl.3) — Better Auth admin API, admin-only including listing
 // ---------------------------------------------------------------------------
 

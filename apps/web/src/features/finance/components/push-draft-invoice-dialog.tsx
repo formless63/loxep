@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select';
 import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
+import { formatDuration } from '@/lib/format';
 import {
   counterpartyBillingSearchQuery,
   draftInvoicePushStatusQuery,
@@ -34,10 +35,20 @@ interface DraftLine {
   description: string;
   quantity: string;
   unitCost: string;
+  /**
+   * On-screen-only metadata from a loaded `time_entry` unbilled-work row —
+   * NEVER submitted (the mutation below maps only description/quantity/
+   * unitCost). Surfaces the write-down gap the schema deliberately
+   * preserves (`minutes` worked vs `billableMinutes` actually billed,
+   * loxep-rh0) instead of it collapsing silently once `quantity` above
+   * already folded it into a single number.
+   */
+  workedMinutes: number | null;
+  billedMinutes: number | null;
 }
 
 function emptyLine(): DraftLine {
-  return { description: '', quantity: '1', unitCost: '' };
+  return { description: '', quantity: '1', unitCost: '', workedMinutes: null, billedMinutes: null };
 }
 
 function linesAreValid(lines: DraftLine[]): boolean {
@@ -137,7 +148,9 @@ export default function PushDraftInvoiceDialog({
         const loaded = rows.map((row): DraftLine => ({
           description: row.description,
           quantity: row.quantity,
-          unitCost: row.unitCost ?? ''
+          unitCost: row.unitCost ?? '',
+          workedMinutes: row.workedMinutes,
+          billedMinutes: row.billedMinutes
         }));
         return [...withoutBlankPlaceholder, ...loaded];
       });
@@ -305,61 +318,72 @@ export default function PushDraftInvoiceDialog({
             </p>
             {lines.map((line, index) => (
               // eslint-disable-next-line react/no-array-index-key
-              <div key={index} className='grid grid-cols-[1fr_5rem_6rem_2rem] items-end gap-2'>
-                <Field>
-                  {index === 0 && <FieldLabel>Description</FieldLabel>}
-                  <Input
-                    placeholder='e.g. Consulting hours'
-                    value={line.description}
-                    onChange={(event) =>
-                      setLines((current) =>
-                        current.map((row, i) =>
-                          i === index ? { ...row, description: event.target.value } : row
+              <React.Fragment key={index}>
+                <div className='grid grid-cols-[1fr_5rem_6rem_2rem] items-end gap-2'>
+                  <Field>
+                    {index === 0 && <FieldLabel>Description</FieldLabel>}
+                    <Input
+                      placeholder='e.g. Consulting hours'
+                      value={line.description}
+                      onChange={(event) =>
+                        setLines((current) =>
+                          current.map((row, i) =>
+                            i === index ? { ...row, description: event.target.value } : row
+                          )
                         )
-                      )
-                    }
-                  />
-                </Field>
-                <Field>
-                  {index === 0 && <FieldLabel>Qty</FieldLabel>}
-                  <Input
-                    inputMode='decimal'
-                    placeholder='1'
-                    value={line.quantity}
-                    onChange={(event) =>
-                      setLines((current) =>
-                        current.map((row, i) =>
-                          i === index ? { ...row, quantity: event.target.value } : row
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    {index === 0 && <FieldLabel>Qty</FieldLabel>}
+                    <Input
+                      inputMode='decimal'
+                      placeholder='1'
+                      value={line.quantity}
+                      onChange={(event) =>
+                        setLines((current) =>
+                          current.map((row, i) =>
+                            i === index ? { ...row, quantity: event.target.value } : row
+                          )
                         )
-                      )
-                    }
-                  />
-                </Field>
-                <Field>
-                  {index === 0 && <FieldLabel>Unit cost</FieldLabel>}
-                  <Input
-                    inputMode='decimal'
-                    placeholder='0.00'
-                    value={line.unitCost}
-                    onChange={(event) =>
-                      setLines((current) =>
-                        current.map((row, i) =>
-                          i === index ? { ...row, unitCost: event.target.value } : row
+                      }
+                    />
+                  </Field>
+                  <Field>
+                    {index === 0 && <FieldLabel>Unit cost</FieldLabel>}
+                    <Input
+                      inputMode='decimal'
+                      placeholder='0.00'
+                      value={line.unitCost}
+                      onChange={(event) =>
+                        setLines((current) =>
+                          current.map((row, i) =>
+                            i === index ? { ...row, unitCost: event.target.value } : row
+                          )
                         )
-                      )
-                    }
-                  />
-                </Field>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='icon'
-                  disabled={lines.length === 1}
-                  onClick={() => setLines((current) => current.filter((_, i) => i !== index))}
-                >
-                  <Icons.trash />
-                </Button>
-              </div>
+                      }
+                    />
+                  </Field>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon'
+                    disabled={lines.length === 1}
+                    onClick={() => setLines((current) => current.filter((_, i) => i !== index))}
+                  >
+                    <Icons.trash />
+                  </Button>
+                </div>
+                {line.workedMinutes !== null && line.billedMinutes !== null && (
+                  <p className='-mt-1 text-xs text-muted-foreground'>
+                    Worked {formatDuration(line.workedMinutes * 60)}, billed{' '}
+                    {formatDuration(line.billedMinutes * 60)}
+                    {line.workedMinutes !== line.billedMinutes && (
+                      <span className='text-warning'> — write-down applied</span>
+                    )}
+                  </p>
+                )}
+              </React.Fragment>
             ))}
           </div>
 

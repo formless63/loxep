@@ -4,6 +4,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/u
 import { SettingsPage } from '@/features/settings/components/settings-page';
 import DiagnosticsStatTiles from '@/features/settings/components/diagnostics/stat-tiles';
 import JobsTable from '@/features/settings/components/diagnostics/jobs-table';
+import PendingOperationsTable from '@/features/settings/components/diagnostics/pending-operations-table';
 
 export const Route = createFileRoute('/settings/diagnostics')({
   component: SettingsDiagnostics
@@ -46,6 +47,19 @@ function SettingsDiagnostics() {
             </CardHeader>
             <CardContent>
               <JobsTable />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Pending provider operations</CardTitle>
+              <CardDescription>
+                Outbound provider calls whose outcome is unconfirmed — a worker crash between the
+                call and recording its result. Read-only: resolving one means reading the provider
+                back, which only a human (or a future read-back reconciler) can do.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PendingOperationsTable />
             </CardContent>
           </Card>
         </div>

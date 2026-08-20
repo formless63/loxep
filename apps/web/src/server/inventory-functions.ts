@@ -242,6 +242,27 @@ export interface ItemMediaDto {
   servingUrl: string;
 }
 
+/**
+ * One `inventory_allocations` row — the rows behind the `availableToSell`
+ * scalar (loxep-rh0). `allocationKind = 'order_line'` rows carry the order
+ * they reserved stock for; `manual_hold` rows carry none — that absence is
+ * exactly what a stale, never-released hold looks like on this list.
+ */
+export interface ItemAllocationDto {
+  id: string;
+  allocationKind: string;
+  status: string;
+  quantity: string;
+  orderLineId: string | null;
+  orderId: string | null;
+  orderExternalNumber: string | null;
+  allocatedAt: string;
+  expiresAt: string | null;
+  fulfilledAt: string | null;
+  releasedAt: string | null;
+  releaseReason: string | null;
+}
+
 export interface InventoryItemDetailDto extends InventoryItemListItemDto {
   lotReference: string | null;
   serialNumber: string | null;
@@ -258,6 +279,8 @@ export interface InventoryItemDetailDto extends InventoryItemListItemDto {
   /** `quantity_on_hand − sum(open reservations)`, read live (not cached). */
   availableToSell: string;
   movements: InventoryMovementDto[];
+  /** `inventory_allocations` for this item, newest first — see `ItemAllocationDto`'s own doc. */
+  allocations: ItemAllocationDto[];
   /** The reverse `/market` wire: the marketplace item(s) this unit traces back to, snapshot-frozen at link time. */
   sourcedFrom: MarketItemLinkDto[];
   /** M3 enrichment (loxep-dgf.3): plain text/Markdown authoring source, never listing HTML. */
@@ -300,6 +323,7 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
       acquisition,
       movementRows,
       linkRows,
+      allocationRows,
       reserved,
       specificsService,
       inventoryMediaService
@@ -323,6 +347,13 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
       handle.db.query.acquisitionOpportunityLinks.findMany({
         where: (table, { eq }) => eq(table.inventoryItemId, data.id),
         orderBy: (table, { desc }) => [desc(table.linkedAt)]
+      }),
+      // The rows behind `availableToSell` (loxep-rh0): every reservation
+      // against this item, not just the `reserved`-status sum. Answers
+      // "which order line, or which manual_hold nobody released".
+      handle.db.query.inventoryAllocations.findMany({
+        where: (table, { eq }) => eq(table.inventoryItemId, data.id),
+        orderBy: (table, { desc }) => [desc(table.allocatedAt)]
       }),
       // `availableToSell` — mirrors `@loxep/inventory/items.ts`'s own query verbatim:
       // on-hand minus the sum of `reserved`-status allocations. A single small
@@ -360,6 +391,36 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
           })
         : [];
     const movementLocationCodeById = new Map(movementLocations.map((row) => [row.id, row.code]));
+
+    // Traverse the `orderLineId` bridge forward: which order reserved this
+    // allocation (loxep-rh0). `order_lines` -> `orders` for the
+    // human-readable external order number.
+    const allocationOrderLineIds = [
+      ...new Set(
+        allocationRows.map((row) => row.orderLineId).filter((id): id is string => id !== null)
+      )
+    ];
+    const allocationOrderLines =
+      allocationOrderLineIds.length > 0
+        ? await handle.db.query.orderLines.findMany({
+            where: (table, { inArray }) => inArray(table.id, allocationOrderLineIds),
+            columns: { id: true, orderId: true }
+          })
+        : [];
+    const allocationOrderIdByLineId = new Map(
+      allocationOrderLines.map((row) => [row.id, row.orderId])
+    );
+    const allocationOrderIds = [...new Set(allocationOrderLines.map((row) => row.orderId))];
+    const allocationOrders =
+      allocationOrderIds.length > 0
+        ? await handle.db.query.orders.findMany({
+            where: (table, { inArray }) => inArray(table.id, allocationOrderIds),
+            columns: { id: true, externalOrderNumber: true }
+          })
+        : [];
+    const allocationOrderNumberById = new Map(
+      allocationOrders.map((row) => [row.id, row.externalOrderNumber])
+    );
 
     const marketItemIds = [
       ...new Set(
@@ -465,6 +526,25 @@ export const fetchInventoryItem = createServerFn({ method: 'GET' })
         occurredAt: iso(row.occurredAt),
         recordedAt: iso(row.recordedAt)
       })),
+      allocations: allocationRows.map((row) => {
+        const orderId = row.orderLineId
+          ? (allocationOrderIdByLineId.get(row.orderLineId) ?? null)
+          : null;
+        return {
+          id: row.id,
+          allocationKind: row.allocationKind,
+          status: row.status,
+          quantity: row.quantity,
+          orderLineId: row.orderLineId,
+          orderId,
+          orderExternalNumber: orderId ? (allocationOrderNumberById.get(orderId) ?? null) : null,
+          allocatedAt: iso(row.allocatedAt),
+          expiresAt: iso(row.expiresAt),
+          fulfilledAt: iso(row.fulfilledAt),
+          releasedAt: iso(row.releasedAt),
+          releaseReason: row.releaseReason
+        };
+      }),
       sourcedFrom: linkRows.map((row) => ({
         id: row.id,
         linkKind: row.linkKind,

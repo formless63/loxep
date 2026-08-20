@@ -25,6 +25,7 @@ import { fetchEbayCallbackUrl, fetchEbayKeysetStatus } from '@/server/ebay-oauth
 import { fetchEtsyCallbackUrl, fetchEtsyKeysetStatus } from '@/server/etsy-oauth';
 import {
   fetchStorageBackendOptions,
+  fetchStorageMigrations,
   fetchStorageMigrationStatus
 } from '@/server/storage-migration-functions';
 
@@ -106,6 +107,19 @@ export const storageMigrationStatusQuery = (id: string) =>
     queryKey: ['settings', 'storage-migration', id],
     queryFn: () => fetchStorageMigrationStatus({ data: { id } })
   });
+
+/**
+ * Every migration this installation has started, newest first (loxep-rh0) —
+ * lets the `/settings/storage` panel survive a reload instead of only
+ * tracking whichever migration it started in local React state. Polled
+ * while anything is still `running`.
+ */
+export const storageMigrationsQuery = queryOptions({
+  queryKey: ['settings', 'storage-migrations'],
+  queryFn: () => fetchStorageMigrations({ data: {} }),
+  refetchInterval: (query) =>
+    (query.state.data ?? []).some((migration) => migration.status === 'running') ? 5000 : false
+});
 
 export const usersQuery = queryOptions({
   queryKey: ['settings', 'users'],

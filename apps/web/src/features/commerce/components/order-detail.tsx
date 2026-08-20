@@ -45,6 +45,7 @@ import {
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
 import OrderAttributionDialog from '@/features/commerce/components/order-attribution-dialog';
 import ShipmentsPanel from '@/features/inventory/components/shipments-panel';
+import { allocationStatusLabel } from '@/features/inventory/constants';
 import type {
   OrderDetailDto,
   OrderFeeDto,
@@ -91,6 +92,37 @@ function LineJoins({ line }: { line: OrderLineDto }) {
           </Link>
         ) : (
           <span className='text-muted-foreground'>not linked</span>
+        )}
+      </span>
+      {/*
+        The `order_line_id` bridge traversed backward (loxep-rh0): which
+        physical inventory unit(s) this line's reservation(s) point at.
+        Empty means nothing has ever been allocated against this line — the
+        unmatched-depletion backlog, not a broken link.
+      */}
+      <span>
+        Shipped from:{' '}
+        {line.allocations.length === 0 ? (
+          <span className='text-muted-foreground'>no allocation yet</span>
+        ) : (
+          <span className='inline-flex flex-wrap items-center gap-1'>
+            {line.allocations.map((allocation, index) => (
+              <span key={allocation.id}>
+                {index > 0 && ', '}
+                <Link
+                  to='/inventory/stock/$id'
+                  params={{ id: allocation.inventoryItemId }}
+                  className='hover:underline'
+                >
+                  {allocation.itemCode}
+                </Link>{' '}
+                <span className='text-muted-foreground'>
+                  ({allocationStatusLabel(allocation.status)}, qty{' '}
+                  {formatQuantity(Number(allocation.quantity))})
+                </span>
+              </span>
+            ))}
+          </span>
         )}
       </span>
     </div>

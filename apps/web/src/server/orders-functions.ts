@@ -165,6 +165,18 @@ export interface OrderLineDto {
   channelListingCode: string | null;
   marketplaceItemId: string | null;
   marketplaceItemTitle: string | null;
+  /** The `order_line_id` bridge traversed backward (loxep-rh0): which physical unit(s) this line reserved/shipped from, per `inventory_allocations`. Empty means nothing has ever been allocated against this line — the unmatched-depletion backlog `@loxep/inventory/allocations.ts` documents. */
+  allocations: OrderLineAllocationDto[];
+}
+
+export interface OrderLineAllocationDto {
+  id: string;
+  status: string;
+  quantity: string;
+  inventoryItemId: string;
+  itemCode: string;
+  itemLabel: string;
+  fulfilledAt: string | null;
 }
 
 export interface OrderFeeDto {
@@ -350,6 +362,7 @@ export const fetchOrder = createServerFn({ method: 'GET' })
         linkRows.map((link) => link.providerObjectId).filter((id): id is string => id !== null)
       )
     ];
+    const lineIds = lineRows.map((line) => line.id);
 
     const [
       catalogItemRows,
@@ -359,7 +372,10 @@ export const fetchOrder = createServerFn({ method: 'GET' })
       fulfillmentLineRows,
       sourceEventRows,
       providerObjectRows,
-      economicEntityRow
+      economicEntityRow,
+      // The `order_line_id` bridge traversed backward (loxep-rh0): which
+      // physical inventory item(s) each line's allocation(s) point at.
+      allocationRows
     ] = await Promise.all([
       catalogItemIds.length > 0
         ? handle.db.query.catalogItems.findMany({
@@ -409,12 +425,38 @@ export const fetchOrder = createServerFn({ method: 'GET' })
             where: (table, { eq }) => eq(table.id, order.economicEntityId as string),
             columns: { id: true, name: true }
           })
-        : undefined
+        : undefined,
+      lineIds.length > 0
+        ? handle.db.query.inventoryAllocations.findMany({
+            where: (table, { inArray }) => inArray(table.orderLineId, lineIds),
+            orderBy: (table, { desc }) => [desc(table.allocatedAt)]
+          })
+        : []
     ]);
 
     const catalogItemById = new Map(catalogItemRows.map((row) => [row.id, row]));
     const channelListingById = new Map(channelListingRows.map((row) => [row.id, row]));
     const marketplaceItemById = new Map(marketplaceItemRows.map((row) => [row.id, row]));
+
+    const allocationInventoryItemIds = [
+      ...new Set(allocationRows.map((row) => row.inventoryItemId))
+    ];
+    const allocationInventoryItems =
+      allocationInventoryItemIds.length > 0
+        ? await handle.db.query.inventoryItems.findMany({
+            where: (table, { inArray }) => inArray(table.id, allocationInventoryItemIds),
+            columns: { id: true, itemCode: true, label: true }
+          })
+        : [];
+    const allocationInventoryItemById = new Map(
+      allocationInventoryItems.map((row) => [row.id, row])
+    );
+    const allocationsByOrderLineId = groupBy(
+      allocationRows.filter(
+        (row): row is typeof row & { orderLineId: string } => row.orderLineId !== null
+      ),
+      (row) => row.orderLineId
+    );
     const refundLinesByRefundId = groupBy(refundLineRows, (row) => row.orderRefundId);
     const fulfillmentLinesByFulfillmentId = groupBy(
       fulfillmentLineRows,
@@ -451,7 +493,19 @@ export const fetchOrder = createServerFn({ method: 'GET' })
         channelListingId: line.channelListingId,
         channelListingCode: channelListing?.listingCode ?? null,
         marketplaceItemId: line.marketplaceItemId,
-        marketplaceItemTitle: marketplaceItem?.title ?? null
+        marketplaceItemTitle: marketplaceItem?.title ?? null,
+        allocations: (allocationsByOrderLineId.get(line.id) ?? []).map((allocation) => {
+          const inventoryItem = allocationInventoryItemById.get(allocation.inventoryItemId);
+          return {
+            id: allocation.id,
+            status: allocation.status,
+            quantity: allocation.quantity,
+            inventoryItemId: allocation.inventoryItemId,
+            itemCode: inventoryItem?.itemCode ?? allocation.inventoryItemId,
+            itemLabel: inventoryItem?.label ?? '',
+            fulfilledAt: iso(allocation.fulfilledAt)
+          };
+        })
       };
     });
 

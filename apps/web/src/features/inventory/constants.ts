@@ -514,3 +514,52 @@ const ITEM_MEDIA_PURPOSE_LABELS = {
 export function itemMediaPurposeLabel(purpose: string): string {
   return ITEM_MEDIA_PURPOSE_LABELS[purpose as ItemMediaPurpose] ?? purpose;
 }
+
+/**
+ * `inventory_allocations.allocation_kind` — CLOSED, `CHECK`ed
+ * (`inventory_allocations_kind_check`, `packages/db/src/schema/inventory.ts`).
+ * Copied verbatim per this file's own module-doc convention.
+ */
+export type AllocationKind = 'order_line' | 'manual_hold' | 'transfer' | 'project';
+
+const ALLOCATION_KIND_LABELS = {
+  order_line: 'Order line',
+  manual_hold: 'Manual hold',
+  transfer: 'Transfer',
+  project: 'Project'
+} satisfies Record<AllocationKind, string>;
+
+export function allocationKindLabel(kind: string): string {
+  return ALLOCATION_KIND_LABELS[kind as AllocationKind] ?? kind;
+}
+
+/**
+ * `inventory_allocations.status` — CLOSED, `CHECK`ed
+ * (`inventory_allocations_status_check`).
+ */
+export type AllocationStatus = 'reserved' | 'fulfilled' | 'released' | 'cancelled' | 'expired';
+
+const ALLOCATION_STATUS_LABELS = {
+  reserved: 'Reserved',
+  fulfilled: 'Fulfilled',
+  released: 'Released',
+  cancelled: 'Cancelled',
+  expired: 'Expired'
+} satisfies Record<AllocationStatus, string>;
+
+export function allocationStatusLabel(status: string): string {
+  return ALLOCATION_STATUS_LABELS[status as AllocationStatus] ?? status;
+}
+
+const ALLOCATION_STATUS_TONE = {
+  reserved: 'warning',
+  fulfilled: 'success',
+  released: 'outline',
+  cancelled: 'outline',
+  expired: 'destructive'
+} as const satisfies Record<AllocationStatus, BadgeVariant>;
+
+/** `reserved` is `warning`, not neutral: it is stock the item's own on-hand count no longer covers as available. `expired` is `destructive`: a stale `manual_hold` past `expires_at` that nobody released — the exact gap the audit named. */
+export function allocationStatusTone(status: string): BadgeVariant {
+  return ALLOCATION_STATUS_TONE[status as AllocationStatus] ?? 'outline';
+}

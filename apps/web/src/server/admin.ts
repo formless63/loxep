@@ -95,6 +95,7 @@ import {
   createMailboxAdminService,
   createMailboxTemplatesService,
   createManagedDomainsService,
+  createProviderOperationsLedger,
   createProvisioningTemplatesService,
   createProxyResourcesService,
   createTransactionalEnqueue,
@@ -109,6 +110,7 @@ import {
   type MailboxAdminService,
   type MailboxTemplatesService,
   type ManagedDomainsService,
+  type ProviderOperationsLedger,
   type ProvisioningTemplatesService,
   type ProxyResourcesService,
   type TransactionalEnqueue
@@ -345,6 +347,15 @@ interface AdminRegistry {
    * adapter work lands.
    */
   dnsProviderTokens: DnsProviderTokensService;
+  /**
+   * The outbound idempotency ledger (`provider_operations`, loxep-rh0):
+   * `listPending()` had zero web references before this pass — a `pending`
+   * row means "we may or may not have created something at the provider",
+   * resolved today only by reading the ledger, never by a blind retry (see
+   * `@loxep/infrastructure/operations.ts`'s own module doc). Pure `{ db }`,
+   * no enqueue dependency, so it is built eagerly like `drift` above.
+   */
+  providerOperations: ProviderOperationsLedger;
   /** Transactional `graphile_worker.add_job`, for ad hoc "sync now" actions. */
   infrastructureEnqueue: TransactionalEnqueue;
   /**
@@ -620,6 +631,7 @@ function buildRegistry(): AdminRegistry {
     }),
     mailboxTemplates: createMailboxTemplatesService({ db: handle.db }),
     drift: createDriftService({ db: handle.db }),
+    providerOperations: createProviderOperationsLedger({ db: handle.db }),
     dnsProviderTokens: createDnsProviderTokensService({
       db: handle.db,
       provider: buildDnsTokenProviderPort(),
@@ -852,6 +864,11 @@ export function getMailboxTemplatesService(): MailboxTemplatesService {
 /** Persisted DNS drift findings — the desired-vs-observed diff panel. */
 export function getDriftService(): DriftService {
   return getAdminServices().drift;
+}
+
+/** The `provider_operations` outbound idempotency ledger — `/settings/diagnostics`'s pending-operations worklist (loxep-rh0). Read-only from this registry: `succeed`/`fail` require a redacted response summary a read-back reconciler produces, not something an admin UI can fabricate. */
+export function getProviderOperationsLedger(): ProviderOperationsLedger {
+  return getAdminServices().providerOperations;
 }
 
 /** Minted per-host DNS tokens: mint (reveal-once), roll, and zone-scope intent. */

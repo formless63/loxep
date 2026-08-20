@@ -94,6 +94,37 @@ export const startStorageMigration = createServerFn({ method: 'POST' })
     return { id: migration.id };
   });
 
+/**
+ * Every migration this installation has started, newest first — wires
+ * `StorageMigrationService.listMigrations` (added this session precisely so
+ * the panel could survive a reload, loxep-4wa) into the panel. Optionally
+ * narrowed to one status (`running` while polling for something to resume).
+ */
+export const fetchStorageMigrations = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ status: z.string().trim().min(1).optional() }))
+  .handler(async ({ data }): Promise<StorageMigrationDto[]> => {
+    const { requireAdmin, getStorageMigrationService } = await import('@/server/admin');
+    await requireAdmin();
+    const migrations = await getStorageMigrationService();
+    const rows = await migrations.listMigrations({ status: data.status, limit: 50 });
+    const withCounts = await Promise.all(
+      rows.map(async (row) => {
+        const { counts } = await migrations.getMigrationStatus(row.id);
+        return {
+          id: row.id,
+          sourceBackendId: row.sourceBackendId,
+          destinationBackendId: row.destinationBackendId,
+          status: row.status,
+          startedAt: iso(row.startedAt),
+          completedAt: iso(row.completedAt),
+          createdAt: iso(row.createdAt),
+          counts
+        };
+      })
+    );
+    return withCounts;
+  });
+
 export const resumeStorageMigration = createServerFn({ method: 'POST' })
   .inputValidator(z.strictObject({ id: z.uuid() }))
   .handler(async ({ data }): Promise<{ enqueued: number }> => {
