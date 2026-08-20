@@ -132,16 +132,17 @@ async function liveRecordsFor(domainId: string): Promise<RecordRow[]> {
   );
 }
 
-async function runsFor(
-  domainId: string,
-): Promise<Array<{ mode: string; trigger: string; status: string; id: string }>> {
-  const rows = await handle.pool.query<{
-    id: string;
-    mode: string;
-    trigger: string;
-    status: string;
-  }>(
-    `select id, mode, trigger, status from reconcile_runs
+interface RunRow {
+  id: string;
+  kind: string;
+  mode: string;
+  trigger: string;
+  status: string;
+}
+
+async function runsFor(domainId: string): Promise<RunRow[]> {
+  const rows = await handle.pool.query<RunRow>(
+    `select id, kind, mode, trigger, status from reconcile_runs
       where subject_type = 'domain' and subject_id = $1 order by started_at`,
     [domainId],
   );
@@ -168,15 +169,22 @@ async function giveZone(domainId: string): Promise<string> {
   return externalZoneId;
 }
 
-/** The newest run for a domain, once one more than `before` exists. */
+/**
+ * The newest run of a given `kind` for a domain, once one more than `before`
+ * exists — filtered by `kind` because `materializeDomainRecords` now writes
+ * its OWN `materialize-records` run synchronously (loxep-ejs), so a caller
+ * waiting for the chained `sync-records` run must not be satisfied by that
+ * materialize run appearing first.
+ */
 async function waitForRun(
   domainId: string,
   before: number,
   label: string,
-): Promise<{ id: string; mode: string; trigger: string; status: string }> {
+  kind: string,
+): Promise<RunRow> {
   return waitFor(
     async () => {
-      const runs = await runsFor(domainId);
+      const runs = (await runsFor(domainId)).filter((run) => run.kind === kind);
       if (runs.length <= before) return undefined;
       const latest = runs[runs.length - 1];
       // `running` means the handler is mid-flight; wait for a terminal one.
@@ -289,10 +297,26 @@ describe("infrastructure.materialize-records", () => {
     // materializer refuses to emit one until an owner reviews it.
     expect(records.some((row) => row.owner === "caa")).toBe(false);
 
-    // The domain has no provider zone yet (only the template engine ever sets
-    // one), so no sync was chained — and, crucially, no job was left to burn
-    // a retry budget against a run that cannot start.
-    expect(await runsFor(domain.id)).toEqual([]);
+    // The materialize itself now records its own run (loxep-ejs). Its
+    // `reconcile_runs`/`reconcile_run_steps` writes are separate autocommit
+    // statements AFTER the `dns_records` transaction commits (matching
+    // `sync.ts`'s own shape), so — exactly like the records above — the run
+    // is awaited to a TERMINAL status rather than read the instant records
+    // appear. The domain has no provider zone yet (only the template engine
+    // ever sets one), so no sync was chained — and, crucially, no job was
+    // left to burn a retry budget against a run that cannot start.
+    const run = await waitForRun(
+      domain.id,
+      0,
+      "materialize run for materialize-a.test",
+      "materialize-records",
+    );
+    expect({ mode: run.mode, trigger: run.trigger, status: run.status }).toEqual({
+      mode: "apply",
+      trigger: "intent_change",
+      status: "succeeded",
+    });
+    expect(await runsFor(domain.id)).toHaveLength(1);
   });
 
   it("is idempotent: a second run over unchanged intent writes nothing new", async () => {
@@ -382,7 +406,12 @@ describe("infrastructure.sync-records", () => {
     const outcome = await materializeDomainRecords(services, domain.id);
     expect(outcome.syncEnqueued).toBe(true);
 
-    const run = await waitForRun(domain.id, 0, "chained sync run for sync-a.test");
+    const run = await waitForRun(
+      domain.id,
+      0,
+      "chained sync run for sync-a.test",
+      "sync-records",
+    );
     // An apply the operator has not authorized: never a silent skip, never a
     // failure — a 'blocked' step and a 'partial' run.
     expect({ mode: run.mode, trigger: run.trigger, status: run.status }).toEqual({
@@ -398,10 +427,17 @@ describe("infrastructure.sync-records", () => {
 
   it("publishes once an admin raises the connection's write policy", async () => {
     await setWritePolicy("additive");
-    const before = (await runsFor(domainId)).length;
+    const before = (await runsFor(domainId)).filter(
+      (run) => run.kind === "sync-records",
+    ).length;
 
     await materializeDomainRecords(services, domainId);
-    const run = await waitForRun(domainId, before, "authorized sync run for sync-a.test");
+    const run = await waitForRun(
+      domainId,
+      before,
+      "authorized sync run for sync-a.test",
+      "sync-records",
+    );
     expect(run.status).toBe("succeeded");
 
     expect(
@@ -412,11 +448,18 @@ describe("infrastructure.sync-records", () => {
   });
 
   it("is idempotent: a second sync against a converged zone applies nothing", async () => {
-    const before = (await runsFor(domainId)).length;
+    const before = (await runsFor(domainId)).filter(
+      (run) => run.kind === "sync-records",
+    ).length;
     const applyCallsBefore = zone.applyCalls.length;
 
     await materializeDomainRecords(services, domainId);
-    const run = await waitForRun(domainId, before, "second sync run for sync-a.test");
+    const run = await waitForRun(
+      domainId,
+      before,
+      "second sync run for sync-a.test",
+      "sync-records",
+    );
     expect(run.status).toBe("succeeded");
 
     // Nothing differed, so the operation builder produced nothing and the

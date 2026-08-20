@@ -249,6 +249,17 @@ export type {
 } from "./sync.ts";
 
 export {
+  MATERIALIZE_RECORDS_RUN_KIND,
+  buildMaterializeInput,
+  runMaterializeRecords,
+} from "./materialize-run.ts";
+export type {
+  MaterializeRecordsOutcome,
+  MaterializeSyncSkipReason,
+  RunMaterializeRecordsOptions,
+} from "./materialize-run.ts";
+
+export {
   createRecordingEnqueue,
   createTransactionalEnqueue,
   jobKeysInQueue,

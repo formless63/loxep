@@ -196,18 +196,11 @@ export type { CreateInfrastructureReconcilePollExecutorOptions } from "./infrast
 // request-scoped admin action) can drive the real service verbs without
 // going through Graphile Worker.
 export {
-  MATERIALIZE_CHAINED_SYNC_MODE,
-  MATERIALIZE_CHAINED_SYNC_TRIGGER,
-  buildMaterializeInput,
   createInfrastructureDomainTasks,
   createRecordSyncForDomain,
   materializeDomainRecords,
 } from "./infrastructure-domains.ts";
-export type {
-  InfrastructureDomainTasks,
-  MaterializeRecordsOutcome,
-  MaterializeSyncSkipReason,
-} from "./infrastructure-domains.ts";
+export type { InfrastructureDomainTasks } from "./infrastructure-domains.ts";
 
 // loxep-vdt: `@loxep/storage`'s own `storage.migrate-object` task, finally
 // composed into the worker registry.

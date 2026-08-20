@@ -1,17 +1,23 @@
 /**
  * The two managed-domain record tasks — composition-root wiring for the
  * Phase 7 job graph's `materialize-records` → `sync-records` pair
- * (loxep-vdt).
+ * (loxep-vdt), and the `reconcile_runs` ownership loxep-vdt deliberately
+ * left out (loxep-ejs).
  *
  * ```text
  * infrastructure.materialize-records   intent change   key domain:{id}:materialize
  *      |  (managed_domains / dns_records intent changed, or a mail ownership
  *      |   code arrived)
- *      +→ read the domain, every hosting target + its host_addresses,
- *         the installation CAA policy, the mail provider's required set
- *      +→ materializeDesiredRecords(...)            ← the PURE decision
- *      +→ ManagedDomainsService.applyMaterializedRecords(...)
- *      +→ enqueue sync-records IN THE SAME TRANSACTION (zone permitting)
+ *      +→ resolve this domain's Cloudflare adapter (+ Purelymail adapter,
+ *         lazily, only if a mail_domains row exists) and bridge each to its
+ *         port
+ *      +→ @loxep/infrastructure's runMaterializeRecords(...) — THE SERVICE
+ *         VERB. Reads every hosting target + its host_addresses (via
+ *         wanAddressPair()), the CAA policy, and (lazily) the mail
+ *         provider's requiredRecords(); runs materializeDesiredRecords(...);
+ *         writes dns_records; enqueues sync-records IN THE SAME
+ *         TRANSACTION (zone permitting); and OWNS the whole run's
+ *         `reconcile_runs`/`reconcile_run_steps` rows
  *
  * infrastructure.sync-records          after materialize  key domain:{id}:records
  *      +→ resolve the domain's OWN dns connection (managed_domains
@@ -32,6 +38,30 @@
  * therefore never materialized a single DNS record. This module is the
  * missing half.
  *
+ * ## `materialize-records` is now a THIN WRAPPER (loxep-ejs)
+ *
+ * Everything that used to live here — assembling the whole
+ * `MaterializeInput` from `hosting_targets`/`host_addresses`, the CAA
+ * policy, and the mail provider's required-record set, then calling
+ * `materializeDesiredRecords`/`applyMaterializedRecords` directly with no
+ * `reconcile_runs` row anywhere — has moved into
+ * `@loxep/infrastructure`'s `materialize-run.ts` (`runMaterializeRecords`).
+ * That module's own doc explains the split in full; the short version is
+ * `materialize.ts` must stay pure (no database), `domains.ts` owns intent
+ * and the record writer but not run rows, and every OTHER reconciler in
+ * this domain (`sync.ts`, `mail-sync.ts`, `container-hosts.ts`) keeps its
+ * run machinery in its own module — `materialize-records` was the one
+ * exception, and it no longer is.
+ *
+ * What is left here is exactly what `infrastructure-token.ts` and
+ * `infrastructure-mail.ts` already do for their own verbs: resolve the real
+ * provider adapters this domain needs (Cloudflare always, Purelymail only
+ * when a mail registration exists) and bridge each to the structural port
+ * `@loxep/infrastructure` declares, then call the one service entry point.
+ * No credential is ever in a job payload — both adapters are resolved
+ * INSIDE the task from the domain's stored connections, per `tasks.ts`'s
+ * rule 1.
+ *
  * ## Both handlers are idempotent, and here is exactly why
  *
  * Handlers are at-least-once (ADR-0003); a redelivery must be a no-op.
@@ -48,15 +78,15 @@
  * 'manual'` predicate inside the upsert, not by a filter this module could
  * forget. The `domain:{id}:materialize` job key (default `replace` mode)
  * additionally collapses a burst of intent changes into one pending job.
+ * The one thing a rerun DOES duplicate is the `reconcile_runs` row, which
+ * `runMaterializeRecords`'s own doc explains is correct rather than a leak —
+ * two runs really did happen.
  *
  * **`sync-records`** inherits `sync.ts`'s own at-least-once contract, quoted
  * from its module doc: the provider read is a read, the diff is pure, apply
  * operations are convergent (the adapter reports a replayed create as
  * `already_present` and a replayed delete as `already_absent`), and findings
- * upsert against the unresolved partial unique. The one thing a rerun DOES
- * duplicate is the `reconcile_runs` row, which is correct rather than a
- * leak — two runs really did happen, and an operator reading
- * `/infrastructure/runs` should see both.
+ * upsert against the unresolved partial unique.
  *
  * ## `mode: 'apply'` after a materialize, and why that is not reckless
  *
@@ -69,7 +99,9 @@
  * hard-codes `'check'` and argues at length that a RECURRING apply across
  * every domain in the installation is a materially different risk posture;
  * nothing in that argument applies to a run triggered by a human changing a
- * domain's apex target.
+ * domain's apex target. (Both literal strings now live inside
+ * `runMaterializeRecords` itself, which is the one place the chained
+ * enqueue happens.)
  *
  * It is also gated twice over. `sync.ts` runs `assertWritePolicy` before
  * `provider.apply` with the domain's own `connectionId`, and
@@ -88,32 +120,24 @@
  * for an operator to read — precisely the invisible-failure shape this bead
  * exists to remove. Today only `provisioning.ts`'s template engine ever sets
  * that column, so a domain created from the plain new-domain form has no
- * zone. `materialize-records` therefore materializes the records (which
+ * zone. `runMaterializeRecords` therefore materializes the records (which
  * needs no zone at all — intent is intent) and skips the chained enqueue,
- * logging `syncEnqueued: false` with a reason, rather than queueing a job
- * that can only burn 25 attempts. `apps/web`'s `requestDomainResync` refuses
- * the same case up front so the operator gets an error instead of a lying
- * success toast.
+ * recording an `enqueue-sync` step with `errorCode: 'no_provider_zone'`
+ * rather than queueing a job that can only burn 25 attempts. `apps/web`'s
+ * `requestDomainResync` refuses the same case up front so the operator gets
+ * an error instead of a lying success toast.
  *
- * ## No credential is ever in a payload, and no `reconcile_runs` row is
- * written here
+ * ## `materialize-records` NOW writes a `reconcile_runs` row (loxep-ejs)
  *
- * Both payloads carry a `domainId` (plus, for `sync-records`, the two
- * enum-ish scheduling fields the design's own `SyncRecordsPayload` declares)
- * and nothing else. Every credential — the Cloudflare token behind
- * `capabilities()`, the Purelymail token behind `requiredRecords()` — is
- * resolved INSIDE the task from the domain's stored connections, per
- * `tasks.ts`'s rule 1.
- *
- * `materialize-records` writes no `reconcile_runs` row. Building one from
- * `@loxep/app` would mean writing `reconcile_run_steps` from the composition
- * root, which is `@loxep/infrastructure`'s job (`sync.ts`, `mail-sync.ts`,
- * and `container-hosts.ts` each own their own run machinery). The
- * materialize step's outcome is visible as the domain's record list plus the
- * run the chained `sync-records` produces; a materialization FAILURE (a
- * fronting cycle, a target with no publishable address, a tailnet address in
- * a `wan` row) currently surfaces only as a failed job in the worker log,
- * which is a real observability gap recorded here rather than papered over.
+ * Before this bead, this module said plainly: "Building one from
+ * `@loxep/app` would mean writing `reconcile_run_steps` from the
+ * composition root, which is `@loxep/infrastructure`'s job." That is
+ * exactly what changed — `runMaterializeRecords` owns the write now, so a
+ * `MaterializationError` (a fronting cycle, a tunnel client with no
+ * fronting node, a hosting target with no publishable address, a private
+ * Tailscale-range address in a `wan`/`operator_declared` row) lands as a
+ * FAILED run whose `materialize` step names the exact reason, visible on
+ * `/infrastructure/runs` — not just a dead job in the worker log.
  */
 import { defineTask } from "@loxep/jobs";
 import type { LoxepTask } from "@loxep/jobs";
@@ -121,47 +145,25 @@ import {
   MATERIALIZE_RECORDS_TASK,
   ProviderCallError,
   SYNC_RECORDS_TASK,
-  createManagedDomainsService,
   createRecordSyncService,
   createTransactionalEnqueue,
-  domainJobKey,
-  materializeDesiredRecords,
-  wanAddressPair,
+  runMaterializeRecords,
 } from "@loxep/infrastructure";
 import type {
-  CaaPolicy,
-  DesiredRecord,
-  HostingTargetNode,
+  MailProviderPort,
   ManagedDomainRow,
-  MaterializeInput,
+  MaterializeRecordsOutcome,
   RecordSyncService,
   RunRecordSyncInput,
 } from "@loxep/infrastructure";
-import { caaPolicySetting } from "@loxep/domain";
 import { z } from "zod";
 import { AppConfigurationError } from "./errors.ts";
 import {
   cloudflareApplyResultRedactor,
   providerPortFromCloudflareAdapter,
 } from "./infrastructure-poll-executor.ts";
+import { mailProviderPortFromPurelymailAdapter } from "./infrastructure-mail.ts";
 import type { AppServices } from "./services.ts";
-
-/** The chained sync's mode/trigger — see the module doc's `mode: 'apply'` section. */
-export const MATERIALIZE_CHAINED_SYNC_MODE = "apply" as const;
-export const MATERIALIZE_CHAINED_SYNC_TRIGGER = "intent_change" as const;
-
-/** Why a materialize run did not chain a `sync-records` job. */
-export type MaterializeSyncSkipReason = "no_provider_zone";
-
-export interface MaterializeRecordsOutcome {
-  domainId: string;
-  desired: readonly DesiredRecord[];
-  created: number;
-  updated: number;
-  softDeleted: number;
-  syncEnqueued: boolean;
-  syncSkippedReason: MaterializeSyncSkipReason | null;
-}
 
 async function requireDomain(
   services: AppServices,
@@ -179,148 +181,48 @@ async function requireDomain(
 }
 
 /**
- * Build the pure materializer's whole input from the database.
- *
- * Exported so a test (and any future preview surface) can see exactly what
- * intent would produce without writing a row. Two of the four inputs deserve
- * a note:
- *
- * - **targets** is EVERY hosting target, not just the apex one, because
- *   `resolveHostingAddress` walks `fronted_by_target_id` and a chain member
- *   that was not supplied is a `MaterializationError` rather than a silent
- *   fallback to the origin's address. Each target's address pair comes from
- *   `wanAddressPair()` — loxep-bub's structural quarantine, the ONE filter
- *   that decides which `host_addresses` row may ever be published.
- * - **mailRecords** is `null` unless the domain has a `mail_domains`
- *   registration; the adapter tolerates a `null` ownership code and returns
- *   six of its seven records, which is deliberate (see
- *   `@loxep/integration-purelymail`'s `records.ts`: publish what you can
- *   now, add the ownership TXT on the next materialize).
+ * Resolve `@loxep/infrastructure`'s `MailProviderPort` for one mail
+ * connection, lazily — the resolver `runMaterializeRecords` calls ONLY when
+ * the domain has both `mail_enabled` and an existing `mail_domains` row
+ * (see `materialize-run.ts`'s own doc for why laziness matters: a
+ * credential is decrypted only when there is a required-record set to
+ * build).
  */
-export async function buildMaterializeInput(
+function resolveMailProvider(
   services: AppServices,
-  domain: ManagedDomainRow,
-): Promise<MaterializeInput> {
-  const db = services.db;
-
-  const [targetRows, addressRows] = await Promise.all([
-    db.query.hostingTargets.findMany(),
-    db.query.hostAddresses.findMany(),
-  ]);
-
-  const addressesByTarget = new Map<string, typeof addressRows>();
-  for (const address of addressRows) {
-    const list = addressesByTarget.get(address.hostingTargetId) ?? [];
-    list.push(address);
-    addressesByTarget.set(address.hostingTargetId, list);
-  }
-
-  const targets = new Map<string, HostingTargetNode>();
-  for (const target of targetRows) {
-    const wan = wanAddressPair(addressesByTarget.get(target.id) ?? []);
-    targets.set(target.id, {
-      id: target.id,
-      name: target.name,
-      controlSurface: target.controlSurface as HostingTargetNode["controlSurface"],
-      addressV4: wan.addressV4,
-      addressV6: wan.addressV6,
-      frontedByTargetId: target.frontedByTargetId,
-    });
-  }
-
-  const caaPolicy: CaaPolicy = await services.settings.get(caaPolicySetting);
-
-  let mailRecords: MaterializeInput["mailRecords"] = null;
-  if (domain.mailEnabled) {
-    const mail = await db.query.mailDomains.findFirst({
-      where: (table, { eq }) => eq(table.domainId, domain.id),
-    });
-    if (mail !== undefined) {
-      const purelymail = await services.getPurelymailAdapterForConnection(
-        mail.mailConnectionId,
-      );
-      mailRecords = purelymail.adapter.requiredRecords({
-        domainName: domain.name,
-        ownershipCode: mail.ownershipCode,
-      });
-    }
-  }
-
-  // The provider's capabilities gate proxying intent, and getting them wrong
-  // degrades silently, so they come from the REAL adapter for this domain's
-  // own DNS connection rather than a constant. Building the adapter costs a
-  // credential decrypt and no network call — `capabilities()` is local.
-  const cloudflare = await services.getCloudflareAdapterForConnection(
-    domain.dnsConnectionId,
-  );
-  const capabilities = cloudflare.adapter.capabilities();
-
-  return {
-    domain: {
-      name: domain.name,
-      apexTargetId: domain.apexTargetId,
-      apexProxied: domain.apexProxied,
-      wildcardProxied: domain.wildcardProxied,
-      mailEnabled: domain.mailEnabled,
-    },
-    targets,
-    caaPolicy,
-    mailRecords,
-    capabilities: {
-      proxying: capabilities.proxying,
-      proxiedWildcards: capabilities.proxiedWildcards,
-      proxiableTypes: capabilities.proxiableTypes,
-    },
+): (mailConnectionId: string) => Promise<Pick<MailProviderPort, "requiredRecords">> {
+  return async (mailConnectionId) => {
+    const purelymail =
+      await services.getPurelymailAdapterForConnection(mailConnectionId);
+    return mailProviderPortFromPurelymailAdapter(purelymail.adapter);
   };
 }
 
 /**
  * The `infrastructure.materialize-records` body, directly callable.
  *
- * The write and the chained enqueue share ONE transaction, which is the
- * property `domains.ts`'s module doc calls "the whole point": there is no
- * outbox and no "the records changed but the sync never fired" window.
+ * A thin wrapper, matching `infrastructure-token.ts`'s and
+ * `infrastructure-mail.ts`'s own shape: resolve the real adapters this
+ * domain needs, bridge them to `@loxep/infrastructure`'s structural ports,
+ * and call the ONE service verb that owns everything else — the
+ * `MaterializeInput` assembly, the pure decision, the desired-record write,
+ * the chained enqueue, and the `reconcile_runs`/`reconcile_run_steps` rows.
  */
 export async function materializeDomainRecords(
   services: AppServices,
   domainId: string,
 ): Promise<MaterializeRecordsOutcome> {
   const domain = await requireDomain(services, domainId);
-  const input = await buildMaterializeInput(services, domain);
-  const desired = materializeDesiredRecords(input);
+  const cloudflare = await services.getCloudflareAdapterForConnection(
+    domain.dnsConnectionId,
+  );
 
-  const domains = createManagedDomainsService({ db: services.db });
-  const enqueue = createTransactionalEnqueue();
-  const hasZone = domain.externalZoneId !== null;
-
-  const applied = await services.db.transaction(async (tx) => {
-    const counts = await domains.applyMaterializedRecords(domain.id, desired, {
-      executor: tx,
-    });
-    if (hasZone) {
-      await enqueue(
-        tx,
-        SYNC_RECORDS_TASK,
-        {
-          domainId: domain.id,
-          mode: MATERIALIZE_CHAINED_SYNC_MODE,
-          trigger: MATERIALIZE_CHAINED_SYNC_TRIGGER,
-        },
-        { jobKey: domainJobKey(SYNC_RECORDS_TASK, domain.id) },
-      );
-    }
-    return counts;
+  return runMaterializeRecords(domainId, {
+    db: services.db,
+    dnsProvider: providerPortFromCloudflareAdapter(cloudflare.adapter),
+    resolveMailProvider: resolveMailProvider(services),
+    enqueue: createTransactionalEnqueue(),
   });
-
-  return {
-    domainId: domain.id,
-    desired,
-    created: applied.created,
-    updated: applied.updated,
-    softDeleted: applied.softDeleted,
-    syncEnqueued: hasZone,
-    syncSkippedReason: hasZone ? null : "no_provider_zone",
-  };
 }
 
 /**
@@ -387,6 +289,7 @@ export function createInfrastructureDomainTasks(options: {
       const outcome = await materializeDomainRecords(services, payload.domainId);
       logger.info(
         {
+          runId: outcome.runId,
           domainId: outcome.domainId,
           desired: outcome.desired.length,
           created: outcome.created,
