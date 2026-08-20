@@ -190,6 +190,7 @@ export {
   domainJobKey,
 } from "./domains.ts";
 export type {
+  AttachZoneInput,
   CreateManagedDomainInput,
   DnsRecordRow,
   ManagedDomainRow,

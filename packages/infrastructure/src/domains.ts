@@ -135,6 +135,32 @@ const updateIntentSchema = z
 
 export type UpdateDomainIntentInput = z.input<typeof updateIntentSchema>;
 
+/**
+ * `loxep-8f8`'s "attach an existing zone" input. Deliberately NOT run
+ * through {@link updateIntentSchema}/`updateIntent`: attaching a zone is not
+ * an intent change the reconciler should react to (it enqueues nothing —
+ * see {@link ManagedDomainsService.attachZone}'s own doc), and its fields
+ * (`externalZoneId`, `providerZoneStatus`, `zoneNameservers`) are exactly the
+ * ones `updateIntentSchema`'s `.strictObject` already refuses.
+ */
+const attachZoneSchema = z.strictObject({
+  externalZoneId: z.string().trim().min(1),
+  /** The provider's own status string, verbatim — retained exactly as
+   * `provisioning.ts`'s `dispatchDomainDeclare` step already does. */
+  providerZoneStatus: z.string().trim().min(1).nullish(),
+  /** Ordered, opaque — `CloudflareZoneFact.nameservers`, when the caller has it. */
+  zoneNameservers: z.array(z.string().trim().min(1)).nullish(),
+  /**
+   * Required to overwrite an ALREADY-SET `external_zone_id` with a
+   * DIFFERENT one. Re-attaching the SAME zone id never needs it — that path
+   * is idempotent by construction, not a replace.
+   */
+  replace: z.boolean().optional(),
+  actorUserId: z.string().min(1).nullish(),
+});
+
+export type AttachZoneInput = z.input<typeof attachZoneSchema>;
+
 /** A manual record an operator authored, or one adopted from observed drift. */
 export interface ManualRecordInput {
   type: string;
@@ -156,6 +182,34 @@ export interface ManagedDomainsService {
     id: string,
     input: UpdateDomainIntentInput,
   ): Promise<ManagedDomainRow>;
+  /**
+   * `loxep-8f8`: attach a zone the operator already has at the DNS
+   * provider — option (b) of the three the design's job-graph note weighs,
+   * chosen because the owner's zones already exist at Cloudflare and
+   * `ensure-zone`/`provision-domain` remain unbuilt tasks. Writes
+   * `external_zone_id` (+ whatever of `provider_zone_status`/
+   * `zone_nameservers` the caller has) so `createRecordSyncService.run()` no
+   * longer refuses this domain. Mirrors the ONE existing writer
+   * (`provisioning.ts`'s `dispatchDomainDeclare` step) in every way except
+   * that it takes an already-resolved zone rather than resolving one itself
+   * — the caller (an estate-style Cloudflare zone list, per Rule P11) has
+   * already made the provider READ.
+   *
+   * IDEMPOTENT: re-attaching the SAME `externalZoneId` a domain already
+   * carries succeeds and refreshes `providerZoneStatus`/`zoneNameservers` if
+   * given — it is not a "replace". Attaching a DIFFERENT `externalZoneId`
+   * to a domain that already has one throws {@link InfrastructureValidationError}
+   * unless `input.replace` is `true` — pointing a domain at a different zone
+   * is a real, deliberate operator act, never an accidental overwrite.
+   *
+   * Deliberately enqueues NOTHING. Rule P11 (adopt-into-intent): adoption
+   * "changes nothing on the provider" and "does NOT enqueue a reconcile" —
+   * attaching a zone is Loxep starting to track a binding, not a request to
+   * sync. The operator's existing "Sync now" (`requestDomainResync`) is the
+   * separate, explicit next step, and it is what was refusing before this
+   * method existed.
+   */
+  attachZone(id: string, input: AttachZoneInput): Promise<ManagedDomainRow>;
   /** Live desired state for one domain. */
   listRecords(domainId: string): Promise<DnsRecordRow[]>;
   /** Author a `manual` record the reconciler will never rewrite. */
@@ -341,6 +395,74 @@ export function createManagedDomainsService(options: {
           { jobKey: domainJobKey(MATERIALIZE_RECORDS_TASK, id) },
         );
 
+        return row;
+      });
+    },
+
+    async attachZone(id, input) {
+      const parsed = attachZoneSchema.parse(input);
+
+      return db.transaction(async (tx) => {
+        const before = await requireDomain(tx, id);
+
+        const isReplace =
+          before.externalZoneId !== null &&
+          before.externalZoneId !== parsed.externalZoneId;
+        if (isReplace && parsed.replace !== true) {
+          throw new InfrastructureValidationError(
+            `managed domain "${before.name}" is already attached to zone "${before.externalZoneId}" — pass replace: true to point it at a different zone`,
+            {
+              domainId: id,
+              currentExternalZoneId: before.externalZoneId,
+              requestedExternalZoneId: parsed.externalZoneId,
+            },
+          );
+        }
+
+        const patch: Record<string, unknown> = {
+          externalZoneId: parsed.externalZoneId,
+          updatedAt: new Date(),
+        };
+        if (parsed.providerZoneStatus !== undefined) {
+          patch["providerZoneStatus"] = parsed.providerZoneStatus;
+        }
+        if (parsed.zoneNameservers !== undefined) {
+          patch["zoneNameservers"] = parsed.zoneNameservers;
+        }
+
+        // Left untouched, deliberately: `delegationVerifiedAt`. Unlike
+        // `providerZoneStatus`, no zone fact this design has ever produced
+        // carries confirmed delegation evidence — `isDelegationConfirmed`
+        // (`mail-sync.ts`) treats `providerZoneStatus === 'active'` as
+        // sufficient on its own, so a freshly-attached already-active zone
+        // is already delegation-confirmed through that column, with no
+        // separate write needed here.
+        const rows = await tx
+          .update(managedDomains)
+          .set(patch)
+          .where(eq(managedDomains.id, id))
+          .returning();
+        const row = rows[0];
+        if (row === undefined) {
+          throw new Error("managed domain zone attach returned no row");
+        }
+
+        await createAuditService({ db: tx }).append({
+          actorUserId: parsed.actorUserId ?? null,
+          action: "infrastructure.managed_domain.attach_zone",
+          resourceType: MANAGED_DOMAIN_RESOURCE_TYPE,
+          resourceId: id,
+          before: {
+            externalZoneId: before.externalZoneId,
+            providerZoneStatus: before.providerZoneStatus,
+          },
+          after: {
+            externalZoneId: row.externalZoneId,
+            providerZoneStatus: row.providerZoneStatus,
+          },
+        });
+
+        // NO enqueue. See this method's own doc — Rule P11.
         return row;
       });
     },

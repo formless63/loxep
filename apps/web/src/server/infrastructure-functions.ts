@@ -646,6 +646,14 @@ export interface ManagedDomainDto {
   registrar: string | null;
   /** Free-text operator note (loxep-4xo) — surfaced so the domain-edit dialog has something to prefill; was written on create but never read back before this bead. */
   notes: string | null;
+  /**
+   * The provider's zone id, or `null` before anything has attached one —
+   * `loxep-8f8`. `null` is the entire reason `createRecordSyncService.run()`
+   * refuses this domain: see `requestDomainResync`'s own refusal message and
+   * the "Attach zone" affordance this field drives on `/infrastructure/
+   * domains/$name`.
+   */
+  externalZoneId: string | null;
   zoneNameservers: string[] | null;
   /** The DNS provider's own zone status (e.g. Cloudflare's `active`/`pending`) — distinct from `state`, Loxep's own provisioning-chain state. */
   providerZoneStatus: string | null;
@@ -694,6 +702,7 @@ export const fetchManagedDomains = createServerFn({ method: 'GET' }).handler(
         mailVerified: mail?.ownershipVerifiedAt !== undefined && mail.ownershipVerifiedAt !== null,
         registrar: domain.registrar,
         notes: domain.notes,
+        externalZoneId: domain.externalZoneId,
         zoneNameservers: domain.zoneNameservers,
         providerZoneStatus: domain.providerZoneStatus,
         delegationVerifiedAt: iso(domain.delegationVerifiedAt),
@@ -1054,6 +1063,7 @@ export const fetchManagedDomain = createServerFn({ method: 'GET' })
       mailVerified: mail?.ownershipVerifiedAt !== null && mail?.ownershipVerifiedAt !== undefined,
       registrar: domain.registrar,
       notes: domain.notes,
+      externalZoneId: domain.externalZoneId,
       zoneNameservers: domain.zoneNameservers,
       providerZoneStatus: domain.providerZoneStatus,
       delegationVerifiedAt: iso(domain.delegationVerifiedAt),
@@ -1166,6 +1176,119 @@ export const updateManagedDomainIntent = createServerFn({ method: 'POST' })
       actorUserId: session.user.id
     });
     return { id: row.id };
+  });
+
+// ---------------------------------------------------------------------------
+// Attach an existing Cloudflare zone (loxep-8f8)
+// ---------------------------------------------------------------------------
+
+/**
+ * `loxep-8f8` closes the gap `loxep-vdt` made honest but did not close: a
+ * domain created from `/infrastructure/domains/new` materializes
+ * `dns_records` but never gets `managed_domains.external_zone_id`, so
+ * `createRecordSyncService.run()` (driven by `requestDomainResync`'s "Sync
+ * now", above) refuses it before it can even record a `reconcile_runs` row.
+ * The design's job-graph note (`infrastructure-control-design.md`) weighs
+ * three ways to close it: (a) build `infrastructure.ensure-zone` as a real
+ * task, (b) let an operator ATTACH a zone they already have at the provider,
+ * (c) route the plain new-domain form through a provisioning template. This
+ * ships (b) — the owner's zones already exist at Cloudflare, and
+ * `@loxep/integration-cloudflare` already exports everything a "list my
+ * zones" read needs (`listZones`, `getZone`); (a) and (c) remain open.
+ *
+ * **This is a provider READ plus a Loxep-own write, never a provider
+ * write** — exactly Rule P11's adopt-into-intent shape (Estate Browsers
+ * Design §2.5): attaching "changes nothing on the provider" and "does NOT
+ * enqueue a reconcile" ("start controlling this from Loxep", not "apply
+ * now"). The write lands entirely in `managed_domains` via
+ * `ManagedDomainsService.attachZone` (`packages/infrastructure/src/
+ * domains.ts`) — admin-only, idempotent for the SAME zone id, and refuses to
+ * silently overwrite a DIFFERENT already-attached zone unless the caller
+ * passes `replace: true` (the UI's separate "Change zone" affordance is
+ * what makes that deliberate — see `attach-zone-dialog.tsx`). Once attached,
+ * the operator's EXISTING "Sync now" is the separate, explicit next step —
+ * this function enqueues nothing itself.
+ *
+ * The candidate read reuses the SAME independently-budgeted estate-read
+ * Cloudflare adapter factory `cloudflare-estate-functions.ts` uses
+ * (`getCloudflareAdapterForConnection`) — never the worker's own reconciler
+ * adapter — bounded to ONE page and filtered server-side by the domain's
+ * own name (`listZones({ name, maxPages: 1 })`), the same narrowing
+ * `provisioning.ts`'s `dispatchDomainDeclare` step already relies on via
+ * `findZoneByName`. The attach write does NOT re-read the provider a second
+ * time to verify the candidate is still fresh — it trusts the status/
+ * nameservers the dialog just echoed back from that one read, the same
+ * trust model `AttachDiscoveredResourceDialog` already uses for a
+ * Beszel/Dockhand candidate.
+ */
+export interface CandidateZoneDto {
+  externalZoneId: string;
+  name: string;
+  /** Verbatim provider status (Rule P3) — never mapped to a Loxep verdict word. */
+  status: string;
+  nameservers: string[];
+}
+
+export const fetchCandidateManagedDomainZones = createServerFn({ method: 'GET' })
+  .inputValidator(z.strictObject({ domainId: z.uuid() }))
+  .handler(async ({ data }): Promise<{ zones: CandidateZoneDto[] }> => {
+    const { requireAdmin, getAdminServices, getCloudflareAdapterForConnection } =
+      await import('@/server/admin');
+    await requireAdmin();
+    const { handle, connections } = getAdminServices();
+    const domain = await handle.db.query.managedDomains.findFirst({
+      where: (table, { eq }) => eq(table.id, data.domainId)
+    });
+    if (domain === undefined) {
+      throw new Error(`Managed domain "${data.domainId}" not found`);
+    }
+    const connection = await connections.getConnection(domain.dnsConnectionId);
+    if (connection.provider !== 'cloudflare') {
+      throw new Error(
+        `This domain's DNS connection ("${connection.provider}") has no zone-attach support yet — only Cloudflare is implemented.`
+      );
+    }
+
+    try {
+      const { adapter } = await getCloudflareAdapterForConnection(domain.dnsConnectionId);
+      const zones = await adapter.listZones({ name: domain.name, maxPages: 1 });
+      return {
+        zones: zones.map((zone) => ({
+          externalZoneId: zone.externalZoneId,
+          name: zone.name,
+          status: zone.status,
+          nameservers: zone.nameservers
+        }))
+      };
+    } catch (error) {
+      const { classifyCaughtProviderError } = await import('@/features/estate/error-taxonomy');
+      const info = classifyCaughtProviderError(error, 'Could not read Cloudflare zones.');
+      throw new Error(info.message, { cause: error });
+    }
+  });
+
+const attachManagedDomainZoneInput = z.strictObject({
+  domainId: z.uuid(),
+  externalZoneId: z.string().trim().min(1),
+  providerZoneStatus: z.string().trim().min(1).nullish(),
+  zoneNameservers: z.array(z.string().trim().min(1)).nullish(),
+  /** Required to point an already-attached domain at a DIFFERENT zone. */
+  replace: z.boolean().optional()
+});
+
+export const attachManagedDomainZone = createServerFn({ method: 'POST' })
+  .inputValidator(attachManagedDomainZoneInput)
+  .handler(async ({ data }): Promise<{ id: string; externalZoneId: string }> => {
+    const { requireAdmin, getManagedDomainsService } = await import('@/server/admin');
+    const session = await requireAdmin();
+    const row = await getManagedDomainsService().attachZone(data.domainId, {
+      externalZoneId: data.externalZoneId,
+      providerZoneStatus: data.providerZoneStatus,
+      zoneNameservers: data.zoneNameservers,
+      replace: data.replace,
+      actorUserId: session.user.id
+    });
+    return { id: row.id, externalZoneId: row.externalZoneId ?? data.externalZoneId };
   });
 
 /**

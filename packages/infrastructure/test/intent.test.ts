@@ -300,6 +300,111 @@ describe("managed domains", () => {
   });
 });
 
+describe("attachZone (loxep-8f8)", () => {
+  it("attaches a zone to a domain that has none yet, and enqueues NOTHING", async () => {
+    // A fresh service wired to a recording enqueue, so "no job" is proven by
+    // the port never being called — not by job-key dedup silently hiding a
+    // second (identical) enqueue attempt from `create`'s own first one.
+    const recorder = createRecordingEnqueue();
+    const service = createManagedDomainsService({
+      db: handle.db,
+      enqueue: recorder,
+    });
+    const row = await service.create({
+      name: `${nextName("attach")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    expect(row.externalZoneId).toBeNull();
+    expect(recorder.calls).toHaveLength(1); // create's own materialize enqueue
+
+    const attached = await service.attachZone(row.id, {
+      externalZoneId: "cf-zone-1",
+      providerZoneStatus: "active",
+      zoneNameservers: ["ns1.example.com", "ns2.example.com"],
+    });
+    expect(attached.externalZoneId).toBe("cf-zone-1");
+    expect(attached.providerZoneStatus).toBe("active");
+    expect(attached.zoneNameservers).toEqual([
+      "ns1.example.com",
+      "ns2.example.com",
+    ]);
+
+    // Rule P11 (adopt-into-intent): STILL exactly one call, from `create`.
+    // `attachZone` itself never touches the enqueue port.
+    expect(recorder.calls).toHaveLength(1);
+
+    const audit = await handle.pool.query<{ action: string }>(
+      `select action from audit_events
+        where resource_type = 'managed_domain' and resource_id = $1
+        order by occurred_at`,
+      [row.id],
+    );
+    expect(audit.rows.map((entry) => entry.action)).toEqual([
+      "infrastructure.managed_domain.create",
+      "infrastructure.managed_domain.attach_zone",
+    ]);
+  });
+
+  it("is IDEMPOTENT — re-attaching the SAME zone succeeds and refreshes evidence", async () => {
+    const row = await domains.create({
+      name: `${nextName("idempotent")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    await domains.attachZone(row.id, {
+      externalZoneId: "cf-zone-2",
+      providerZoneStatus: "pending",
+    });
+    const again = await domains.attachZone(row.id, {
+      externalZoneId: "cf-zone-2",
+      providerZoneStatus: "active",
+    });
+    expect(again.externalZoneId).toBe("cf-zone-2");
+    expect(again.providerZoneStatus).toBe("active");
+  });
+
+  it("REFUSES to overwrite a different zone without replace: true", async () => {
+    const row = await domains.create({
+      name: `${nextName("refuse")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    await domains.attachZone(row.id, { externalZoneId: "cf-zone-3" });
+    await expect(
+      domains.attachZone(row.id, { externalZoneId: "cf-zone-4" }),
+    ).rejects.toThrow(/already attached/);
+
+    const unchanged = await domains.get(row.id);
+    expect(unchanged.externalZoneId).toBe("cf-zone-3");
+  });
+
+  it("ALLOWS overwriting a different zone when replace: true is explicit", async () => {
+    const row = await domains.create({
+      name: `${nextName("replace")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    await domains.attachZone(row.id, { externalZoneId: "cf-zone-5" });
+    const replaced = await domains.attachZone(row.id, {
+      externalZoneId: "cf-zone-6",
+      replace: true,
+    });
+    expect(replaced.externalZoneId).toBe("cf-zone-6");
+  });
+
+  it("refuses to attach the SAME external zone id to two different domains", async () => {
+    const a = await domains.create({
+      name: `${nextName("dup-a")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    const b = await domains.create({
+      name: `${nextName("dup-b")}.test`,
+      dnsConnectionId: connectionId,
+    });
+    await domains.attachZone(a.id, { externalZoneId: "cf-zone-shared" });
+    await expect(
+      domains.attachZone(b.id, { externalZoneId: "cf-zone-shared" }),
+    ).rejects.toThrow();
+  });
+});
+
 describe("transactional enqueue", () => {
   it("commits the intent change and the job together", async () => {
     const row = await domains.create({

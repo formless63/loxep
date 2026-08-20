@@ -22,6 +22,7 @@ import { InfrastructurePage } from '@/features/infrastructure/components/infrast
 import DomainChainDiagram, {
   DomainChainDiagramSkeleton
 } from '@/features/infrastructure/components/domain-chain-diagram';
+import AttachZoneDialog from '@/features/infrastructure/components/attach-zone-dialog';
 import DnsDriftPanel from '@/features/infrastructure/components/dns-drift-panel';
 import EditDomainDialog from '@/features/infrastructure/components/edit-domain-dialog';
 import MailPanel from '@/features/infrastructure/components/mail-panel';
@@ -59,6 +60,7 @@ function DetailSkeleton() {
 function DomainSummaryCard({ domain }: { domain: ManagedDomainDetailDto }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = React.useState(false);
+  const [attachZoneOpen, setAttachZoneOpen] = React.useState(false);
   const resyncMutation = useMutation({
     mutationFn: () => requestDomainResync({ data: { domainId: domain.id } }),
     onSuccess: async () => {
@@ -90,14 +92,46 @@ function DomainSummaryCard({ domain }: { domain: ManagedDomainDetailDto }) {
           {domain.lastReconciledAt &&
             ` · last reconciled ${formatDateTime(domain.lastReconciledAt)}`}
         </CardDescription>
-        <CardAction>
+        <CardAction className='flex gap-2'>
+          {/* When there is no zone yet, the ONE "Attach zone…" affordance
+              lives in the blocked-state alert below, right next to the
+              reason (bead point 3) — not duplicated up here too. Once a
+              zone is attached, this quieter "Change zone…" is the only
+              place that affordance lives. */}
+          {domain.externalZoneId !== null && (
+            <Button size='sm' variant='outline' onClick={() => setAttachZoneOpen(true)}>
+              Change zone…
+            </Button>
+          )}
           <Button size='sm' variant='outline' onClick={() => setEditOpen(true)}>
             Edit…
           </Button>
           <EditDomainDialog domain={domain} open={editOpen} onOpenChange={setEditOpen} />
+          <AttachZoneDialog
+            domainId={domain.id}
+            domainName={domain.name}
+            currentExternalZoneId={domain.externalZoneId}
+            open={attachZoneOpen}
+            onOpenChange={setAttachZoneOpen}
+          />
         </CardAction>
       </CardHeader>
       <CardContent className='flex flex-col gap-3'>
+        {domain.externalZoneId === null && (
+          <Alert variant='warning'>
+            <Icons.alertCircle />
+            <AlertTitle>No provider zone attached — DNS cannot publish yet</AlertTitle>
+            <AlertDescription className='flex flex-col items-start gap-2'>
+              <span>
+                "{domain.name}" has no provider zone, so a sync run cannot start — attach the zone
+                that already exists at the DNS provider, or create it there first.
+              </span>
+              <Button size='sm' variant='outline' onClick={() => setAttachZoneOpen(true)}>
+                Attach zone…
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
         {domain.zoneNameservers && domain.zoneNameservers.length > 0 && (
           <div>
             <div className='flex flex-wrap items-center gap-2'>

@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query';
 import {
+  fetchCandidateManagedDomainZones,
   fetchContainerHostRegistration,
   fetchDiscoveredFleetResources,
   fetchDnsConnectionOptions,
@@ -70,6 +71,18 @@ export const managedDomainQuery = (name: string) =>
   queryOptions({
     queryKey: ['infrastructure', 'domains', name],
     queryFn: () => fetchManagedDomain({ data: { name } })
+  });
+
+/**
+ * The `AttachZoneDialog`'s candidate list (loxep-8f8) — a live provider
+ * read, so `staleTime: 0` forces a fresh `listZones` call every time the
+ * dialog opens rather than serving a stale candidate from a prior open.
+ */
+export const candidateManagedDomainZonesQuery = (domainId: string) =>
+  queryOptions({
+    queryKey: ['infrastructure', 'domains', domainId, 'candidate-zones'],
+    queryFn: () => fetchCandidateManagedDomainZones({ data: { domainId } }),
+    staleTime: 0
   });
 
 export const hostingTargetsQuery = queryOptions({
