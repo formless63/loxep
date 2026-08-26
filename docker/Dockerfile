@@ -9,7 +9,7 @@
 # re-runs on any context change, but its output only contains manifests, so
 # downstream install layers stay cached until a manifest actually changes.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14 AS manifests
+FROM oven/bun:1.4.0 AS manifests
 WORKDIR /src
 COPY . .
 RUN mkdir -p /manifests \
@@ -19,7 +19,7 @@ RUN mkdir -p /manifests \
 # ---------------------------------------------------------------------------
 # Build stage: full workspace install + apps/web production build (Vite+Nitro)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14 AS build
+FROM oven/bun:1.4.0 AS build
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source edits.
@@ -72,7 +72,7 @@ RUN bun run build
 # new workspace package is added — including packages/integrations/*, which an
 # explicit './packages/*' glob silently misses.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.3.14 AS deps
+FROM oven/bun:1.4.0 AS deps
 WORKDIR /app
 
 COPY --from=manifests /manifests ./
