@@ -22,11 +22,8 @@
  * page-cursor parameter, only a cumulative ceiling) — this package is
  * outside this milestone's edit fence, so "Load more" is implemented as
  * incrementing `maxPages` and re-requesting from page 1. For the vast
- * majority of installations (a single Cloudflare account's zone/record
- * count is far under one page — Cloudflare's own `per_page` ceiling is 50
- * zones / 100 records, and a live read-only verification against the real
- * connection this design targets found its zone count comfortably under
- * that ceiling too) this costs exactly the one call Rule P8 promises; only
+ * common under-one-page case (Cloudflare's own `per_page` ceiling is 50
+ * zones / 100 records) this costs exactly the one call Rule P8 promises; only
  * past that ceiling does a SECOND "Load more" click re-walk page 1, an
  * accepted trade-off of the adapter's public surface rather than a new
  * adapter verb.

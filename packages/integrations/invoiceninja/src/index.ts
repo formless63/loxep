@@ -11,15 +11,11 @@
  *
  * SOURCE-VERIFIED against `invoiceninja/invoiceninja`'s `v5-stable` branch
  * (fetched 2026-08-13) — see each module's own doc for the exact files and
- * lines cited. LIVE-PROBED, READ-ONLY AND UNAUTHENTICATED ONLY, against a
- * real self-hosted instance running on this host (`invoiceninja-web`
- * container, `X-APP-VERSION: 5.13.24`) — no write credential was available
- * in this environment, so `errors.ts`'s auth-failure taxonomy is
- * live-confirmed but every write path (`createInvoice`, `markInvoiceSent`,
- * `createClient`, …) and every money/pagination/timestamp claim rests on
- * Invoice Ninja's own PHP source rather than an observed response. Live
- * write verification is tracked as the follow-up bead (see this package's
- * `test/live-instance.test.ts`, which names the credential file it needs).
+ * lines cited. A live unauthenticated probe confirms `errors.ts`'s
+ * auth-failure taxonomy. Every authenticated read/write path
+ * (`createInvoice`, `markInvoiceSent`, `createClient`, …) and every money,
+ * pagination, and timestamp claim remains source- and fixture-verified.
+ * `test/live-instance.test.ts` is the explicit opt-in live verification leg.
  *
  * SCOPE: this package is the adapter only. It writes to Invoice Ninja
  * (unlike the read-only Medusa/WooCommerce adapters, because the billing

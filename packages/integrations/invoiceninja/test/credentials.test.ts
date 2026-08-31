@@ -33,7 +33,7 @@ describe("defaultInvoiceNinjaEnvFilePath", () => {
 });
 
 describe("loadInvoiceNinjaCredentialsFromEnvFile", () => {
-  it("returns null when the file does not exist — the expected state in this environment", () => {
+  it("returns null when the file does not exist", () => {
     const missing = join(tmpdir(), "loxep-invoiceninja-env-does-not-exist.env");
     expect(loadInvoiceNinjaCredentialsFromEnvFile(missing)).toBeNull();
   });

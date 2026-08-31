@@ -98,7 +98,7 @@
  * The estate-browser audit (`estate-browsers-design.md` §8.3) found this the
  * one write-capable adapter with zero `assertWritePolicy` call sites — an
  * undocumented asymmetry with its three siblings, not a considered exemption.
- * Owner ruling 2026-08-16 (#2): join now. `reconcile()` gates its ONE
+ * The accepted design closes that asymmetry. `reconcile()` gates its ONE
  * possible write (`applyHost`, fired at most once per call — hb7 §2.4) with
  * `assertWritePolicy` immediately before attempting it, keyed on the
  * declared link's OWN `connectionId` (never a constructor option, unlike
@@ -108,14 +108,12 @@
  * installation-wide constant; see the module doc above). Both `create` and
  * `update` are tier 1 (additive): the write is narrow — it creates or
  * updates a row in Dockhand's OWN database; nothing executes on the target
- * machine (the owner's 2026-08-13 carve-out) — unlike Pangolin, whose
+ * machine — unlike Pangolin, whose
  * `update-*` is tier 2. A refusal records a `'blocked'`
  * `reconcile_run_steps` row (never a failure, never a silent skip) and the
  * run finishes `'partial'`, exactly like `sync.ts`/`mail-sync.ts`. The
- * owner's Dockhand connection defaults to `read_only`, so this join is a
- * BEHAVIOR CHANGE: applies that previously always executed now block until
- * the connection's tier is raised on `/settings/connections` — see the
- * connecting-dockhand guide.
+ * default policy is `read_only`, so applies block until the connection's tier
+ * is explicitly raised on `/settings/connections` — see the connecting guide.
  */
 import {
   createResourceLinksService,

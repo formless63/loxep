@@ -22,14 +22,10 @@
  * style Medusa v2 uses (see `@loxep/integration-medusa`'s `money.ts`), and
  * unlike a minor-unit-integer convention (Stripe, Medusa v1).
  *
- * This was NOT independently confirmed against the live instance on this
- * host: no API token was available in this environment, so no authenticated
- * client/invoice payload was ever fetched — see `credentials.ts`. The claim
- * above rests entirely on the transformer source, which is the ground truth
- * for what the API actually serializes (transformers are the last step
- * before `json_encode`, with no further cast applied downstream in
- * `BaseController::response()`). Live verification is the follow-up bead's
- * job once a credential is available.
+ * This is not yet authenticated-live-verified. The claim rests on the
+ * transformer source, which is the ground truth for what the API serializes
+ * (transformers are the last step before `json_encode`, with no further cast
+ * applied downstream in `BaseController::response()`).
  *
  * ## The conversion, precisely
  *

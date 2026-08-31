@@ -134,7 +134,7 @@ describe("health service", () => {
         subjectId: SUBJECT_ID_A,
         status: "failing",
         source: "probe",
-        detail: { token: "sk-should-never-be-here" },
+        detail: { token: "synthetic-secret-should-never-be-here" },
       }),
     ).rejects.toThrow(DomainValidationError);
   });

@@ -13,10 +13,9 @@
  * `token_auth`-guarded route group as every resource endpoint (source-
  * verified: `routes/api.php`, same branch/fetch — both routes are declared
  * inside the `token_auth` middleware group, not exempted from it), and this
- * was LIVE-CONFIRMED: an unauthenticated `GET /api/v1/ping` against the
- * instance running on this host returned the same `403
- * {"message":"Invalid token"}` as every other endpoint — so there is no
- * unauthenticated "is the server up" shortcut to prefer instead.
+ * was LIVE-CONFIRMED: an unauthenticated `GET /api/v1/ping` returned the
+ * same `403 {"message":"Invalid token"}` as other API endpoints — so there
+ * is no unauthenticated "is the server up" shortcut to prefer instead.
  *
  * ONE strategy, matching the Medusa probe's reasoning: nothing found in the
  * source reviewed here suggests an Invoice Ninja company token can be scoped

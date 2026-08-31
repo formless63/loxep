@@ -7,13 +7,10 @@
  * or embedded in fixtures/errors; every error thrown here reports positions,
  * not content.
  *
- * A live Invoice Ninja instance (`invoiceninja/invoiceninja-debian`,
- * container name `invoiceninja-web`/`invoiceninja`) runs on this host, but
- * no API token for it was provided in this environment — only unauthenticated
- * read-only probing was performed (see `errors.ts`/`probe.ts`). This loader
- * returns `null` when the file is absent (CI, a fresh clone, or — today —
- * this environment), and `test/live-instance.test.ts` skips cleanly in that
- * case, naming this exact path.
+ * This loader returns `null` when the file is absent, and the explicitly
+ * opted-in live suite skips cleanly in that case. A live unauthenticated
+ * probe confirmed only the provider's auth-failure shape; authenticated
+ * behavior remains source- and fixture-verified.
  *
  * File format (KEY=VALUE lines, `#` comments and blank lines ignored,
  * optional single/double quotes around values):

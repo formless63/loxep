@@ -414,7 +414,7 @@ describe("addTarget() — PUT /resource/:resourceId/target, tier 1", () => {
   });
 });
 
-describe("createRule() — PUT /resource/:resourceId/rule, tier 1, the owner's headline use case", () => {
+describe("createRule() — PUT /resource/:resourceId/rule, tier 1, primary access-rule use case", () => {
   it("sends PUT with the full rule payload and returns the created rule fact", async () => {
     const { adapter, stub } = adapterWith([envelope(ruleRecord({ ruleId: 77 }))]);
     const rule = await adapter.createRule("10", {

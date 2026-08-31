@@ -2,10 +2,9 @@
  * Fixture payloads for the Invoice Ninja v5 REST API. Constructed from the
  * source-verified transformers (`invoiceninja/invoiceninja`, `v5-stable`
  * branch, fetched 2026-08-13) — see `src/clients.ts`/`src/invoices.ts` for
- * the field-by-field citation trail. No live authenticated response was
- * captured for this package (no write credential in this environment), so
- * these fixtures were never reconciled against a real payload the way the
- * Medusa adapter's were — flagged in the module docs as fixtures-only.
+ * the field-by-field citation trail. These fixtures have not yet been
+ * reconciled against an authenticated live payload, so the module docs label
+ * them source- and fixture-verified rather than live-verified.
  *
  * ALL DATA HERE IS FAKE. No value in this file corresponds to any real
  * Invoice Ninja deployment.

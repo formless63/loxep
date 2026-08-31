@@ -12,9 +12,9 @@
  * the disable/enable verb `add-then-retire`'s retirement half needs; ships
  * at the adapter level now, but the ORCHESTRATION of retirement — the
  * typed confirmation, the self-lockout preflight, the decision to actually
- * call this method from a reconcile — is gated to a later milestone per an
- * owner ruling not yet made, exactly as `container-hosts.ts`'s own closed
- * operation union gates a widening). There is still no `deleteResource`,
+ * call this method from a reconcile — is gated to a later milestone, exactly
+ * as `container-hosts.ts`'s own closed operation union gates a widening).
+ * There is still no `deleteResource`,
  * `deleteTarget`, `deleteRule`, `deleteSite`, or `deleteOrg` anywhere in
  * this file, and there will never be one — see the design's verdict 3 and
  * rule 5. `operations.ts`'s `PANGOLIN_ALLOWED_WRITE_SHAPES` is the closed,
@@ -44,34 +44,11 @@
  * `/v1`. It is not the same process, port, or router as the dashboard
  * — confirmed from source, not merely documentation.
  *
- * **Live reconnaissance against the owner's instance, 2026-08-15, found
- * this port is not reachable from this build environment on any path
- * tried**, despite exhausting every reasonable network route available:
- *
- * - the public base URL over HTTPS on 443, `/v1/openapi.json` (the
- *   documented-unauthenticated route): the dashboard's own Next.js app
- *   answers its own 404 page — no router forwards this path to the
- *   Integration API;
- * - `https://<host>:3003` directly, over both the public internet and a
- *   confirmed direct Tailscale connection to the actual Pangolin VPS
- *   (identified by matching its TLS certificate CN): connection refused —
- *   nothing is bound to that port on any reachable interface, consistent
- *   with a typical Traefik+Docker deployment where the container's port is
- *   never published to the host and only Traefik's own internal service
- *   discovery can reach it;
- * - five plausible dedicated-subdomain guesses
- *   (`api.<domain>`, `pangolin-api.<domain>`, etc. — the pattern Pangolin's
- *   own self-host documentation recommends): each resolves via wildcard DNS
- *   but answers Traefik's default self-signed certificate, meaning none has
- *   a router configured.
- *
- * **One genuine live confirmation did land**: the dashboard's own internal
- * `/api/v1/*` route (a DIFFERENT, session-cookie-gated API sharing the same
- * response-wrapper code) answered `HTTP 401` with
- * `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` —
- * live proof of the exact envelope shape the design document predicted from
- * source, even though it did not exercise the bearer-authenticated surface
- * this adapter targets.
+ * A live unauthenticated probe confirmed two portable facts: a dashboard URL
+ * does not necessarily expose the Integration API, and the dashboard's
+ * sibling API uses the source-documented response envelope. It did not
+ * authenticate against the standalone Integration API, so bearer-authenticated
+ * reads remain source- and fixture-verified rather than live-verified.
  *
  * **Consequence for this milestone and the connecting guide**: an operator
  * who pastes the Pangolin dashboard URL into this connection's base-URL
@@ -82,8 +59,8 @@
  * route the operator configures in front of the Pangolin container's
  * `integration_port` (a subdomain, per Pangolin's own self-host
  * documentation) — it is not derivable from the dashboard URL by any
- * fixed transformation, and `live-pangolin.test.ts` records the concrete
- * failure this produces against the owner's current instance today.
+ * fixed transformation. `live-pangolin.test.ts` checks the explicitly
+ * configured Integration API origin when a contributor opts in.
  *
  * ## The envelope
  *
@@ -136,10 +113,9 @@ import {
 } from "./rate-budget.ts";
 
 /**
- * Live Pangolin instances return SQLite-flavoured numeric booleans (`sso: 1`,
- * `whitelist: 0`) alongside real ones (`ssl: true`) in the same row — observed
- * against a real instance 2026-08-16, where strict `z.boolean()` silently
- * dropped every resource. Accept both and normalize.
+ * Pangolin can serialize SQLite-flavoured numeric booleans (`sso: 1`,
+ * `whitelist: 0`) alongside JSON booleans (`ssl: true`) in the same row.
+ * Accept both and normalize so valid resources are not dropped.
  */
 const looseBoolean = z.union([z.boolean(), z.number()]).transform((v) => (typeof v === "number" ? v !== 0 : v));
 
@@ -368,7 +344,7 @@ export interface PangolinAdapter {
     payload: PangolinCreateTargetPayload,
   ): Promise<PangolinTargetFact>;
   /**
-   * TIER 1, additive, and the owner's headline use case. `PUT
+   * TIER 1, additive, and the primary access-rule use case. `PUT
    * /resource/{resourceId}/rule`. NON-IDEMPOTENT — a `PUT` here always
    * inserts. Read-back resolution: `listRules` matched on
    * `(action, match, value, priority)`.

@@ -22,16 +22,10 @@
  *
  * before the request reaches any resource controller — so this is the ONE
  * shape every unauthenticated/misauthenticated call produces, regardless of
- * endpoint. Confirmed live against a real self-hosted instance running on
- * this host (`invoiceninja-web` container, `invoiceninja/invoiceninja-debian`
- * image, `X-APP-VERSION: 5.13.24` response header) — an unauthenticated
- * `GET /api/v1/clients`, `/api/v1/ping`, and `/api/v1/health_check` each
- * returned exactly `HTTP 403 {"message":"Invalid token"}` on 2026-08-13. No
- * write credential was available in this environment, so only the
- * READ/auth-failure path was exercised live; every other classification
- * below is sourced from Invoice Ninja's own GitHub source and standard
- * Laravel framework behavior, not independently confirmed against a running
- * instance — flagged inline.
+ * endpoint. A live unauthenticated probe confirmed that representative API
+ * endpoints return `HTTP 403 {"message":"Invalid token"}`. Only this
+ * auth-failure path is live-verified; every other classification below is
+ * sourced from Invoice Ninja's own code and standard Laravel behavior.
  *
  * `App\Models\User::isActive()`/inactive-user and locked-company-user paths
  * in the same middleware return the SAME 403 status with a different
@@ -39,8 +33,7 @@
  * classifies all of them as `auth`, since none is something a caller can
  * retry without fixing the credential.
  *
- * ## Everything else — Laravel's own framework conventions (not live-probed;
- * no valid token was available to reach these paths on the live instance)
+ * ## Everything else — Laravel's own framework conventions (not live-probed)
  *
  * - **404** — Laravel's route-model-binding failure
  *   (`ModelNotFoundException`) renders as JSON because this adapter always

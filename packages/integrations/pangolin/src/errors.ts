@@ -26,18 +26,10 @@
  *    does, so this module classifies primarily from HTTP status, using the
  *    envelope's own `status` field as a tiebreaker when it and the transport
  *    status disagree.
- * 2. **Live**, 2026-08-15, against the owner's instance
- *    (`pangolin.example.com`): an unauthenticated request answered
- *    `HTTP 401` with body
- *    `{"data":null,"success":false,"error":true,"message":"Unauthorized","stack":null}` —
- *    the exact shape source predicts, `stack: null` included. This confirms
- *    the envelope shape live even though the standalone bearer-authenticated
- *    Integration API server (port 3003, prefix `/v1`) itself could not be
- *    reached from this network — see `adapter.ts`'s module doc for the full
- *    reachability finding. The probed response came from the dashboard
- *    app's own internal `/api/v1` route (session-cookie gated), which
- *    shares the same response-wrapper code, not from the Integration API
- *    proper.
+ * 2. **Live unauthenticated probe.** A dashboard sibling route returned the
+ *    source-documented `HTTP 401` failure envelope. That confirms the shared
+ *    wrapper shape, but not the standalone bearer-authenticated Integration
+ *    API; authenticated classification remains source- and fixture-verified.
  *
  * ## Classification
  *
@@ -169,7 +161,7 @@ export function pangolinKindFromEnvelope(
 export interface PangolinErrorContext {
   /** Adapter operation label, e.g. `sites.list`. Never a URL. */
   operation: string;
-  /** Request path, e.g. `/v1/org/home-lab/sites`. No query string. */
+  /** Request path, e.g. `/v1/org/example-org/sites`. No query string. */
   path: string;
 }
 

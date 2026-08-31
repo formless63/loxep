@@ -9,10 +9,8 @@
  * SOURCE-VERIFIED against `App\Transformers\ClientTransformer::transform()`
  * and `App\Transformers\ClientContactTransformer::transform()`
  * (`invoiceninja/invoiceninja`, `v5-stable` branch, fetched 2026-08-13).
- * NOT independently confirmed against the live instance on this host: no API
- * token was available in this environment (see `credentials.ts`), so this
- * module is FIXTURES/SOURCE-VERIFIED ONLY — live verification is the
- * follow-up bead's job.
+ * This module is SOURCE- AND FIXTURE-VERIFIED. Authenticated live
+ * verification remains pending and requires explicit live-test opt-in.
  *
  * ## A field format Medusa/WooCommerce do not have: Unix-second timestamps
  *

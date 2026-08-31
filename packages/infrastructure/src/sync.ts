@@ -47,12 +47,11 @@
  * `run()` accepts an optional `connectionId` (constructor option). When it
  * is supplied, an `input.mode === 'apply'` run checks
  * `write-policy.ts`'s `assertWritePolicy` BEFORE calling `provider.apply` —
- * the design's cross-provider rule 1: the owner's current Cloudflare token is
- * a full-account READ-ONLY token, ruled read-only BY POLICY rather than by
- * scope, so this connection needs the same honest-refusal gate Pangolin
- * does. A refusal is recorded as a `'blocked'` step (never a failure, never a
- * silent skip) and the run finishes `'partial'`; `apply` proceeds normally
- * otherwise. `connectionId` is OPTIONAL for backward compatibility with
+ * the design's cross-provider rule 1: credentials may be broader than the
+ * writes authorized in Loxep, so this connection needs the same
+ * honest-refusal gate Pangolin does. A refusal is recorded as a `'blocked'`
+ * step (never a failure, never a silent skip) and the run finishes
+ * `'partial'`; `apply` proceeds normally otherwise. `connectionId` is OPTIONAL for backward compatibility with
  * direct construction (tests, and any future caller that has not resolved
  * one) — omitting it skips the gate entirely, so every real caller MUST pass
  * it. The composition root (`@loxep/app`'s `infrastructure-poll-executor.ts`)

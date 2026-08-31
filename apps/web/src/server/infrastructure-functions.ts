@@ -831,8 +831,8 @@ export interface ProxyResourceChainDto {
    */
   writePolicyTier: ProviderWritePolicyTier | null;
   /**
-   * "Who/when" for the rules list's disabled rows (the owner's filtering-UX
-   * ruling) — the most recent SUCCESSFUL retire/enable run for this
+   * "Who/when" for the rules list's disabled rows (the accepted filtering UX)
+   * — the most recent SUCCESSFUL retire/enable run for this
    * resource, resource-level (not per-rule; see `buildProxyResourceChainDtos`'s
    * own doc for why), `null` when no such run has ever completed.
    */
@@ -925,7 +925,7 @@ export async function buildProxyResourceChainDtos(
       connectionId === null ? null : (writePolicies[connectionId] ?? 'read_only');
 
     // M7 (loxep-acj.7): "who/when" for the rules list's disabled rows, per
-    // the owner's filtering-UX ruling. The ledger's own granularity is per
+    // the accepted filtering UX. The ledger's own granularity is per
     // RESOURCE (`reconcile_runs.subject_id`), not per rule — a `proxy_resource
     // _rules` row carries no "last changed by" column of its own — so this is
     // the most recent SUCCESSFUL retire/enable run for the WHOLE resource,
@@ -1192,7 +1192,7 @@ export const updateManagedDomainIntent = createServerFn({ method: 'POST' })
  * three ways to close it: (a) build `infrastructure.ensure-zone` as a real
  * task, (b) let an operator ATTACH a zone they already have at the provider,
  * (c) route the plain new-domain form through a provisioning template. This
- * ships (b) — the owner's zones already exist at Cloudflare, and
+ * ships (b) — installations may adopt zones that already exist at the provider, and
  * `@loxep/integration-cloudflare` already exports everything a "list my
  * zones" read needs (`listZones`, `getZone`); (a) and (c) remain open.
  *
@@ -1473,7 +1473,7 @@ export const requestDomainResync = createServerFn({ method: 'POST' })
  * sync-proxy-resource` in `mode: 'apply'`, `trigger: 'manual'` for every
  * declared `proxy_resources` row under one domain — the task's own payload
  * granularity (`{domainId}`, no connection id, no per-resource targeting).
- * Admin-only, matching the owner's ruling that writes are admin-only in
+ * Admin-only, matching Loxep's accepted rule that writes are admin-only in
  * Loxep. Does NOT await the reconcile — writes intent (a job) and returns,
  * per Phase 7's own rule; the run's outcome (`succeeded`/`partial` with a
  * `blocked` step/`failed`) shows up on the SAME panel that already polls
@@ -1555,8 +1555,7 @@ const retireProxyResourceRuleInput = z.strictObject({
 
 /**
  * Disable ONE rule at the provider — `enabled: false`, the reversible
- * retirement form (owner ruling, `pangolin-credential-constraints` memory:
- * "retirement = disable-never-delete CONFIRMED"). Admin-only; enqueues
+ * retirement form (the accepted disable-never-delete policy). Admin-only; enqueues
  * `infrastructure.retire-proxy-resource-rule` (job-based — see that task's
  * own doc for why this cannot be a synchronous call from `apps/web`) and
  * returns immediately, matching every other intent-changing action in this
@@ -1599,7 +1598,7 @@ export const retireProxyResourceRule = createServerFn({ method: 'POST' })
   });
 
 /**
- * The owner's filtering-UX ruling's "plus re-enable" half — `enabled: true`
+ * The accepted filtering UX's "plus re-enable" half — `enabled: true`
  * on ONE rule. Same admin-only, typed-confirmation, job-based shape as
  * {@link retireProxyResourceRule}, mirrored.
  */
@@ -3159,12 +3158,10 @@ export const fetchDockhandHostView = createServerFn({ method: 'GET' })
   });
 
 // ---------------------------------------------------------------------------
-// Termix per-session rows (loxep-4ah, owner-approved 2026-08-15 ruling —
-// "the more info the better, this tool is meant to be used by people that
-// trust one another"). The wvm design double-gated this on (a) a live run
-// confirming the active-sessions field names and (b) an explicit owner
-// ruling on the trust model; both are now satisfied — see loxep-4ah's own
-// notes and the corrected loxep-wvm docs.
+// Termix per-session rows (loxep-4ah). The accepted trust model assumes an
+// installation is shared by mutually trusted users. The wvm design gated this
+// on a live run confirming the active-sessions field names and on that explicit
+// trust model; both conditions are now satisfied.
 //
 // Sessions stay LIVE-READ, exactly like Dockhand's containers panel above:
 // no table, no cache, no cadence. `TermixSessionFact` is never persisted —
@@ -3196,9 +3193,9 @@ export interface TermixSessionRowDto {
   /**
    * The human this session was shared BY, when it is not the caller's own —
    * `null` for an own session. Rendered verbatim as the username Termix
-   * itself reports: the owner's 2026-08-15 ruling is that this tool is used
-   * by people who trust one another, so "who is logged into which host" is
-   * the intended value, not a surveillance surface to redact.
+   * itself reports. Under the accepted mutually trusted-user model, "who is
+   * logged into which host" is intended operational context rather than a
+   * surveillance surface to redact.
    */
   sharedByUsername: string | null;
   permissionLevel: string | null;

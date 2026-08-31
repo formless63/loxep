@@ -27,20 +27,20 @@ describe("loadPangolinCredentialsFromEnvFile", () => {
     expect(loadPangolinCredentialsFromEnvFile("/nonexistent/pangolin.env")).toBeNull();
   });
 
-  it("parses the owner's real file shape: PANGOLIN_API_KEY as one combined <id>.<secret> value", () => {
+  it("parses PANGOLIN_API_KEY as one combined <id>.<secret> value", () => {
     const path = writeEnvFile(
       [
-        "PANGOLIN_API_KEY=99nfitsqgw5ry5t.duavlsls2x65scs22zw26qqld7opwkuyka6opzmd",
-        "PANGOLIN_KEY_NAME=prod-primary",
+        "PANGOLIN_API_KEY=fixture-id.fixture-secret-not-valid",
+        "PANGOLIN_KEY_NAME=fixture-read-only",
         "PANGOLIN_URL=https://pangolin.example.com",
       ].join("\n"),
     );
     const credentials = loadPangolinCredentialsFromEnvFile(path);
     expect(credentials).toEqual({
       baseUrl: "https://pangolin.example.com",
-      apiKeyId: "99nfitsqgw5ry5t",
-      apiKeySecret: "duavlsls2x65scs22zw26qqld7opwkuyka6opzmd",
-      keyName: "prod-primary",
+      apiKeyId: "fixture-id",
+      apiKeySecret: "fixture-secret-not-valid",
+      keyName: "fixture-read-only",
     });
   });
 
@@ -53,11 +53,11 @@ describe("loadPangolinCredentialsFromEnvFile", () => {
 
   it("reads an optional PANGOLIN_ORG_ID", () => {
     const path = writeEnvFile(
-      ["PANGOLIN_API_KEY=abc.def", "PANGOLIN_URL=https://pangolin.example.com", "PANGOLIN_ORG_ID=home-lab"].join(
+      ["PANGOLIN_API_KEY=abc.def", "PANGOLIN_URL=https://pangolin.example.com", "PANGOLIN_ORG_ID=example-org"].join(
         "\n",
       ),
     );
-    expect(loadPangolinCredentialsFromEnvFile(path)?.orgId).toBe("home-lab");
+    expect(loadPangolinCredentialsFromEnvFile(path)?.orgId).toBe("example-org");
   });
 
   it("throws invalid_request when PANGOLIN_URL is missing", () => {

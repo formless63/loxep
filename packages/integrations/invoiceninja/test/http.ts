@@ -4,8 +4,7 @@
  * Every unit test injects one of these through
  * `createInvoiceNinjaAdapter({ fetchImpl })` so the suite exercises the real
  * request/response path — body parsing, error normalization, pagination —
- * without a live write credential (none exists in this environment; see
- * `src/credentials.ts`'s module doc).
+ * without network access or live credentials.
  */
 import type { InvoiceNinjaAdapterError, InvoiceNinjaFetch } from "../src/index.ts";
 

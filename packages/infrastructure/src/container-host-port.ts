@@ -38,7 +38,8 @@
  * decision to make: an operator who decommissions a machine says so in
  * `hosting_targets`, and Loxep's correct response is to stop reconciling it,
  * not to delete somebody else's record. The operation union is closed so that
- * adding a delete requires an owner ruling rather than a one-line union member.
+ * adding a delete requires an explicit architecture decision rather than a
+ * one-line union member.
  *
  * ## The join key is the NAME, and that is what makes this migration-free
  *

@@ -12,10 +12,8 @@
  *
  * ## Verification trail, 2026-08-13
  *
- * The owner supplied https://docs.termix.site/api/termix-api/ as the
- * primary source. Its live page is a JavaScript-rendered API-reference app
- * this environment could not fetch as text beyond navigation chrome; its
- * GENERATING SOURCE — `Termix-SSH/Docs`'s `static/openapi.json`, a full
+ * The provider documentation page is a JavaScript-rendered API-reference app.
+ * Its GENERATING SOURCE — `Termix-SSH/Docs`'s `static/openapi.json`, a full
  * OpenAPI 3.0.3 document regenerated 2026-08-06 — is what this package and
  * `operations.ts` are built from. Four findings shape this module:
  *
@@ -54,25 +52,13 @@
  *    `tabInstanceId`, `shareId`), so this is the one read in the package
  *    with confirmed field names.
  *
- * ## Live verification of session fields (loxep-4ah, 2026-08-15)
+ * ## Verification status of session fields
  *
- * Per-session rows were owner-approved 2026-08-15 (loxep-4ah), gated on a
- * live run of `test/live-termix.test.ts`'s extended sessions assertion
- * (dockhand's "report presence per field, across ALL rows" pattern). That
- * run happened, against the same real instance and account loxep-wvm's
- * 2026-08-14 run used — and, exactly as that run also found, the account's
- * active-sessions list was EMPTY (no open Termix tabs at run time). An
- * empty list is a documented pass (finding 4 already covers the shape; a
- * zero-row page proves nothing wrong), but it means field PRESENCE was NOT
- * newly confirmed against a live row this run — the schema this module
- * parses against remains sourced from `openapi.json` alone, unlike the
- * `name`/`ip`/`lastSeenAt` host fields above, which WERE live-confirmed
- * present on 2026-08-14. `sessionSchema` in this file already parses every
- * field defensively (`.optional()`/`.nullable()` throughout) regardless of
- * this distinction, so per-session rows are safe to ship on the strength of
- * the fully-specified OpenAPI document plus defensive parsing — but a
- * future reader who gets a live account with open sessions should re-run
- * the live leg and fold a real observation back into this paragraph.
+ * Per-session fields are specified by `openapi.json`; a non-empty live row
+ * has not yet been captured to cross-check field presence. `sessionSchema`
+ * therefore parses every field defensively (`.optional()`/`.nullable()`
+ * throughout). The opt-in live leg should report presence across all rows
+ * when a throwaway instance has active sessions.
  *
  * ## Read-only by construction
  *

@@ -170,10 +170,10 @@ export async function createMailSyncForDomain(
     secrets: services.secrets,
     providerName: PURELYMAIL_CONNECTION_PROVIDER,
     enqueue: createTransactionalEnqueue(),
-    // Write-authorization gate (Pangolin chain design M3, loxep-acj.3): the
-    // owner's Purelymail token has no scoping at all, so this connection's
-    // stored policy defaults to read_only and every write is refused
-    // (recorded as a 'blocked' step) until an admin flips it.
+    // Write-authorization gate (Pangolin chain design M3, loxep-acj.3):
+    // Purelymail has no narrow token scope for these writes, so stored policy
+    // defaults to read_only and every write is refused (recorded as a
+    // 'blocked' step) until an admin explicitly changes it.
     connectionId: mail.mailConnectionId,
   });
 }

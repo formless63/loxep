@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-off, container-run (see the `one-off-scripts-against-the-live-loxep-stack`
- * bd memory and `mint-qa-session.mjs`'s precedent): registers the Compose
+ * One-off, container-run (following `mint-qa-session.mjs`'s precedent): registers the Compose
  * `rustfs` companion as an in-app `s3` storage backend, through the REAL
  * `StorageBackendsService` — so the credential lands application-encrypted in
  * `application_secrets` via the keyring, never as plaintext or raw SQL.

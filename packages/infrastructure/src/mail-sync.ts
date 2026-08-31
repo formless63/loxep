@@ -92,9 +92,8 @@
  *
  * ## The write-authorization gate (Pangolin chain design M3, `loxep-acj.3`)
  *
- * The owner's Purelymail token is a fully-scoped account admin token with NO
- * token scoping at all — "there is no safe-by-construction credential to ask
- * for. Safety has to come from Loxep" (the design's own words). So an
+ * Purelymail does not offer a narrowly scoped token that makes these writes
+ * safe by construction, so Loxep's policy must provide that safety. An
  * optional `connectionId` (constructor option) gates the FIRST write attempt
  * in each entry point: `runMailDomainSync` checks it immediately before
  * `provider.addDomain` (never before — the ownership-code fetch and the

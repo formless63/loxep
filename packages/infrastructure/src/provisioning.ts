@@ -93,7 +93,7 @@
  * every step this design permits is additive or convergent. A future
  * tier-2-capable step_kind would need the typed-confirmation treatment M7
  * builds for retirement; none exists here, and none should be added without
- * that owner-reviewed ceremony.
+ * an accepted design for that confirmation ceremony.
  *
  * ## `blocked`, not `failed`, and never a silent skip
  *
@@ -110,8 +110,8 @@
  * ```
  *
  * Every write-policy-tier refusal — across all three providers, following
- * the design's own framing of the owner's real credentials as uniformly
- * "full-account" rather than narrowly scoped — blocks with `credential_scope`
+ * the design's treatment of potentially broad provider credentials — blocks
+ * with `credential_scope`
  * (this module's own `checkTierOnePolicy`, checked BEFORE any provider call,
  * ahead of and in addition to each underlying service's own redundant gate —
  * defense in depth, never a single point of failure for the write-risk

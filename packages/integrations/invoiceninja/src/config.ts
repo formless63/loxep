@@ -6,15 +6,9 @@
  *
  * TRANSPORT SECURITY IS NOT OPTIONAL HERE, same reasoning as the
  * WooCommerce/Medusa adapters (`packages/integrations/{woo,medusa}/src/config.ts`).
- * Loxep rejects an `http:` base URL at config parse time — a real deployment
- * puts a self-hosted Invoice Ninja instance behind TLS the same way it would
- * any other admin surface holding customer billing data. (The live instance
- * verified for this package — see the module docs on `errors.ts`/`probe.ts` —
- * runs plain HTTP internally on a private Docker network with no host port
- * published, so it was reachable only via the container's bridge-network
- * IP, never over `https:`. That deployment shape is exactly why this rule
- * exists: it is not how Invoice Ninja is meant to be exposed to a caller
- * holding a real API token.)
+ * Loxep rejects an `http:` base URL at config parse time: a self-hosted
+ * Invoice Ninja instance must be exposed to credential-bearing callers over
+ * TLS, regardless of how its internal container network is arranged.
  *
  * AUTHENTICATION — SOURCE-VERIFIED (`App\Http\Middleware\TokenAuth`,
  * `invoiceninja/invoiceninja`, `v5-stable` branch, fetched 2026-08-13:
@@ -146,7 +140,7 @@ export function parseInvoiceNinjaAdapterConfig(
  * `orders.source_account_key` requires of Medusa/WooCommerce/eBay. Invoice
  * Ninja does not itself source `orders` rows (it is a Phase 6 billing
  * companion, not a commerce channel — see the Services & Billing Schema
- * Design's "Owner answers" section), so this key is not a
+ * Design's accepted decisions), so this key is not a
  * `source_account_key` in that schema's sense; it exists for the same
  * reason those keys do — a deterministic scope string for health/diagnostic
  * surfaces and for `external_resources` provenance — under the vocabulary

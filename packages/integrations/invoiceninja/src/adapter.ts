@@ -9,13 +9,10 @@
  * SOURCE-VERIFIED against `invoiceninja/invoiceninja`, `v5-stable` branch,
  * fetched 2026-08-13 (`routes/api.php`, `app/Http/Middleware/TokenAuth.php`,
  * `app/Http/Controllers/BaseController.php`,
- * `app/Transformers/{Client,Invoice}Transformer.php`). LIVE-PROBED
- * (unauthenticated only — no write credential existed in this environment)
- * against a real self-hosted instance running on this host (container
- * `invoiceninja-web`, image `invoiceninja/invoiceninja-debian`,
- * `X-APP-VERSION: 5.13.24`), reachable only via its Docker bridge-network IP
- * since no host port is published — see `errors.ts` for the exact probe
- * evidence.
+ * `app/Transformers/{Client,Invoice}Transformer.php`). A live
+ * unauthenticated probe confirmed the documented 403 auth-failure shape.
+ * Authenticated reads and writes remain source- and fixture-verified rather
+ * than live-verified; see `errors.ts`.
  *
  * ## What is structurally different from the Medusa/WooCommerce adapters
  *

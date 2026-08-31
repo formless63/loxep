@@ -4,8 +4,7 @@
  * live Loxep deployment now that SMTP is real (Purelymail) and
  * Mailpit-captured magic links are no longer reachable there.
  *
- * This is a one-off container script, not a workspace package (see bd
- * memory `one-off-scripts-against-the-live-loxep-stack`): `docker cp` it
+ * This is a one-off container script, not a workspace package: `docker cp` it
  * into the running app container's `/app`, then run it with
  * `docker compose exec -T <service> node /app/mint-qa-session.mjs ...` so it
  * resolves `@loxep/config` / `@loxep/db` / `better-auth` / `better-call`

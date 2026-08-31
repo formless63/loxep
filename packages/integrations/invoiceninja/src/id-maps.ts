@@ -16,12 +16,10 @@
  * is the complete, current set. Field names (`country_id`, `settings.currency_id`,
  * `settings.payment_terms`) were cross-checked against `app/Models/Client.php`'s
  * `$fillable` and `app/Http/Requests/Client/StoreClientRequest.php`'s
- * validation rules — NOT independently confirmed against a running instance
- * (no API token was available in this environment; same honest gap
- * `clients.ts`'s own module doc already records for the rest of this
- * package). Re-verify with `GET /api/v1/statics` or a running instance's
- * client-edit country/currency dropdowns before relying on this for a
- * disputed push, per the design's own instruction.
+ * validation rules. These maps remain source-verified rather than
+ * authenticated-live-verified. Re-verify with `GET /api/v1/statics` or a
+ * throwaway instance's client-edit country/currency dropdowns before relying
+ * on them for a disputed push, per the design's own instruction.
  *
  * ## The finding that simplifies this file: `country_id` IS the ISO numeric code
  *

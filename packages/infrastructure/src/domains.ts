@@ -185,7 +185,7 @@ export interface ManagedDomainsService {
   /**
    * `loxep-8f8`: attach a zone the operator already has at the DNS
    * provider — option (b) of the three the design's job-graph note weighs,
-   * chosen because the owner's zones already exist at Cloudflare and
+   * supporting installations that adopt pre-existing provider state while
    * `ensure-zone`/`provision-domain` remain unbuilt tasks. Writes
    * `external_zone_id` (+ whatever of `provider_zone_status`/
    * `zone_nameservers` the caller has) so `createRecordSyncService.run()` no

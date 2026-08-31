@@ -444,12 +444,12 @@ export const documentsMediaLimitsSetting = defineSetting({
  * class) is "a SETTING, not a rewrite" per the design's own words — this
  * key is where that setting lives.
  *
- * Default is `'ocr_tesseract'` (OWNER RULING 2026-08-17, superseding M4's
+ * Default is `'ocr_tesseract'` (accepted product decision, superseding M4's
  * original opt-in `'manual'` default): the original caution guarded a
  * runtime-weight tradeoff that the M4 addendum dissolved — the WASM engine
  * and its traineddata ship inside the image regardless of this setting, so
  * defaulting to "extraction on" costs a fresh installation nothing it has
- * not already paid for, and the owner's ask is receipts that are searchable
+ * not already paid for, while preserving searchable receipts out of the box.
  * out of the box. `'manual'` remains one settings-write away for an
  * installation that wants no automatic extraction. The schema
  * intentionally does NOT enumerate valid parser ids (unlike, say,
@@ -544,7 +544,7 @@ export const inventoryDefaultSaleModeSetting = defineSetting({
  * question 9: *"which facts should be published — worker backlog, sync
  * freshness, drift count, readiness"*, plus the fifth named in the
  * question's own recommendation prose, notification delivery success),
- * owner-approved 2026-08-15 (loxep-4ah) as the `mode: 'facts'` expansion of
+ * accepted in loxep-4ah as the `mode: 'facts'` expansion of
  * the single worst-status rollup milestone 2 shipped. Ordered here exactly
  * as `computeGatusPushFacts` (`@loxep/app`'s `gatus-push.ts`) iterates them,
  * so the derived-key list and the push order can never drift apart.
@@ -607,7 +607,7 @@ export const gatusPushSetting = defineSetting({
       )
       .nullable(),
     /**
-     * PROVISIONAL default `'single'` (loxep-4ah owner ruling 6b): an
+     * PROVISIONAL default `'single'` (loxep-4ah compatibility decision): an
      * installation that has never touched this field keeps EXACTLY
      * milestone 2's shipped behavior — one push, the overall
      * `integration_health` rollup, to `endpointKey` itself. `'facts'` opts
@@ -717,7 +717,7 @@ export const GATUS_PUSH_SECRET_KEY = "infrastructure.gatus_push.default";
  * non-empty string key. A key that does not match a current catalog entry is
  * simply inert (nothing reads it) until a future catalog id reuses it.
  *
- * DEFAULT (PROVISIONAL — owner note, loxep-dgg): all-on, i.e. an EMPTY map.
+ * DEFAULT (PROVISIONAL, loxep-dgg): all-on, i.e. an EMPTY map.
  * The bead deliberately left "sensible minimal set" vs. "all-on" open; this
  * ships all-on because an ABSENT setting must not hide a provider an
  * operator already uses — the safe default for an upgrade-in-place
@@ -831,18 +831,18 @@ export const tailscaleIgnoredDevicesSetting = defineSetting({
  * `LOXEP_BOOTSTRAP_ADMIN_EMAIL`, `loxep admin promote`, or the claim mapping
  * below — closes that window behind itself.
  *
- * DEFAULT (CONFIRMED — owner ruling 2026-08-15, `loxep-yk8`, resolving the
+ * DEFAULT (CONFIRMED by `loxep-yk8`, resolving the
  * question `loxep-x2s` was filed to ask): closed-after-bootstrap ships exactly
  * as built. The recommendation held because the failure modes are asymmetric —
  * an install that was open when it should have been closed has already handed
  * out accounts, while an install that was closed when it should have been open
- * costs its owner one switch. It is nonetheless a behavior change for an
+ * costs an administrator one switch. It is nonetheless a behavior change for an
  * upgrade in place (a colleague added next week is declined until an admin
  * opens the method or creates the account), and it runs against this module's
  * own "an absent setting must not surprise an existing install" habit — see
  * {@link integrationsEnabledSetting}. The sub-question was whether `oidc`
  * should default to `'open'` while `magicLink` stays `'closed'`, since with
- * SSO the operator's identity provider is already the gate; the ruling keeps
+ * SSO the operator's identity provider is already the gate; the accepted decision keeps
  * that split rejected — one coherent default is easier to reason about than a
  * two-speed one — and instead addresses the discoverability gap with a
  * dismissible onboarding card on `/dashboard/overview` (shown once an admin
@@ -862,7 +862,7 @@ export const tailscaleIgnoredDevicesSetting = defineSetting({
  * `applyOn: 'every_sign_in'` declares the IdP authoritative and both grants and
  * revokes admin — guarded so it never demotes the only remaining administrator
  * and never runs in the same session as a first-admin bootstrap grant. The
- * ruling ships this default as built, unchanged; it is unrelated to
+ * accepted decision ships this default as built, unchanged; it is unrelated to
  * `LOXEP_OIDC_EMAIL_CLAIM` (`@loxep/config`, `configuration-and-secrets.md`),
  * a separate bootstrap override for which claim seeds the email address.
  */
@@ -910,10 +910,9 @@ export const authProvisioningSetting = defineSetting({
 
 /**
  * Whether the admin has dismissed the `/dashboard/overview` onboarding card
- * offering to open OIDC auto-provisioning (ADR-0024 §2, owner ruling
- * 2026-08-15, `loxep-yk8`).
+ * offering to open OIDC auto-provisioning (ADR-0024 §2, `loxep-yk8`).
  *
- * The card exists because the ruling that kept `auth.provisioning`'s
+ * The card exists because the accepted decision that kept `auth.provisioning`'s
  * closed-for-both default (above) rejected splitting `oidc` to `open` by
  * default — SSO-gated installs still start closed, and instead learn the
  * option exists via this one-time surface right after their first
@@ -955,13 +954,10 @@ export const authOnboardingOidcPromptDismissedSetting = defineSetting({
  * audited flip. See `provider-write-policy.ts`'s module doc for the tier
  * vocabulary and why it is a four-value ordinal rather than a binary switch.
  *
- * Applies to every connection, not only Pangolin's: rule 1 explicitly widens
- * this to Cloudflare and Purelymail, because both of the owner's current
- * credentials are read-only BY POLICY rather than by scope
- * (`owner-credential-constraints` memory, 2026-08-15) — a full-account
- * Cloudflare token and a fully-scoped Purelymail admin token that has NO
- * token scoping at all. This setting is where that policy actually lives for
- * every provider connection it is wired to check, not only Pangolin's.
+ * Applies to every connection, not only Pangolin's: provider credentials can
+ * be broadly scoped, and some providers offer no narrower token scope at all.
+ * This setting is where Loxep's explicit per-connection write policy lives for
+ * every provider wired to check it.
  *
  * Flipping one connection's tier is an ADMIN-ONLY server function
  * (`setConnectionWritePolicy`, `apps/web/src/server/admin-functions.ts`)

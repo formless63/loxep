@@ -71,9 +71,8 @@
  * and is never on the same origin as the dashboard by default; an operator
  * must add their own reverse-proxy route (a dedicated subdomain, per
  * Pangolin's own self-host documentation) to reach it at all. See
- * `adapter.ts`'s module doc for the live reachability finding against the
- * owner's instance and why the connecting guide must warn about this
- * explicitly.
+ * `adapter.ts` for the portable reachability constraint the connection UI
+ * must explain.
  */
 export const PANGOLIN_API_PREFIX = "/v1";
 

@@ -14,12 +14,10 @@
  * `App\DataMapper\InvoiceItem` (line-item field names),
  * `App\Http\Controllers\InvoiceController::performAction()`, and
  * `routes/api.php` (`invoiceninja/invoiceninja`, `v5-stable` branch, fetched
- * 2026-08-13). NOT independently confirmed against the live instance on this
- * host: no API token was available in this environment (see
- * `credentials.ts`), so this module is FIXTURES/SOURCE-VERIFIED ONLY — live
- * verification, including whether a created invoice really carries an
- * auto-assigned `number` and a populated `invitations[].link` by default, is
- * the follow-up bead's job.
+ * 2026-08-13). This module is SOURCE- AND FIXTURE-VERIFIED. Authenticated
+ * live verification remains pending, including whether a created invoice
+ * carries an auto-assigned `number` and populated `invitations[].link` by
+ * default.
  *
  * ## The push flow this module implements (design doc's round-trip)
  *
@@ -363,8 +361,8 @@ export async function fetchInvoice(
  * Ninja's counter-based numbering (`GeneratesCounter`, source above) and
  * invitation-link generation are believed to run around the send/email
  * step rather than at draft creation, but this specific sequencing was NOT
- * live-confirmed for Invoice Ninja (no write credential — see the module
- * doc); callers should re-fetch after {@link markInvoiceSent} rather than
+ * authenticated-live-confirmed for Invoice Ninja; callers should re-fetch
+ * after {@link markInvoiceSent} rather than
  * assume either field is populated immediately after `createInvoice`.
  */
 export async function createInvoice(

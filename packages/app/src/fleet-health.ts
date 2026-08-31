@@ -1775,9 +1775,8 @@ function termixFailureOutcome(error: unknown): HealthProbeOutcome {
  * loxep-wvm §1.3/§4.2's per-host status mapping — the discovery counterpart
  * to `dockhandEnvironmentHealthStatus` above. `online` comes from `/status`,
  * which §4.2 calls "a fourth-hand signal with the weakest provenance in the
- * fleet" — live verification already found it `null` on a real instance (see
- * this module's own live-verification notes). NEVER `failing`: a `false`/
- * `null` reading is indistinguishable from "Termix reported nothing usable"
+ * fleet". NEVER `failing`: a `false`/`null` reading is indistinguishable from
+ * "Termix reported nothing usable"
  * rather than a confirmed negative fact, so both collapse to `unknown` — the
  * same "don't assert a fact you can't back" posture every other status
  * mapping in this file applies to its own weak signal.
@@ -2036,9 +2035,9 @@ async function probePangolinConnection(
 /**
  * Dispatch for {@link CONTROL_PLANE_PROVIDERS_WITH_HEALTH_PROBE}: each
  * control-plane provider proves its credential with its own cheapest
- * authenticated read, exactly like the fleet five — added when the owner's
- * real Cloudflare/Purelymail connections sat at unknown forever for the same
- * no-probe reason Pangolin's once did.
+ * authenticated read, exactly like the fleet five. This prevents configured
+ * control-plane connections from remaining unknown solely because no probe
+ * exists for their provider.
  */
 async function probeControlPlaneConnection(
   services: FleetHealthServices,

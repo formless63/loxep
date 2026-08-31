@@ -10,9 +10,9 @@
  *
  * **No provider response type is exported from this package.** See
  * `adapter.ts` for the full verification trail — source-cited against
- * `fosrl/pangolin@main`, the envelope shape live-confirmed 2026-08-15
- * against the owner's instance, and the reachability finding that must be
- * read before wiring a connection.
+ * `fosrl/pangolin@main`, with the shared envelope live-probed through an
+ * unauthenticated sibling route. Bearer-authenticated reads require an
+ * explicitly exposed Integration API origin and remain opt-in.
  */
 export { createPangolinAdapter } from "./adapter.ts";
 export type {

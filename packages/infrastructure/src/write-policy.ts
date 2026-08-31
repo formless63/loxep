@@ -46,8 +46,8 @@
  *   IS structurally permitted — that is deliberate, and it is the seam M5's
  *   dynamic-IP auto-apply (not built here) is expected to use, gated by the
  *   `'additive'` policy tier and its own per-alias `autoApply` flag.
- * - **owner ruling, 2026-08-15 (`pangolin-credential-constraints` memory)**:
- *   "writes are ADMIN-ONLY in Loxep." `actorIsAdmin: false` — an explicit,
+ * - **accepted authorization rule**: writes are admin-only in Loxep.
+ *   `actorIsAdmin: false` — an explicit,
  *   known, non-admin human actor — always refuses, regardless of policy
  *   tier or operation tier. `actorIsAdmin: undefined` means "no human actor
  *   is attached to this apply" (a background job on a trigger other than a
@@ -210,7 +210,7 @@ export function assertWritePolicy(input: AssertWritePolicyInput): void {
     );
   }
 
-  // Owner ruling: writes are admin-only. Only refuses when a KNOWN non-admin
+  // Writes are admin-only. Only refuse when a KNOWN non-admin
   // actor is attached — see the module doc for why `undefined` passes.
   if (input.actorIsAdmin === false) {
     throw new WritePolicyError(

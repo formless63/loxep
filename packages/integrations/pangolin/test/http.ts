@@ -9,7 +9,7 @@ import type { PangolinFetch } from "../src/index.ts";
 export const TEST_API_KEY_ID = "test-pangolin-key-id-marker-zzz";
 export const TEST_API_KEY_SECRET = "test-pangolin-key-secret-marker-zzz";
 export const TEST_BASE_URL = "https://pangolin.example.invalid";
-export const TEST_ORG_ID = "home-lab";
+export const TEST_ORG_ID = "example-org";
 
 export interface RecordedCall {
   url: string;
