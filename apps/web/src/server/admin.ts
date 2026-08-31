@@ -805,6 +805,17 @@ export function getAccountingEnqueue(): TransactionalEnqueue {
   return getAdminServices().accountingEnqueue;
 }
 
+/**
+ * The inventory `TransactionalEnqueue` instance — `/inventory/stock`'s
+ * "Release stale holds" trigger (loxep-souz). Deliberately its own accessor
+ * rather than reusing `getAccountingEnqueue()`: they are the same TYPE but
+ * name different callers, and a reader should not have to know that the
+ * inventory sweep borrows accounting's enqueue to understand either one.
+ */
+export function getInventoryEnqueue(): TransactionalEnqueue {
+  return getAdminServices().accountingEnqueue;
+}
+
 /** Counterparties (`/finance/partners`), loxep-l49. */
 export function getCounterpartiesService(): CounterpartiesService {
   return getAdminServices().counterparties;

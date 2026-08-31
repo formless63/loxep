@@ -33,6 +33,7 @@ import {
   SYNC_TOKEN_POLICY_TASK,
 } from "@loxep/infrastructure";
 import { STORAGE_MIGRATE_OBJECT_TASK_NAME } from "@loxep/storage/migration";
+import { EXPIRE_STALE_HOLDS_TASK_NAME } from "../src/inventory-allocations.ts";
 import { DELIVER_TASK_NAME } from "@loxep/notifications";
 import { startWorkerRuntime } from "@loxep/jobs";
 import type { WorkerRuntime } from "@loxep/jobs";
@@ -181,6 +182,11 @@ describe("buildWorkerRegistry", () => {
         MATERIALIZE_RECORDS_TASK,
         SYNC_RECORDS_TASK,
         STORAGE_MIGRATE_OBJECT_TASK_NAME,
+        // loxep-souz: the stale-hold sweep. `AllocationsService.
+        // expireStaleHolds` had no caller at all, so a reservation that fell
+        // through suppressed `available_to_sell` forever. Hourly cron; also
+        // enqueueable on demand.
+        EXPIRE_STALE_HOLDS_TASK_NAME,
       ].sort(),
     );
 

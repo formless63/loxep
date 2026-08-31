@@ -26,6 +26,7 @@ import { inventoryItemQuery } from '@/features/inventory/api/queries';
 import InventoryItemListingsPanel from '@/features/commerce/components/inventory-item-listings-panel';
 import ImageGallery from '@/features/inventory/components/image-gallery';
 import ItemAllocationsTable from '@/features/inventory/components/item-allocations-table';
+import ReleaseStaleHoldsButton from '@/features/inventory/components/release-stale-holds-button';
 import ItemEnrichmentPanel from '@/features/inventory/components/item-enrichment-panel';
 import SpecificsEditor from '@/features/inventory/components/specifics-editor';
 import { QueryErrorAlert } from '@/features/settings/components/query-error-alert';
@@ -277,11 +278,14 @@ export default function ItemDetail({ itemId }: { itemId: string }) {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle className='text-base'>Allocations</CardTitle>
-          <p className='text-muted-foreground text-sm'>
-            Every reservation against this item — the rows behind &quot;available to sell&quot;.
-          </p>
+        <CardHeader className='flex flex-row items-start justify-between gap-2'>
+          <div>
+            <CardTitle className='text-base'>Allocations</CardTitle>
+            <p className='text-muted-foreground text-sm'>
+              Every reservation against this item — the rows behind &quot;available to sell&quot;.
+            </p>
+          </div>
+          <ReleaseStaleHoldsButton />
         </CardHeader>
         <CardContent>
           <ItemAllocationsTable allocations={data.allocations} />

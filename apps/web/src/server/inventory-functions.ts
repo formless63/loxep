@@ -2448,3 +2448,42 @@ export interface UnlinkedShippingLabelFeeDto {
   currency: string;
   amount: string;
 }
+
+// ---------------------------------------------------------------------------
+// Stale-hold sweep, on demand (loxep-souz)
+// ---------------------------------------------------------------------------
+
+/**
+ * Forces an off-cycle run of `inventory.expire-stale-holds` rather than
+ * waiting up to an hour for its cron tick.
+ *
+ * Enqueues, never sweeps synchronously: the task name constant is reached
+ * through `getFleetModule()` (the cached `@vite-ignore` dynamic import of
+ * `@loxep/app`, which pulls `@loxep/jobs` and must never enter the web
+ * bundle), matching `triggerPostingSweep` and every other "enqueue, don't
+ * call" action here. The job key makes a double-click one run, not two.
+ *
+ * `requireAdmin`: releasing another operator's reservations changes what the
+ * whole installation can sell, the same bar the posting sweep sets.
+ */
+export const releaseStaleHolds = createServerFn({ method: 'POST' }).handler(
+  async (): Promise<{ enqueued: boolean }> => {
+    const { requireAdmin, getAdminServices, getInventoryEnqueue, getFleetModule } =
+      await import('@/server/admin');
+    await requireAdmin();
+    const { handle } = getAdminServices();
+    const appModule = await getFleetModule();
+    const enqueue = getInventoryEnqueue();
+    await handle.db.transaction(async (tx) => {
+      await enqueue(
+        tx,
+        appModule.EXPIRE_STALE_HOLDS_TASK_NAME,
+        {},
+        {
+          jobKey: 'inventory.expire-stale-holds:manual'
+        }
+      );
+    });
+    return { enqueued: true };
+  }
+);

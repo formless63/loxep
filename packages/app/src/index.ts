@@ -424,6 +424,18 @@ export type {
 } from "./inventory-ebay.ts";
 
 export {
+  EXPIRE_STALE_HOLDS_CRON_MATCH,
+  EXPIRE_STALE_HOLDS_TASK_NAME,
+  createExpireStaleHoldsTasks,
+  runExpireStaleHoldsSweep,
+} from "./inventory-allocations.ts";
+export type {
+  ExpireStaleHoldsResult,
+  ExpireStaleHoldsTask,
+  ExpireStaleHoldsTasks,
+} from "./inventory-allocations.ts";
+
+export {
   GATUS_PUSH_CRON_MATCH,
   GATUS_PUSH_SECRET_KEY,
   GATUS_PUSH_TASK_NAME,

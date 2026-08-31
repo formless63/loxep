@@ -25,6 +25,7 @@
  * | `infrastructure.materialize-records` | @loxep/app (mechanics in @loxep/infrastructure) | loxep-vdt: intent -> `dns_records`, then chains the sync (on-demand) |
  * | `infrastructure.sync-records` | @loxep/app (mechanics in @loxep/infrastructure) | loxep-vdt: the reconcile run behind "Sync now"/"Retry" and the materialize chain (on-demand) |
  * | `storage.migrate-object`     | @loxep/storage       | loxep-vdt: one resumable local->S3 object copy+verify+cutover (on-demand) |
+ * | `inventory.expire-stale-holds` | @loxep/app (mechanics in @loxep/inventory) | loxep-souz: sweeps expired `manual_hold` reservations so a stale hold stops suppressing `available_to_sell` forever (hourly) |
  *
  * ## The three names that were enqueued with no handler (loxep-vdt)
  *
@@ -62,7 +63,10 @@
  * minutes, piggybacking on `health.sweep`'s own cadence — see
  * `gatus-push.ts`'s module doc), `accounting.post-facts` (every 5 minutes,
  * PROVISIONAL — see `accounting-posting.ts`'s module doc for why the design
- * names no cadence and a sweep was chosen over event-driven posting).
+ * names no cadence and a sweep was chosen over event-driven posting),
+ * `inventory.expire-stale-holds` (hourly, PROVISIONAL — see
+ * `inventory-allocations.ts`'s module doc for why a stale hold does not need
+ * the 5-minute pump/probe cadence above).
  *
  * @loxep/commerce's ORDER SYNC deliberately defines no cron item — that
  * scheduled work is a `woo_orders` / `ebay_orders` monitor target claimed by
@@ -248,6 +252,7 @@ import {
   createEbayPurchasePollExecutor,
   createInventoryPurchaseSyncTasks,
 } from "./inventory-ebay.ts";
+import { createExpireStaleHoldsTasks } from "./inventory-allocations.ts";
 import { createListingContextCache } from "./listing-context.ts";
 import type { ListingContextCache } from "./listing-context.ts";
 import {
@@ -348,6 +353,7 @@ export function buildCronItems(input: {
   gatusPush: AppCronItem;
   accountingPostFacts: AppCronItem;
   ipAliasDetection: AppCronItem;
+  expireStaleHolds: AppCronItem;
 }): readonly JobsCronItem[] {
   return [
     // @loxep/jobs' own defaults (heartbeat) stay first so the maintenance
@@ -360,6 +366,7 @@ export function buildCronItems(input: {
     input.gatusPush,
     input.accountingPostFacts,
     input.ipAliasDetection,
+    input.expireStaleHolds,
   ];
 }
 
@@ -627,6 +634,18 @@ export function buildWorkerRegistry(
   // the idempotency/books-gating contract it relies on.
   const accountingPostFacts = createAccountingPostFactsTasks({ services });
 
+  // --- inventory stale-hold sweep (loxep-souz) ---------------------------
+  // `AllocationsService.expireStaleHolds` (`@loxep/inventory`) had zero
+  // callers anywhere — a fallen-through `manual_hold` reservation suppressed
+  // `available_to_sell` forever. One recurring sweep, hourly (PROVISIONAL —
+  // see `inventory-allocations.ts`'s module doc for why holds do not need
+  // the 5-minute cadence above), plus the manual "Release stale holds"
+  // admin action on `/inventory/stock` (`apps/web`'s `inventory-functions.ts`
+  // `triggerExpireStaleHolds`) enqueuing the SAME task through
+  // `getSyncNowEnqueue()`/`getFleetModule()`, mirroring
+  // `posting-functions.ts`'s `triggerPostingSweep`.
+  const expireStaleHolds = createExpireStaleHoldsTasks({ services });
+
   // --- fleet evidence ingestion (Phase 8 milestone 7, loxep-ovj.7) ------
   // One on-demand task, enqueued transactionally by `fleet-evidence.ts`'s
   // `receiveFleetEvidence` from the (unauthenticated-by-session) inbound
@@ -674,6 +693,7 @@ export function buildWorkerRegistry(
     health.healthSweepTask,
     gatusPush.gatusPushTask,
     accountingPostFacts.accountingPostFactsTask,
+    expireStaleHolds.expireStaleHoldsTask,
     ...fleetEvidence.tasks,
     documentsExtraction.extractTextTask,
     ...storageMigration.tasks,
@@ -689,6 +709,7 @@ export function buildWorkerRegistry(
       gatusPush: gatusPush.gatusPushCronItem,
       accountingPostFacts: accountingPostFacts.accountingPostFactsCronItem,
       ipAliasDetection: ipAliasDetection.ipAliasDetectionCronItem,
+      expireStaleHolds: expireStaleHolds.expireStaleHoldsCronItem,
     }),
     services,
     listings,
