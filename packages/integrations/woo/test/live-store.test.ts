@@ -1,8 +1,8 @@
 /**
  * LIVE leg — a REAL PRODUCTION WooCommerce store, read-only credentials.
  *
- * Skips cleanly when ~/.config/loxep/woo.env is absent (CI has
- * no credentials).
+ * Requires `LOXEP_LIVE_TESTS=woo` (or `=all`) before it inspects
+ * `~/.config/loxep/woo.env`; without opt-in it skips cleanly.
  *
  * ABSOLUTE RULES honored here, and how:
  *
@@ -41,19 +41,19 @@ import {
 import type { WooOrderFact } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadWooCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("woo");
+const creds = optedIn ? loadWooCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-store] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-store] skipped: no credentials at ~/.config/loxep/woo.env",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-store] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
   );
 }
 

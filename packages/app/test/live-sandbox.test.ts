@@ -1,7 +1,7 @@
 /**
- * LIVE eBay sandbox tier for the composition root. Skips cleanly when the
- * local keyset file (~/.config/loxep/ebay-sandbox.env) is absent — CI has no
- * credentials.
+ * LIVE eBay sandbox tier for the composition root. Requires
+ * `LOXEP_LIVE_TESTS=ebay` (or `=all`) before inspecting the local keyset;
+ * an opted-in run skips cleanly when that file is absent.
  *
  * ## What this tier proves
  *
@@ -67,19 +67,19 @@ import {
 } from "./helpers.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadSandboxCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("ebay");
+const creds = optedIn ? loadSandboxCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-sandbox] skipped: no keyset at ~/.config/loxep/ebay-sandbox.env",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-sandbox] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
   );
 }
 

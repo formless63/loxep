@@ -1,10 +1,9 @@
 /**
  * LIVE leg — a REAL Cloudflare account, READ-ONLY credentials.
  *
- * Skips cleanly when `~/.config/loxep/cloudflare.env` is absent, which is the
- * state today: **the owner has not created a token yet, and every live
- * verification in this milestone is owner-gated.** Nothing in this file runs
- * in CI or on a machine without that file.
+ * Requires `LOXEP_LIVE_TESTS=cloudflare` (or `=all`) before it inspects
+ * `~/.config/loxep/cloudflare.env`. Without opt-in it skips without reading
+ * local credentials; an opted-in run also skips when that file is absent.
  *
  * ABSOLUTE RULES honored here, and how:
  *
@@ -47,19 +46,19 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadCloudflareCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("cloudflare");
+const creds = optedIn ? loadCloudflareCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-cloudflare] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=cloudflare (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     `[live-cloudflare] skipped: no credentials at ${defaultCloudflareEnvFilePath()}`,
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-cloudflare] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=cloudflare (or =all) to run against the live instance.",
   );
 }
 

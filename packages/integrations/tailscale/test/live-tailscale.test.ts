@@ -1,6 +1,6 @@
 /**
- * The live leg. **Skips cleanly** unless `~/.config/loxep/tailscale.env`
- * exists.
+ * The live leg. Requires `LOXEP_LIVE_TESTS=tailscale` (or `=all`) before it
+ * inspects `~/.config/loxep/tailscale.env`; without opt-in it skips cleanly.
  *
  * Its standing job is to confirm the `Device` field names this package reads
  * (`hostname`, `name`, `addresses`, `lastSeen`, `connectedToControl`, `os`)
@@ -22,20 +22,22 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const loaded = (() => {
-  try {
-    const credentials = loadTailscaleCredentialsFromEnvFile();
-    return credentials === null ? null : { credentials };
-  } catch {
-    return null;
-  }
-})();
-
 const optedIn = liveTestsEnabledFor("tailscale");
-if (loaded !== null && !optedIn) {
+const loaded = optedIn
+  ? (() => {
+      try {
+        const credentials = loadTailscaleCredentialsFromEnvFile();
+        return credentials === null ? null : { credentials };
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-tailscale] skipped: credentials present but not opted in — set " +
+    "[live-tailscale] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=tailscale (or =all) to run against the live instance.",
   );
 }

@@ -1,13 +1,10 @@
 /**
  * LOXEP_LIVE_TESTS opt-in gate for this package's live-integration test(s).
  *
- * A live test now needs BOTH its credential file AND this flag before it is
- * allowed to talk to a real — often production — instance. Credentials alone
- * used to be sufficient, which meant a routine `bun run test:packages` would
- * silently contact production the moment a credential file existed on disk
- * (e.g. the owner's real Beszel/Dockhand/Gatus/Termix/Woo/eBay/Medusa
- * instances, logging in to Dockhand and Termix on every run). This flag is
- * the second, explicit condition that keeps a routine run from doing that.
+ * A live test needs BOTH its credential file AND this flag before it may
+ * contact an external instance. Credentials on disk are not consent: routine
+ * package tests must remain deterministic and offline unless explicitly
+ * opted in.
  *
  * Duplicated per package rather than centralized in a shared package,
  * mirroring this repo's existing norm of package-local test helpers (see

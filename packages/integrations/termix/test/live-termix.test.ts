@@ -1,6 +1,6 @@
 /**
- * The live leg. **Skips cleanly** unless `~/.config/loxep/termix.env`
- * exists.
+ * The live leg. Requires `LOXEP_LIVE_TESTS=termix` (or `=all`) before it
+ * inspects `~/.config/loxep/termix.env`; without opt-in it skips cleanly.
  *
  * Its standing job is to replace the UNVERIFIED paragraphs in
  * `src/adapter.ts` with observed fact: `GET /host/db/host` and `GET
@@ -22,19 +22,21 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const credentials = (() => {
-  try {
-    return loadTermixCredentialsFromEnvFile();
-  } catch {
-    return null;
-  }
-})();
-
 const optedIn = liveTestsEnabledFor("termix");
-if (credentials !== null && !optedIn) {
+const credentials = optedIn
+  ? (() => {
+      try {
+        return loadTermixCredentialsFromEnvFile();
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-termix] skipped: credentials present but not opted in — set " +
+    "[live-termix] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=termix (or =all) to run against the live instance.",
   );
 }

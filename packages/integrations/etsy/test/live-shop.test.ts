@@ -1,8 +1,6 @@
 /**
- * Live Etsy leg. Skips cleanly when the local dev keyset file
- * (~/.config/loxep/etsy-sandbox.env) is absent — CI has no credentials, and
- * NEITHER DOES THIS ENVIRONMENT until the owner completes the OWNER
- * PREREQUISITE this bead names explicitly:
+ * Live Etsy leg. Requires `LOXEP_LIVE_TESTS=etsy` (or `=all`) before it
+ * inspects the local dev keyset. An opted-in run also requires this setup:
  *
  * 1. Register an Etsy app in the Etsy Developer Portal
  *    (https://www.etsy.com/developers/register) as a Personal App — requires
@@ -19,7 +17,7 @@
  * "Owner-action prerequisites", item 6) — "live" here means a real approved
  * app calling real Etsy endpoints read-only (ping + public listing/shop
  * reads), never an isolated test environment. This leg is deliberately
- * read-only and safe to run against a real app the moment credentials exist.
+ * read-only and runs against a real app only after explicit opt-in.
  *
  * ABSOLUTE RULE honored here: credential values are never printed, logged,
  * asserted-by-value, or embedded in messages. Leak checks are containment
@@ -38,22 +36,22 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadDevKeysetFromEnvFile();
 const optedIn = liveTestsEnabledFor("etsy");
+const creds = optedIn ? loadDevKeysetFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-shop] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=etsy (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-shop] skipped: no Etsy dev keyset at ~/.config/loxep/etsy-sandbox.env " +
       "— owner prerequisite: register + wait for approval of an Etsy Developer " +
       "Portal Personal App (see this file's module doc), then write the keyset " +
       "to that env file. Etsy has no sandbox, so nothing here can run until then.",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-shop] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=etsy (or =all) to run against the live instance.",
   );
 }
 

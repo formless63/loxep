@@ -2,8 +2,9 @@
  * LIVE tier for the Medusa commerce wiring (loxep-xxz) — one bounded order
  * sync against a REAL, throwaway Medusa v2 backend (2.18.0), driven end to
  * end through the REAL composed worker registry. The analogue of
- * `live-woo-sync.test.ts`. Skips cleanly when `~/.config/loxep/medusa.env` is
- * absent (CI, a fresh clone) — see
+ * `live-woo-sync.test.ts`. Requires `LOXEP_LIVE_TESTS=medusa` (or `=all`)
+ * before inspecting `~/.config/loxep/medusa.env` or its optional CA path;
+ * an opted-in run skips cleanly when the credential file is absent. See
  * `packages/integrations/medusa/test/harness.md` for how that file and the
  * throwaway backend behind it are provisioned.
  *
@@ -104,7 +105,8 @@ import {
 } from "./helpers.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadMedusaCredentialsFromEnvFile();
+const optedIn = liveTestsEnabledFor("medusa");
+const creds = optedIn ? loadMedusaCredentialsFromEnvFile() : null;
 
 /**
  * The harness's self-signed trust anchor, read straight out of the env file —
@@ -139,10 +141,16 @@ function selfSignedTrustMissing(): string | null {
   return trusted.includes(caCertFile) ? null : caCertFile;
 }
 
-const untrustedCaCertFile = creds === null ? null : selfSignedTrustMissing();
-const optedIn = liveTestsEnabledFor("medusa");
+const untrustedCaCertFile =
+  optedIn && creds !== null ? selfSignedTrustMissing() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-medusa-sync] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=medusa (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-medusa-sync] skipped: no credentials at ~/.config/loxep/medusa.env",
@@ -154,12 +162,6 @@ if (creds === null) {
       "TLS terminator and this process does not trust it. Re-run with " +
       `NODE_EXTRA_CA_CERTS=${untrustedCaCertFile} (see ` +
       "packages/integrations/medusa/test/harness.md).",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-medusa-sync] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=medusa (or =all) to run against the live instance.",
   );
 }
 

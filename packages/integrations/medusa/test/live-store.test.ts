@@ -1,7 +1,8 @@
 /**
  * LIVE leg — a REAL Medusa v2 backend, read-only-intended secret API key.
  *
- * Skips cleanly when ~/.config/loxep/medusa.env is absent (CI, fresh clone).
+ * Requires `LOXEP_LIVE_TESTS=medusa` (or `=all`) before it inspects
+ * `~/.config/loxep/medusa.env` or the optional CA file named there.
  *
  * ## What this suite is for
  *
@@ -77,18 +78,18 @@ import type { MedusaFetch, MedusaOrderFact } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const ENV_PATH = join(homedir(), ".config", "loxep", "medusa.env");
-const creds = loadMedusaCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("medusa");
+const creds = optedIn ? loadMedusaCredentialsFromEnvFile() : null;
 
-if (creds === null) {
-  // eslint-disable-next-line no-console
-  console.info(`[live-store] skipped: no credentials at ${ENV_PATH}`);
-} else if (!optedIn) {
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-store] skipped: credentials present but not opted in — set " +
+    "[live-store] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=medusa (or =all) to run against the live instance.",
   );
+} else if (creds === null) {
+  // eslint-disable-next-line no-console
+  console.info(`[live-store] skipped: no credentials at ${ENV_PATH}`);
 }
 
 /**
@@ -113,7 +114,7 @@ function localCaCertificate(): string | null {
   }
 }
 
-const caCertificate = localCaCertificate();
+const caCertificate = optedIn ? localCaCertificate() : null;
 
 /**
  * A `fetch`-shaped transport over `node:https` that trusts exactly one

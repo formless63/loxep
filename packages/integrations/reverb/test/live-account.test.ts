@@ -1,8 +1,6 @@
 /**
- * Live Reverb leg. Skips cleanly when the local dev credentials file
- * (~/.config/loxep/reverb.env) is absent — CI has no credentials, and
- * neither does this environment until the owner completes the (single,
- * instant, no-approval-queue) OWNER STEP the design doc names:
+ * Live Reverb leg. Requires `LOXEP_LIVE_TESTS=reverb` (or `=all`) before it
+ * inspects the local dev credentials file. An opted-in run also requires:
  *
  * 1. Sign in to the Reverb account Loxep should observe.
  * 2. Open Settings -> API tokens (or the equivalent path in Reverb's
@@ -15,7 +13,7 @@
  * UNLIKE Etsy, there is no approval wait and no sandbox distinction to
  * caveat — "live" here means a real PAT calling real Reverb endpoints
  * read-only (account whoami + listing/my-listings reads). This leg is
- * deliberately read-only and safe to run the moment a token exists.
+ * deliberately read-only and runs only after explicit opt-in.
  *
  * ABSOLUTE RULE honored here: credential values are never printed, logged,
  * asserted-by-value, or embedded in messages. Leak checks are containment
@@ -30,22 +28,22 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadDevCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("reverb");
+const creds = optedIn ? loadDevCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-account] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=reverb (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-account] skipped: no Reverb dev credentials at " +
       "~/.config/loxep/reverb.env — owner step: mint a Personal Access " +
       "Token in the Reverb account's own settings (public + read_listings " +
       "scopes) and write it to that env file. See this file's module doc.",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-account] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=reverb (or =all) to run against the live instance.",
   );
 }
 

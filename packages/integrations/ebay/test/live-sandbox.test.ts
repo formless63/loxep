@@ -1,6 +1,7 @@
 /**
- * Live eBay SANDBOX leg. Skips cleanly when the local keyset file
- * (~/.config/loxep/ebay-sandbox.env) is absent — CI has no credentials.
+ * Live eBay SANDBOX leg. Requires `LOXEP_LIVE_TESTS=ebay` (or `=all`) before
+ * it inspects the local keyset or token files. An opted-in run skips cleanly
+ * when the keyset at `~/.config/loxep/ebay-sandbox.env` is absent.
  *
  * TWO tiers of live coverage:
  *
@@ -41,19 +42,19 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadSandboxCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("ebay");
+const creds = optedIn ? loadSandboxCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-sandbox] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-sandbox] skipped: no keyset at ~/.config/loxep/ebay-sandbox.env",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-sandbox] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
   );
 }
 
@@ -444,7 +445,8 @@ describeConsent("eBay sandbox consent URL (live config)", () => {
 // Trading watchlist — needs a user token from a completed manual consent.
 // ---------------------------------------------------------------------------
 
-const userBundle = creds === null ? null : loadSandboxUserTokenFromFile();
+const userBundle =
+  optedIn && creds !== null ? loadSandboxUserTokenFromFile() : null;
 
 if (creds !== null && userBundle === null) {
   // eslint-disable-next-line no-console

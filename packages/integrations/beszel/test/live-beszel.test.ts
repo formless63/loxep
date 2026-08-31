@@ -1,5 +1,6 @@
 /**
- * The live leg. **Skips cleanly** unless `~/.config/loxep/beszel.env` exists.
+ * The live leg. Requires `LOXEP_LIVE_TESTS=beszel` (or `=all`) before it
+ * inspects `~/.config/loxep/beszel.env`; without opt-in it skips cleanly.
  *
  * Its standing job is to replace the UNVERIFIED paragraph in
  * `src/adapter.ts` with observed fact: Beszel publishes no schema for the
@@ -32,19 +33,21 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const credentials = (() => {
-  try {
-    return loadBeszelCredentialsFromEnvFile();
-  } catch {
-    return null;
-  }
-})();
-
 const optedIn = liveTestsEnabledFor("beszel");
-if (credentials !== null && !optedIn) {
+const credentials = optedIn
+  ? (() => {
+      try {
+        return loadBeszelCredentialsFromEnvFile();
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-beszel] skipped: credentials present but not opted in — set " +
+    "[live-beszel] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=beszel (or =all) to run against the live instance.",
   );
 }

@@ -42,12 +42,10 @@ import {
 import type { ConnectionsService, SettingsService } from "@loxep/domain";
 import {
   createDockhandAdapter,
-  defaultDockhandEnvFilePath,
   loadDockhandCredentialsFromEnvFile,
 } from "@loxep/integration-dockhand";
 import {
   createTermixAdapter,
-  defaultTermixEnvFilePath,
   loadTermixCredentialsFromEnvFile,
 } from "@loxep/integration-termix";
 import { createFleetHealthSubjectRegistry } from "../src/fleet-health.ts";
@@ -56,35 +54,38 @@ import { DOCKHAND_CONNECTION_CONFIG_KEY, TERMIX_CONNECTION_CONFIG_KEY } from "..
 import { createScratchDb, dropScratchDb, scratchDbName, testKeyring } from "./helpers.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const dockhandCreds = (() => {
-  try {
-    return loadDockhandCredentialsFromEnvFile();
-  } catch {
-    return null;
-  }
-})();
-const termixCreds = (() => {
-  try {
-    return loadTermixCredentialsFromEnvFile();
-  } catch {
-    return null;
-  }
-})();
-
 const dockhandOptedIn = liveTestsEnabledFor("dockhand");
 const termixOptedIn = liveTestsEnabledFor("termix");
+const dockhandCreds = dockhandOptedIn
+  ? (() => {
+      try {
+        return loadDockhandCredentialsFromEnvFile();
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+const termixCreds = termixOptedIn
+  ? (() => {
+      try {
+        return loadTermixCredentialsFromEnvFile();
+      } catch {
+        return null;
+      }
+    })()
+  : null;
 
-if (dockhandCreds !== null && !dockhandOptedIn) {
+if (!dockhandOptedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-fleet-discovery] dockhand skipped: credentials present but not opted in — set " +
+    "[live-fleet-discovery] dockhand skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=dockhand (or =all) to run against the live instance.",
   );
 }
-if (termixCreds !== null && !termixOptedIn) {
+if (!termixOptedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-fleet-discovery] termix skipped: credentials present but not opted in — set " +
+    "[live-fleet-discovery] termix skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=termix (or =all) to run against the live instance.",
   );
 }
@@ -149,7 +150,7 @@ describeLive("live fleet discovery (Dockhand/Termix)", () => {
   });
 
   (dockhandLive ? it : it.skip)(
-    `Dockhand (${defaultDockhandEnvFilePath()}): one listHosts() read discovers every environment as an external_resources row with its own health row`,
+    "Dockhand (~/.config/loxep/dockhand.env): one listHosts() read discovers every environment as an external_resources row with its own health row",
     async () => {
       const connection = await connections.createConnection({
         provider: "dockhand",
@@ -221,7 +222,7 @@ describeLive("live fleet discovery (Dockhand/Termix)", () => {
   );
 
   (termixLive ? it : it.skip)(
-    `Termix (${defaultTermixEnvFilePath()}): one listHosts() read discovers every host as an external_resources row`,
+    "Termix (~/.config/loxep/termix.env): one listHosts() read discovers every host as an external_resources row",
     async () => {
       const connection = await connections.createConnection({
         provider: "termix",

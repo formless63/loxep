@@ -7,20 +7,13 @@
  *
  * ## Read this before trusting a green run
  *
- * Milestone 1's reconnaissance (`adapter.ts`'s module doc) found the
- * Integration API's own port is NOT reachable from this build environment
- * on any network path tried, including a confirmed direct connection to
- * the actual Pangolin host. The owner's `PANGOLIN_URL` is the DASHBOARD's
- * URL, which the design document itself predicted operators would paste
- * first ("the dashboard URL is a documented first-attempt trap"). This
- * suite therefore does NOT assert success — it records whatever the
- * instance actually does, the same way `test/live-tailscale.test.ts`
- * treats an empty tailnet as a legitimate non-error state. A thrown
+ * Pangolin's Integration API is a separate service origin; a dashboard URL
+ * is not a derivable substitute. This suite therefore does NOT assume
+ * success — it records what the explicitly configured endpoint does. A thrown
  * `PangolinAdapterError` is caught, printed, and treated as the honest
- * result of this run, not a suite failure — the standing job is to
- * confirm reachability once the operator has a working reverse-proxy
- * route for the Integration API's port, at which point this same test
- * starts exercising real reads with no code change required.
+ * result of this opt-in reconnaissance run, not a suite failure. Once the
+ * configured origin exposes the Integration API, the same test exercises
+ * authenticated reads with no code change.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -31,20 +24,22 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const loaded = (() => {
-  try {
-    const credentials = loadPangolinCredentialsFromEnvFile();
-    return credentials === null ? null : { credentials };
-  } catch {
-    return null;
-  }
-})();
-
 const optedIn = liveTestsEnabledFor("pangolin");
-if (loaded !== null && !optedIn) {
+const loaded = optedIn
+  ? (() => {
+      try {
+        const credentials = loadPangolinCredentialsFromEnvFile();
+        return credentials === null ? null : { credentials };
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-pangolin] skipped: credentials present but not opted in — set " +
+    "[live-pangolin] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=pangolin (or =all) to run against the live instance.",
   );
 }

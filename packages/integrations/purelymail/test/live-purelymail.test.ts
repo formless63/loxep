@@ -2,10 +2,9 @@
  * LIVE leg — a REAL Purelymail account, READ-ONLY **by construction of this
  * file**, not by construction of the credential.
  *
- * Skips cleanly when `~/.config/loxep/purelymail.env` is absent, which is the
- * state today: **no Purelymail API key exists yet, and every live verification
- * in this milestone is owner-gated.** Nothing in this file runs in CI or on a
- * machine without that file.
+ * Requires `LOXEP_LIVE_TESTS=purelymail` (or `=all`) before it inspects
+ * `~/.config/loxep/purelymail.env`. Without opt-in it skips without reading
+ * local credentials; an opted-in run also skips when that file is absent.
  *
  * ## The difference from milestone 1, stated plainly
  *
@@ -60,19 +59,19 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadPurelymailCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("purelymail");
+const creds = optedIn ? loadPurelymailCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-purelymail] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=purelymail (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     `[live-purelymail] skipped: no credentials at ${defaultPurelymailEnvFilePath()}`,
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-purelymail] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=purelymail (or =all) to run against the live instance.",
   );
 }
 

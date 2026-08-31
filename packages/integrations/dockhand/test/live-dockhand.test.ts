@@ -1,5 +1,6 @@
 /**
- * The live leg. **Skips cleanly** unless `~/.config/loxep/dockhand.env` exists.
+ * The live leg. Requires `LOXEP_LIVE_TESTS=dockhand` (or `=all`) before it
+ * inspects `~/.config/loxep/dockhand.env`; without opt-in it skips cleanly.
  *
  * Its standing job is to replace the UNVERIFIED note in `src/adapter.ts` with
  * observed fact. Dockhand publishes no OpenAPI document — the
@@ -38,19 +39,21 @@ import {
 } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const credentials = (() => {
-  try {
-    return loadDockhandCredentialsFromEnvFile();
-  } catch {
-    return null;
-  }
-})();
-
 const optedIn = liveTestsEnabledFor("dockhand");
-if (credentials !== null && !optedIn) {
+const credentials = optedIn
+  ? (() => {
+      try {
+        return loadDockhandCredentialsFromEnvFile();
+      } catch {
+        return null;
+      }
+    })()
+  : null;
+
+if (!optedIn) {
   // eslint-disable-next-line no-console
   console.info(
-    "[live-dockhand] skipped: credentials present but not opted in — set " +
+    "[live-dockhand] skipped: not opted in — set " +
       "LOXEP_LIVE_TESTS=dockhand (or =all) to run against the live instance.",
   );
 }

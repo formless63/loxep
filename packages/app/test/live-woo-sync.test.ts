@@ -1,8 +1,9 @@
 /**
  * LIVE tier for the commerce wiring — one bounded order sync against a REAL
  * production WooCommerce store, driven end to end through the REAL composed
- * worker registry. Skips cleanly when
- * ~/.config/loxep/woo.env is absent (CI has no credentials).
+ * worker registry. Requires `LOXEP_LIVE_TESTS=woo` (or `=all`) before
+ * inspecting `~/.config/loxep/woo.env`; an opted-in run skips cleanly when
+ * that file is absent.
  *
  * ## What this tier proves that the mocked e2e cannot
  *
@@ -68,19 +69,19 @@ import {
 } from "./helpers.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadWooCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("woo");
+const creds = optedIn ? loadWooCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-woo-sync] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-woo-sync] skipped: no credentials at ~/.config/loxep/woo.env",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-woo-sync] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
   );
 }
 

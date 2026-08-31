@@ -2,6 +2,8 @@
  * Live eBay SANDBOX leg for **Sell Fulfillment order ingestion**
  * (loxep-xh9.2). Read-only: GETs only, never `issueRefund`,
  * `createShippingFulfillment`, or any other mutating call.
+ * Requires `LOXEP_LIVE_TESTS=ebay` (or `=all`) before either local artifact
+ * below is inspected.
  *
  * ## It skips, and that is expected today
  *
@@ -48,11 +50,18 @@ import {
 import { EbayAdapterError } from "../src/errors.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadSandboxCredentialsFromEnvFile();
-const bundle = creds === null ? null : loadSandboxUserTokenFromFile();
 const optedIn = liveTestsEnabledFor("ebay");
+const creds = optedIn ? loadSandboxCredentialsFromEnvFile() : null;
+const bundle =
+  optedIn && creds !== null ? loadSandboxUserTokenFromFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-orders] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     "[live-orders] skipped: no keyset at ~/.config/loxep/ebay-sandbox.env",
@@ -63,12 +72,6 @@ if (creds === null) {
     `[live-orders] skipped: no consented user token at ${defaultSandboxUserTokenFilePath()} ` +
       `— complete the sandbox consent flow with the ${EBAY_SELL_FULFILLMENT_READONLY_SCOPE} scope ` +
       "(EBAY_ORDER_CONSENT_SCOPES) and write the bundle there",
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-orders] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=ebay (or =all) to run against the live instance.",
   );
 }
 

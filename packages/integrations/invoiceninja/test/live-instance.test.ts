@@ -2,19 +2,16 @@
  * LIVE leg — a REAL self-hosted Invoice Ninja v5 instance, read-only-intended
  * company API token.
  *
- * Skips cleanly when ~/.config/loxep/invoiceninja.env is absent (CI, a fresh
- * clone, and — as of this writing — this development environment: a live
- * instance runs on this host, `invoiceninja-web`/`invoiceninja` containers,
- * `X-APP-VERSION: 5.13.24`, but no API token for it was ever provided here,
- * so this whole suite has never run authenticated in this environment).
+ * Requires `LOXEP_LIVE_TESTS=invoiceninja` (or `=all`) before it inspects
+ * `~/.config/loxep/invoiceninja.env`. Without opt-in it skips cleanly; an
+ * opted-in run also skips when that file is absent.
  *
  * ## What this suite is for
  *
  * `@loxep/integration-invoiceninja` was built from Invoice Ninja's own
- * GitHub source (`v5-stable` branch, fetched 2026-08-13) plus one
- * UNAUTHENTICATED probe against the live instance on this host (see
- * `src/errors.ts`'s module doc — the `X-API-TOKEN`/403/"Invalid token" shape
- * is genuinely live-confirmed). Every WRITE path — `createClient`,
+ * GitHub source (`v5-stable` branch, fetched 2026-08-13) plus one generic
+ * unauthenticated probe (see `src/errors.ts` — the
+ * `X-API-TOKEN`/403/"Invalid token" shape is live-confirmed). Every WRITE path — `createClient`,
  * `updateClient`, `createInvoice`, `updateInvoice`, `markInvoiceSent` — and
  * every money/pagination/timestamp claim about an AUTHENTICATED response
  * rests on source reading alone. This suite is the answer to "but does a
@@ -45,28 +42,27 @@
  * This file intentionally contains NO live assertions yet — writing them
  * against a shape this package has never observed authenticated would be
  * guessing with extra steps. Populating them is the follow-up bead's job,
- * once ~/.config/loxep/invoiceninja.env exists with real credentials
- * pointed at a THROWAWAY instance (never a production one — this suite
- * creates data).
+ * once explicit opt-in credentials target a THROWAWAY instance (never a
+ * production one — this suite creates data).
  */
 import { describe, it } from "vitest";
 import { loadInvoiceNinjaCredentialsFromEnvFile, defaultInvoiceNinjaEnvFilePath } from "../src/index.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
 const ENV_PATH = defaultInvoiceNinjaEnvFilePath();
-const creds = loadInvoiceNinjaCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("invoiceninja");
+const creds = optedIn ? loadInvoiceNinjaCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "[live-instance] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=invoiceninja (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   // eslint-disable-next-line no-console
   console.info(
     `[live-instance] skipped: no credentials at ${ENV_PATH} — see this file's module doc`,
-  );
-} else if (!optedIn) {
-  // eslint-disable-next-line no-console
-  console.info(
-    "[live-instance] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=invoiceninja (or =all) to run against the live instance.",
   );
 }
 

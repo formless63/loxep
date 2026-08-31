@@ -2,8 +2,8 @@
  * LIVE tier — ingestion against a REAL PRODUCTION WooCommerce store with
  * read-only credentials, into a throwaway scratch database.
  *
- * Skips cleanly when ~/.config/loxep/woo.env is absent (CI has
- * no credentials).
+ * Requires `LOXEP_LIVE_TESTS=woo` (or `=all`) before inspecting
+ * `~/.config/loxep/woo.env`; an opted-in run skips cleanly when it is absent.
  *
  * ABSOLUTE RULES honored here, and how:
  *
@@ -38,17 +38,17 @@ import { createMigratedScratchDb, seedConnection, seedEntity } from "./helpers.t
 import type { ScratchDb } from "./helpers.ts";
 import { liveTestsEnabledFor } from "./live-gate.ts";
 
-const creds = loadWooCredentialsFromEnvFile();
 const optedIn = liveTestsEnabledFor("woo");
+const creds = optedIn ? loadWooCredentialsFromEnvFile() : null;
 
-if (creds === null) {
+if (!optedIn) {
+  console.info(
+    "[live-store] skipped: not opted in — set " +
+      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
+  );
+} else if (creds === null) {
   console.info(
     "[live-store] skipped: no credentials at ~/.config/loxep/woo.env",
-  );
-} else if (!optedIn) {
-  console.info(
-    "[live-store] skipped: credentials present but not opted in — set " +
-      "LOXEP_LIVE_TESTS=woo (or =all) to run against the live instance.",
   );
 }
 
