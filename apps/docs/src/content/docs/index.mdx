@@ -15,7 +15,7 @@ This site is the project specification as well as the public documentation. Duri
 ## Start here
 
 - [Vision](./overview/vision/) — what Loxep is trying to become and what it is not.
-- [Guides](./guides/) — operator walkthroughs for running installations, starting with connecting eBay, WooCommerce, and Medusa.
+- [Guides](./guides/) — operator walkthroughs for access, provider connections, health evidence, and provisioning.
 - [Workspaces & Navigation](./product/workspaces/) — the current application-shell model and proposed top-level product workspaces.
 - [Master Domain Map](./product/master-domain-map/) — the broader product territory and scope labels.
 - [System Overview](./architecture/system-overview/) — runtime, deployment, provider-ingestion, and domain flow.
@@ -28,14 +28,20 @@ This site is the project specification as well as the public documentation. Duri
 
 ## Current repository state
 
-The web application is no longer a blank planned scaffold. The Kiranism TanStack Start dashboard has been adopted as a UI donor and moved into a Loxep workspace-aware shell:
+The web application is no longer a blank planned scaffold. The Kiranism TanStack Start dashboard has been adopted as a UI donor and moved into a Loxep workspace-aware shell with eight configured workspaces:
 
 ```text
-/dashboard/*    Loxep's real dashboard workspace
-/starter/*      preserved donor/demo reference workspace
+/dashboard/*        cross-domain overview
+/market/*           marketplace observation and opportunities
+/inventory/*        stock, acquisitions, and movements
+/commerce/*         catalog, listings, and orders
+/finance/*          expenses, books, journal, and reporting
+/infrastructure/*   domains, DNS, mail, fleet, and provisioning
+/settings/*         installation administration
+/starter/*          preserved donor/demo reference
 ```
 
-The sidebar and command palette derive their navigation from the active workspace. Future major product areas should be peers of `/dashboard`, not children of one giant `/dashboard/*` navigation tree.
+The sidebar and command palette derive their navigation from the active workspace. Major product areas are peers of `/dashboard`, not children of one giant `/dashboard/*` navigation tree. The commerce ingestion path currently supports eBay, WooCommerce, and Medusa; the integration catalog contains 14 provider adapters at differing levels of implementation and live verification. Consult [Integration Status](./product/integrations-status/) rather than inferring support from the presence of a package or catalog card.
 
 The default runtime direction remains deliberately small:
 

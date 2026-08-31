@@ -118,7 +118,13 @@ Rules:
 - A row with no filterable/sortable columns and a fixed row set (a financial statement, not a data grid) can skip `useDataTable` entirely and drive `DataTable` with a local `useTable({ data, columns, features: dataTableFeatures, getRowId, manualPagination: true })` instead — see `book-trial-balance.tsx`, the reference implementation for both the `summary` slot and this local-table shape.
 - Reference implementations: `book-trial-balance.tsx` (fixed statement, balances-to-zero badge), `expenses-table/index.tsx` and `items-table/index.tsx` (per-currency totals over a `useDataTable`-paginated table), `order-detail.tsx`'s `FeesTable` (per-direction, per-currency fee subtotals).
 
-The repository contains the ideal before/after pair, two components with the same name: `src/features/settings/components/users-table.tsx` (bare `<Table>`, no sorting, no paging) and `src/features/users/components/users-table/index.tsx` (`useDataTable` + `columns.tsx` + toolbar). Read both.
+Choose a current reference whose data-flow shape matches the new surface:
+
+- `src/features/settings/components/users-table/index.tsx` for client-side filtering and paging with explicit loading/error states;
+- `src/features/market/components/items-table/index.tsx` for server-side filtering, sorting, and paging;
+- `src/features/settings/components/connections-table/index.tsx` for stable row identity, pinned actions, and a larger interactive table.
+
+Do not resurrect deleted bare-table examples or introduce a second table framework.
 
 ### Before / after
 

@@ -30,7 +30,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: apps/docs
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build documentation
         working-directory: apps/docs

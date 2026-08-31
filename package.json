@@ -8,6 +8,7 @@
   ],
   "type": "module",
   "scripts": {
+    "agent:preflight": "node scripts/agent-preflight.mjs",
     "dev": "bun --cwd apps/web dev",
     "build": "bun --cwd apps/web build",
     "lint": "bun --cwd apps/web lint",

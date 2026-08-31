@@ -9,6 +9,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   web:
     name: Web application
@@ -37,10 +40,8 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      # apps/web's own unit tests (bun:test) — 9 files including the
-      # settings-registry allowlist guard and the notification class mirror,
-      # none of which ran in CI before 2026-08-18. Package suites need a live
-      # PostgreSQL and stay out of this job; these are pure and fast.
+      # apps/web's own pure unit tests (bun:test). Package suites need a live
+      # PostgreSQL and are not yet part of CI; this remains a fast web-only job.
       - name: Web unit tests
         run: bun --cwd apps/web test
 

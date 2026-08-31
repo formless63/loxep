@@ -139,13 +139,19 @@ The web application already uses a workspace-aware shell rather than placing eve
 Current route roots:
 
 ```text
-/dashboard/*    real Loxep dashboard workspace
-/starter/*      preserved donor/reference workspace
+/dashboard/*        cross-domain overview
+/market/*           marketplace observation and opportunities
+/inventory/*        stock and acquisitions
+/commerce/*         catalog, listings, and orders
+/finance/*          expenses, accounting, and reporting
+/infrastructure/*   domains, DNS, mail, fleet, and provisioning
+/settings/*         installation administration
+/starter/*          preserved donor/reference workspace
 ```
 
 The shared shell owns the workspace switcher, sidebar frame, header, command palette, theme controls, and account controls. The active workspace supplies its navigation tree. Sidebar navigation and Cmd+K therefore follow the same active-workspace configuration.
 
-Future major product surfaces are peer route roots such as `/market`, `/commerce`, `/inventory`, `/projects`, `/finance`, and `/settings`. Workspaces are UX/navigation boundaries, **not** backend/domain ownership, permission, economic-entity, or accounting-book boundaries. See [Workspaces & Navigation](../../product/workspaces/).
+Major product surfaces are peer route roots; `/projects` and other future surfaces should follow the same rule when they acquire a real navigation need. Workspaces are UX/navigation boundaries, **not** backend/domain ownership, permission, economic-entity, or accounting-book boundaries. See [Workspaces & Navigation](../../product/workspaces/).
 
 ## Authentication and authorization
 

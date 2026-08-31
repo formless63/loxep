@@ -235,11 +235,9 @@ async function commandStart(modeOverride?: LoxepMode): Promise<void> {
       // import lives inside the callback so `LOXEP_MODE=web` never pulls in
       // graphile-worker or the provider integrations.
       //
-      // WIRING CAVEAT: the repo-root package.json does not declare
-      // `@loxep/app`, so it is reached through a workspace-relative
-      // specifier — the same pattern `apps/web/src/server/ebay-oauth.ts`
-      // uses for `@loxep/integration-ebay`. Replacing this with the package
-      // name once the dependency is declared is a one-line change.
+      // The composition package is a direct repo-root workspace dependency,
+      // so the runtime can load it by package name without depending on Bun's
+      // incidental workspace hoisting layout.
       buildRegistry: async () => {
         const { buildWorkerRegistry } = await import('@loxep/app');
         return buildWorkerRegistry({ config, logger });

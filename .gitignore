@@ -24,9 +24,10 @@ dist/
 .astro/
 **/.astro/
 
-# Beads / Dolt files (added by bd init)
+# Private, local-only Beads / Dolt state. It may contain operator context or
+# deployment details and must never be committed or exported into the repo.
+.beads/
 .dolt/
-*.db
 .beads-credential-key
 compose.override.yml
 
@@ -37,4 +38,3 @@ compose.override.yml
 # Medusa live-verification harness TLS material (generated locally; a private
 # key never belongs in the repo — see packages/integrations/medusa/test/harness.md)
 packages/integrations/medusa/test/harness/tls/
-.beads/

@@ -1,6 +1,6 @@
 ---
 name: add-data-table
-description: Build or convert a data table in apps/web — any list of rows a user would sort, filter, page, or select — onto Loxep's only sanctioned path (columns.tsx + useDataTable + DataTable + DataTableToolbar + DataTableSkeleton + shared formatters). Use when adding a table to /settings, /market, or a new product surface, when a review flags a bare <Table> driven by .map(), or when replacing useState pagination, per-file formatTimestamp, or grey outline status badges.
+description: Build or convert a data table in apps/web — any list of rows a user would sort, filter, page, or select — onto Loxep's sanctioned DataTable path (columns.tsx + useDataTable + DataTable + DataTableToolbar + DataTableSkeleton + shared formatters). Use when adding a table to any product workspace, when a review flags a bare Table component driven by map, or when replacing useState pagination, per-file formatTimestamp, or literal-color status badges.
 ---
 
 Loxep has exactly one data table. A bare `<table>`, or `<Table>`/`<TableRow>` from
@@ -8,17 +8,14 @@ Loxep has exactly one data table. A bare `<table>`, or `<Table>`/`<TableRow>` fr
 rationale: `apps/docs/src/content/docs/development/frontend-standards.md` (Tables,
 Semantic-token discipline, Standard formats). Do not duplicate that page here — read it.
 
-## Read the before/after pair first
+## Read current reference implementations first
 
-Two components share the name `users-table`. Open both:
+- `apps/web/src/features/settings/components/users-table/` — client-side filtering and paging with explicit loading/error states.
+- `apps/web/src/features/market/components/items-table/` — server-side filtering, sorting, and paging.
+- `apps/web/src/features/settings/components/connections-table/` — stable row identity, pinned actions, and a larger interactive table.
 
-- **before** `apps/web/src/features/settings/components/users-table.tsx` — bare `<Table>`, no sorting, no paging.
-- **after** `apps/web/src/features/users/components/users-table/` — `columns.tsx` + `useDataTable` + toolbar.
-
-`apps/web/src/features/market/components/items-table.tsx` is the largest live violation
-(eight columns, `useState` paging, local `formatTimestamp`) — the canonical conversion target.
-Only two components in the repo comply today: the donor `users-table` and
-`apps/web/src/features/products/components/product-tables/`. Copy their composition; do not invent one.
+The repository has many compliant tables. Pick the reference whose data-flow shape matches the
+new surface; do not resurrect deleted bare-table examples or invent another table framework.
 
 ## The stack
 
@@ -44,9 +41,11 @@ src/features/<feature>/components/<thing>-table/
 
 ## 1. Query options, not inline fetching
 
-Server functions are wrapped once per feature in `api/queries.ts`
-(`apps/web/src/features/settings/api/queries.ts`), then consumed with
-`useSuspenseQuery`. Never call a server function inline in a component.
+Wrap server functions once per feature in `api/queries.ts`
+(`apps/web/src/features/settings/api/queries.ts`). Never call a server function inline in a
+component. For a route with one combined data source, prefetch in the route loader and consume
+with `useSuspenseQuery`; for independent cards/data sources, use `useQuery` with an honest
+pending/error state per source. Follow Frontend Standards rather than forcing one query mode.
 
 ```ts
 export const entitiesQuery = queryOptions({
@@ -58,7 +57,7 @@ export const entitiesQuery = queryOptions({
 ## 2. columns.tsx owns presentation
 
 ```tsx
-export const columns: ColumnDef<EntityDto>[] = [
+export const columns: ColumnDef<DataTableFeatures, EntityDto>[] = [
   {
     id: 'name',
     accessorKey: 'name',
@@ -87,7 +86,7 @@ const { table } = useDataTable({
   getRowId: (item) => item.id,
   shallow: true,
   debounceMs: 500,
-  initialState: { columnPinning: { right: ['actions'] } }
+  initialState: { columnPinning: { start: [], end: ['actions'] } }
 });
 
 return (

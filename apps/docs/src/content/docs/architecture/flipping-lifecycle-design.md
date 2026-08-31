@@ -26,6 +26,8 @@ It differs from those documents in one important way, and the difference sets th
 
 **Status update: `M6` shipped.** The "DESIGN ONLY" sentence above described this page's authorization at the time it was written; `M6` was subsequently implemented as migration `0019_manual_and_draft_listings.sql` (see the [migration plan sketch](#migration-plan-sketch) below, which records the same fact in place). Left here, unedited, as the original design statement this document's other milestones (M1–M5) are also each preserved next to their own "Status update" notes.
 
+**Current summary: all six milestones in this design have shipped.** The baseline audit below intentionally records the headless state that motivated Phase 9; it is historical context, not a description of the current workspace registry or runtime consumers.
+
 ## The finding that reframes this phase
 
 Phases 3, 4, 5, and 6 shipped **headless**.
