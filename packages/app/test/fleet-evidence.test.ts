@@ -1,7 +1,7 @@
 /**
  * Fleet alert evidence ingestion — the composition root (Phase 8 milestone
- * 7, loxep-ovj.7): constant-time token verification (including the
- * indistinguishable-failure rule), `receiveFleetEvidence`'s provider
+ * 7, loxep-ovj.7): uniform token-verification results and normalized work,
+ * `receiveFleetEvidence`'s provider
  * dispatch and `source_events` write, the feedback-latch drop, the
  * projection task, and the two load-bearing negative assertions the design
  * names by name — no fleet path ever writes `notification_deliveries`, and
@@ -112,7 +112,7 @@ describe("fleet evidence ingestion", () => {
       expect(result).toEqual({ ok: false });
     });
 
-    it("rejects an unknown connection id — the SAME shape as a wrong token", async () => {
+    it("rejects an unknown connection id with the same result as a wrong token", async () => {
       const result = await verifyFleetIngestToken({
         connections: services.connections,
         connectionCredentials: services.connectionCredentials,

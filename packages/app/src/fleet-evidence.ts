@@ -6,7 +6,7 @@
  *
  * ```text
  * POST /api/v1/hooks/fleet/:connectionId          apps/web route (thin)
- *      -> verifyFleetIngestToken                  constant-time, indistinguishable
+ *      -> verifyFleetIngestToken                  uniform result, normalized work
  *      -> receiveFleetEvidence                    THIS module
  *           -> provider dispatch (never in the receiver — see below)
  *           -> ONE source_events row               (existing table, no new schema)
@@ -91,18 +91,26 @@ export function fleetEvidenceIngestJobKey(sourceEventId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Token verification — constant-time, indistinguishable failure
+// Token verification — uniform failure result, normalized dependency work
 // ---------------------------------------------------------------------------
 
 /**
- * A fixed comparison target used whenever there is no real stored token to
- * compare against (unknown connection, wrong `kind`, or no credential row).
- * Hashing this — instead of short-circuiting — keeps "unknown connection"
- * and "wrong token" doing the SAME shape of work (one credential lookup
- * attempt, one hash, one `timingSafeEqual`) rather than one path skipping
- * the cryptographic comparison entirely.
+ * Fixed substitutes used when an untrusted request cannot supply a usable
+ * lookup id or stored token. A malformed id is never sent to PostgreSQL as a
+ * UUID, but still performs both service lookups against a value the normal
+ * connection API cannot create. Every authentication attempt also performs
+ * the hash comparison below.
+ *
+ * This is work-shape normalization, not a claim of identical wall-clock
+ * timing: a real credential lookup necessarily includes version lookup and
+ * decryption, while a missing row cannot. Persisting a dummy encrypted
+ * credential just to erase that distinction would add mutable security state
+ * and another lifecycle invariant. Callers must therefore expose only the
+ * uniform `{ ok: false }` result and must not describe its cause.
  */
 const DUMMY_INGEST_TOKEN = "loxep-fleet-evidence-dummy-comparison-token";
+const DUMMY_CONNECTION_ID = "00000000-0000-0000-0000-000000000000";
+const connectionIdSchema = z.uuid();
 
 export interface VerifyFleetIngestTokenOptions {
   connections: ConnectionsService;
@@ -117,18 +125,23 @@ export type VerifyFleetIngestTokenResult =
 
 /**
  * Verify a presented bearer token against `connectionId`'s
- * `fleet_ingest_token` credential. Per the design: a bad token and an
- * unknown connection (or a connection that exists but is not an
- * evidence-ingest one) are INDISTINGUISHABLE — both return `{ ok: false }`
- * with no further detail, and the caller must render the identical HTTP
- * response for every `ok: false` regardless of which case produced it.
+ * `fleet_ingest_token` credential. A malformed id, bad token, unknown
+ * connection, missing credential, and connection of the wrong kind all
+ * return `{ ok: false }` with no further detail. Both dependency lookups and
+ * the fixed-length digest comparison run for every one of those classes; the
+ * caller must render the identical HTTP response for every `ok: false`.
  */
 export async function verifyFleetIngestToken(
   options: VerifyFleetIngestTokenOptions,
 ): Promise<VerifyFleetIngestTokenResult> {
+  const parsedConnectionId = connectionIdSchema.safeParse(options.connectionId);
+  const lookupConnectionId = parsedConnectionId.success
+    ? parsedConnectionId.data
+    : DUMMY_CONNECTION_ID;
+
   let connection: Connection | null = null;
   try {
-    connection = await options.connections.getConnection(options.connectionId);
+    connection = await options.connections.getConnection(lookupConnectionId);
   } catch (error) {
     // Matched by name as well as identity: in the built app the web bundle
     // constructs the connections service against its own bundled copy of
@@ -144,19 +157,14 @@ export async function verifyFleetIngestToken(
   }
 
   let storedToken: string | null = null;
-  if (
-    connection !== null &&
-    connection.kind === EVIDENCE_INGEST_CONNECTION_KIND
-  ) {
-    try {
-      const credential = await options.connectionCredentials.getCredentialPayload(
-        options.connectionId,
-        "fleet_ingest_token",
-      );
-      storedToken = credential.payload.token;
-    } catch {
-      storedToken = null;
-    }
+  try {
+    const credential = await options.connectionCredentials.getCredentialPayload(
+      lookupConnectionId,
+      "fleet_ingest_token",
+    );
+    storedToken = credential.payload.token;
+  } catch {
+    storedToken = null;
   }
 
   const expected = createHash("sha256")
@@ -167,7 +175,13 @@ export async function verifyFleetIngestToken(
     .digest();
   const tokenMatches = timingSafeEqual(expected, actual);
 
-  if (!tokenMatches || storedToken === null || connection === null) {
+  if (
+    !tokenMatches ||
+    storedToken === null ||
+    !parsedConnectionId.success ||
+    connection === null ||
+    connection.kind !== EVIDENCE_INGEST_CONNECTION_KIND
+  ) {
     return { ok: false };
   }
   return { ok: true, connection };

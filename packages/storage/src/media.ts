@@ -11,7 +11,7 @@
  * reference that the row claims exists.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { Readable, Transform } from "node:stream";
+import { finished, Readable, Transform } from "node:stream";
 import { mediaLinks, mediaObjects } from "@loxep/db/schema";
 import type { LoxepDb } from "@loxep/db";
 import { MediaObjectNotFoundError, StorageError } from "./errors.ts";
@@ -64,7 +64,10 @@ export interface MediaLinkInput {
 export interface MediaService {
   upload(input: UploadInput): Promise<MediaObjectRecord>;
   getMediaObject(mediaObjectId: string): Promise<MediaObjectRecord>;
-  /** Returns the row plus a Readable over the object bytes. */
+  /**
+   * Returns the row plus a Readable over the object bytes. Consumers must
+   * consume or destroy the body so the resolved driver's resources release.
+   */
   read(
     mediaObjectId: string,
   ): Promise<{ mediaObject: MediaObjectRecord; body: Readable }>;
@@ -99,6 +102,26 @@ export function createMediaService(options: {
 
   function closeDriver(driver: StorageDriver): void {
     driver.close?.();
+  }
+
+  /**
+   * Keep the resolved driver alive until its read stream reaches a terminal
+   * state. `finished` covers normal consumption, stream errors, and explicit
+   * destruction (including cancellation of a `Readable.toWeb` adapter).
+   */
+  function closeDriverWithStream(
+    driver: StorageDriver,
+    body: Readable,
+  ): Readable {
+    const stopWatching = finished(
+      body,
+      { readable: true, writable: false },
+      () => {
+        stopWatching();
+        closeDriver(driver);
+      },
+    );
+    return body;
   }
 
   async function upload(input: UploadInput): Promise<MediaObjectRecord> {
@@ -190,8 +213,15 @@ export function createMediaService(options: {
     // The driver stays open for the lifetime of the returned stream; S3
     // clients keep pooled sockets, released when the stream is consumed.
     const driver = await backends.resolveDriver(mediaObject.storageBackendId);
-    const body = await driver.get(mediaObject.storageKey);
-    return { mediaObject, body };
+    try {
+      const body = await driver.get(mediaObject.storageKey);
+      return { mediaObject, body: closeDriverWithStream(driver, body) };
+    } catch (error) {
+      // No stream was handed to the caller, so no terminal event can own
+      // cleanup. Release the driver before preserving the original failure.
+      closeDriver(driver);
+      throw error;
+    }
   }
 
   async function remove(mediaObjectId: string): Promise<void> {

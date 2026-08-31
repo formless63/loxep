@@ -22,6 +22,7 @@
 import { Readable } from 'node:stream';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
 import { avatarServingUrl, extractAvatarMediaId } from '@/lib/avatar';
+import { parseLimitedMultipartFormData } from '@/server/multipart-upload';
 
 const ALLOWED_AVATAR_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
@@ -50,15 +51,9 @@ export async function handleAvatarUpload(request: Request): Promise<Response> {
     return jsonResponse(401, { error: 'unauthorized', message: 'Authentication required' });
   }
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return jsonResponse(400, {
-      error: 'invalid-request',
-      message: 'Expected a multipart/form-data upload'
-    });
-  }
+  const parsed = await parseLimitedMultipartFormData(request, MAX_AVATAR_BYTES);
+  if (!parsed.ok) return parsed.response;
+  const { formData } = parsed;
 
   const file = formData.get('file');
   if (!(file instanceof File)) {
@@ -150,6 +145,7 @@ export async function handleAvatarServe(mediaId: string): Promise<Response> {
       ? (metadata as Record<string, unknown>).purpose
       : undefined;
   if (purpose !== 'avatar') {
+    body.destroy();
     return new Response(null, { status: 404 });
   }
 

@@ -37,6 +37,7 @@
 import { Readable } from 'node:stream';
 import { documentsMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
+import { parseLimitedMultipartFormData } from '@/server/multipart-upload';
 
 /**
  * The media OBJECT's own `metadata.purpose` — a single constant, used ONLY
@@ -70,15 +71,11 @@ export async function handleReceiptUpload(request: Request): Promise<Response> {
     return jsonResponse(401, { error: 'unauthorized', message: 'Authentication required' });
   }
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    return jsonResponse(400, {
-      error: 'invalid-request',
-      message: 'Expected a multipart/form-data upload'
-    });
-  }
+  const { settings } = getAdminServices();
+  const limits = await settings.get(documentsMediaLimitsSetting);
+  const parsed = await parseLimitedMultipartFormData(request, limits.maxBytes);
+  if (!parsed.ok) return parsed.response;
+  const { formData } = parsed;
 
   const file = formData.get('file');
   if (!(file instanceof File)) {
@@ -100,9 +97,6 @@ export async function handleReceiptUpload(request: Request): Promise<Response> {
     typeof purposeField === 'string' && EXPENSE_LINK_PURPOSES.has(purposeField)
       ? purposeField
       : 'receipt';
-
-  const { settings } = getAdminServices();
-  const limits = await settings.get(documentsMediaLimitsSetting);
 
   if (!limits.allowedMimeTypes.includes(file.type)) {
     return jsonResponse(400, {
@@ -197,6 +191,7 @@ export async function handleReceiptServe(mediaId: string): Promise<Response> {
       ? (metadata as Record<string, unknown>).purpose
       : undefined;
   if (purpose !== RECEIPT_MEDIA_METADATA_PURPOSE) {
+    body.destroy();
     return new Response(null, { status: 404 });
   }
 
