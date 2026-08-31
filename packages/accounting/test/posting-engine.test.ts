@@ -524,6 +524,51 @@ describe("posting engine", () => {
       expect(trial.difference).toBe("0.000000");
     });
 
+    it("does not split an expense over-allocated by one high-boundary micro-unit", async () => {
+      const { book, entityId } = await newFixture();
+      const created = await expenses.create({
+        economicEntityId: entityId,
+        expenseDate: "2026-03-05",
+        category: "postage",
+        payeeName: "Malformed allocation fixture",
+        currency: "USD",
+        amount: "99999999999999.000000",
+        paymentMethod: "card",
+        status: "recorded",
+      });
+      const marketplaceFees = await scratch.handle.pool.query<{ id: string }>(
+        `select id from ledger_accounts
+          where accounting_book_id = $1 and system_key = 'marketplace_fees'`,
+        [book.id],
+      );
+
+      // The expense service rejects this state. Insert it directly to prove
+      // the posting engine's defensive fallback is also exact for legacy,
+      // imported, or otherwise out-of-band rows.
+      await scratch.handle.pool.query(
+        `insert into expense_allocations
+           (expense_id, line_number, amount, ledger_account_id)
+         values ($1, 1, $2, $3)`,
+        [
+          created.expense.id,
+          "99999999999999.000001",
+          marketplaceFees.rows[0]?.id,
+        ],
+      );
+
+      const outcome = await engine.evaluateFact({
+        sourceFactType: "expense",
+        sourceFactId: created.expense.id,
+      });
+      expect(outcome.status).toBe("posted");
+      // An incoherent split is ignored in favour of the rule-authored line.
+      expect(await balanceOf(book.id, "marketplace_fees")).toBe("0.000000");
+      expect(await balanceOf(book.id, "shipping_expense")).toBe(
+        "99999999999999.000000",
+      );
+      expect((await reports.trialBalance(book.id)).difference).toBe("0.000000");
+    });
+
     it("falls through to the catch-all rule for an unmapped category", async () => {
       const { book, entityId } = await newFixture();
       const created = await expenses.create({

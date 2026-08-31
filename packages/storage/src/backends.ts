@@ -27,6 +27,9 @@ import { uuidLiteral } from "./sql.ts";
 
 type Keyring = Parameters<typeof createSecretsService>[0]["keyring"];
 
+const DEFAULT_BACKEND_LOCK_SQL =
+  "select pg_advisory_xact_lock(hashtext('loxep.storage_backends'), hashtext('default'))";
+
 /** Storage driver families (mirrors @loxep/db `STORAGE_DRIVERS`). */
 export const STORAGE_DRIVER_FAMILIES = ["local", "s3"] as const;
 export type StorageDriverFamily = (typeof STORAGE_DRIVER_FAMILIES)[number];
@@ -170,21 +173,44 @@ export function createStorageBackendsService(options: {
   }
 
   async function setDefaultBackend(backendId: string): Promise<void> {
-    const target = await getBackend(backendId);
-    if (!target.enabled) {
-      throw new StorageBackendError(
-        `cannot make disabled backend "${backendId}" the default`,
+    const targetId = uuidLiteral(backendId);
+    await db.transaction(async (tx) => {
+      // Serialize default selection before taking row locks. Without this,
+      // two transactions can both clear the previous default from their
+      // snapshots and one then loses to the partial unique index. The index
+      // remains the database-level backstop; this lock makes both legitimate
+      // service calls complete deterministically.
+      await tx.execute(DEFAULT_BACKEND_LOCK_SQL);
+
+      // Lock and re-read the target inside the transaction. A concurrent
+      // disable either commits first (and is rejected here) or waits and is
+      // rejected by the database check after this backend becomes default.
+      const locked = await tx.execute(
+        `select enabled from storage_backends where id = ${targetId} for update`,
       );
-    }
-    const currentDefaults = await db.query.storageBackends.findMany({
-      where: (table, { eq }) => eq(table.isDefault, true),
-    });
-    for (const row of currentDefaults) {
-      if (row.id !== backendId) {
-        await updateBackend(row, { isDefault: false });
+      const target = locked.rows[0] as { enabled?: boolean } | undefined;
+      if (target === undefined) {
+        throw new StorageBackendError(`unknown storage backend "${backendId}"`);
       }
-    }
-    await updateBackend(target, { isDefault: true });
+      if (target.enabled !== true) {
+        throw new StorageBackendError(
+          `cannot make disabled backend "${backendId}" the default`,
+        );
+      }
+
+      // Both writes commit together, so readers observe the old default or
+      // the new default — never the intermediate zero-default state.
+      await tx.execute(
+        `update storage_backends
+            set is_default = false, updated_at = now()
+          where is_default and id <> ${targetId}`,
+      );
+      await tx.execute(
+        `update storage_backends
+            set is_default = true, updated_at = now()
+          where id = ${targetId}`,
+      );
+    });
   }
 
   async function registerBackend(
@@ -251,13 +277,29 @@ export function createStorageBackendsService(options: {
   }
 
   async function disableBackend(backendId: string): Promise<void> {
-    const row = await getBackend(backendId);
-    if (row.isDefault) {
-      throw new StorageBackendError(
-        `cannot disable default storage backend "${backendId}"; set another default first`,
+    const targetId = uuidLiteral(backendId);
+    await db.transaction(async (tx) => {
+      // Use the same lock as setDefaultBackend so a disable/default race has
+      // a clean service-level outcome instead of leaking a CHECK violation.
+      await tx.execute(DEFAULT_BACKEND_LOCK_SQL);
+      const locked = await tx.execute(
+        `select is_default from storage_backends where id = ${targetId} for update`,
       );
-    }
-    await updateBackend(row, { enabled: false });
+      const row = locked.rows[0] as { is_default?: boolean } | undefined;
+      if (row === undefined) {
+        throw new StorageBackendError(`unknown storage backend "${backendId}"`);
+      }
+      if (row.is_default === true) {
+        throw new StorageBackendError(
+          `cannot disable default storage backend "${backendId}"; set another default first`,
+        );
+      }
+      await tx.execute(
+        `update storage_backends
+            set enabled = false, updated_at = now()
+          where id = ${targetId}`,
+      );
+    });
   }
 
   async function getDefaultBackend(): Promise<StorageBackendRecord> {

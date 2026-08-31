@@ -73,7 +73,10 @@ import { createBooksService } from "./books.ts";
 import type { AccountingBookRow } from "./books.ts";
 import {
   ZERO,
+  absDecimal,
+  compareDecimals,
   isZeroDecimal,
+  isNegative,
   multiplyDecimals,
   negateDecimal,
   sumDecimals,
@@ -406,8 +409,8 @@ export function createPostingEngine(options: { db: LoxepDb }): PostingEngine {
     // service refuses to create one; if a row got there another way, the rule's
     // own line is used unchanged rather than posting a number nobody stated.
     if (
-      allocated.startsWith("-") !== target.amount.startsWith("-") ||
-      Math.abs(Number(allocated)) > Math.abs(Number(target.amount))
+      isNegative(allocated) !== isNegative(target.amount) ||
+      compareDecimals(absDecimal(allocated), absDecimal(target.amount)) > 0
     ) {
       return lines;
     }

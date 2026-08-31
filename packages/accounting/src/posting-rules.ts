@@ -58,7 +58,12 @@ import type {
   PostingRuleSourceFactType,
 } from "@loxep/db/schema";
 import { z } from "zod";
-import { compareDecimals, toMoneyString } from "./decimal.ts";
+import {
+  compareDecimals,
+  fromUnits,
+  toMoneyString,
+  toUnits,
+} from "./decimal.ts";
 import {
   AccountingConflictError,
   AccountingNotFoundError,
@@ -342,62 +347,84 @@ function assertTemplateBalances(
   // carries only one amount, every alias IS that amount.
   const basis: Record<
     ReadableSourceFactType,
-    Partial<Record<PostingAmountSource, Record<string, number>>>
+    Partial<Record<PostingAmountSource, Record<string, bigint>>>
   > = {
     order: {
-      total: { subtotal: 1, shipping: 1, tax: 1, discount: -1 },
-      subtotal: { subtotal: 1 },
-      shipping: { shipping: 1 },
-      tax: { tax: 1 },
-      discount: { discount: 1 },
-      fee: { fee: 1 },
-      refund: { refund: 1 },
-      net: { subtotal: 1, shipping: 1, tax: 1, discount: -1, refund: -1 },
+      total: { subtotal: 1n, shipping: 1n, tax: 1n, discount: -1n },
+      subtotal: { subtotal: 1n },
+      shipping: { shipping: 1n },
+      tax: { tax: 1n },
+      discount: { discount: 1n },
+      fee: { fee: 1n },
+      refund: { refund: 1n },
+      net: {
+        subtotal: 1n,
+        shipping: 1n,
+        tax: 1n,
+        discount: -1n,
+        refund: -1n,
+      },
     },
-    order_fee: { fee: { fee: 1 }, total: { fee: 1 }, net: { fee: 1 } },
+    order_fee: {
+      fee: { fee: 1n },
+      total: { fee: 1n },
+      net: { fee: 1n },
+    },
     order_refund: {
-      refund: { refund: 1 },
-      total: { refund: 1 },
-      net: { refund: 1 },
+      refund: { refund: 1n },
+      total: { refund: 1n },
+      net: { refund: 1n },
     },
     expense: {
-      total: { net: 1, tax: 1 },
-      tax: { tax: 1 },
-      net: { net: 1 },
+      total: { net: 1n, tax: 1n },
+      tax: { tax: 1n },
+      net: { net: 1n },
     },
-    acquisition_cost: { total: { amount: 1 }, net: { amount: 1 } },
+    acquisition_cost: {
+      total: { amount: 1n },
+      net: { amount: 1n },
+    },
     // One component under three names: the reader apportions the frozen basis
     // once and every alias IS that number, so a template that debits COGS by
     // `quantity_times_basis` and credits inventory by `cost_basis` balances —
     // which it must, because those are the two names the design and the rule
     // model each gave the same amount.
     inventory_movement: {
-      cost_basis: { basis: 1 },
-      quantity_times_basis: { basis: 1 },
-      total: { basis: 1 },
+      cost_basis: { basis: 1n },
+      quantity_times_basis: { basis: 1n },
+      total: { basis: 1n },
     },
   };
 
-  const totals = new Map<string, number>();
+  // A multiplier is numeric(20,6), so one BigInt unit is one millionth. Keeping
+  // symbolic coefficients in those same units makes cancellation exact even
+  // near the column's 14-digit integer boundary, where IEEE-754 collapses
+  // adjacent micro-units into the same Number.
+  const totals = new Map<string, bigint>();
   for (const line of lines) {
     const decomposition = basis[factType][line.amountSource];
     if (decomposition === undefined) continue;
-    const multiplier = Number(line.amountMultiplier ?? "1");
+    const multiplier = toUnits(line.amountMultiplier ?? "1");
     for (const [component, coefficient] of Object.entries(decomposition)) {
       totals.set(
         component,
-        (totals.get(component) ?? 0) + coefficient * multiplier,
+        (totals.get(component) ?? 0n) + coefficient * multiplier,
       );
     }
   }
   const offending = [...totals.entries()].filter(
-    ([, coefficient]) => Math.abs(coefficient) > 1e-9,
+    ([, coefficient]) => coefficient !== 0n,
   );
   if (offending.length > 0) {
     throw new AccountingValidationError(
       "this template cannot balance for every fact: the " +
         offending
-          .map(([component, coefficient]) => `${component} (×${coefficient})`)
+          .map(([component, coefficient]) => {
+            const exact = fromUnits(coefficient)
+              .replace(/0+$/, "")
+              .replace(/\.$/, "");
+            return `${component} (×${exact})`;
+          })
           .join(", ") +
         " component(s) do not cancel. Add a `remainder` line — the plug that " +
         "takes whatever value makes the entry balance — or correct the " +

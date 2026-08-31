@@ -3,9 +3,11 @@
  * attachment links, and resumable storage-migration state (ADR-0012,
  * ADR-0014).
  */
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -14,30 +16,45 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { user } from "./auth.ts";
 import { applicationSecrets, emptyJsonObject } from "./settings.ts";
 
-export const storageBackends = pgTable("storage_backends", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  name: text("name").notNull(),
-  driver: text("driver").notNull(),
-  enabled: boolean("enabled").notNull().default(true),
-  isDefault: boolean("is_default").notNull().default(false),
-  config: jsonb("config").notNull().default(emptyJsonObject),
-  // Logical secret reference (ADR-0019) — never a version row.
-  secretId: uuid("secret_id").references(() => applicationSecrets.id),
-  createdByUserId: text("created_by_user_id").references(() => user.id, {
-    onDelete: "set null",
-  }),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const storageBackends = pgTable(
+  "storage_backends",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    driver: text("driver").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    isDefault: boolean("is_default").notNull().default(false),
+    config: jsonb("config").notNull().default(emptyJsonObject),
+    // Logical secret reference (ADR-0019) — never a version row.
+    secretId: uuid("secret_id").references(() => applicationSecrets.id),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // An installation may have no default while it is being configured, but
+    // once selected the default is a singleton and must be usable.
+    uniqueIndex("storage_backends_default_uq")
+      .on(table.isDefault)
+      .where(sql`${table.isDefault}`),
+    check(
+      "storage_backends_default_enabled_check",
+      sql`not ${table.isDefault} or ${table.enabled}`,
+    ),
+  ],
+);
 
 /** Initial storage driver families. */
 export const STORAGE_DRIVERS = ["local", "s3"] as const;

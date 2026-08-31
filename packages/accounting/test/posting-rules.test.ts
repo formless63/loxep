@@ -197,6 +197,49 @@ describe("posting rules", () => {
       ).not.toThrow();
     });
 
+    it("refuses a micro-unit imbalance at numeric(20,6)'s high boundary", () => {
+      // Both multipliers become the same IEEE-754 Number. The symbolic check
+      // must retain the one-micro-unit difference the database retains.
+      expect(Number("99999999999999.000001")).toBe(
+        Number("99999999999999.000000"),
+      );
+      expect(() =>
+        validatePostingRuleTemplate("order_fee", [
+          {
+            accountSystemKey: "marketplace_fees",
+            amountSource: "fee",
+            amountMultiplier: "99999999999999.000001",
+            inheritEntity: true,
+          },
+          {
+            accountSystemKey: "marketplace_clearing",
+            amountSource: "fee",
+            amountMultiplier: "-99999999999999.000000",
+            inheritEntity: true,
+          },
+        ]),
+      ).toThrow(/fee \(×0\.000001\)/);
+    });
+
+    it("accepts exact cancellation at numeric(20,6)'s high boundary", () => {
+      expect(() =>
+        validatePostingRuleTemplate("order_fee", [
+          {
+            accountSystemKey: "marketplace_fees",
+            amountSource: "fee",
+            amountMultiplier: "99999999999999.000001",
+            inheritEntity: true,
+          },
+          {
+            accountSystemKey: "marketplace_clearing",
+            amountSource: "fee",
+            amountMultiplier: "-99999999999999.000001",
+            inheritEntity: true,
+          },
+        ]),
+      ).not.toThrow();
+    });
+
     it("refuses two remainder lines in one version", async () => {
       await expect(
         rules.createRule({

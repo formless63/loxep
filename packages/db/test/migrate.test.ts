@@ -3,7 +3,12 @@
  * PostgreSQL + TimescaleDB (docker/compose.dev.yml).
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { checkMigrationState, runMigrations } from "../src/migrate.ts";
+import {
+  checkMigrationState,
+  closeDb,
+  createDb,
+  runMigrations,
+} from "../src/migrate.ts";
 import {
   createScratchDb,
   dropScratchDb,
@@ -90,8 +95,11 @@ import {
  *      pre-release, a clean cut. hosting_targets_addressable_check is
  *      dropped (a CHECK cannot query another table) and re-expressed as a
  *      service-level invariant in @loxep/infrastructure.
+ * 0032 storage backend default invariants: repairs any legacy disabled or
+ *      duplicate defaults, then enforces at most one default and requires
+ *      that a selected default is enabled.
  */
-const MIGRATION_FILE_COUNT = 32;
+const MIGRATION_FILE_COUNT = 33;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
@@ -152,5 +160,76 @@ describe("concurrent migration invocations", () => {
 
     const state = await checkMigrationState(databaseUrl);
     expect(state.upToDate).toBe(true);
+  });
+});
+
+describe("0032 storage-backend default invariant upgrade", () => {
+  const dbName = scratchDbName("loxep_test_storage_default_upgrade");
+  let databaseUrl = "";
+
+  beforeAll(async () => {
+    databaseUrl = await createScratchDb(dbName);
+  });
+
+  afterAll(async () => {
+    await dropScratchDb(dbName);
+  });
+
+  it("repairs legacy disabled and duplicate defaults before enforcing constraints", async () => {
+    await runMigrations({ databaseUrl, logger: silentLogger });
+
+    // Reconstruct a database at 0031: remove 0032's schema objects and its
+    // migration ledger row, then seed states the old service could produce.
+    const setup = createDb(databaseUrl);
+    try {
+      await setup.pool.query(
+        `alter table storage_backends
+           drop constraint storage_backends_default_enabled_check`,
+      );
+      await setup.pool.query(`drop index storage_backends_default_uq`);
+      await setup.pool.query(
+        `insert into storage_backends (name, driver, enabled, is_default)
+         values
+           ('legacy enabled one', 'local', true, true),
+           ('legacy enabled two', 'local', true, true),
+           ('legacy disabled', 'local', false, true)`,
+      );
+      await setup.pool.query(
+        `delete from drizzle.__drizzle_migrations
+          where created_at = (
+            select max(created_at) from drizzle.__drizzle_migrations
+          )`,
+      );
+    } finally {
+      await closeDb(setup);
+    }
+
+    await expect(
+      runMigrations({ databaseUrl, logger: silentLogger }),
+    ).resolves.toEqual({
+      applied: 1,
+    });
+
+    const verify = createDb(databaseUrl);
+    try {
+      const defaults = await verify.pool.query<{
+        enabled: boolean;
+        name: string;
+      }>(
+        `select name, enabled from storage_backends where is_default
+         order by name`,
+      );
+      expect(defaults.rows).toHaveLength(1);
+      expect(defaults.rows[0]?.enabled).toBe(true);
+      expect(defaults.rows[0]?.name).toMatch(/^legacy enabled/);
+
+      const disabled = await verify.pool.query<{ is_default: boolean }>(
+        `select is_default from storage_backends
+          where name = 'legacy disabled'`,
+      );
+      expect(disabled.rows[0]?.is_default).toBe(false);
+    } finally {
+      await closeDb(verify);
+    }
   });
 });

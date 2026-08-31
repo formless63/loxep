@@ -133,6 +133,99 @@ describe("storage backends + media services", () => {
     expect((await backends.getDefaultBackend()).id).toBe(localBackendId);
   });
 
+  it("serializes concurrent default switches and leaves one enabled default", async () => {
+    const candidates = await Promise.all(
+      Array.from({ length: 4 }, (_, index) =>
+        backends.registerBackend({
+          name: `concurrent default ${index}`,
+          driver: "local" as const,
+          config: { rootDir: localRootDir },
+        }),
+      ),
+    );
+
+    await expect(
+      Promise.all(
+        Array.from({ length: 16 }, (_, index) =>
+          backends.setDefaultBackend(
+            candidates[index % candidates.length]?.id ?? localBackendId,
+          ),
+        ),
+      ),
+    ).resolves.toHaveLength(16);
+
+    const defaults = (await backends.listBackends()).filter(
+      (row) => row.isDefault,
+    );
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0]?.enabled).toBe(true);
+
+    // Keep the fixture's original default stable for later media tests.
+    await backends.setDefaultBackend(localBackendId);
+  });
+
+  it("enforces default invariants below the service boundary", async () => {
+    await expect(
+      handle.pool.query(
+        `insert into storage_backends (name, driver, enabled, is_default)
+         values ('duplicate default', 'local', true, true)`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23505",
+      constraint: "storage_backends_default_uq",
+    });
+
+    await expect(
+      handle.pool.query(
+        `insert into storage_backends (name, driver, enabled, is_default)
+         values ('disabled default', 'local', false, true)`,
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "storage_backends_default_enabled_check",
+    });
+
+    await expect(
+      handle.pool.query(
+        `update storage_backends set enabled = false where id = $1`,
+        [localBackendId],
+      ),
+    ).rejects.toMatchObject({
+      code: "23514",
+      constraint: "storage_backends_default_enabled_check",
+    });
+    expect((await backends.getDefaultBackend()).id).toBe(localBackendId);
+  });
+
+  it("serializes a default-selection race with disabling the same backend", async () => {
+    const candidate = await backends.registerBackend({
+      name: "default-disable race",
+      driver: "local",
+      config: { rootDir: localRootDir },
+    });
+    const outcomes = await Promise.allSettled([
+      backends.setDefaultBackend(candidate.id),
+      backends.disableBackend(candidate.id),
+    ]);
+
+    expect(
+      outcomes.filter((outcome) => outcome.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    expect(rejected?.reason).toBeInstanceOf(StorageBackendError);
+
+    const rows = await backends.listBackends();
+    const defaults = rows.filter((row) => row.isDefault);
+    expect(defaults).toHaveLength(1);
+    expect(defaults[0]?.enabled).toBe(true);
+    expect(rows.some((row) => row.isDefault && !row.enabled)).toBe(false);
+
+    if (!(await backends.getBackend(candidate.id)).enabled) {
+      await backends.enableBackend(candidate.id);
+    }
+    await backends.setDefaultBackend(localBackendId);
+  });
+
   it("uploads to the default backend, computes sha256/size, reads back, removes", async () => {
     const payload = Buffer.from("loxep media payload — ünïcode ✓");
     const uploaded = await media.upload({
