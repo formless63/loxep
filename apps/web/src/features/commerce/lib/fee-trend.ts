@@ -128,7 +128,7 @@ export function shapeFeeTrendByPeriod(rows: readonly FeeTrendInputRow[]): FeeTre
     (row) => `${periodOf(row.chargedAt)}::${categorize(row.feeType)}`
   );
 
-  const periods = [...new Set(includedRows.map((row) => periodOf(row.chargedAt)))].sort();
+  const periods = [...new Set(includedRows.map((row) => periodOf(row.chargedAt)))].toSorted();
   const points: FeeTrendPeriodPoint[] = periods.map((period) => {
     const point = { period } as FeeTrendPeriodPoint;
     for (const category of FEE_TREND_CATEGORIES) {

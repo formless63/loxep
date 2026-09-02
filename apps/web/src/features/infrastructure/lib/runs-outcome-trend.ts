@@ -67,5 +67,5 @@ export function shapeRunsOutcomeTrend(runs: readonly ReconcileRunDto[]): RunsDay
     if (bucket) bucket.avgDurationSeconds = sum / count;
   }
 
-  return [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day));
+  return [...byDay.values()].toSorted((a, b) => a.day.localeCompare(b.day));
 }

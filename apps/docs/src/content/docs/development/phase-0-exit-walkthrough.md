@@ -50,8 +50,38 @@ All findings were fixed in the main repository immediately after this walkthroug
 - **G2/G3** — `docker/compose.dev.yml` project name, container name, port, and password, and `compose.yml`'s image name, are now `${VAR:-default}`-overridable so parallel checkouts cannot collide.
 - **G4** — the root `test:packages` script now aggregates all nine test-bearing packages.
 
-## Environment notes
+## 2026-09-02 coordinated stack refresh
 
-- Host: Linux, 4 cores, ~10 GB free RAM; Docker 29.6.1; Node 24.15.0; Bun 1.3.14 (matches `packageManager` pin).
+The historical matrix above remains the evidence for the original Phase 0
+exit. A follow-on validation exercised the current stack after the coordinated
+Bun, Node, TypeScript, Vite, Better Auth, PostgreSQL/TimescaleDB, RustFS, and
+delivery-tooling refresh:
+
+- `bun run agent:preflight --full` passed with zero lint warnings, formatting
+  across 858 web files, every workspace typecheck, 333 web tests, 4,228 package
+  tests, and the 81-page documentation build/link check.
+- The pinned Bun 1.4.0 build image completed `bun install --frozen-lockfile` and
+  the production Vite/Nitro build. The same image passed all 333 web tests with
+  one CPU and no network access.
+- The final Node 24.20.0 image applied all 35 migrations to a fresh `template0`
+  database, installed TimescaleDB 2.29.2, and reached worker-mode readiness with
+  its database, migration, worker, and worker-job checks healthy.
+- An existing 2.29.1 extension was upgraded through the explicit migration
+  path; the retained local maintenance/template databases were also verified at
+  PostgreSQL 18.4 / TimescaleDB 2.29.2. Test databases now use `TEMPLATE
+  template0`, so they never inherit a stale extension from a long-lived local
+  volume.
+- A disposable pinned RustFS 1.0.0-rc.4 instance reported ready and passed all
+  67 storage tests with the real S3 conformance and resumable-migration legs
+  enabled.
+- Runtime-image validation exposed a restrictive-source-permission failure that
+  an ordinary image build did not: the non-root process could not read a newly
+  added migration. The Dockerfile now normalizes shipped sources to
+  root-owned, world-readable/non-writable files, and the corrected image was
+  re-verified.
+
+## Original walkthrough environment notes
+
+- Host: Linux, 4 cores, ~10 GB free RAM; Docker 29.6.1; Node 24.15.0; Bun 1.3.14 (matched the then-current `packageManager` pin).
 - Shared services: Mailpit on `localhost:1025/8025` (message deletion always scoped `to:` recipient); the main checkout's `loxep-dev-db` on 5433 was left untouched.
 - Everything created for the walkthrough (both compose projects + volumes, RustFS test container, `loxep-fresh` image, e2e scratch DB and media dir) was removed afterwards; the fresh clone was kept for inspection.

@@ -37,6 +37,8 @@
  * successfully verified token spends the connection's own budget. Every
  * keyed map has a hard entry cap with O(1) oldest-entry eviction.
  */
+import '@tanstack/react-start/server-only';
+
 import { createHash } from 'node:crypto';
 import { createTransactionalNotificationEnqueue } from '@loxep/domain';
 

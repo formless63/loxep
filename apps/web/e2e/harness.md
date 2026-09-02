@@ -27,7 +27,7 @@ From the repo root:
 ```bash
 # 1. Scratch database on the dev container (drop/recreate to reset)
 psql postgres://postgres:loxep-dev@localhost:5433/postgres \
-  -c 'CREATE DATABASE loxep_e2e'
+  -c 'CREATE DATABASE loxep_e2e TEMPLATE template0'
 
 # 2. Environment for migrate + start (same shell)
 export LOXEP_DATABASE_URL='postgresql://postgres:loxep-dev@localhost:5433/loxep_e2e'
@@ -49,6 +49,12 @@ lsof -t -i :3093    # must print nothing; if it prints a PID, kill that PID
                     # by number — never pkill by name
 node bin/loxep.ts start --mode=all
 ```
+
+The explicit `TEMPLATE template0` is intentional. The TimescaleDB HA image
+installs its extension in `template1`, and a persisted development volume can
+retain the prior extension version after an image update. Starting from
+PostgreSQL's pristine template lets migration 0000 install the exact extension
+version supported by the current pinned image.
 
 **Port 3093 is single-occupant.** `loxep start` refuses to start when the
 port is already bound (it exits 1 with `EADDRINUSE` — this is deliberate;

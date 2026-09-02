@@ -43,15 +43,34 @@ export default function OrderAttributionDialog({
   orderId: string;
   currentEconomicEntityId: string | null;
 }) {
+  return (
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      {open && (
+        <OrderAttributionContent
+          key={`${orderId}:${currentEconomicEntityId ?? UNATTRIBUTED_ENTITY_VALUE}`}
+          onOpenChange={onOpenChange}
+          orderId={orderId}
+          currentEconomicEntityId={currentEconomicEntityId}
+        />
+      )}
+    </ResponsiveDialog>
+  );
+}
+
+function OrderAttributionContent({
+  onOpenChange,
+  orderId,
+  currentEconomicEntityId
+}: {
+  onOpenChange: (open: boolean) => void;
+  orderId: string;
+  currentEconomicEntityId: string | null;
+}) {
   const queryClient = useQueryClient();
-  const { data: entities } = useQuery({ ...entitiesQuery, enabled: open });
+  const { data: entities } = useQuery(entitiesQuery);
   const [economicEntityId, setEconomicEntityId] = React.useState(
     currentEconomicEntityId ?? UNATTRIBUTED_ENTITY_VALUE
   );
-
-  React.useEffect(() => {
-    if (open) setEconomicEntityId(currentEconomicEntityId ?? UNATTRIBUTED_ENTITY_VALUE);
-  }, [open, currentEconomicEntityId]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -76,41 +95,39 @@ export default function OrderAttributionDialog({
   ];
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className='sm:max-w-[420px]'>
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>Set order attribution</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            An explicit, audited override. Feeds every downstream financial figure for this order —
-            change it deliberately.
-          </ResponsiveDialogDescription>
-        </ResponsiveDialogHeader>
-        <div className='space-y-6'>
-          <FieldGroup>
-            <Select value={economicEntityId} onValueChange={setEconomicEntityId}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {entityOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FieldGroup>
-          <div className='flex justify-end gap-2'>
-            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type='button' disabled={mutation.isPending} onClick={() => mutation.mutate()}>
-              {mutation.isPending && <Icons.spinner className='animate-spin' />}
-              Save
-            </Button>
-          </div>
+    <ResponsiveDialogContent className='sm:max-w-[420px]'>
+      <ResponsiveDialogHeader>
+        <ResponsiveDialogTitle>Set order attribution</ResponsiveDialogTitle>
+        <ResponsiveDialogDescription>
+          An explicit, audited override. Feeds every downstream financial figure for this order —
+          change it deliberately.
+        </ResponsiveDialogDescription>
+      </ResponsiveDialogHeader>
+      <div className='space-y-6'>
+        <FieldGroup>
+          <Select value={economicEntityId} onValueChange={setEconomicEntityId}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {entityOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldGroup>
+        <div className='flex justify-end gap-2'>
+          <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type='button' disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending && <Icons.spinner className='animate-spin' />}
+            Save
+          </Button>
         </div>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+      </div>
+    </ResponsiveDialogContent>
   );
 }

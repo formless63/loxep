@@ -467,7 +467,7 @@ export const contactChannels = pgTable(
 
     /**
      * `UNIQUE ... NULLS NOT DISTINCT` (PostgreSQL 15+, and the deployment target
-     * is `timescale/timescaledb:2.29.1-pg18`). Exactly one owner column is
+     * is `timescale/timescaledb-ha:pg18.4-ts2.29.2-all`). Exactly one owner column is
      * non-null by the `CHECK` above, so under PostgreSQL's DEFAULT null handling
      * this constraint would permit the same channel twice — the duplicate it
      * exists to prevent. The precedent is `channel_listings` (0003).

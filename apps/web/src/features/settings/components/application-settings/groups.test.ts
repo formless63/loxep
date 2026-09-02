@@ -38,11 +38,11 @@ const EXPECTED_CLASS_A_KEYS = [
   'inventory.default_sale_mode',
   'documents.parser_id',
   'auth.onboarding_oidc_prompt_dismissed'
-].sort();
+].toSorted();
 
 describe('APPLICATION_SETTINGS_GROUPS', () => {
   test('covers exactly the 13 class (a) settings, no duplicates', () => {
-    expect([...APPLICATION_SETTINGS_GROUPED_KEYS].sort()).toEqual(EXPECTED_CLASS_A_KEYS);
+    expect(APPLICATION_SETTINGS_GROUPED_KEYS.toSorted()).toEqual(EXPECTED_CLASS_A_KEYS);
     expect(new Set(APPLICATION_SETTINGS_GROUPED_KEYS).size).toBe(
       APPLICATION_SETTINGS_GROUPED_KEYS.length
     );

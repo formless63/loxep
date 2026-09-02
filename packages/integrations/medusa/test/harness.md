@@ -28,9 +28,9 @@ checked in are called out at each step.
 ## What the stack is
 
 ```text
-medusa-verify-db      postgres:17-alpine        127.0.0.1:5439
-medusa-verify-app     node:24-bookworm-slim     127.0.0.1:9000   `npx medusa develop`
-medusa-verify-proxy   nginx:alpine              127.0.0.1:9443   self-signed TLS terminator
+medusa-verify-db      postgres:17.11-alpine3.24        127.0.0.1:5439
+medusa-verify-app     node:24.20.0-bookworm-slim       127.0.0.1:9000   `npx medusa develop`
+medusa-verify-proxy   nginx:1.31.4-alpine3.24          127.0.0.1:9443   self-signed TLS terminator
 ```
 
 Compose project `medusa-verify`, fully isolated from the Loxep dev stack
@@ -54,7 +54,7 @@ lockfile, and it is not Loxep's source:
 ```bash
 export MEDUSA_VERIFY_APP_DIR="$HOME/.local/share/loxep/medusa-verify-app"
 mkdir -p "$MEDUSA_VERIFY_APP_DIR"
-npx create-medusa-app@latest --skip-db --no-browser   # answer: apps/backend
+npx create-medusa-app@2.18.0 --skip-db --no-browser   # answer: apps/backend
 ```
 
 The compose file expects the backend at `$MEDUSA_VERIFY_APP_DIR/apps/backend`

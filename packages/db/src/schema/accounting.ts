@@ -83,7 +83,7 @@
  * ```
  *
  * Both exclusions need `btree_gist` for the `uuid with =` operand; it is
- * available in `timescale/timescaledb-ha:pg18.4-ts2.29.1-all` (verified,
+ * available in `timescale/timescaledb-ha:pg18.4-ts2.29.2-all` (verified,
  * version 1.8) so the design's weaker portable fallback was not needed.
  *
  * ## What migration 0010 added, and what it still leaves out

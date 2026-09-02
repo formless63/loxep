@@ -377,21 +377,18 @@ function MigrationHistoryList({
  */
 export default function StorageMigrationPanel() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
-  const [migrationId, setMigrationId] = React.useState<string | null>(null);
+  const [selectedMigrationId, setSelectedMigrationId] = React.useState<string | undefined>(
+    undefined
+  );
   const { data: migrations } = useQuery(storageMigrationsQuery);
 
-  // Default the selection to the newest running migration (or, failing
-  // that, the newest migration at all) the first time the list loads —
-  // never overrides an explicit user selection afterward.
-  const defaultedRef = React.useRef(false);
-  React.useEffect(() => {
-    if (defaultedRef.current || migrations === undefined) return;
-    defaultedRef.current = true;
-    if (migrationId !== null) return;
-    const running = migrations.find((migration) => migration.status === 'running');
-    const fallback = running ?? migrations[0];
-    if (fallback) setMigrationId(fallback.id);
-  }, [migrations, migrationId]);
+  // Until the operator makes a selection, show the newest running migration
+  // (or, failing that, the newest migration at all). Keeping `undefined` as
+  // the untouched sentinel means query data can supply the initial selection
+  // without a state-setting effect and can never override an explicit choice.
+  const defaultMigration =
+    migrations?.find((migration) => migration.status === 'running') ?? migrations?.[0];
+  const migrationId = selectedMigrationId ?? defaultMigration?.id ?? null;
 
   return (
     <div className='flex flex-col gap-4'>
@@ -410,7 +407,7 @@ export default function StorageMigrationPanel() {
           </Button>
         </CardHeader>
         <CardContent>
-          <MigrationHistoryList selectedId={migrationId} onSelect={setMigrationId} />
+          <MigrationHistoryList selectedId={migrationId} onSelect={setSelectedMigrationId} />
         </CardContent>
       </Card>
 
@@ -419,7 +416,7 @@ export default function StorageMigrationPanel() {
       <StartMigrationDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
-        onStarted={setMigrationId}
+        onStarted={setSelectedMigrationId}
       />
     </div>
   );

@@ -11,6 +11,8 @@
  * This module is server-only. Route/server-function code must reach it via
  * dynamic import inside handlers so nothing here leaks into the client bundle.
  */
+import '@tanstack/react-start/server-only';
+
 import { loadBootstrapConfig, BootstrapConfigError, type BootstrapConfig } from '@loxep/config';
 import { createAuth, type LoxepAuth } from '@loxep/auth';
 import { createDb, type DbHandle } from '@loxep/db';

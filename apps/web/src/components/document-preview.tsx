@@ -128,14 +128,16 @@ function OverlayBox({
  *   `<OverlayBox>` above can position every `document_line_candidates.source_region`
  *   box as a simple percentage of natural size — see that component's own
  *   doc for why no pixel-ratio math is needed.
- * - `application/pdf` — an `<iframe>` over the SAME `servingUrl`, i.e. the
- *   browser's own PDF viewer: same-origin, session-cookie gated (every
- *   serving route already sits behind `requireSession`), zero bundle cost,
- *   zero new dependency. The caveat is real and stated on the surface below
- *   rather than discovered: the operator gets the browser's chrome, not
- *   Loxep's, and a highlight box cannot be drawn over a browser-native PDF
- *   viewer. **`overlay` is a no-op for a PDF document** — the design scopes
- *   tier B's PDF answer to a `pdfjs-dist`-controlled canvas
+ * - `application/pdf` — a fully sandboxed `<iframe>` over the SAME
+ *   `servingUrl`, i.e. the browser's own PDF viewer: same-origin,
+ *   session-cookie gated (every serving route already sits behind
+ *   `requireSession`), zero bundle cost, zero new dependency. Chromium may
+ *   refuse to render its native viewer inside a sandbox, so explicit open
+ *   and download links remain available below it. The other caveat is real
+ *   and stated on the surface rather than discovered: the operator gets the
+ *   browser's chrome, not Loxep's, and a highlight box cannot be drawn over
+ *   a browser-native PDF viewer. **`overlay` is a no-op for a PDF document**
+ *   — the design scopes tier B's PDF answer to a `pdfjs-dist`-controlled canvas
  *   (`expense-entry-design.md`, M5's own "WHAT" section), which needs a new
  *   dependency this pass's write fence does not authorize
  *   (`apps/web/package.json` is out of scope). Recorded as an explicit gap
@@ -247,19 +249,31 @@ export function DocumentPreview({
         <iframe
           src={servingUrl}
           title={alt}
-          // Deliberately NOT sandboxed: Chrome refuses to run its built-in
-          // PDF viewer inside ANY sandboxed iframe — the user sees "This
-          // page has been blocked by Chrome" instead of the document (found
-          // live, 2026-08-17). The prior sandbox bought nothing anyway: the
-          // src is same-origin, session-cookie-gated bytes Loxep itself
-          // serves with a safe content type, and allow-same-origin had
-          // already handed back the only isolation sandboxing provides
-          // against your own origin.
+          // Uploaded documents are untrusted content. Grant no sandbox
+          // capabilities here; a same-origin exception would let an active
+          // response share Loxep's origin. Chromium's native PDF viewer may
+          // decline this sandbox, which is why the explicit open/download
+          // fallback below is part of the component rather than an error UI.
+          sandbox=''
           className='min-h-0 w-full flex-1 rounded-md border'
         />
-        <p className='text-muted-foreground text-xs'>
-          Browser PDF viewer — detected-line highlights apply to image receipts only.
-        </p>
+        <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-1 text-xs'>
+          <span>
+            Sandboxed browser PDF viewer — some browsers block inline viewing, and detected-line
+            highlights apply to image receipts only.
+          </span>
+          <a
+            href={servingUrl}
+            target='_blank'
+            rel='noreferrer'
+            className='text-primary font-medium hover:underline'
+          >
+            Open PDF in a new tab
+          </a>
+          <a href={servingUrl} download={alt} className='text-primary font-medium hover:underline'>
+            Download PDF
+          </a>
+        </div>
       </div>
     );
   }

@@ -23,12 +23,6 @@ export function Messenger() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const shouldReduceMotion = useReducedMotion();
   const replyTimeoutRef = useRef<number | null>(null);
-  const selectedRef = useRef(selectedConversationId);
-
-  useEffect(() => {
-    selectedRef.current = selectedConversationId;
-    setAttachments([]);
-  }, [selectedConversationId]);
 
   useEffect(() => {
     return () => {
@@ -38,6 +32,14 @@ export function Messenger() {
     };
   }, []);
 
+  const handleSelectConversation = useCallback(
+    (conversationId: string) => {
+      setAttachments([]);
+      selectConversation(conversationId);
+    },
+    [selectConversation]
+  );
+
   const handleAddAttachments = useCallback((files: FileList) => {
     const newAttachments: Attachment[] = Array.from(files).map((file) => ({
       id: 'file-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7),
@@ -45,11 +47,11 @@ export function Messenger() {
       size: file.size,
       type: file.type
     }));
-    setAttachments((prev) => [...prev, ...newAttachments]);
+    setAttachments((previous) => [...previous, ...newAttachments]);
   }, []);
 
   const handleRemoveAttachment = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
+    setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
   }, []);
 
   const handleSubmit = useCallback(
@@ -106,12 +108,12 @@ export function Messenger() {
       <ConversationSelect
         conversations={conversations}
         selectedId={selectedConversationId}
-        onSelect={selectConversation}
+        onSelect={handleSelectConversation}
       />
       <ConversationList
         conversations={conversations}
         selectedId={selectedConversationId}
-        onSelect={selectConversation}
+        onSelect={handleSelectConversation}
       />
       <ChatArea
         conversation={activeConversation}

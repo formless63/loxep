@@ -43,7 +43,9 @@ Exact versions are acceptable and preferred for application/tooling dependencies
 
 CI actions should use explicit verified release versions rather than obsolete examples. Security-oriented SHA pinning may be introduced where appropriate, provided automated tooling is configured to keep the pinned digest current.
 
-Container images used in reference/production Compose should also use deliberate reproducible versioning once an image is part of Loxep's tested stack. Do not confuse a convenient exploratory `latest` run with a reproducible supported deployment.
+Container images used in reference/production Compose should also use deliberate reproducible versioning once an image is part of Loxep's tested stack. Supported images use a readable exact tag plus a verified manifest digest; the tag records intent while the digest makes the resolved artifact immutable. Do not confuse a convenient exploratory `latest` run with a reproducible supported deployment.
+
+Runtime operating-system packages use a dated Debian Snapshot source matching the pinned Node base image and an exact direct package version. Advance the Node image digest, snapshot epoch, and package pin as one reviewed set, then rebuild the production image. Dependabot does not maintain this APT pin automatically.
 
 ## Current intentional exceptions
 
@@ -51,17 +53,29 @@ Documented deviations from "newest stable, no prereleases" (reviewed whenever th
 
 - **`nitro` 3.x beta** in `apps/web`: the current TanStack Start Vite integration is built against the Nitro v3 line, which upstream currently ships as beta releases. It is pinned to an exact verified beta build and re-verified together with the TanStack Start/Router set rather than independently upgraded. Revisit whenever TanStack Start or Nitro publishes a stable pairing.
 - **Deliberate-major queue**: upstream majors that exist but require real migration work (not drive-by bumps) are tracked as explicit issues rather than adopted silently or ignored silently. Dependabot surfaces them as individual (ungrouped) pull requests; adoption happens through reviewed migrations with green builds.
-- **TanStack Router set pinned below latest** in `apps/web` (`@tanstack/react-router` 1.170.8, `@tanstack/react-start` 1.168.12, `@tanstack/router-plugin` 1.168.11): upstream `router-core` ≥ 1.171.7 carries an open SSR streaming regression ([TanStack/router#7529](https://github.com/TanStack/router/issues/7529) — the query dehydration stream's close listener is silently dropped), which broke SSR dehydration on every `useQuery` page. Pinned to the last known-good `router-core` 1.171.6 as a self-consistent same-week set. Un-pinning is tracked as an explicit issue and happens when a release containing the upstream fix is verified. The deprecated `@tanstack/react-router-with-query` was replaced by `@tanstack/react-router-ssr-query` in the same change.
+- **TanStack Router set pinned below latest** in `apps/web` (`@tanstack/react-router` 1.170.8, `@tanstack/react-start` 1.168.12, `@tanstack/router-plugin` 1.168.11): upstream `router-core` ≥ 1.171.7 carries an open SSR streaming regression ([TanStack/router#7529](https://github.com/TanStack/router/issues/7529) — the query dehydration stream's close listener is silently dropped), which broke SSR dehydration on every `useQuery` page. The root override holds `router-core` at the last known-good 1.171.6. Router devtools is deliberately pinned to 1.166.13 because its latest release peers on an affected core and otherwise installs a second, unsafe Router tree. Un-pinning is tracked as an explicit issue and happens when a release containing the upstream fix is verified. Query, Query devtools, SSR Query, and Table may still move as compatibility-checked sets because they do not replace the pinned Router core.
+- **TypeScript 6 rather than registry-latest TypeScript 7**: TypeScript 7.0 has no stable programmatic API, and its own release guidance directs Astro/MDX-style toolchains to remain on TypeScript 6. Loxep uses the newest viable TypeScript 6 release until the 7.1 API/tooling re-evaluation tracked in Beads.
+- **Node 24 rather than registry/current Node 26**: the supported runtime follows the Active LTS line. Node 26 remains Current until its scheduled LTS promotion; `@types/node` stays on the newest 24.x release with the runtime.
+- **RustFS release candidate**: RustFS has not published a stable 1.0 image. The optional companion uses the newest verified release candidate with an exact digest; moving to stable is tracked separately.
+- **Timescale HA PostgreSQL patch lag**: the newest viable TimescaleDB HA/all image combines TimescaleDB 2.29.2 with PostgreSQL 18.4 while upstream PostgreSQL has a newer 18.x patch. Loxep keeps the accepted HA/all image family and tracks its next current-PostgreSQL build instead of silently switching image families.
+
+The root `@types/pg` override is a workspace-consistency guard rather than a
+version exception: Graphile Worker otherwise installs a second semver-compatible
+copy, whose nominal `pg` pool types are incompatible with the copy used by
+Loxep's database packages under TypeScript 6. Keep the override aligned with the
+direct exact pin until the upstream dependency graph no longer duplicates it.
 
 ## Automated updates
 
-Loxep uses GitHub's built-in Dependabot for dependency maintenance (`.github/dependabot.yml`) rather than a third-party app: this is a personal, non-org repository, so a zero-install, zero-secrets tool is the right fit. Dependabot's `bun` ecosystem (GA February 2025) reads the root `bun.lock` directly and covers every workspace manifest (`apps/*`, `packages/*`, `packages/integrations/*`) from a single entry; separate entries cover `github-actions` and the `docker`/`docker-compose` ecosystems (`docker/Dockerfile`, `compose.yml`, `compose.override.yml`, `docker/compose.dev.yml`).
+Loxep uses GitHub's built-in Dependabot for dependency maintenance (`.github/dependabot.yml`) rather than a third-party app: this is a personal, non-org repository, so a zero-install, zero-secrets tool is the right fit. Dependabot's `bun` ecosystem (GA February 2025) reads the root `bun.lock` directly and covers every workspace manifest (`apps/*`, `packages/*`, `packages/integrations/*`) from a single entry; separate entries cover `github-actions` and the `docker`/`docker-compose` ecosystems, including the main/dev stacks and the Medusa verification harness. Dependabot can retain readable `tag@sha256:` image pins while updating their verified digests.
 
 Automated updates do not remove the requirement to review major-version migrations. The desired workflow is:
 
 - Dependabot detects a new stable release and opens a pull request weekly;
 - routine minor/patch bumps are grouped into a single PR per ecosystem; each major-version bump stays its own individual PR and feeds the deliberate-major queue above;
-- CI builds and tests the proposed update;
+- GitHub Actions minor/patch groups may auto-merge after the changed actions themselves complete the gating CI run;
+- Bun, Docker, and Compose groups always require review because hosted CI does not yet cover every PostgreSQL-backed package suite or container migration path;
+- CI builds and tests the proposed update, supplemented by the relevant package, Compose, migration, or image checks before review-required updates merge;
 - breaking changes are reviewed where relevant;
 - the dependency remains current rather than silently aging for years.
 

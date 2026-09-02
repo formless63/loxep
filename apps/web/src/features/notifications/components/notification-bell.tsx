@@ -31,6 +31,7 @@ import { notificationEventClassLabel } from '@/features/settings/constants';
 import type { NotificationFeedItemDto } from '@/server/admin-functions';
 
 const LAST_SEEN_STORAGE_KEY = 'loxep.notifications.lastSeenAt';
+const LAST_SEEN_CHANGE_EVENT = 'loxep:notifications-last-seen-change';
 const MAX_VISIBLE = 8;
 
 function readLastSeen(): string | null {
@@ -43,11 +44,27 @@ function readLastSeen(): string | null {
   }
 }
 
+function subscribeToLastSeen(onStoreChange: () => void): () => void {
+  function handleStorage(event: StorageEvent) {
+    if (event.key === LAST_SEEN_STORAGE_KEY) onStoreChange();
+  }
+
+  window.addEventListener('storage', handleStorage);
+  window.addEventListener(LAST_SEEN_CHANGE_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener('storage', handleStorage);
+    window.removeEventListener(LAST_SEEN_CHANGE_EVENT, onStoreChange);
+  };
+}
+
 export function NotificationBell() {
-  const [lastSeenAt, setLastSeenAt] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    setLastSeenAt(readLastSeen());
-  }, []);
+  const persistedLastSeenAt = React.useSyncExternalStore(
+    subscribeToLastSeen,
+    readLastSeen,
+    () => null
+  );
+  const [sessionLastSeenAt, setSessionLastSeenAt] = React.useState<string | null>(null);
+  const lastSeenAt = sessionLastSeenAt ?? persistedLastSeenAt;
 
   const { data } = useQuery(notificationFeedQuery);
   const items: NotificationFeedItemDto[] = data ?? [];
@@ -58,9 +75,10 @@ export function NotificationBell() {
 
   function markSeen() {
     const now = new Date().toISOString();
-    setLastSeenAt(now);
+    setSessionLastSeenAt(now);
     try {
       window.localStorage.setItem(LAST_SEEN_STORAGE_KEY, now);
+      window.dispatchEvent(new Event(LAST_SEEN_CHANGE_EVENT));
     } catch {
       // Nothing to recover: the badge simply keeps its count this session.
     }

@@ -71,12 +71,15 @@ export default function TypedConfirmDialog({
   variant = 'default'
 }: TypedConfirmDialogProps) {
   const [typed, setTyped] = React.useState('');
+  const [previousOpen, setPreviousOpen] = React.useState(open);
   const inputId = React.useId();
-  const matches = typed === confirmText;
 
-  React.useEffect(() => {
-    if (!open) setTyped('');
-  }, [open]);
+  if (open !== previousOpen) {
+    setPreviousOpen(open);
+    setTyped('');
+  }
+
+  const matches = typed === confirmText;
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>

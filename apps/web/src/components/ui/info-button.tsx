@@ -20,12 +20,13 @@ export function InfoButton({
   const { setContent, setOpen } = useInfobar();
 
   // Set content on mount so the infobar has it ready, but don't force it open
-  const contentRef = React.useRef(content);
-  contentRef.current = content;
+  const setInitialContent = React.useEffectEvent(() => {
+    setContent(content);
+  });
 
   React.useEffect(() => {
-    setContent(contentRef.current);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    setInitialContent();
+  }, []);
 
   const handleClick: React.ComponentProps<typeof Button>['onClick'] = (e) => {
     setContent(content);

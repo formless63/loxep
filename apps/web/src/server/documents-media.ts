@@ -40,6 +40,8 @@
  * runner it wraps) is the single place that decides whether a given
  * document/backend combination has anything to extract.
  */
+import '@tanstack/react-start/server-only';
+
 import { Readable } from 'node:stream';
 import { documentsMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';

@@ -75,6 +75,7 @@ Do not introduce Redis, Kafka, BullMQ, pg-boss, or another queue/cache merely be
 
 - Every mode is **one Node.js process**; `all` embeds Graphile Worker in-process. No in-container process supervisor or sibling processes.
 - Schema migration is an explicit invocation of the same image (conceptually `loxep migrate`), protected by a PostgreSQL advisory lock. Normal startup never mutates schema; it fails readiness with a clear diagnostic when the database is behind.
+- Updating the supported TimescaleDB image does not update an existing database's installed extension. Each supported bump must add an append-only migration marker and update the runner's exact required version. Under the migration advisory lock, the runner performs `ALTER EXTENSION` as the first command on a disposable fresh session, then uses another fresh session for schema migrations; never place that upgrade inside Drizzle's migration transaction or reuse a session that observed the old extension version.
 - The Compose stack contains no migration service and no one-shot containers (ADR-0018 as amended): migrations run by exec into the running `loxep` container; the app boots unmigrated into a failed-readiness state with a pending count.
 - Liveness = process/event loop functioning. Readiness = the mode's required dependencies usable (`web`: DB + web init; `worker`: DB + worker init; `all`: both). Worker backlog and similar degraded conditions are observable health information, not automatic unreadiness.
 

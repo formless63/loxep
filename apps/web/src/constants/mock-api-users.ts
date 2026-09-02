@@ -19,28 +19,29 @@ export type User = {
   updated_at: string;
 };
 
+function generateRandomUserData(id: number): User {
+  const roles = ['Developer', 'Designer', 'Manager', 'QA', 'DevOps', 'Product Owner'];
+  const statuses = ['Active', 'Inactive', 'Invited'];
+
+  return {
+    id,
+    first_name: faker.person.firstName(),
+    last_name: faker.person.lastName(),
+    email: faker.internet.email(),
+    phone: faker.phone.number({ style: 'national' }),
+    status: faker.helpers.arrayElement(statuses),
+    role: faker.helpers.arrayElement(roles),
+    created_at: faker.date.between({ from: '2022-01-01', to: '2023-12-31' }).toISOString(),
+    updated_at: faker.date.recent().toISOString()
+  };
+}
+
 // Mock user data store
 export const fakeUsers = {
   records: [] as User[],
 
   initialize() {
     const sampleUsers: User[] = [];
-    function generateRandomUserData(id: number): User {
-      const roles = ['Developer', 'Designer', 'Manager', 'QA', 'DevOps', 'Product Owner'];
-      const statuses = ['Active', 'Inactive', 'Invited'];
-
-      return {
-        id,
-        first_name: faker.person.firstName(),
-        last_name: faker.person.lastName(),
-        email: faker.internet.email(),
-        phone: faker.phone.number({ style: 'national' }),
-        status: faker.helpers.arrayElement(statuses),
-        role: faker.helpers.arrayElement(roles),
-        created_at: faker.date.between({ from: '2022-01-01', to: '2023-12-31' }).toISOString(),
-        updated_at: faker.date.recent().toISOString()
-      };
-    }
 
     for (let i = 1; i <= 50; i++) {
       sampleUsers.push(generateRandomUserData(i));

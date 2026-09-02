@@ -49,7 +49,9 @@ async function withMaintenanceDb(sql: string): Promise<void> {
 }
 
 export async function createScratchDb(databaseName: string): Promise<string> {
-  await withMaintenanceDb(`create database "${databaseName}"`);
+  await withMaintenanceDb(
+    `create database "${databaseName}" template template0`,
+  );
   return databaseUrlFor(databaseName);
 }
 
@@ -180,7 +182,8 @@ export function s3UnavailableMessage(): string {
   return (
     `S3 conformance leg SKIPPED: no S3-compatible endpoint at ${endpoint}. ` +
     "Start the disposable test container (or any generic S3 endpoint) with: " +
-    "docker run -d --name loxep-test-rustfs -p 9002:9000 rustfs/rustfs:1.0.0-rc.1 " +
+    "docker run -d --name loxep-test-rustfs -p 9002:9000 " +
+    "rustfs/rustfs:1.0.0-rc.4@sha256:a9fbb5e5bfce09ccd0869ac9a7b0e39191c6868d75ec4c5d08ebbd5475db5d6b " +
     "— or point LOXEP_TEST_S3_ENDPOINT/_REGION/_ACCESS_KEY/_SECRET_KEY elsewhere."
   );
 }

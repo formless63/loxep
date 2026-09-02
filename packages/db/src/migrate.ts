@@ -28,6 +28,16 @@ import * as schema from "./schema/index.ts";
  */
 export const MIGRATION_LOCK_KEY = "5498710724765894983";
 
+/**
+ * TimescaleDB extension version supported by the pinned development and
+ * deployment image (ADR-0002).
+ *
+ * Updating a TimescaleDB image does not update the extension installed in an
+ * existing database. Keep this exact version aligned with the image and add an
+ * append-only migration marker whenever it changes.
+ */
+export const REQUIRED_TIMESCALEDB_VERSION = "2.29.2";
+
 /** Default migrations directory, resolved relative to this source file. */
 export const MIGRATIONS_FOLDER = fileURLToPath(
   new URL("../migrations", import.meta.url),
@@ -69,31 +79,107 @@ async function countAppliedMigrations(client: pg.Client): Promise<number> {
   return Number(rows.rows[0]?.count ?? "0");
 }
 
+/** Read the installed version on a disposable session. */
+async function readInstalledTimescaleExtensionVersion(
+  databaseUrl: string,
+): Promise<string | undefined> {
+  const inspectClient = new pg.Client({ connectionString: databaseUrl });
+  await inspectClient.connect();
+  try {
+    const current = await inspectClient.query<{ extversion: string }>(
+      `select extversion
+         from pg_catalog.pg_extension
+        where extname = 'timescaledb'`,
+    );
+    return current.rows[0]?.extversion;
+  } finally {
+    await inspectClient.end();
+  }
+}
+
+/**
+ * Upgrade an already-installed TimescaleDB extension before schema migrations.
+ *
+ * Timescale requires `ALTER EXTENSION` to be the first command in a fresh
+ * session. The caller keeps Loxep's migration advisory lock while this helper
+ * inspects, upgrades, and verifies through separate disposable clients. A
+ * fresh database has no extension yet, so migration 0000 remains responsible
+ * for creating it.
+ */
+async function upgradeInstalledTimescaleExtension(
+  databaseUrl: string,
+  logger: MigrationLogger,
+): Promise<void> {
+  const installedVersion =
+    await readInstalledTimescaleExtensionVersion(databaseUrl);
+  if (
+    installedVersion === undefined ||
+    installedVersion === REQUIRED_TIMESCALEDB_VERSION
+  ) {
+    return;
+  }
+
+  logger.info(
+    `loxep migrate: upgrading TimescaleDB extension from ${installedVersion} to ${REQUIRED_TIMESCALEDB_VERSION}`,
+  );
+
+  const upgradeClient = new pg.Client({ connectionString: databaseUrl });
+  await upgradeClient.connect();
+  try {
+    // This must remain the first SQL statement executed on upgradeClient.
+    await upgradeClient.query(
+      `alter extension "timescaledb" update to '${REQUIRED_TIMESCALEDB_VERSION}'`,
+    );
+  } finally {
+    await upgradeClient.end();
+  }
+
+  // Never reuse a session that observed the old extension version: the
+  // Timescale loader terminates it after ALTER EXTENSION changes the catalog.
+  const upgradedVersion =
+    await readInstalledTimescaleExtensionVersion(databaseUrl);
+  if (upgradedVersion !== REQUIRED_TIMESCALEDB_VERSION) {
+    throw new Error(
+      `TimescaleDB extension upgrade finished at ${upgradedVersion ?? "no installed version"}; expected ${REQUIRED_TIMESCALEDB_VERSION}`,
+    );
+  }
+}
+
 /**
  * Apply all pending migrations from `packages/db/migrations`.
  *
- * Uses a single session so the advisory lock is held on the same connection
- * that runs the migrator. Resolves with the number of newly applied
- * migration files.
+ * A control session holds the advisory lock for the whole operation. An
+ * installed TimescaleDB extension is first updated on the dedicated fresh
+ * session required by upstream, then schema migrations run on another fresh
+ * session. Keeping the lock-only session out of subsequent database work is
+ * deliberate: Timescale invalidates sessions that observed the old extension
+ * version. Closing the control connection releases the session-level lock.
+ * Resolves with the number of newly applied migration files.
  */
 export async function runMigrations(
   opts: RunMigrationsOptions,
 ): Promise<{ applied: number }> {
   const logger = opts.logger ?? consoleLogger;
-  const client = new pg.Client({ connectionString: opts.databaseUrl });
-  await client.connect();
+  const lockClient = new pg.Client({ connectionString: opts.databaseUrl });
+  await lockClient.connect();
   try {
     logger.info(
       `loxep migrate: acquiring advisory lock ${MIGRATION_LOCK_KEY}`,
     );
-    await client.query("select pg_advisory_lock($1::bigint)", [
+    await lockClient.query("select pg_advisory_lock($1::bigint)", [
       MIGRATION_LOCK_KEY,
     ]);
+    await upgradeInstalledTimescaleExtension(opts.databaseUrl, logger);
+
+    const migrationClient = new pg.Client({
+      connectionString: opts.databaseUrl,
+    });
+    await migrationClient.connect();
     try {
-      const before = await countAppliedMigrations(client);
-      const db = drizzle(client);
+      const before = await countAppliedMigrations(migrationClient);
+      const db = drizzle(migrationClient);
       await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
-      const after = await countAppliedMigrations(client);
+      const after = await countAppliedMigrations(migrationClient);
       const applied = after - before;
       if (applied === 0) {
         logger.info(
@@ -106,9 +192,7 @@ export async function runMigrations(
       }
       return { applied };
     } finally {
-      await client.query("select pg_advisory_unlock($1::bigint)", [
-        MIGRATION_LOCK_KEY,
-      ]);
+      await migrationClient.end();
     }
   } catch (error) {
     logger.error(
@@ -116,7 +200,10 @@ export async function runMigrations(
     );
     throw error;
   } finally {
-    await client.end();
+    // Session-level advisory locks are released automatically on disconnect.
+    // Do not issue another query here: an extension upgrade intentionally
+    // leaves this lock-only session on the old Timescale loader generation.
+    await lockClient.end();
   }
 }
 

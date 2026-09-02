@@ -45,16 +45,16 @@ export default function IpAliasesTable({ isAdmin }: { isAdmin: boolean }) {
 
   const { data, isPending, isError, error, refetch } = useQuery(ipAliasesQuery);
 
-  const openCreate = () => {
+  const openCreate = React.useCallback(() => {
     setEditing(null);
     setDialogOpen(true);
-  };
-  const openEdit = (alias: IpAliasDto) => {
+  }, []);
+  const openEdit = React.useCallback((alias: IpAliasDto) => {
     setEditing(alias);
     setDialogOpen(true);
-  };
+  }, []);
 
-  const columns = React.useMemo(() => getColumns(isAdmin, openEdit), [isAdmin]);
+  const columns = React.useMemo(() => getColumns(isAdmin, openEdit), [isAdmin, openEdit]);
 
   let body: React.ReactNode;
   if (isPending) {

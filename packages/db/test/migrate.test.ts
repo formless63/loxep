@@ -7,6 +7,7 @@ import {
   checkMigrationState,
   closeDb,
   createDb,
+  REQUIRED_TIMESCALEDB_VERSION,
   runMigrations,
 } from "../src/migrate.ts";
 import {
@@ -98,8 +99,14 @@ import {
  * 0032 storage backend default invariants: repairs any legacy disabled or
  *      duplicate defaults, then enforces at most one default and requires
  *      that a selected default is enabled.
+ * 0033 Better Auth 1.7 account identity: adds the required issuer, preserves
+ *      Loxep 1.6's provider-scoped OIDC/credential identities, then enforces
+ *      uniqueness across (issuer, account_id).
+ * 0034 TimescaleDB 2.29.2 extension marker: verifies the explicit migration
+ *      runner upgraded an existing database's installed extension after the
+ *      pinned HA/all image changed.
  */
-const MIGRATION_FILE_COUNT = 33;
+const MIGRATION_FILE_COUNT = 35;
 
 describe("runMigrations / checkMigrationState", () => {
   const dbName = scratchDbName("loxep_test_migrate");
@@ -163,6 +170,60 @@ describe("concurrent migration invocations", () => {
   });
 });
 
+describe("0034 TimescaleDB extension upgrade", () => {
+  const dbName = scratchDbName("loxep_test_timescaledb_upgrade");
+  let databaseUrl = "";
+
+  beforeAll(async () => {
+    databaseUrl = await createScratchDb(dbName);
+  });
+
+  afterAll(async () => {
+    await dropScratchDb(dbName);
+  });
+
+  it("upgrades an existing 2.29.1 database before applying schema migrations", async () => {
+    const legacy = createDb(databaseUrl);
+    try {
+      // The pinned HA/all image intentionally carries prior extension files so
+      // an existing volume can be upgraded in place. This is the first SQL on
+      // the pool's new connection, matching Timescale's loader requirement.
+      await legacy.pool.query(
+        `create extension timescaledb version '2.29.1'`,
+      );
+      const before = await legacy.pool.query<{ extversion: string }>(
+        `select extversion
+           from pg_catalog.pg_extension
+          where extname = 'timescaledb'`,
+      );
+      expect(before.rows[0]?.extversion).toBe("2.29.1");
+    } finally {
+      await closeDb(legacy);
+    }
+
+    const [first, second] = await Promise.all([
+      runMigrations({ databaseUrl, logger: silentLogger }),
+      runMigrations({ databaseUrl, logger: silentLogger }),
+    ]);
+    expect(first.applied + second.applied).toBe(MIGRATION_FILE_COUNT);
+    expect([first.applied, second.applied]).toContain(0);
+
+    const verify = createDb(databaseUrl);
+    try {
+      const result = await verify.pool.query<{ extversion: string }>(
+        `select extversion
+           from pg_catalog.pg_extension
+          where extname = 'timescaledb'`,
+      );
+      expect(result.rows[0]?.extversion).toBe(
+        REQUIRED_TIMESCALEDB_VERSION,
+      );
+    } finally {
+      await closeDb(verify);
+    }
+  });
+});
+
 describe("0032 storage-backend default invariant upgrade", () => {
   const dbName = scratchDbName("loxep_test_storage_default_upgrade");
   let databaseUrl = "";
@@ -178,10 +239,13 @@ describe("0032 storage-backend default invariant upgrade", () => {
   it("repairs legacy disabled and duplicate defaults before enforcing constraints", async () => {
     await runMigrations({ databaseUrl, logger: silentLogger });
 
-    // Reconstruct a database at 0031: remove 0032's schema objects and its
-    // migration ledger row, then seed states the old service could produce.
+    // Reconstruct a database at 0031: remove 0032 and every later schema
+    // object plus their migration ledger rows, then seed states the old
+    // service could produce.
     const setup = createDb(databaseUrl);
     try {
+      await setup.pool.query(`drop index "account_issuer_accountId_uidx"`);
+      await setup.pool.query(`alter table "account" drop column "issuer"`);
       await setup.pool.query(
         `alter table storage_backends
            drop constraint storage_backends_default_enabled_check`,
@@ -196,8 +260,10 @@ describe("0032 storage-backend default invariant upgrade", () => {
       );
       await setup.pool.query(
         `delete from drizzle.__drizzle_migrations
-          where created_at = (
-            select max(created_at) from drizzle.__drizzle_migrations
+          where created_at in (
+            select created_at from drizzle.__drizzle_migrations
+            order by created_at desc
+            limit 3
           )`,
       );
     } finally {
@@ -206,9 +272,7 @@ describe("0032 storage-backend default invariant upgrade", () => {
 
     await expect(
       runMigrations({ databaseUrl, logger: silentLogger }),
-    ).resolves.toEqual({
-      applied: 1,
-    });
+    ).resolves.toEqual({ applied: 3 });
 
     const verify = createDb(databaseUrl);
     try {
@@ -228,6 +292,156 @@ describe("0032 storage-backend default invariant upgrade", () => {
           where name = 'legacy disabled'`,
       );
       expect(disabled.rows[0]?.is_default).toBe(false);
+    } finally {
+      await closeDb(verify);
+    }
+  });
+});
+
+describe("0033 Better Auth account-issuer upgrade", () => {
+  const dbName = scratchDbName("loxep_test_auth_issuer_upgrade");
+  let databaseUrl = "";
+
+  beforeAll(async () => {
+    databaseUrl = await createScratchDb(dbName);
+  });
+
+  afterAll(async () => {
+    await dropScratchDb(dbName);
+  });
+
+  it("preserves supported 1.6 provider identities before enforcing the 1.7 key", async () => {
+    await runMigrations({ databaseUrl, logger: silentLogger });
+
+    // Reconstruct a database at 0032, including both identity namespaces the
+    // shipped Loxep configuration can create. Password login is disabled, but
+    // credential is a Better Auth local namespace and is handled defensively.
+    const setup = createDb(databaseUrl);
+    try {
+      await setup.pool.query(`drop index "account_issuer_accountId_uidx"`);
+      await setup.pool.query(`alter table "account" drop column "issuer"`);
+      await setup.pool.query(
+        `insert into "user" (id, name, email, updated_at)
+         values
+           ('issuer-oidc-user', 'OIDC User', 'issuer-oidc@example.test', now()),
+           ('issuer-credential-user', 'Credential User', 'issuer-credential@example.test', now())`,
+      );
+      await setup.pool.query(
+        `insert into "account"
+           (id, account_id, provider_id, user_id, updated_at)
+         values
+           ('issuer-oidc-account', 'subject-123', 'oidc', 'issuer-oidc-user', now()),
+           ('issuer-credential-account', 'issuer-credential-user', 'credential', 'issuer-credential-user', now())`,
+      );
+      await setup.pool.query(
+        `delete from drizzle.__drizzle_migrations
+          where created_at in (
+            select created_at from drizzle.__drizzle_migrations
+            order by created_at desc
+            limit 2
+          )`,
+      );
+    } finally {
+      await closeDb(setup);
+    }
+
+    await expect(
+      runMigrations({ databaseUrl, logger: silentLogger }),
+    ).resolves.toEqual({ applied: 2 });
+
+    const verify = createDb(databaseUrl);
+    try {
+      const identities = await verify.pool.query<{
+        account_id: string;
+        issuer: string;
+        provider_id: string;
+      }>(
+        `select account_id, issuer, provider_id
+           from "account"
+          order by provider_id`,
+      );
+      expect(identities.rows).toEqual([
+        {
+          account_id: "issuer-credential-user",
+          issuer: "local:credential",
+          provider_id: "credential",
+        },
+        {
+          account_id: "subject-123",
+          issuer: "local:oauth:oidc",
+          provider_id: "oidc",
+        },
+      ]);
+
+      await expect(
+        verify.pool.query(
+          `insert into "account"
+             (id, issuer, account_id, provider_id, user_id, updated_at)
+           values
+             ('duplicate-issuer-account', 'local:oauth:oidc', 'subject-123', 'oidc', 'issuer-oidc-user', now())`,
+        ),
+      ).rejects.toMatchObject({ code: "23505" });
+    } finally {
+      await closeDb(verify);
+    }
+  });
+});
+
+describe("0033 Better Auth account-issuer ambiguity guard", () => {
+  const dbName = scratchDbName("loxep_test_auth_issuer_guard");
+  let databaseUrl = "";
+
+  beforeAll(async () => {
+    databaseUrl = await createScratchDb(dbName);
+  });
+
+  afterAll(async () => {
+    await dropScratchDb(dbName);
+  });
+
+  it("refuses to invent an issuer for an unrecognized legacy provider", async () => {
+    await runMigrations({ databaseUrl, logger: silentLogger });
+
+    const setup = createDb(databaseUrl);
+    try {
+      await setup.pool.query(`drop index "account_issuer_accountId_uidx"`);
+      await setup.pool.query(`alter table "account" drop column "issuer"`);
+      await setup.pool.query(
+        `insert into "user" (id, name, email, updated_at)
+         values ('issuer-unknown-user', 'Unknown User', 'issuer-unknown@example.test', now())`,
+      );
+      await setup.pool.query(
+        `insert into "account"
+           (id, account_id, provider_id, user_id, updated_at)
+         values
+           ('issuer-unknown-account', 'external-123', 'unknown-provider', 'issuer-unknown-user', now())`,
+      );
+      await setup.pool.query(
+        `delete from drizzle.__drizzle_migrations
+          where created_at in (
+            select created_at from drizzle.__drizzle_migrations
+            order by created_at desc
+            limit 2
+          )`,
+      );
+    } finally {
+      await closeDb(setup);
+    }
+
+    await expect(
+      runMigrations({ databaseUrl, logger: silentLogger }),
+    ).rejects.toThrow(/unrecognized provider_id/);
+
+    const verify = createDb(databaseUrl);
+    try {
+      const issuerColumn = await verify.pool.query(
+        `select 1
+           from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'account'
+            and column_name = 'issuer'`,
+      );
+      expect(issuerColumn.rowCount).toBe(0);
     } finally {
       await closeDb(verify);
     }

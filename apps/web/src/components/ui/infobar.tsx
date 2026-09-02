@@ -640,6 +640,14 @@ function InfobarMenuBadge({ className, ...props }: React.ComponentProps<'div'>) 
   );
 }
 
+function skeletonWidthFromId(id: string): string {
+  let hash = 0;
+  for (const character of id) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 40;
+  }
+  return `${hash + 50}%`;
+}
+
 function InfobarMenuSkeleton({
   className,
   showIcon = false,
@@ -647,10 +655,7 @@ function InfobarMenuSkeleton({
 }: React.ComponentProps<'div'> & {
   showIcon?: boolean;
 }) {
-  // Random width between 50 to 90%.
-  const width = React.useMemo(() => {
-    return `${Math.floor(Math.random() * 40) + 50}%`;
-  }, []);
+  const width = skeletonWidthFromId(React.useId());
 
   return (
     <div

@@ -15,7 +15,7 @@
 name: medusa-verify
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine3.24@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     container_name: medusa-verify-db
     restart: unless-stopped
     environment:
@@ -38,7 +38,7 @@ services:
   # directory therefore cannot live in this repo — MEDUSA_VERIFY_APP_DIR points
   # at wherever you scaffolded it (harness.md step 1).
   medusa:
-    image: node:24-bookworm-slim
+    image: node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
     container_name: medusa-verify-app
     restart: unless-stopped
     user: "1000:1000"
@@ -64,7 +64,7 @@ services:
   # is self-signed and generated locally (harness.md step 2); the live tests
   # trust that one certificate explicitly and nothing else.
   proxy:
-    image: nginx:alpine
+    image: nginx:1.31.4-alpine3.24@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
     container_name: medusa-verify-proxy
     restart: unless-stopped
     volumes:

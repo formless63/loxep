@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
 # Loxep application image (ADR-0013/ADR-0018): one image, one Node.js process,
 # `loxep migrate` / `loxep start [--mode=all|web|worker]` via bin/loxep.ts.
 # Build from the repository root:  docker build -f docker/Dockerfile .
@@ -9,7 +9,7 @@
 # re-runs on any context change, but its output only contains manifests, so
 # downstream install layers stay cached until a manifest actually changes.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0 AS manifests
+FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS manifests
 WORKDIR /src
 COPY . .
 RUN mkdir -p /manifests \
@@ -19,7 +19,7 @@ RUN mkdir -p /manifests \
 # ---------------------------------------------------------------------------
 # Build stage: full workspace install + apps/web production build (Vite+Nitro)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0 AS build
+FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS build
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source edits.
@@ -40,7 +40,7 @@ RUN bun run build
 # Deps stage: production-only node_modules for the runtime image.
 # Workspace packages resolve through node_modules/@loxep/* symlinks that Bun
 # creates; the runtime stage copies them verbatim. --linker=hoisted forces the
-# classic flat layout — Bun 1.3's default isolated linker scatters
+# classic flat layout — Bun's default isolated linker scatters
 # per-workspace node_modules under packages/*, which this image does not carry.
 #
 # --filter '!./apps/*' installs root + packages/* only. The runtime executes
@@ -72,7 +72,7 @@ RUN bun run build
 # new workspace package is added — including packages/integrations/*, which an
 # explicit './packages/*' glob silently misses.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0 AS deps
+FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS deps
 WORKDIR /app
 
 COPY --from=manifests /manifests ./
@@ -82,7 +82,7 @@ RUN bun install --frozen-lockfile --production --omit=peer --linker=hoisted --fi
 # Runtime stage: Node.js 24 runs bin/ and packages/ TypeScript natively via
 # type stripping; the web runtime is the prebuilt Nitro output.
 # ---------------------------------------------------------------------------
-FROM node:24-slim AS runtime
+FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
@@ -92,8 +92,11 @@ WORKDIR /app
 # it. Without the binary the code path degrades honestly to available:false
 # — this line is what makes it real in the shipped image. ~30MB apt delta;
 # the WASM OCR engine itself ships in node_modules and needs no apt package.
+# The snapshot epoch matches the Debian metadata embedded in the pinned Node
+# image, making both the direct package and its transitive dependencies stable.
+COPY docker/debian-bookworm-20260824.sources /etc/apt/sources.list.d/debian.sources
 RUN apt-get update \
- && apt-get install -y --no-install-recommends poppler-utils \
+ && apt-get install -y --no-install-recommends poppler-utils=22.12.0-2+deb12u3 \
  && rm -rf /var/lib/apt/lists/*
 
 # Production node_modules (COPY preserves the relative @loxep/* symlinks,
@@ -105,8 +108,13 @@ COPY packages ./packages
 COPY apps/web/package.json apps/web/package.json
 COPY --from=build /app/apps/web/.output apps/web/.output
 
-# Default LOXEP_MEDIA_ROOT volume target, writable by the non-root user.
-RUN mkdir -p /data/media && chown -R node:node /data
+# Docker preserves context permission bits. Agent-created files can be 0600
+# before their first commit, so normalize shipped application sources for the
+# non-root runtime user while keeping them root-owned and non-writable.
+# Default LOXEP_MEDIA_ROOT remains the one writable application path.
+RUN chmod -R a+rX /app/bin /app/packages /app/apps/web \
+ && mkdir -p /data/media \
+ && chown -R node:node /data
 
 USER node
 EXPOSE 3020

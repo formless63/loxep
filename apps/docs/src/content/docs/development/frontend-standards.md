@@ -2,7 +2,7 @@
 title: Frontend Standards
 ---
 
-This page is the **load-bearing UI contract** for `apps/web`. The [Implementation Contract](../implementation-contract/) fixes *which* libraries are accepted; this page fixes *how* they must be used so that Loxep product surfaces look like one designed application instead of ten hand-rolled ones.
+This page is the **load-bearing UI contract** for `apps/web`. The [Implementation Contract](../implementation-contract/) fixes _which_ libraries are accepted; this page fixes _how_ they must be used so that Loxep product surfaces look like one designed application instead of ten hand-rolled ones.
 
 Rules here are checkable. If a change violates one, either fix the change or change this page (and say why in the PR).
 
@@ -28,27 +28,27 @@ Eight themes ship today: `macaron`, `neobrutualism`, `cyberpunk`, `light-green`,
 
 Every theme defines the **same** token vocabulary. That vocabulary is the whole palette you are allowed to use:
 
-| Token | Tailwind utilities | Use for |
-| --- | --- | --- |
-| `--background` / `--foreground` | `bg-background`, `text-foreground` | page ground and default text |
-| `--card` / `--card-foreground` | `bg-card`, `text-card-foreground` | raised panels, KPI tiles, list containers |
-| `--popover` / `--popover-foreground` | `bg-popover`, `text-popover-foreground` | menus, comboboxes, tooltips |
-| `--primary` / `--primary-foreground` | `bg-primary`, `text-primary`, `text-primary-foreground` | the one emphasised action or value per view |
-| `--secondary` / `--secondary-foreground` | `bg-secondary`, `text-secondary-foreground` | secondary chips and buttons |
-| `--muted` / `--muted-foreground` | `bg-muted`, `text-muted-foreground` | de-emphasised fills and secondary text |
-| `--accent` / `--accent-foreground` | `bg-accent`, `text-accent-foreground` | hover/selected states, highlighted rows |
-| `--destructive` / `--destructive-foreground` | `bg-destructive`, `text-destructive` | errors, failures, destructive actions |
-| `--success` / `--success-foreground` | `bg-success`, `text-success` | healthy/succeeded states |
-| `--warning` / `--warning-foreground` | `bg-warning`, `text-warning` | degraded/at-risk states, operator-caused states that are not failures |
-| `--border`, `--input`, `--ring` | `border`, `border-border`, `bg-input`, `ring-ring` | edges, field chrome, focus rings |
-| `--chart-1` … `--chart-5` | `fill-chart-1`, `text-chart-3`, `bg-chart-2/15`, `var(--chart-N)` | **all** categorical series and category accents |
-| `--sidebar`, `--sidebar-foreground`, `--sidebar-primary(-foreground)`, `--sidebar-accent(-foreground)`, `--sidebar-border`, `--sidebar-ring` | `bg-sidebar`, `text-sidebar-foreground`, `bg-sidebar-accent`, … | navigation chrome only |
-| `--font-sans`, `--font-serif`, `--font-mono` | `font-sans`, `font-serif`, `font-mono` | themes swap real typefaces; never hardcode a family |
-| `--radius` (+ `--radius-sm/md/lg/xl`) | `rounded-md`, `rounded-lg`, … | themes vary corner geometry |
-| `--shadow-2xs` … `--shadow-2xl` | `shadow-sm`, `shadow-md`, … | themes vary elevation (neobrutualism is hard-offset) |
-| `--spacing`, `--tracking-normal` | Tailwind spacing scale | never hardcode `px` where a scale step works |
+| Token                                                                                                                                        | Tailwind utilities                                                | Use for                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `--background` / `--foreground`                                                                                                              | `bg-background`, `text-foreground`                                | page ground and default text                                          |
+| `--card` / `--card-foreground`                                                                                                               | `bg-card`, `text-card-foreground`                                 | raised panels, KPI tiles, list containers                             |
+| `--popover` / `--popover-foreground`                                                                                                         | `bg-popover`, `text-popover-foreground`                           | menus, comboboxes, tooltips                                           |
+| `--primary` / `--primary-foreground`                                                                                                         | `bg-primary`, `text-primary`, `text-primary-foreground`           | the one emphasised action or value per view                           |
+| `--secondary` / `--secondary-foreground`                                                                                                     | `bg-secondary`, `text-secondary-foreground`                       | secondary chips and buttons                                           |
+| `--muted` / `--muted-foreground`                                                                                                             | `bg-muted`, `text-muted-foreground`                               | de-emphasised fills and secondary text                                |
+| `--accent` / `--accent-foreground`                                                                                                           | `bg-accent`, `text-accent-foreground`                             | hover/selected states, highlighted rows                               |
+| `--destructive` / `--destructive-foreground`                                                                                                 | `bg-destructive`, `text-destructive`                              | errors, failures, destructive actions                                 |
+| `--success` / `--success-foreground`                                                                                                         | `bg-success`, `text-success`                                      | healthy/succeeded states                                              |
+| `--warning` / `--warning-foreground`                                                                                                         | `bg-warning`, `text-warning`                                      | degraded/at-risk states, operator-caused states that are not failures |
+| `--border`, `--input`, `--ring`                                                                                                              | `border`, `border-border`, `bg-input`, `ring-ring`                | edges, field chrome, focus rings                                      |
+| `--chart-1` … `--chart-5`                                                                                                                    | `fill-chart-1`, `text-chart-3`, `bg-chart-2/15`, `var(--chart-N)` | **all** categorical series and category accents                       |
+| `--sidebar`, `--sidebar-foreground`, `--sidebar-primary(-foreground)`, `--sidebar-accent(-foreground)`, `--sidebar-border`, `--sidebar-ring` | `bg-sidebar`, `text-sidebar-foreground`, `bg-sidebar-accent`, …   | navigation chrome only                                                |
+| `--font-sans`, `--font-serif`, `--font-mono`                                                                                                 | `font-sans`, `font-serif`, `font-mono`                            | themes swap real typefaces; never hardcode a family                   |
+| `--radius` (+ `--radius-sm/md/lg/xl`)                                                                                                        | `rounded-md`, `rounded-lg`, …                                     | themes vary corner geometry                                           |
+| `--shadow-2xs` … `--shadow-2xl`                                                                                                              | `shadow-sm`, `shadow-md`, …                                       | themes vary elevation (neobrutualism is hard-offset)                  |
+| `--spacing`, `--tracking-normal`                                                                                                             | Tailwind spacing scale                                            | never hardcode `px` where a scale step works                          |
 
-`--success` / `--success-foreground` and `--warning` / `--warning-foreground` exist in all eight theme files, wired into each `@theme inline` block, with matching `Badge` (`variant='success'`, `variant='warning'`) and `Alert` (`variant='success'`, `variant='warning'`) variants. **Status hues derive from the theme's own palette, not a fixed green/amber.** Every theme originally shipped with `--success` pinned near `oklch(_ _ 145)` (generic green) and `--warning` near `oklch(_ _ 70–85)` (generic amber), regardless of the theme's actual hues — that read as two off-brand chips bolted onto an otherwise coherent palette (loxep-l31). Instead, when adding or re-tuning a theme: pick `--success`'s hue from that theme's own greenest `--chart-N` (or `--primary`/`--secondary`) token where one exists — e.g. `cyberpunk` and `fallout` both reuse their own accent/secondary green-family hue exactly; `neobrutualism`'s success already equals `--chart-4`. Where a theme has no green in its palette at all (`zen`, `astro-vista`, `burning-acid`'s light mode), blend toward one at that theme's own chroma/lightness register instead of importing a foreign saturated green — `zen` uses a muted low-chroma sage rather than a bright grass green, `astro-vista` uses a cosmic teal. Harmonize `--warning` with the theme's own warm accent/secondary family the same way (`neobrutualism` reuses its bold secondary yellow, `fallout` reuses its amber-glow primary in dark mode). Keep `--destructive` as the theme already defines it — it was theme-native from the start and needs no re-derivation. Reserve `--destructive` for genuine failure, `--warning` for degraded/at-risk states and operator-caused states (a *disabled* endpoint is a warning-or-neutral state, not the same alarm red as a *failing* health check), and `--success` for healthy/succeeded states. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
+`--success` / `--success-foreground` and `--warning` / `--warning-foreground` exist in all eight theme files, wired into each `@theme inline` block, with matching `Badge` (`variant='success'`, `variant='warning'`) and `Alert` (`variant='success'`, `variant='warning'`) variants. **Status hues derive from the theme's own palette, not a fixed green/amber.** Every theme originally shipped with `--success` pinned near `oklch(_ _ 145)` (generic green) and `--warning` near `oklch(_ _ 70–85)` (generic amber), regardless of the theme's actual hues — that read as two off-brand chips bolted onto an otherwise coherent palette (loxep-l31). Instead, when adding or re-tuning a theme: pick `--success`'s hue from that theme's own greenest `--chart-N` (or `--primary`/`--secondary`) token where one exists — e.g. `cyberpunk` and `fallout` both reuse their own accent/secondary green-family hue exactly; `neobrutualism`'s success already equals `--chart-4`. Where a theme has no green in its palette at all (`zen`, `astro-vista`, `burning-acid`'s light mode), blend toward one at that theme's own chroma/lightness register instead of importing a foreign saturated green — `zen` uses a muted low-chroma sage rather than a bright grass green, `astro-vista` uses a cosmic teal. Harmonize `--warning` with the theme's own warm accent/secondary family the same way (`neobrutualism` reuses its bold secondary yellow, `fallout` reuses its amber-glow primary in dark mode). Keep `--destructive` as the theme already defines it — it was theme-native from the start and needs no re-derivation. Reserve `--destructive` for genuine failure, `--warning` for degraded/at-risk states and operator-caused states (a _disabled_ endpoint is a warning-or-neutral state, not the same alarm red as a _failing_ health check), and `--success` for healthy/succeeded states. Do not solve this by reaching for `text-green-600` or `text-amber-500`.
 
 ### How much themes actually vary
 
@@ -90,7 +90,7 @@ Rules:
 - Cells render **labels, not raw enum values**. Keep the map in the feature's `constants.ts` (`CONNECTION_STATUS_LABELS`, `STORAGE_DRIVER_LABELS`, …) and use it. For union-typed states, make tone/icon maps exhaustive with `satisfies Record<State, …>`; for free-form-text domain states, use `Record<string, BadgeVariant>` plus an explicit fallback.
 - A failed query renders an error state. Destructuring only `{ data, isPending }` means a network failure silently renders "No results", which is a lie.
 
-Non-data uses of `<Table>` (a two-column key/value spec sheet, a static reference grid) are fine — the rule is about *data* the user will want to sort, filter, or page.
+Non-data uses of `<Table>` (a two-column key/value spec sheet, a static reference grid) are fine — the rule is about _data_ the user will want to sort, filter, or page.
 
 ### Totals rows: the DataTable `summary` slot
 
@@ -101,8 +101,12 @@ Non-data uses of `<Table>` (a two-column key/value spec sheet, a static referenc
   table={table}
   summary={
     <TableRow>
-      <TableCell colSpan={5} className='font-medium'>Total (USD)</TableCell>
-      <TableCell className='text-right font-medium tabular-nums'>{formatMoney(total, 'USD')}</TableCell>
+      <TableCell colSpan={5} className="font-medium">
+        Total (USD)
+      </TableCell>
+      <TableCell className="text-right font-medium tabular-nums">
+        {formatMoney(total, "USD")}
+      </TableCell>
       <TableCell colSpan={3} />
     </TableRow>
   }
@@ -154,7 +158,7 @@ const { table } = useDataTable({
   pageCount,
   getRowId: (item) => item.id,
   shallow: true,
-  initialState: { columnPinning: { start: [], end: ['actions'] } }
+  initialState: { columnPinning: { start: [], end: ["actions"] } },
 });
 
 return (
@@ -179,7 +183,7 @@ Loxep settings and market dialogs already comply; keep it that way.
 
 `/settings/application` is the operator's front door to every registered `defineSetting()` in `packages/domain/src/settings-defaults.ts` (19 as of this writing — see the [Settings UX Overhaul Design](../../architecture/settings-ux-design/) for the full inventory and rationale). A setting's Zod schema is the validator; **never hand-write a second, parallel Zod object in a settings form that mirrors a registered schema's shape** — that duplication is exactly what `GatusPushCard`/`ProvisioningCard` had to do before the generic renderer existed, and it drifts silently the moment the domain schema changes underneath it.
 
-- **The browser never imports a setting's live Zod schema.** `@loxep/domain` value imports (as opposed to `import type`) stay confined to `apps/web/src/server/*.ts` — the barrel re-exports server-only code (`@loxep/db`, `createSettingsService`), so a browser-bundle import of the schema object itself is a boundary violation, not a shortcut. Instead, the server ships each setting's shape as data: `RegisteredSettingDto.jsonSchema`, computed with `z.toJSONSchema(definition.schema)`. The generic renderer maps that JSON Schema to fields; the server's `schema.safeParse()` remains the sole validation authority, exactly as it is for today's raw-JSON dialog.
+- **The browser never imports a setting's live Zod schema.** Runtime imports from the complete `@loxep/*` package entry points stay inside server-only modules or `createServerFn` handlers — those barrels compose database, crypto, filesystem, and worker code. Isomorphic UI code may import only an explicitly browser-safe subpath such as `@loxep/domain/browser`, which exposes a small set of inert constants and types and never the settings registry. Vite import protection enforces that distinction. The server ships each setting's shape as data instead: `RegisteredSettingDto.jsonSchema`, computed with `z.toJSONSchema(definition.schema)`. The generic renderer maps that JSON Schema to fields; the server's `schema.safeParse()` remains the sole validation authority, exactly as it is for today's raw-JSON dialog.
 - **Field mapping** (from a setting's `jsonSchema`): `boolean` → `SwitchField`; `enum` → `SelectField`; `integer`/`number` (with `minimum`/`maximum`) → `TextField[type=number]`, unit and help text from the field's own `.describe()`; `string[]` → `TagsField`; nullable `string` → `TextField`, empty input submits `null` (the convention `GatusPushCard`'s `baseUrl` already uses). A `Record<K, V>`-shaped setting (a keyed map) is **not** rendered generically here — go find where the map's keys are already enumerated (a connections table, a catalog grid) and add a row editor there, following `WritePolicyCell` (`src/features/settings/components/connections-table/write-policy-cell.tsx`) — a settings page has no way to enumerate foreign ids it was never given.
 - **Descriptions travel through `.describe()`.** A setting's own top-level `description` already flows registry → DTO → UI; a per-field description is `.describe()` on that field in its Zod schema (Zod 4, already pinned), which is exactly what `z.toJSONSchema()` reads. Do not invent a second metadata channel (a parallel labels/units object) for what `.describe()` already carries end to end.
 - **Save granularity is one registered setting per save.** `SettingsService.write()` persists and audits one `application_settings` row per call — never batch several settings behind one page-level "Save all," and never autosave per keystroke. One Card, one `useAppForm`, one `SubmitButton`, matching `GatusPushCard`/`ProvisioningCard`'s existing shape exactly.
@@ -191,16 +195,16 @@ Recharts is the accepted chart library. It is always wrapped:
 
 ```tsx
 const chartConfig = {
-  price:  { label: 'Price',  color: 'var(--chart-1)' },
-  volume: { label: 'Volume', color: 'var(--chart-2)' }
+  price: { label: "Price", color: "var(--chart-1)" },
+  volume: { label: "Volume", color: "var(--chart-2)" },
 } satisfies ChartConfig;
 
 <ChartContainer config={chartConfig}>
   <LineChart data={data}>
     <ChartTooltip content={<ChartTooltipContent />} />
-    <Line dataKey='price' stroke='var(--color-price)' dot={false} />
+    <Line dataKey="price" stroke="var(--color-price)" dot={false} />
   </LineChart>
-</ChartContainer>
+</ChartContainer>;
 ```
 
 Rules:
@@ -256,20 +260,20 @@ Status must map to tone. As of this writing 19 of 24 badges across settings and 
 
 ```tsx
 // before — every state looks identical
-<Badge variant='outline'>{item.currentState}</Badge>
+<Badge variant="outline">{item.currentState}</Badge>;
 
 // after — tone carries meaning, still theme-driven
 const STATE_VARIANT = {
-  active:    'success',     // --success — healthy/succeeded
-  changed:   'warning',     // --warning — at-risk, needs attention
-  ended:     'outline',
-  failed:    'destructive'  // --destructive — genuine failure only
+  active: "success", // --success — healthy/succeeded
+  changed: "warning", // --warning — at-risk, needs attention
+  ended: "outline",
+  failed: "destructive", // --destructive — genuine failure only
 } as const satisfies Record<ItemState, BadgeVariant>;
 
-<Badge variant={STATE_VARIANT[item.currentState]} className='capitalize'>
+<Badge variant={STATE_VARIANT[item.currentState]} className="capitalize">
   <StateIcon state={item.currentState} />
   {item.currentState}
-</Badge>
+</Badge>;
 ```
 
 Pair the tone with an icon (as `src/features/products/.../columns.tsx` does) so the meaning does not depend on hue alone — colorblind viewers still get it, and a low-chroma outlier token in an otherwise-chromatic theme (see "Never encode meaning in hue alone" above) doesn't lose the signal. Reach for `bg-chart-N/15 text-chart-N` when a state is categorical rather than good/bad/at-risk.
@@ -307,7 +311,7 @@ Binding rules from the [UI Overhaul 2026 Design](../../architecture/ui-overhaul-
 ### Brand iconography
 
 - Provider marks come from the pinned `simple-icons` package via the Loxep `BrandIcon` component and the `PROVIDER_BRAND_ICONS` registry — never a CDN fetch, never an `<img>` from a brand's site. Fallback order: registry's lucide icon, then an initial-letter tile on `bg-muted`.
-- Marks render **monochrome `currentColor` everywhere** (brand hexes fight ten themes and dark mode). The one permitted flourish: the integrations catalog card may tint the icon *tile* `bg-primary/10`.
+- Marks render **monochrome `currentColor` everywhere** (brand hexes fight ten themes and dark mode). The one permitted flourish: the integrations catalog card may tint the icon _tile_ `bg-primary/10`.
 - Icons appear only beside factual references to the integrated service (nominative use). Sizes: 16px inline/table, 20px card header, 24px estate header — no others.
 
 ## Standard formats
@@ -316,17 +320,17 @@ Formatting is centralized in `@/lib/format`. Per-file helpers are the current re
 
 What exists today:
 
-| Helper | Status |
-| --- | --- |
-| `formatDate(date, opts)` — `Intl.DateTimeFormat` | exists, unused by product surfaces |
-| `formatDateTime(value)` | exists — absolute timestamp, minute precision, `—` for null/invalid |
-| `formatTimestampPrecise(value)` | exists — second precision, for event/audit logs |
-| `formatRelativeTime(value)` | exists — "3 minutes ago" via `Intl.RelativeTimeFormat`; pair with an absolute value (`formatDateTime`/`formatTimestampPrecise`) in a `title`/tooltip |
-| `formatMoney(amount, currency)` | exists — `amount` is a decimal string, fed to `Intl.NumberFormat({ style: 'currency', currency })` for display only; no fabricated currency when `currency` is null |
-| `formatQuantity(value)` / `formatPercent(value)` | exists — grouped integers; percent carries an explicit sign |
-| `formatDuration(seconds)` | exists — uptime, backoff, poll intervals; built on `date-fns` `intervalToDuration` |
-| `formatScore(value)` | exists — canonical two-decimal precision for scores |
-| `formatBytes(bytes)` | exists in `lib/format`; `src/lib/utils.ts` re-exports it for existing callers |
+| Helper                                           | Status                                                                                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `formatDate(date, opts)` — `Intl.DateTimeFormat` | exists, unused by product surfaces                                                                                                                                  |
+| `formatDateTime(value)`                          | exists — absolute timestamp, minute precision, `—` for null/invalid                                                                                                 |
+| `formatTimestampPrecise(value)`                  | exists — second precision, for event/audit logs                                                                                                                     |
+| `formatRelativeTime(value)`                      | exists — "3 minutes ago" via `Intl.RelativeTimeFormat`; pair with an absolute value (`formatDateTime`/`formatTimestampPrecise`) in a `title`/tooltip                |
+| `formatMoney(amount, currency)`                  | exists — `amount` is a decimal string, fed to `Intl.NumberFormat({ style: 'currency', currency })` for display only; no fabricated currency when `currency` is null |
+| `formatQuantity(value)` / `formatPercent(value)` | exists — grouped integers; percent carries an explicit sign                                                                                                         |
+| `formatDuration(seconds)`                        | exists — uptime, backoff, poll intervals; built on `date-fns` `intervalToDuration`                                                                                  |
+| `formatScore(value)`                             | exists — canonical two-decimal precision for scores                                                                                                                 |
+| `formatBytes(bytes)`                             | exists in `lib/format`; `src/lib/utils.ts` re-exports it for existing callers                                                                                       |
 
 Feature-side adoption (deleting the local `formatTimestamp`/`formatPrice`/`formatSeconds`/`formatUptime` copies enumerated above and converting call sites) is a separate, follow-up pass — the helpers above are ready to be imported.
 
@@ -345,24 +349,24 @@ Rules:
 - **Skeleton:** the loading state mirrors the loaded layout. Tables use `DataTableSkeleton` with the real `columnCount`/`filterCount`; charts use a chart skeleton **matching the chart's height** (`aspect-video` by default, not `h-48`); cards use `Skeleton` blocks shaped like the card. A single `<Skeleton className='h-64 w-full' />` standing in for an eight-column table is a violation — it guarantees layout shift.
 - Never nest loading gates so the user sees skeleton → skeleton → content. One boundary per surface.
 - **Suspense** boundaries wrap the data component, with the skeleton as the fallback (see `src/features/products/components/product-listing.tsx`).
-- **One boundary per data source, not one per route.** A route that reads a single combined DTO (one server function, one query) gets one skeleton/error boundary for the whole surface — that is not a "page-wide gate," it is honest, because there is only one thing to wait on. A route that reads genuinely independent data (a table plus a chart plus a summary card, each its own query) gives **each card its own** `isPending`/skeleton pair so the fast ones render immediately instead of waiting on the slowest. The one legitimate joint gate across multiple `useQuery` calls is when two queries feed one *derived, joined* view — `src/features/market/components/search-dashboard.tsx`'s `SearchDashboard` reads `monitorsQuery` and `searchDashboardQuery` under one `isPending`/`isError` because its discovery-monitor rows are computed by joining both results; gating them separately would either show a table with no stats or require a second, nested loading state (the "skeleton → skeleton → content" violation above). Document the reason inline when you do this, the way that component does.
+- **One boundary per data source, not one per route.** A route that reads a single combined DTO (one server function, one query) gets one skeleton/error boundary for the whole surface — that is not a "page-wide gate," it is honest, because there is only one thing to wait on. A route that reads genuinely independent data (a table plus a chart plus a summary card, each its own query) gives **each card its own** `isPending`/skeleton pair so the fast ones render immediately instead of waiting on the slowest. The one legitimate joint gate across multiple `useQuery` calls is when two queries feed one _derived, joined_ view — `src/features/market/components/search-dashboard.tsx`'s `SearchDashboard` reads `monitorsQuery` and `searchDashboardQuery` under one `isPending`/`isError` because its discovery-monitor rows are computed by joining both results; gating them separately would either show a table with no stats or require a second, nested loading state (the "skeleton → skeleton → content" violation above). Document the reason inline when you do this, the way that component does.
 
 ### Suspense: route loader prefetch + `useSuspenseQuery`
 
 TanStack Start's router context carries a `queryClient` (`context: { queryClient }` in `src/router.tsx`), so a route can prefetch its data in the loader and read it with `useSuspenseQuery` instead of a client-only `useQuery` + `isPending` gate. This removes the client-fetch waterfall on first navigation (the loader's `ensureQueryData` already warms the cache before the component mounts) and moves error handling from an `isError` branch to the route's own `errorComponent`. `src/routes/market/overview.tsx` is the reference implementation for a single-combined-DTO route:
 
 ```tsx
-export const Route = createFileRoute('/market/overview')({
+export const Route = createFileRoute("/market/overview")({
   loader: async ({ context: { queryClient } }) => {
     await queryClient.ensureQueryData(marketOverviewQuery);
   },
   errorComponent: MarketOverviewError, // { error } → Alert(variant='destructive') + a router.invalidate() retry
-  component: MarketOverview
+  component: MarketOverview,
 });
 
 function MarketOverview() {
   return (
-    <MarketPage title='Market' description='…'>
+    <MarketPage title="Market" description="…">
       <Suspense fallback={<OverviewSkeleton />}>
         <OverviewData /> {/* useSuspenseQuery(marketOverviewQuery) */}
       </Suspense>
@@ -381,13 +385,13 @@ Convert a route to this pattern when it reads one query (or a set of queries tha
 
 ## Reference routes
 
-| Pattern | Route | Source |
-| --- | --- | --- |
-| URL-synced data table, filters, faceted filters | `/starter/product` | `src/features/products/components/product-tables/` |
-| Data table with row actions and sheet form | `/starter/users` | `src/features/users/components/users-table/` |
-| Charts on chart tokens + KPI cards | `/starter/overview` | `src/features/overview/components/` |
-| Forms: basic, advanced, multi-step, sheet | `/starter/forms/*` | `src/features/forms/components/` |
-| Theme switching | header theme selector | `src/components/themes/` |
+| Pattern                                         | Route                 | Source                                             |
+| ----------------------------------------------- | --------------------- | -------------------------------------------------- |
+| URL-synced data table, filters, faceted filters | `/starter/product`    | `src/features/products/components/product-tables/` |
+| Data table with row actions and sheet form      | `/starter/users`      | `src/features/users/components/users-table/`       |
+| Charts on chart tokens + KPI cards              | `/starter/overview`   | `src/features/overview/components/`                |
+| Forms: basic, advanced, multi-step, sheet       | `/starter/forms/*`    | `src/features/forms/components/`                   |
+| Theme switching                                 | header theme selector | `src/components/themes/`                           |
 
 Keep these routes working. They are the executable half of this document.
 

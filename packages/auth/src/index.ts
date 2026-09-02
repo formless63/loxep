@@ -10,6 +10,7 @@ export {
   buildOidcProviderConfig,
   createAuth,
   mapOidcProfileToUser,
+  OIDC_ACCOUNT_ISSUER,
   OIDC_PROVIDER_ID,
   resolveOidcEmailClaim,
 } from "./create-auth.ts";

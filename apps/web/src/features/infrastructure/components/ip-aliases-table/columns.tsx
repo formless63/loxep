@@ -103,12 +103,9 @@ export function getColumns(
         // are two different clocks — the design's own distinction. Whichever
         // is more recent is "last changed" for a glance-level column; both
         // remain visible on the edit dialog.
-        // eslint-disable-next-line unicorn/no-array-sort -- freshly filtered
-        // array, never the caller's own; `toSorted()` needs an ES2023 lib
-        // target this project does not configure.
         const latest = [row.original.confirmedAt, row.original.observedAt]
           .filter((value): value is string => value !== null)
-          .sort()
+          .toSorted()
           .at(-1);
         return <span className='text-muted-foreground'>{formatRelativeTime(latest ?? null)}</span>;
       }

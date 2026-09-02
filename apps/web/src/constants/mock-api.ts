@@ -19,6 +19,30 @@ export type Product = {
   updated_at: string;
 };
 
+function generateRandomProductData(id: number): Product {
+  const categories = [
+    'Electronics',
+    'Furniture',
+    'Clothing',
+    'Toys',
+    'Groceries',
+    'Books',
+    'Jewelry',
+    'Beauty Products'
+  ];
+
+  return {
+    id,
+    name: faker.commerce.productName(),
+    description: faker.commerce.productDescription(),
+    created_at: faker.date.between({ from: '2022-01-01', to: '2023-12-31' }).toISOString(),
+    price: parseFloat(faker.commerce.price({ min: 5, max: 500, dec: 2 })),
+    photo_url: `https://api.slingacademy.com/public/sample-products/${id}.png`,
+    category: faker.helpers.arrayElement(categories),
+    updated_at: faker.date.recent().toISOString()
+  };
+}
+
 // Mock product data store
 export const fakeProducts = {
   records: [] as Product[], // Holds the list of product objects
@@ -26,29 +50,6 @@ export const fakeProducts = {
   // Initialize with sample data
   initialize() {
     const sampleProducts: Product[] = [];
-    function generateRandomProductData(id: number): Product {
-      const categories = [
-        'Electronics',
-        'Furniture',
-        'Clothing',
-        'Toys',
-        'Groceries',
-        'Books',
-        'Jewelry',
-        'Beauty Products'
-      ];
-
-      return {
-        id,
-        name: faker.commerce.productName(),
-        description: faker.commerce.productDescription(),
-        created_at: faker.date.between({ from: '2022-01-01', to: '2023-12-31' }).toISOString(),
-        price: parseFloat(faker.commerce.price({ min: 5, max: 500, dec: 2 })),
-        photo_url: `https://api.slingacademy.com/public/sample-products/${id}.png`,
-        category: faker.helpers.arrayElement(categories),
-        updated_at: faker.date.recent().toISOString()
-      };
-    }
 
     // Generate remaining records
     for (let i = 1; i <= 20; i++) {

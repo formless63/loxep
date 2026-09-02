@@ -15,12 +15,12 @@
     "@loxep/db": "workspace:*",
     "@loxep/domain": "workspace:*",
     "@loxep/jobs": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "@types/pg": "8.21.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "@types/pg": "8.23.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
   }
 }

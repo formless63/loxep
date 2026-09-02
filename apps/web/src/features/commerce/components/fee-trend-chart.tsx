@@ -43,6 +43,30 @@ const feeTrendChartConfig = {
 } satisfies ChartConfig;
 
 const CHART_HEIGHT_CLASS = 'aspect-auto h-64 w-full';
+type FeeTrendTooltipFormatter = NonNullable<
+  React.ComponentProps<typeof ChartTooltipContent>['formatter']
+>;
+
+const formatFeeTrendTooltipValue: FeeTrendTooltipFormatter = (value, name, item) => {
+  const category = name as FeeTrendCategory;
+  const currency =
+    typeof item.payload?.currency === 'string' ? item.payload.currency : 'unknown currency';
+
+  return (
+    <div className='flex w-full items-center justify-between gap-3'>
+      <span className='flex items-center gap-1.5 text-muted-foreground'>
+        <span
+          className='size-2.5 shrink-0 rounded-[2px]'
+          style={{ backgroundColor: `var(--color-${category})` }}
+        />
+        {feeTrendChartConfig[category]?.label ?? name}
+      </span>
+      <span className='font-mono font-medium text-foreground tabular-nums'>
+        {formatMoney(String(value), currency)}
+      </span>
+    </div>
+  );
+};
 
 function FeeTrendChartSkeleton() {
   return (
@@ -68,7 +92,13 @@ function FeeTrendChartContent({
 }: {
   rows: { feeType: string; currency: string; amount: string; chargedAt: string }[];
 }) {
-  const shape = React.useMemo(() => shapeFeeTrendByPeriod(rows), [rows]);
+  const shape = React.useMemo(() => {
+    const result = shapeFeeTrendByPeriod(rows);
+    return {
+      ...result,
+      points: result.points.map((point) => ({ ...point, currency: result.currency }))
+    };
+  }, [rows]);
 
   return (
     <Card>
@@ -110,23 +140,7 @@ function FeeTrendChartContent({
                   content={
                     <ChartTooltipContent
                       labelFormatter={(value) => periodLabel(String(value))}
-                      formatter={(value, name) => {
-                        const category = name as FeeTrendCategory;
-                        return (
-                          <div className='flex w-full items-center justify-between gap-3'>
-                            <span className='flex items-center gap-1.5 text-muted-foreground'>
-                              <span
-                                className='size-2.5 shrink-0 rounded-[2px]'
-                                style={{ backgroundColor: `var(--color-${category})` }}
-                              />
-                              {feeTrendChartConfig[category]?.label ?? name}
-                            </span>
-                            <span className='font-mono font-medium text-foreground tabular-nums'>
-                              {formatMoney(String(value), shape.currency)}
-                            </span>
-                          </div>
-                        );
-                      }}
+                      formatter={formatFeeTrendTooltipValue}
                     />
                   }
                 />

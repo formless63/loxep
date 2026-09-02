@@ -33,19 +33,19 @@ export default function BookAccounts({
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<LedgerAccountDto | null>(null);
 
-  const openCreate = () => {
+  const openCreate = React.useCallback(() => {
     setEditing(null);
     setDialogOpen(true);
-  };
-  const openEdit = (account: LedgerAccountDto) => {
+  }, []);
+  const openEdit = React.useCallback((account: LedgerAccountDto) => {
     setEditing(account);
     setDialogOpen(true);
-  };
+  }, []);
 
   const accounts = data ?? [];
   const columns = React.useMemo(
     () => getAccountColumns(isAdmin, accountingBookId, openEdit),
-    [isAdmin, accountingBookId]
+    [isAdmin, accountingBookId, openEdit]
   );
 
   return (

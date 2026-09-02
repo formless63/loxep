@@ -202,12 +202,9 @@ function usePinnedPagesQuery() {
     mutationFn: (pages: PinnedPage[]) =>
       savePinnedPages({ data: toPreferenceEntries(pages) }).then(toPinnedPages)
   });
-  // Effects run after render, so the mutate function is current by the time
-  // the effect body reads it — a ref keeps the effect's own dependency array
-  // limited to what should actually retrigger it (the fetched data), not a
-  // new mutation object identity every render.
-  const mutateRef = React.useRef(mergeMutation.mutate);
-  mutateRef.current = mergeMutation.mutate;
+  const migrateLocalPins = React.useEffectEvent((merged: PinnedPage[]) => {
+    saveMergedPins(queryClient, merged, mergeMutation.mutate);
+  });
 
   React.useEffect(() => {
     if (query.data === undefined || localMergeState !== 'idle') return;
@@ -218,8 +215,8 @@ function usePinnedPagesQuery() {
     }
     localMergeState = 'pending';
     const merged = mergePinnedPages(query.data, local);
-    saveMergedPins(queryClient, merged, mutateRef.current);
-  }, [query.data, queryClient]);
+    migrateLocalPins(merged);
+  }, [query.data]);
 
   return query;
 }

@@ -16,7 +16,7 @@ That was acceptable while every deployment sat behind a network bypass. It stops
 2. **The magic-link endpoint will send mail to any address on request.** Even without a resulting account, that is an unauthenticated "make this server email a stranger" primitive.
 3. **The IdP's own group/role information is discarded.** An installation whose identity provider already knows who the administrators are must re-designate them by hand in Loxep, and the deployment-level role can silently drift from the IdP's.
 
-Better Auth ships static answers to (1) — `magicLink({ disableSignUp })` and the generic-OAuth provider's `disableSignUp` / `disableImplicitSignUp`. Verified against the installed **better-auth 1.6.26**, all three are read from the plugin options object at request time but are plain booleans fixed at construction (`plugins/magic-link/index.d.mts:44`, `plugins/generic-oauth/types.d.mts:130-138`); none accepts a function or a context. Using them would make provisioning policy a bootstrap fact requiring a container restart to change, which is exactly the shape ADR-0016 forbids for ordinary runtime policy.
+Better Auth ships static answers to (1) — `magicLink({ disableSignUp })` and the generic-OAuth provider's `disableSignUp` / `disableImplicitSignUp`. Verified against the installed **better-auth 1.7.2**, all three are read from the plugin options object at request time but are plain booleans fixed at construction; none accepts a function or a context. Using them would make provisioning policy a bootstrap fact requiring a container restart to change, which is exactly the shape ADR-0016 forbids for ordinary runtime policy.
 
 ## Decision
 
@@ -62,21 +62,21 @@ The window is keyed on "an admin exists", not on ADR-0016's `auth.first_admin_bo
 
 ### 3. Enforcement points, both methods
 
-Enforcement is defense in depth at two layers, both inside `createAuth`, so no web-layer caller can forget them. Every claim below was verified against the installed better-auth 1.6.26 sources.
+Enforcement is defense in depth at two layers, both inside `createAuth`, so no web-layer caller can forget them. Every claim below was re-verified against the installed better-auth 1.7.2 sources.
 
 **Layer 1 — before the magic link is sent.** The `sendMagicLink` callback resolves the policy and returns *without sending* when the address has no existing user and the policy declines it. `/sign-in/magic-link` returns `ctx.json({ status: true })` regardless (`plugins/magic-link/index.mjs:98`), so the response is identical either way and the endpoint does not become an account-existence oracle. This is the layer that closes hole (2): a closed or allowlisted installation will not send mail to a stranger at all.
 
 **Layer 2 — `databaseHooks.user.create.before`.** This is the authoritative gate, and it covers **both** methods because both reach it:
 
 - magic link: `magicLinkVerify` → `internalAdapter.createUser` → `createWithHooks(..., "user")` (`plugins/magic-link/index.mjs:160`, `db/internal-adapter.mjs:94`);
-- OIDC: `/oauth2/callback/:providerId` → `handleOAuthUserInfo` → `internalAdapter.createOAuthUser` → the same `createWithHooks` (`oauth2/link-account.mjs:97`, `db/internal-adapter.mjs:75-92`).
+- OIDC: `/callback/:id` → the social-provider callback flow → `internalAdapter.createOAuthUser` → the same create hooks.
 
 The hook receives `(user, context)` where `context.path` is the *declared endpoint path* (`api/dispatch.mjs:199`), which is what lets one hook apply the right method's policy:
 
 | `context.path` | policy applied | rejection mechanism | what the person sees |
 | --- | --- | --- | --- |
 | `/magic-link/verify` | `newUsers.magicLink` + domain allowlist | `return false` | redirect to `errorCallbackURL?error=failed_to_create_user` |
-| `/oauth2/callback/:providerId` | `newUsers.oidc` | `throw new APIError('FORBIDDEN', { code: 'SIGNUP_DISABLED', … })` | redirect to `errorURL?error=SIGNUP_DISABLED&error_description=…` |
+| `/callback/:id` | `newUsers.oidc` | `throw new APIError('FORBIDDEN', { code: 'SIGNUP_DISABLED', … })` | redirect to `errorURL?error=SIGNUP_DISABLED&error_description=…` |
 | `/admin/create-user` | **allowed** — the escape hatch | — | — |
 | anything else / `null` | blocked only when both methods are closed | `return false` | — |
 

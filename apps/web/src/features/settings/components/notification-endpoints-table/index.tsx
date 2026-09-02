@@ -38,16 +38,16 @@ export default function NotificationEndpointsTable({ isAdmin }: { isAdmin: boole
 
   const { data, isPending, isError, error, refetch } = useQuery(notificationEndpointsQuery);
 
-  const openCreate = () => {
+  const openCreate = React.useCallback(() => {
     setEditing(null);
     setDialogOpen(true);
-  };
-  const openEdit = (endpoint: NotificationEndpointDto) => {
+  }, []);
+  const openEdit = React.useCallback((endpoint: NotificationEndpointDto) => {
     setEditing(endpoint);
     setDialogOpen(true);
-  };
+  }, []);
 
-  const columns = React.useMemo(() => getColumns(isAdmin, openEdit), [isAdmin]);
+  const columns = React.useMemo(() => getColumns(isAdmin, openEdit), [isAdmin, openEdit]);
 
   let body: React.ReactNode;
   if (isPending) {

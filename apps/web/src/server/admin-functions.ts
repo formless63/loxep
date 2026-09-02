@@ -11,22 +11,10 @@
  * domain/storage services already enforce metadata-only output and these
  * functions keep it that way.
  */
-import { randomBytes } from 'node:crypto';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import type { EconomicEntityKind } from '@loxep/db/schema';
-import {
-  authOnboardingOidcPromptDismissedSetting,
-  authProvisioningSetting,
-  EVIDENCE_INGEST_CONNECTION_KIND,
-  findRegisteredSetting,
-  FLEET_EVIDENCE_PROVIDERS,
-  GATUS_PUSH_SECRET_KEY,
-  gatusPushSetting,
-  integrationsEnabledSetting,
-  PROVIDER_WRITE_POLICY_TIERS,
-  providerWritePolicySetting
-} from '@loxep/domain';
+import { FLEET_EVIDENCE_PROVIDERS, PROVIDER_WRITE_POLICY_TIERS } from '@loxep/domain/browser';
 import type {
   ConnectionStatus,
   FleetEvidenceProvider,
@@ -34,11 +22,6 @@ import type {
 } from '@loxep/domain';
 import type { HealthReport } from '@loxep/runtime';
 import type { NotificationEventClass } from '@loxep/db/schema';
-// Pure renderer (no runtime imports at all), so the bell and the outbound
-// ntfy message describe a fact identically. The package index is dynamically
-// imported elsewhere because it reaches graphile-worker; this deep path does
-// not.
-import { renderNotificationEventMessage } from '@loxep/notifications/render';
 import {
   ECONOMIC_ENTITY_KIND_VALUES,
   NOTIFICATION_EVENT_CLASS_VALUES
@@ -210,7 +193,8 @@ export interface GatusPushSettingsDto {
 
 export const fetchGatusPushSettings = createServerFn({ method: 'GET' }).handler(
   async (): Promise<GatusPushSettingsDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { gatusPushSetting, GATUS_PUSH_SECRET_KEY }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     await requireSession();
     const { settings, secrets } = getAdminServices();
     const [value, storedSecrets] = await Promise.all([
@@ -254,7 +238,8 @@ const updateGatusPushSettingsInput = z.strictObject({
 export const updateGatusPushSettings = createServerFn({ method: 'POST' })
   .inputValidator(updateGatusPushSettingsInput)
   .handler(async ({ data }): Promise<GatusPushSettingsDto> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [{ requireAdmin, getAdminServices }, { gatusPushSetting, GATUS_PUSH_SECRET_KEY }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     const session = await requireAdmin();
     const { settings, secrets } = getAdminServices();
     const { token, ...value } = data;
@@ -573,7 +558,15 @@ const createFleetEvidenceSourceInput = z.strictObject({
 export const createFleetEvidenceSource = createServerFn({ method: 'POST' })
   .inputValidator(createFleetEvidenceSourceInput)
   .handler(async ({ data }): Promise<{ connectionId: string; token: string }> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [
+      { requireAdmin, getAdminServices },
+      { EVIDENCE_INGEST_CONNECTION_KIND },
+      { randomBytes }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain'),
+      import('node:crypto')
+    ]);
     const session = await requireAdmin();
     const { connections, connectionCredentials } = getAdminServices();
 
@@ -613,7 +606,8 @@ export interface FleetEvidenceSourceDto {
  */
 export const fetchFleetEvidenceSources = createServerFn({ method: 'GET' }).handler(
   async (): Promise<FleetEvidenceSourceDto[]> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { EVIDENCE_INGEST_CONNECTION_KIND }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     await requireSession();
     const { connections } = getAdminServices();
     const rows = await connections.listConnections({ kind: EVIDENCE_INGEST_CONNECTION_KIND });
@@ -1494,7 +1488,7 @@ export const setUserRole = createServerFn({ method: 'POST' })
     });
     // loxep-u8c A18: unlike `/admin/ban-user` (which already revokes every
     // session for the target user — verified against the installed
-    // better-auth 1.6.26 dist, `admin/routes.mjs:303`), `/admin/set-role`
+    // better-auth 1.7.2 dist), `/admin/set-role`
     // does not touch sessions at all. Without this explicit revoke, a
     // demoted admin keeps admin-level authorization on their existing
     // session until it expires on Better Auth's own defaults (see
@@ -1509,7 +1503,7 @@ export const setUserRole = createServerFn({ method: 'POST' })
  * `banExpires` through Better Auth's own admin API. `/admin/ban-user`
  * already revokes every existing session for that user
  * (`internalAdapter.deleteUserSessions`, verified against the installed
- * better-auth 1.6.26 dist, `admin/routes.mjs:303`), so access ends
+ * better-auth 1.7.2 dist), so access ends
  * immediately rather than on the session's natural expiry (loxep-u8c A18).
  *
  * Self-ban guard: Better Auth's own route already refuses
@@ -1617,8 +1611,15 @@ export interface AuthProvisioningDto {
 
 export const fetchAuthProvisioning = createServerFn({ method: 'GET' }).handler(
   async (): Promise<AuthProvisioningDto> => {
-    const [{ requireAdmin, getAdminServices }, { installationHasAdmin, emailDomain }] =
-      await Promise.all([import('@/server/admin'), import('@loxep/auth')]);
+    const [
+      { requireAdmin, getAdminServices },
+      { installationHasAdmin, emailDomain },
+      { authProvisioningSetting }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/auth'),
+      import('@loxep/domain')
+    ]);
     const session = await requireAdmin();
     const { settings, handle } = getAdminServices();
     const [value, hasAdmin] = await Promise.all([
@@ -1664,8 +1665,15 @@ const updateAuthProvisioningInput = z.strictObject({
 export const updateAuthProvisioning = createServerFn({ method: 'POST' })
   .inputValidator(updateAuthProvisioningInput)
   .handler(async ({ data }): Promise<AuthProvisioningDto> => {
-    const [{ requireAdmin, getAdminServices }, { installationHasAdmin, emailDomain }] =
-      await Promise.all([import('@/server/admin'), import('@loxep/auth')]);
+    const [
+      { requireAdmin, getAdminServices },
+      { installationHasAdmin, emailDomain },
+      { authProvisioningSetting }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/auth'),
+      import('@loxep/domain')
+    ]);
     const session = await requireAdmin();
     const { settings, handle } = getAdminServices();
     const value = await settings.set(authProvisioningSetting, data, {
@@ -1768,11 +1776,13 @@ export const fetchOnboardingOidcPrompt = createServerFn({ method: 'GET' }).handl
     const [
       { requireSession, getAdminServices },
       { hasRole, installationHasAdmin, readProvisioningPolicy },
-      { getLoginPaths }
+      { getLoginPaths },
+      { authOnboardingOidcPromptDismissedSetting }
     ] = await Promise.all([
       import('@/server/admin'),
       import('@loxep/auth'),
-      import('@/server/auth')
+      import('@/server/auth'),
+      import('@loxep/domain')
     ]);
     const session = await requireSession();
     if (!hasRole(session, 'admin')) return { show: false };
@@ -1796,7 +1806,10 @@ export const fetchOnboardingOidcPrompt = createServerFn({ method: 'GET' }).handl
  */
 export const enableOidcOnboarding = createServerFn({ method: 'POST' }).handler(
   async (): Promise<OnboardingOidcPromptDto> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [
+      { requireAdmin, getAdminServices },
+      { authOnboardingOidcPromptDismissedSetting, authProvisioningSetting }
+    ] = await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     const session = await requireAdmin();
     const { settings } = getAdminServices();
 
@@ -1816,7 +1829,8 @@ export const enableOidcOnboarding = createServerFn({ method: 'POST' }).handler(
 /** The card's secondary action: dismiss without changing the policy. */
 export const dismissOnboardingOidcPrompt = createServerFn({ method: 'POST' }).handler(
   async (): Promise<OnboardingOidcPromptDto> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [{ requireAdmin, getAdminServices }, { authOnboardingOidcPromptDismissedSetting }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     const session = await requireAdmin();
     await getAdminServices().settings.set(authOnboardingOidcPromptDismissedSetting, true, {
       actorUserId: session.user.id
@@ -1861,26 +1875,12 @@ export interface ApplicationSettingsDto {
   raw: RawSettingDto[];
 }
 
-/**
- * A registered setting's shape as plain JSON Schema data, for
- * `RegisteredSettingDto.jsonSchema` (loxep-8ja.1, settings-ux-design.md
- * §2.1). Every entry a caller reaches this through comes from
- * `settings.list()`/`settings.setByKey()`, which only ever produce keys
- * `defineSetting()` registered — so a missing definition here means the
- * registry and the settings service have drifted, and this fails loudly
- * rather than silently shipping a fake/empty schema to the client.
- */
-export function settingJsonSchema(key: string): JsonValue {
-  const definition = findRegisteredSetting(key);
-  if (definition === undefined) {
-    throw new Error(`no registered setting definition found for "${key}"`);
-  }
-  return z.toJSONSchema(definition.schema) as unknown as JsonValue;
-}
-
 export const fetchApplicationSettings = createServerFn({ method: 'GET' }).handler(
   async (): Promise<ApplicationSettingsDto> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { settingJsonSchema }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/setting-json-schema.server')
+    ]);
     await requireSession();
     const { settings, handle } = getAdminServices();
     const registered = await settings.list();
@@ -1934,7 +1934,10 @@ const updateApplicationSettingInput = z.strictObject({
 export const updateApplicationSetting = createServerFn({ method: 'POST' })
   .inputValidator(updateApplicationSettingInput)
   .handler(async ({ data }): Promise<RegisteredSettingDto> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [{ requireAdmin, getAdminServices }, { settingJsonSchema }] = await Promise.all([
+      import('@/server/admin'),
+      import('@/server/setting-json-schema.server')
+    ]);
     const session = await requireAdmin();
 
     let value: unknown;
@@ -1978,7 +1981,8 @@ export const updateApplicationSetting = createServerFn({ method: 'POST' })
  */
 export const fetchIntegrationsEnabled = createServerFn({ method: 'GET' }).handler(
   async (): Promise<Record<string, boolean>> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { integrationsEnabledSetting }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     await requireSession();
     return getAdminServices().settings.get(integrationsEnabledSetting);
   }
@@ -2004,7 +2008,10 @@ const setIntegrationEnabledInput = z.strictObject({
 export const setIntegrationEnabled = createServerFn({ method: 'POST' })
   .inputValidator(setIntegrationEnabledInput)
   .handler(async ({ data }): Promise<Record<string, boolean>> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [{ requireAdmin, getAdminServices }, { integrationsEnabledSetting }] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain')
+    ]);
     const session = await requireAdmin();
     const { settings } = getAdminServices();
 
@@ -2035,7 +2042,8 @@ export const setIntegrationEnabled = createServerFn({ method: 'POST' })
  */
 export const fetchProviderWritePolicy = createServerFn({ method: 'GET' }).handler(
   async (): Promise<Record<string, ProviderWritePolicyTier>> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { providerWritePolicySetting }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/domain')]);
     await requireSession();
     return getAdminServices().settings.get(providerWritePolicySetting);
   }
@@ -2063,7 +2071,10 @@ const setConnectionWritePolicyInput = z.strictObject({
 export const setConnectionWritePolicy = createServerFn({ method: 'POST' })
   .inputValidator(setConnectionWritePolicyInput)
   .handler(async ({ data }): Promise<Record<string, ProviderWritePolicyTier>> => {
-    const { requireAdmin, getAdminServices } = await import('@/server/admin');
+    const [{ requireAdmin, getAdminServices }, { providerWritePolicySetting }] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/domain')
+    ]);
     const session = await requireAdmin();
     const { settings } = getAdminServices();
 
@@ -2464,7 +2475,8 @@ function notificationFeedHref(
  */
 export const fetchNotificationFeed = createServerFn({ method: 'GET' }).handler(
   async (): Promise<NotificationFeedItemDto[]> => {
-    const { requireSession, getAdminServices } = await import('@/server/admin');
+    const [{ requireSession, getAdminServices }, { renderNotificationEventMessage }] =
+      await Promise.all([import('@/server/admin'), import('@loxep/notifications/render')]);
     await requireSession();
     const { handle } = getAdminServices();
     const events = await handle.db.query.notificationEvents.findMany({

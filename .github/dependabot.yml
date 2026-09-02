@@ -1,7 +1,7 @@
 version: 2
 
 updates:
-  # Bun workspace at the repo root (bun@1.3.14, bun.lock; workspaces:
+  # Bun workspace at the repo root (bun@1.4.0, bun.lock; workspaces:
   # apps/*, packages/*, packages/integrations/*). Dependabot's dedicated
   # `bun` ecosystem (GA Feb 2025) reads the text bun.lock directly and
   # covers every workspace manifest from this single root entry.
@@ -13,9 +13,11 @@ updates:
     labels:
       - "dependencies"
     groups:
-      # All deps here are exact-pinned (dependency-policy.md); routine
-      # minor/patch bumps land as one grouped PR per week.
-      routine:
+      # Application dependency updates require review because the hosted CI
+      # does not yet run the PostgreSQL-backed package suites. Keep routine
+      # minor/patch bumps grouped, but use a name that cannot enter the
+      # GitHub-Actions-only auto-merge path.
+      review-required:
         patterns:
           - "*"
         update-types:
@@ -30,7 +32,9 @@ updates:
       # until upstream router-core ships the SSR streaming fix
       # (https://github.com/TanStack/router/issues/7529).
       - dependency-name: "@tanstack/react-router"
+      - dependency-name: "@tanstack/react-router-devtools"
       - dependency-name: "@tanstack/react-start"
+      - dependency-name: "@tanstack/router-core"
       - dependency-name: "@tanstack/router-plugin"
       # Nitro 3.x beta is an intentional pairing with the pinned TanStack
       # Start/Router set, re-verified together rather than bumped alone.
@@ -67,7 +71,9 @@ updates:
     labels:
       - "dependencies"
     groups:
-      routine:
+      # Image changes require explicit runtime/migration validation; a
+      # Timescale patch can also require a matching extension marker.
+      review-required:
         patterns:
           - "*"
         update-types:
@@ -86,12 +92,14 @@ updates:
     directories:
       - "/"
       - "/docker"
+      - "/packages/integrations/medusa/test/harness"
     schedule:
       interval: "weekly"
     labels:
       - "dependencies"
     groups:
-      routine:
+      # Compose image changes require explicit config and runtime validation.
+      review-required:
         patterns:
           - "*"
         update-types:

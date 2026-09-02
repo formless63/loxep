@@ -6,12 +6,12 @@
  * and Better Auth options that determine the auth schema shape. Two consumers
  * call it:
  *
- *   1. the CLI instance below, which exists so `@better-auth/cli generate`
+ *   1. the CLI instance below, which exists so `auth generate`
  *      can emit the Drizzle auth schema into `src/schema/auth.ts` (checked in
  *      as source and migrated through the same reviewed drizzle-kit workflow
  *      as every other table):
  *
- *        bun run generate:auth   # better-auth generate --config src/auth.ts \
+ *        bun run generate:auth   # auth generate --config src/auth.ts \
  *                                #   --output src/schema/auth.ts --yes
  *
  *   2. `@loxep/auth`'s `createAuth()`, which builds the real runtime instance
@@ -62,7 +62,7 @@ export type SendMagicLink = Parameters<typeof magicLink>[0]["sendMagicLink"];
  * URL); `displayName` is the short, informal label a user chooses for
  * themselves ("Will" for "Alex Rivera"). It is declared through Better
  * Auth's `user.additionalFields` mechanism rather than hand-added to the
- * generated Drizzle schema, so `better-auth generate` reproduces the column
+ * generated Drizzle schema, so `auth generate` reproduces the column
  * and ADR-0020's "the generator owns the model" rule keeps holding.
  *
  * - `required: false` — every existing row predates the column, and OIDC
@@ -163,7 +163,7 @@ type CliAuth = ReturnType<typeof createCliAuthInstance>;
 let cliAuth: CliAuth | undefined;
 
 /**
- * Lazy CLI instance for `better-auth generate`. The proxy constructs the
+ * Lazy CLI instance for `auth generate`. The proxy constructs the
  * instance on first property access (the CLI reads `auth.options`); merely
  * importing this module — e.g. via `@loxep/db`'s index — constructs nothing.
  */

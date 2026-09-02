@@ -262,14 +262,36 @@ function LinkPayeeDialog({
   economicEntityId: string | null;
   currentPayeeCounterpartyId: string | null;
 }) {
+  return (
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      {open && (
+        <LinkPayeeContent
+          key={`${expenseId}:${currentPayeeCounterpartyId ?? NO_TRADING_PARTNER_VALUE}`}
+          onOpenChange={onOpenChange}
+          expenseId={expenseId}
+          economicEntityId={economicEntityId}
+          currentPayeeCounterpartyId={currentPayeeCounterpartyId}
+        />
+      )}
+    </ResponsiveDialog>
+  );
+}
+
+function LinkPayeeContent({
+  onOpenChange,
+  expenseId,
+  economicEntityId,
+  currentPayeeCounterpartyId
+}: {
+  onOpenChange: (open: boolean) => void;
+  expenseId: string;
+  economicEntityId: string | null;
+  currentPayeeCounterpartyId: string | null;
+}) {
   const queryClient = useQueryClient();
   const [payeeCounterpartyId, setPayeeCounterpartyId] = React.useState(
     currentPayeeCounterpartyId ?? NO_TRADING_PARTNER_VALUE
   );
-
-  React.useEffect(() => {
-    if (open) setPayeeCounterpartyId(currentPayeeCounterpartyId ?? NO_TRADING_PARTNER_VALUE);
-  }, [open, currentPayeeCounterpartyId]);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -291,34 +313,32 @@ function LinkPayeeDialog({
   });
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className='sm:max-w-[420px]'>
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>Link this payee</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            Attaches a trading partner to this expense without reopening it — works on a recorded
-            expense, not just a draft. Unlinking keeps the last-known payee name as evidence.
-          </ResponsiveDialogDescription>
-        </ResponsiveDialogHeader>
-        <div className='space-y-6'>
-          <PayeeComboboxField
-            label='Payee'
-            value={payeeCounterpartyId}
-            onChange={setPayeeCounterpartyId}
-            economicEntityId={economicEntityId}
-          />
-          <div className='flex justify-end gap-2'>
-            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type='button' disabled={mutation.isPending} onClick={() => mutation.mutate()}>
-              {mutation.isPending && <Icons.spinner className='animate-spin' />}
-              Save
-            </Button>
-          </div>
+    <ResponsiveDialogContent className='sm:max-w-[420px]'>
+      <ResponsiveDialogHeader>
+        <ResponsiveDialogTitle>Link this payee</ResponsiveDialogTitle>
+        <ResponsiveDialogDescription>
+          Attaches a trading partner to this expense without reopening it — works on a recorded
+          expense, not just a draft. Unlinking keeps the last-known payee name as evidence.
+        </ResponsiveDialogDescription>
+      </ResponsiveDialogHeader>
+      <div className='space-y-6'>
+        <PayeeComboboxField
+          label='Payee'
+          value={payeeCounterpartyId}
+          onChange={setPayeeCounterpartyId}
+          economicEntityId={economicEntityId}
+        />
+        <div className='flex justify-end gap-2'>
+          <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type='button' disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending && <Icons.spinner className='animate-spin' />}
+            Save
+          </Button>
         </div>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+      </div>
+    </ResponsiveDialogContent>
   );
 }
 

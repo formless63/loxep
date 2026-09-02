@@ -42,7 +42,9 @@ export function scratchDbName(prefix: string): string {
 export async function createScratchDb(databaseName: string): Promise<string> {
   const handle = createDb(maintenanceUrl());
   try {
-    await handle.pool.query(`create database "${databaseName}"`);
+    await handle.pool.query(
+      `create database "${databaseName}" template template0`,
+    );
   } finally {
     await closeDb(handle);
   }

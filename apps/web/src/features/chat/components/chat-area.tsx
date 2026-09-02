@@ -34,15 +34,22 @@ export function ChatArea({
     const behavior = shouldReduceMotion ? 'auto' : 'smooth';
 
     const scrollToBottom = () => {
-      container.scrollTo({ top: container.scrollHeight, behavior });
+      container.scrollTo({
+        // Reading the active messages here makes the effect rerun for a
+        // replacement array even when a message is edited in place rather
+        // than appended. An empty thread's bottom is its zero origin.
+        top: conversation.messages.length === 0 ? 0 : container.scrollHeight,
+        behavior
+      });
     };
 
     if (behavior === 'smooth') {
-      requestAnimationFrame(scrollToBottom);
-    } else {
-      scrollToBottom();
+      const frameId = requestAnimationFrame(scrollToBottom);
+      return () => cancelAnimationFrame(frameId);
     }
-  }, [conversation.messages, conversation.id, shouldReduceMotion]);
+
+    scrollToBottom();
+  }, [conversation.messages, shouldReduceMotion]);
 
   useEffect(() => {
     if (!liveRegionRef.current) return;

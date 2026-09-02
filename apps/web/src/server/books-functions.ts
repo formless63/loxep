@@ -488,7 +488,7 @@ export const fetchSuspenseTrend = createServerFn({ method: 'GET' })
         endsOn: row['ends_on'] as string,
         netActivity: row['net_activity'] as string
       }))
-      .reverse();
+      .toReversed();
 
     return { ledgerAccountId: suspenseAccount.id, functionalCurrency, points };
   });

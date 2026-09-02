@@ -172,8 +172,7 @@ export const fetchProvisioningTemplate = createServerFn({ method: 'GET' })
         }))
       ),
       runs: runs
-        .slice()
-        .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+        .toSorted((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
         .slice(0, 20)
         .map((run) => ({
           id: run.id,

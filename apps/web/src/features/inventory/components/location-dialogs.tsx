@@ -190,13 +190,38 @@ export function MoveLocationDialog({
   location: InventoryLocationDto | null;
   locations: InventoryLocationDto[];
 }) {
+  if (location === null) return null;
+
+  return (
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      {open && (
+        <MoveLocationContent
+          key={`${location.id}:${location.parentLocationId ?? NO_PARENT_VALUE}`}
+          onOpenChange={onOpenChange}
+          location={location}
+          locations={locations}
+        />
+      )}
+    </ResponsiveDialog>
+  );
+}
+
+function MoveLocationContent({
+  onOpenChange,
+  location,
+  locations
+}: {
+  onOpenChange: (open: boolean) => void;
+  location: InventoryLocationDto;
+  locations: InventoryLocationDto[];
+}) {
   const queryClient = useQueryClient();
 
   const mutation = useMutation({
     mutationFn: (parentLocationId: string) =>
       setLocationParent({
         data: {
-          locationId: location?.id as string,
+          locationId: location.id,
           parentLocationId: parentLocationId === NO_PARENT_VALUE ? null : parentLocationId
         }
       }),
@@ -208,13 +233,9 @@ export function MoveLocationDialog({
     onError: (error) => toastError(error, 'Could not move location')
   });
 
-  const [parentLocationId, setParentLocationId] = React.useState(NO_PARENT_VALUE);
-
-  React.useEffect(() => {
-    if (open && location) setParentLocationId(location.parentLocationId ?? NO_PARENT_VALUE);
-  }, [open, location]);
-
-  if (location === null) return null;
+  const [parentLocationId, setParentLocationId] = React.useState(
+    location.parentLocationId ?? NO_PARENT_VALUE
+  );
 
   const parentOptions = [
     { value: NO_PARENT_VALUE, label: 'No parent (top level)' },
@@ -224,51 +245,49 @@ export function MoveLocationDialog({
   ];
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent className='sm:max-w-[420px]'>
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>Move {location.name}</ResponsiveDialogTitle>
-          <ResponsiveDialogDescription>
-            Re-parents this location and rewrites every descendant's path — a cycle (moving a
-            location under its own descendant) is refused.
-          </ResponsiveDialogDescription>
-        </ResponsiveDialogHeader>
-        {/*
+    <ResponsiveDialogContent className='sm:max-w-[420px]'>
+      <ResponsiveDialogHeader>
+        <ResponsiveDialogTitle>Move {location.name}</ResponsiveDialogTitle>
+        <ResponsiveDialogDescription>
+          Re-parents this location and rewrites every descendant's path — a cycle (moving a location
+          under its own descendant) is refused.
+        </ResponsiveDialogDescription>
+      </ResponsiveDialogHeader>
+      {/*
           Plain `Select` + submit rather than `useAppForm` — a single field
           with no validation beyond "pick one", matching `LinkPayeeDialog`'s
           own precedent for a one-field selection dialog
           (`@/features/finance/components/expense-detail.tsx`).
         */}
-        <div className='space-y-6'>
-          <FieldGroup>
-            <Select value={parentLocationId} onValueChange={setParentLocationId}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {parentOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FieldGroup>
-          <div className='flex justify-end gap-2'>
-            <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button
-              type='button'
-              disabled={mutation.isPending}
-              onClick={() => mutation.mutate(parentLocationId)}
-            >
-              {mutation.isPending && <Icons.spinner className='animate-spin' />}
-              Move
-            </Button>
-          </div>
+      <div className='space-y-6'>
+        <FieldGroup>
+          <Select value={parentLocationId} onValueChange={setParentLocationId}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {parentOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FieldGroup>
+        <div className='flex justify-end gap-2'>
+          <Button type='button' variant='outline' onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            type='button'
+            disabled={mutation.isPending}
+            onClick={() => mutation.mutate(parentLocationId)}
+          >
+            {mutation.isPending && <Icons.spinner className='animate-spin' />}
+            Move
+          </Button>
         </div>
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+      </div>
+    </ResponsiveDialogContent>
   );
 }

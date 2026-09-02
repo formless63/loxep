@@ -25,7 +25,7 @@
  * the two statements of the shape can therefore only ever make this layer MORE
  * restrictive than the operator's stored value, never less.
  *
- * ## Enforcement points (both verified against better-auth 1.6.26)
+ * ## Enforcement points (both verified against better-auth 1.7.2)
  *
  *   1. `sendMagicLink` — the link is not sent at all when the address has no
  *      existing user and the policy declines it. `/sign-in/magic-link` returns
@@ -33,7 +33,7 @@
  *      oracle.
  *   2. `databaseHooks.user.create.before` — the authoritative gate, reached by
  *      BOTH methods (`magicLinkVerify` → `internalAdapter.createUser`, and
- *      `/oauth2/callback/:providerId` → `handleOAuthUserInfo` →
+ *      `/callback/:id` → `handleOAuthUserInfo` →
  *      `internalAdapter.createOAuthUser`), plus `/admin/create-user`, which is
  *      deliberately always allowed — it is the escape hatch a closed
  *      installation uses to add people.
@@ -84,7 +84,7 @@ export type ProvisioningMethod = "magic_link" | "oidc" | "admin" | "unknown";
  * `path: endpoint.path`), so these are template strings, not resolved URLs.
  */
 export const MAGIC_LINK_VERIFY_PATH = "/magic-link/verify";
-export const OAUTH_CALLBACK_PATH_PREFIX = "/oauth2/callback";
+export const OAUTH_CALLBACK_PATH_PREFIX = "/callback";
 export const ADMIN_CREATE_USER_PATH = "/admin/create-user";
 
 /** Which method a `user.create.before` hook invocation belongs to. */

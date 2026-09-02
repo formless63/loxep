@@ -232,6 +232,20 @@
       "when": 1788137971901,
       "tag": "0032_storage_backend_default_invariants",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788317097222,
+      "tag": "0033_better_auth_account_issuer",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788318319128,
+      "tag": "0034_timescaledb_extension_2_29_2",
+      "breakpoints": true
     }
   ]
 }

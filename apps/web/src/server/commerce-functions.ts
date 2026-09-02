@@ -48,9 +48,6 @@
  * — creating a listing or recording a sale is ordinary operator work, not an
  * administrative action.
  */
-import { randomUUID } from 'node:crypto';
-import { catalogItems, channelListings, orderLines, orders } from '@loxep/db/schema';
-import { createTransactionalNotificationEnqueue, publishNotificationEvent } from '@loxep/domain';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 
@@ -260,9 +257,7 @@ export const fetchChannelListing = createServerFn({ method: 'GET' })
           };
         })
         .filter((sale): sale is ChannelListingOrderDto => sale !== null)
-        // A fresh array from `.filter()`, so sorting in place mutates
-        // nothing the caller holds a reference to.
-        .sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1))
+        .toSorted((a, b) => (a.placedAt < b.placedAt ? 1 : -1))
     };
   });
 
@@ -565,7 +560,10 @@ const createManualListingInput = z.strictObject({
 export const createManualChannelListing = createServerFn({ method: 'POST' })
   .inputValidator(createManualListingInput)
   .handler(async ({ data }): Promise<{ id: string; listingCode: string }> => {
-    const { requireSession, getAdminServices, getItemsService } = await import('@/server/admin');
+    const [
+      { requireSession, getAdminServices, getItemsService },
+      { catalogItems, channelListings }
+    ] = await Promise.all([import('@/server/admin'), import('@loxep/db/schema')]);
     await requireSession();
     const { handle } = getAdminServices();
     const itemsService = await getItemsService();
@@ -668,8 +666,17 @@ export interface RecordManualSaleResultDto {
 export const recordManualListingSale = createServerFn({ method: 'POST' })
   .inputValidator(recordManualSaleInput)
   .handler(async ({ data }): Promise<RecordManualSaleResultDto> => {
-    const { requireSession, getAdminServices, getItemsService, getAllocationsService } =
-      await import('@/server/admin');
+    const [
+      { requireSession, getAdminServices, getItemsService, getAllocationsService },
+      { orderLines, orders },
+      { createTransactionalNotificationEnqueue, publishNotificationEvent },
+      { randomUUID }
+    ] = await Promise.all([
+      import('@/server/admin'),
+      import('@loxep/db/schema'),
+      import('@loxep/domain'),
+      import('node:crypto')
+    ]);
     const session = await requireSession();
     const { handle } = getAdminServices();
 

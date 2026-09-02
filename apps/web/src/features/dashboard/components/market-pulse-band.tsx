@@ -5,6 +5,7 @@
  * a 24h event-activity area chart beside the scored top opportunity and the
  * biggest price movers. Every tile links to the market surface that owns it.
  */
+import type { ComponentType, SVGProps } from 'react';
 import { AreaChart, Area, XAxis } from 'recharts';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +39,10 @@ import type { MarketOverviewTrendBucketDto, TopOpportunityDto } from '@/server/m
 const eventsChartConfig = {
   count: { label: 'Events', color: 'var(--chart-1)' }
 } satisfies ChartConfig;
+
+function StatusIcon({ icon: Icon }: { icon: ComponentType<SVGProps<SVGSVGElement>> }) {
+  return <Icon />;
+}
 
 function EventsActivityCard({
   trend,
@@ -121,7 +126,7 @@ function EventsActivityCard({
 }
 
 function TopOpportunityCard({ topOpportunity }: { topOpportunity: TopOpportunityDto | null }) {
-  const ScoreIcon = topOpportunity ? scoreIcon(topOpportunity.score) : Icons.sparkles;
+  const icon = topOpportunity ? scoreIcon(topOpportunity.score) : Icons.sparkles;
 
   return (
     <FocusableLink to='/market/opportunities' className='h-full'>
@@ -135,7 +140,7 @@ function TopOpportunityCard({ topOpportunity }: { topOpportunity: TopOpportunity
               </CardTitle>
               <CardDescription className='pt-1'>
                 <Badge variant={scoreTone(topOpportunity.score)}>
-                  <ScoreIcon />
+                  <StatusIcon icon={icon} />
                   {topOpportunity.ruleName}
                 </Badge>
               </CardDescription>

@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const BAR_HEIGHTS = [52, 76, 38, 88, 64, 44, 92, 58, 72, 34, 82, 48] as const;
+
 export function BarGraphSkeleton() {
   return (
     <Card>
@@ -13,12 +15,12 @@ export function BarGraphSkeleton() {
       </CardHeader>
       <CardContent>
         <div className='flex aspect-auto h-[280px] w-full items-end justify-around gap-2 pt-8'>
-          {Array.from({ length: 12 }).map((_, i) => (
+          {BAR_HEIGHTS.map((height, i) => (
             <Skeleton
               key={i}
               className='w-full rounded-t-sm'
               style={{
-                height: `${Math.max(20, Math.random() * 100)}%`
+                height: `${height}%`
               }}
             />
           ))}

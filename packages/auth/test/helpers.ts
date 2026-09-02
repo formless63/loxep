@@ -39,7 +39,9 @@ export function scratchDbName(prefix: string): string {
 export async function createScratchDb(databaseName: string): Promise<string> {
   const handle = createDb(maintenanceUrl());
   try {
-    await handle.pool.query(`create database "${databaseName}"`);
+    await handle.pool.query(
+      `create database "${databaseName}" template template0`,
+    );
   } finally {
     await closeDb(handle);
   }
@@ -84,6 +86,21 @@ export function testKeyringJson(): string {
 }
 
 export const TEST_PUBLIC_ORIGIN = "http://localhost:3020";
+
+/** Valid synthetic discovery metadata for the test-only OIDC issuer. */
+export function testOidcDiscoveryResponse(
+  overrides: Record<string, unknown> = {},
+): Response {
+  return Response.json({
+    issuer: "https://id.test.invalid",
+    authorization_endpoint: "https://id.test.invalid/authorize",
+    token_endpoint: "https://id.test.invalid/token",
+    userinfo_endpoint: "https://id.test.invalid/userinfo",
+    jwks_uri: "https://id.test.invalid/jwks",
+    id_token_signing_alg_values_supported: ["RS256"],
+    ...overrides,
+  });
+}
 
 export interface TestConfigOverrides {
   bootstrapAdminEmail?: string;

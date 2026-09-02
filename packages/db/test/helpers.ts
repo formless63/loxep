@@ -36,7 +36,12 @@ export async function createScratchDb(databaseName: string): Promise<string> {
   const client = new pg.Client({ connectionString: maintenanceUrl() });
   await client.connect();
   try {
-    await client.query(`create database "${databaseName}"`);
+    // Start from PostgreSQL's pristine template. The HA image installs
+    // TimescaleDB in template1, whose extension version can lag after an
+    // existing-volume image update; migration 0000 must own extension setup.
+    await client.query(
+      `create database "${databaseName}" template template0`,
+    );
   } finally {
     await client.end();
   }

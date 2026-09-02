@@ -19,6 +19,8 @@
  * Loxep-hosted avatar URL (`extractAvatarMediaId` returns non-null); an
  * external OIDC/user-supplied URL is left alone.
  */
+import '@tanstack/react-start/server-only';
+
 import { Readable } from 'node:stream';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
 import { avatarServingUrl, extractAvatarMediaId } from '@/lib/avatar';

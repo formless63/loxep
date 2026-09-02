@@ -56,13 +56,33 @@ docker compose up -d --build
 docker compose exec loxep node bin/loxep.ts migrate
 ```
 
-All configuration comes from the repo-root `.env`. Compose starts exactly two long-running services: PostgreSQL/TimescaleDB and Loxep. On a new or outdated database, Loxep starts but reports failed readiness with the pending-migration count; the `docker compose exec` command above applies migrations under an advisory lock, and readiness recovers without a restart. Re-run that command after any schema update. Follow the structured logs with `docker compose logs -f loxep`.
+All configuration comes from the repo-root `.env`. Compose starts exactly two long-running services: PostgreSQL/TimescaleDB and Loxep. On a new or outdated database, Loxep starts but reports failed readiness with the pending-migration count; the `docker compose exec` command above applies migrations under an advisory lock, and readiness recovers without a restart. Re-run that command after any application schema or supported TimescaleDB image update: for an existing database, the same explicit command first updates its installed TimescaleDB extension to Loxep's pinned version on the fresh session Timescale requires. Follow the structured logs with `docker compose logs -f loxep`.
 
 Loxep is then available at `http://localhost:3020` (readiness: `/health/ready`). Add the optional S3-compatible object-storage companion with `docker compose --profile rustfs up -d`. For scale-out, the same image runs `LOXEP_MODE=web` and `LOXEP_MODE=worker` replicas against the shared PostgreSQL, so background processing can scale independently of web traffic without any architectural change.
 
 Provider connections are made **in the app**, not in Compose: `/settings/integrations` lists the integration catalog and installation-wide setup, while `/settings/connections` adds individual provider accounts and instances. Credentials are encrypted in PostgreSQL with the root key supplied outside the database. The [operator guides](apps/docs/src/content/docs/guides/index.md) cover every currently supported marketplace, store, billing, infrastructure, and fleet integration.
 
-Note: the bundled database image is `timescale/timescaledb-ha:pg18.4-ts2.29.1-all` — TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
+Note: the bundled database image is `timescale/timescaledb-ha:pg18.4-ts2.29.2-all` — TimescaleDB **Community** (Timescale License), deliberately chosen because Loxep's observation hypertable uses TSL-licensed columnstore capabilities — see [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md). Self-hosting is fine under the TSL; offering TimescaleDB itself as a hosted database service is what the license restricts.
+
+### Updating the bundled TimescaleDB image
+
+An image replacement does not update the extension recorded inside an existing PostgreSQL database. Take a verified backup, stop Loxep workloads, replace/start the pinned database image, and update every database that has TimescaleDB installed. In the default Compose stack, update the extension-bearing maintenance/template databases with separate `psql -X` invocations so `ALTER EXTENSION` is the first SQL command in each session; then start Loxep and use its explicit migrator for the application database:
+
+```bash
+docker compose stop loxep
+docker compose up -d postgres
+docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d template1 -c "ALTER EXTENSION timescaledb UPDATE TO '2.29.2'"
+docker compose exec -T postgres psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres -c "ALTER EXTENSION timescaledb UPDATE TO '2.29.2'"
+docker compose build loxep
+docker compose up -d loxep
+docker compose exec loxep node bin/loxep.ts migrate
+```
+
+Repeat the fresh-session `ALTER EXTENSION` command for any additional database where `timescaledb` is installed, except the configured Loxep application database. The rebuilt image's migration runner upgrades that database safely if it is still behind, verifies the exact supported extension version, and applies the append-only schema marker under its advisory lock. See [ADR-0002](apps/docs/src/content/docs/decisions/0002-postgresql-timescaledb.md#extension-upgrades) for why its inspection, upgrade, and schema sessions are deliberately separate.
+
+### Upgrading a populated installation to Better Auth 1.7
+
+Migration `0033_better_auth_account_issuer` is a coordinated cutover, not a rolling-compatible schema change. Before upgrading, rehearse a restore from a verified database backup and register `<LOXEP_PUBLIC_ORIGIN>/api/auth/callback/oidc` with the OIDC provider. Then stop every Loxep process that can use the old Better Auth 1.6 schema, build the refreshed image, run `node bin/loxep.ts migrate` once, and start every web/worker process on the same 1.7 image. Verify OIDC and magic-link sign-in before removing the legacy `/api/auth/oauth2/callback/oidc` registration. Do not run mixed 1.6 and 1.7 application versions against the migrated database: 1.7 requires the populated `account.issuer` identity column and uses the new callback route.
 
 ## Development quickstart
 
@@ -72,10 +92,10 @@ The Compose stack above is the normal way to run Loxep. `bun run dev` is the fas
 bun install --frozen-lockfile
 
 # Real PostgreSQL + TimescaleDB for development and package tests
-# (timescale/timescaledb-ha:pg18.4-ts2.29.1-all, host port 5433; package
+# (timescale/timescaledb-ha:pg18.4-ts2.29.2-all, host port 5433; package
 # integration tests create their own scratch databases here)
 docker compose -f docker/compose.dev.yml up -d --wait
-psql postgres://postgres:loxep-dev@localhost:5433/postgres -c 'CREATE DATABASE loxep'
+psql postgres://postgres:loxep-dev@localhost:5433/postgres -c 'CREATE DATABASE loxep TEMPLATE template0'
 
 # Bootstrap configuration for the dev server
 cp apps/web/env.example.txt apps/web/.env

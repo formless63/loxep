@@ -8,6 +8,7 @@
  * chip pairs a tone with an icon, and every tile links to the settings/
  * market/infrastructure surface that can actually fix the thing it reports.
  */
+import type { ComponentType, SVGProps } from 'react';
 import { Badge } from '@/components/ui/badge';
 import {
   Empty,
@@ -79,6 +80,10 @@ function providerLabel(provider: string): string {
   return integrationServiceForProvider(provider)?.name ?? provider;
 }
 
+function StatusIcon({ icon: Icon }: { icon: ComponentType<SVGProps<SVGSVGElement>> }) {
+  return <Icon />;
+}
+
 function ConnectionsCard({
   providers,
   connectionCount
@@ -110,7 +115,7 @@ function ConnectionsCard({
             </Empty>
           ) : (
             providers.map((provider) => {
-              const HealthIcon = connectionHealthIcon(provider);
+              const icon = connectionHealthIcon(provider);
               return (
                 <div
                   key={provider.provider}
@@ -118,7 +123,7 @@ function ConnectionsCard({
                 >
                   <span className='truncate font-medium'>{providerLabel(provider.provider)}</span>
                   <Badge variant={connectionHealthTone(provider)}>
-                    <HealthIcon />
+                    <StatusIcon icon={icon} />
                     <span className='tabular-nums'>{connectionHealthLabel(provider)}</span>
                   </Badge>
                 </div>
@@ -132,7 +137,7 @@ function ConnectionsCard({
 }
 
 function MonitorFleetCard({ monitors }: { monitors: DashboardMonitorFleetDto }) {
-  const FleetIcon = fleetIcon(monitors);
+  const icon = fleetIcon(monitors);
   return (
     <StatCard
       label='Monitor fleet'
@@ -142,7 +147,7 @@ function MonitorFleetCard({ monitors }: { monitors: DashboardMonitorFleetDto }) 
       footer={
         <div className='flex flex-wrap items-center gap-1.5'>
           <Badge variant={fleetTone(monitors)}>
-            <FleetIcon />
+            <StatusIcon icon={icon} />
             {monitors.erroring > 0
               ? `${formatQuantity(monitors.erroring)} erroring`
               : 'Polling cleanly'}
@@ -193,8 +198,8 @@ function OrderSyncCard({ targets }: { targets: DashboardOrderSyncDto[] }) {
             </Empty>
           ) : (
             targets.map((target) => {
-              const FreshnessIcon = syncFreshnessIcon(target);
-              const ErrorIcon = consecutiveErrorsIcon(target.consecutiveErrors);
+              const freshnessIcon = syncFreshnessIcon(target);
+              const errorIcon = consecutiveErrorsIcon(target.consecutiveErrors);
               return (
                 <div key={target.id} className='flex flex-col gap-1 text-sm'>
                   <div className='flex items-center justify-between gap-2'>
@@ -202,7 +207,7 @@ function OrderSyncCard({ targets }: { targets: DashboardOrderSyncDto[] }) {
                       {target.connectionName ?? monitorTargetTypeLabel(target.targetType)}
                     </span>
                     <Badge variant={syncFreshnessTone(target)}>
-                      <FreshnessIcon />
+                      <StatusIcon icon={freshnessIcon} />
                       {syncFreshnessLabel(target)}
                     </Badge>
                   </div>
@@ -213,7 +218,7 @@ function OrderSyncCard({ targets }: { targets: DashboardOrderSyncDto[] }) {
                     <span>· every {formatDuration(target.intervalSeconds)}</span>
                     {target.consecutiveErrors > 0 && (
                       <Badge variant={consecutiveErrorsTone(target.consecutiveErrors)}>
-                        <ErrorIcon />
+                        <StatusIcon icon={errorIcon} />
                         {formatQuantity(target.consecutiveErrors)} errors
                       </Badge>
                     )}
@@ -260,8 +265,8 @@ function OtherSyncCard({ targets }: { targets: DashboardOtherSyncTargetDto[] }) 
             </Empty>
           ) : (
             targets.map((target) => {
-              const FreshnessIcon = syncFreshnessIcon(target);
-              const ErrorIcon = consecutiveErrorsIcon(target.consecutiveErrors);
+              const freshnessIcon = syncFreshnessIcon(target);
+              const errorIcon = consecutiveErrorsIcon(target.consecutiveErrors);
               return (
                 <div key={target.id} className='flex flex-col gap-1 text-sm'>
                   <div className='flex items-center justify-between gap-2'>
@@ -269,7 +274,7 @@ function OtherSyncCard({ targets }: { targets: DashboardOtherSyncTargetDto[] }) 
                       {target.connectionName ?? otherSyncTargetTypeLabel(target.targetType)}
                     </span>
                     <Badge variant={syncFreshnessTone(target)}>
-                      <FreshnessIcon />
+                      <StatusIcon icon={freshnessIcon} />
                       {syncFreshnessLabel(target)}
                     </Badge>
                   </div>
@@ -281,7 +286,7 @@ function OtherSyncCard({ targets }: { targets: DashboardOtherSyncTargetDto[] }) 
                     <span>· every {formatDuration(target.intervalSeconds)}</span>
                     {target.consecutiveErrors > 0 && (
                       <Badge variant={consecutiveErrorsTone(target.consecutiveErrors)}>
-                        <ErrorIcon />
+                        <StatusIcon icon={errorIcon} />
                         {formatQuantity(target.consecutiveErrors)} errors
                       </Badge>
                     )}
@@ -298,7 +303,7 @@ function OtherSyncCard({ targets }: { targets: DashboardOtherSyncTargetDto[] }) 
 
 /** This installation's own DNS/hosting estate (loxep-9m2) — see `DashboardInfrastructureDto`. */
 function InfrastructureCard({ infrastructure }: { infrastructure: DashboardInfrastructureDto }) {
-  const InfraIcon = infrastructureIcon(infrastructure);
+  const icon = infrastructureIcon(infrastructure);
   return (
     <FocusableLink to='/infrastructure/overview' className='h-full'>
       <Card className='@container/card h-full'>
@@ -311,7 +316,7 @@ function InfrastructureCard({ infrastructure }: { infrastructure: DashboardInfra
         <CardContent className='flex flex-col gap-2'>
           <div className='flex flex-wrap items-center gap-1.5'>
             <Badge variant={infrastructureTone(infrastructure)}>
-              <InfraIcon />
+              <StatusIcon icon={icon} />
               {infrastructure.unresolvedDriftCount > 0 ||
               infrastructure.recentFailedReconcileRunCount > 0
                 ? 'Needs attention'
@@ -400,7 +405,7 @@ function FleetSignalsCard({ signals }: { signals: FleetSignalsDto }) {
 }
 
 function NotificationsCard({ notifications }: { notifications: DashboardNotificationHealthDto }) {
-  const RateIcon = deliveryRateIcon(notifications.successRatePct);
+  const icon = deliveryRateIcon(notifications.successRatePct);
   const settled = notifications.delivered + notifications.failed;
 
   return (
@@ -422,7 +427,7 @@ function NotificationsCard({ notifications }: { notifications: DashboardNotifica
         <CardContent className='flex flex-col gap-2'>
           <div className='flex flex-wrap items-center gap-1.5'>
             <Badge variant={deliveryRateTone(notifications.successRatePct)}>
-              <RateIcon />
+              <StatusIcon icon={icon} />
               {formatQuantity(notifications.delivered)} delivered
             </Badge>
             {notifications.failed > 0 && (

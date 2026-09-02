@@ -12,19 +12,19 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "generate": "drizzle-kit generate",
-    "generate:auth": "better-auth generate --config src/auth.ts --output src/schema/auth.ts --yes"
+    "generate:auth": "auth generate --config src/auth.ts --output src/schema/auth.ts --yes"
   },
   "dependencies": {
-    "better-auth": "1.6.29",
+    "better-auth": "1.7.2",
     "drizzle-orm": "0.45.2",
     "pg": "8.23.0"
   },
   "devDependencies": {
-    "@better-auth/cli": "1.4.21",
     "@types/node": "24.13.3",
-    "@types/pg": "8.21.0",
+    "@types/pg": "8.23.1",
+    "auth": "1.7.2",
     "drizzle-kit": "0.31.10",
-    "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
   }
 }

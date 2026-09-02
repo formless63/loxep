@@ -50,7 +50,6 @@ function EditableTextCell({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(value);
-  React.useEffect(() => setDraft(value), [value]);
 
   if (confirmed) {
     return (
@@ -62,7 +61,10 @@ function EditableTextCell({
     return (
       <button
         type='button'
-        onClick={() => setEditing(true)}
+        onClick={() => {
+          setDraft(value);
+          setEditing(true);
+        }}
         aria-label={`Edit ${ariaLabel}`}
         className={cn(
           'hover:bg-accent focus-visible:ring-ring/50 -mx-1 w-full rounded-sm px-1 text-left focus-visible:ring-[3px] focus-visible:outline-none',

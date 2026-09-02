@@ -1,3 +1,4 @@
+import * as React from 'react';
 import type { Column, ColumnDef } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { DataTableColumnHeader } from '@/components/ui/table/data-table-column-header';
@@ -15,8 +16,48 @@ import {
 import type { MonitorDto } from '@/server/market-functions';
 import { CellAction } from './cell-action';
 
+const BACKOFF_CLOCK_INTERVAL_MS = 30_000;
+const backoffClockListeners = new Set<() => void>();
+let backoffClockSnapshot = 0;
+let backoffClockTimer: ReturnType<typeof setInterval> | undefined;
+
+function updateBackoffClock() {
+  backoffClockSnapshot = Date.now();
+  for (const listener of backoffClockListeners) listener();
+}
+
+function subscribeToBackoffClock(listener: () => void) {
+  backoffClockListeners.add(listener);
+  if (backoffClockListeners.size === 1) {
+    backoffClockSnapshot = Date.now();
+    backoffClockTimer = globalThis.setInterval(updateBackoffClock, BACKOFF_CLOCK_INTERVAL_MS);
+  }
+
+  return () => {
+    backoffClockListeners.delete(listener);
+    if (backoffClockListeners.size === 0 && backoffClockTimer !== undefined) {
+      globalThis.clearInterval(backoffClockTimer);
+      backoffClockTimer = undefined;
+    }
+  };
+}
+
+function getBackoffClockSnapshot() {
+  return backoffClockSnapshot;
+}
+
+function getServerBackoffClockSnapshot() {
+  return 0;
+}
+
 function BackoffBadge({ backoffUntil }: { backoffUntil: string | null }) {
-  if (backoffUntil === null || new Date(backoffUntil).getTime() <= Date.now()) {
+  const now = React.useSyncExternalStore(
+    subscribeToBackoffClock,
+    getBackoffClockSnapshot,
+    getServerBackoffClockSnapshot
+  );
+
+  if (backoffUntil === null || new Date(backoffUntil).getTime() <= now) {
     return <span className='text-muted-foreground'>—</span>;
   }
   return (

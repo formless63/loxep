@@ -54,7 +54,9 @@ export async function createScratchDb(databaseName: string): Promise<string> {
   const client = new pg.Client({ connectionString: maintenanceUrl() });
   await client.connect();
   try {
-    await client.query(`create database "${databaseName}"`);
+    await client.query(
+      `create database "${databaseName}" template template0`,
+    );
   } finally {
     await client.end();
   }

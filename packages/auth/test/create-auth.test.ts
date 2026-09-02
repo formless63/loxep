@@ -2,7 +2,7 @@
  * `createAuth()` construction: explicit/lazy factory, config wiring, and
  * OIDC provider registration derived from bootstrap configuration.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeDb, createDb } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import { loadBootstrapConfig } from "@loxep/config";
@@ -10,6 +10,7 @@ import {
   buildOidcProviderConfig,
   createAuth,
   mapOidcProfileToUser,
+  OIDC_ACCOUNT_ISSUER,
   OIDC_PROVIDER_ID,
 } from "../src/index.ts";
 import {
@@ -18,6 +19,7 @@ import {
   dropScratchDb,
   testBootstrapConfig,
   testKeyringJson,
+  testOidcDiscoveryResponse,
   TEST_PUBLIC_ORIGIN,
 } from "./helpers.ts";
 
@@ -65,28 +67,38 @@ describe("createAuth", () => {
     );
   });
 
-  it("registers the generic OIDC provider only when config.oidc is present", () => {
+  it("registers the generic OIDC provider only when config.oidc is present", async () => {
     const { sender } = captureMagicLinkEmails();
+    const discovery = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(testOidcDiscoveryResponse());
 
-    const withOidc = createAuth({
-      config: testBootstrapConfig(databaseUrl, { withOidc: true }),
-      db,
-      sendMagicLinkEmail: sender,
-    });
-    const oauthPlugin = withOidc.options.plugins.find(
-      (plugin) => plugin.id === "generic-oauth",
-    );
-    expect(oauthPlugin).toBeDefined();
-    const providers = (
-      oauthPlugin as unknown as {
-        options: { config: Array<{ providerId: string; discoveryUrl?: string }> };
-      }
-    ).options.config;
-    expect(providers).toHaveLength(1);
-    expect(providers[0]?.providerId).toBe(OIDC_PROVIDER_ID);
-    expect(providers[0]?.discoveryUrl).toBe(
-      "https://id.test.invalid/.well-known/openid-configuration",
-    );
+    try {
+      const withOidc = createAuth({
+        config: testBootstrapConfig(databaseUrl, { withOidc: true }),
+        db,
+        sendMagicLinkEmail: sender,
+      });
+      const oauthPlugin = withOidc.options.plugins.find(
+        (plugin) => plugin.id === "generic-oauth",
+      );
+      expect(oauthPlugin).toBeDefined();
+      const providers = (
+        oauthPlugin as unknown as {
+          options: {
+            config: Array<{ providerId: string; discoveryUrl?: string }>;
+          };
+        }
+      ).options.config;
+      expect(providers).toHaveLength(1);
+      expect(providers[0]?.providerId).toBe(OIDC_PROVIDER_ID);
+      expect(providers[0]?.discoveryUrl).toBe(
+        "https://id.test.invalid/.well-known/openid-configuration",
+      );
+      await withOidc.$context;
+    } finally {
+      discovery.mockRestore();
+    }
 
     const withoutOidc = createAuth({
       config: testBootstrapConfig(databaseUrl),
@@ -105,6 +117,27 @@ describe("createAuth", () => {
     ).toHaveLength(0);
   });
 
+  it("fails closed when OIDC discovery cannot support ID-token verification", async () => {
+    const discovery = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      testOidcDiscoveryResponse({
+        jwks_uri: undefined,
+      }),
+    );
+    const { sender } = captureMagicLinkEmails();
+    try {
+      const auth = createAuth({
+        config: testBootstrapConfig(databaseUrl, { withOidc: true }),
+        db,
+        sendMagicLinkEmail: sender,
+      });
+      await expect(auth.$context).rejects.toThrowError(
+        /requires verified ID tokens/,
+      );
+    } finally {
+      discovery.mockRestore();
+    }
+  });
+
   it("derives the OIDC provider generically from the issuer (Pocket ID compatible)", () => {
     const provider = buildOidcProviderConfig({
       issuer: "https://pocket-id.example.com/",
@@ -113,6 +146,8 @@ describe("createAuth", () => {
       emailClaim: "email",
     });
     expect(provider.providerId).toBe("oidc");
+    expect(provider.accountIssuer).toBe(OIDC_ACCOUNT_ISSUER);
+    expect(provider.requireIdTokenVerification).toBe(true);
     expect(provider.discoveryUrl).toBe(
       "https://pocket-id.example.com/.well-known/openid-configuration",
     );
@@ -148,7 +183,12 @@ describe("createAuth", () => {
     expect(provider.overrideUserInfo).toBeUndefined();
     // `emailClaim: "email"` is the standard claim, so the wrapper behaves
     // identically to calling `mapOidcProfileToUser` with no override.
-    expect(provider.mapProfileToUser?.({ given_name: "Alex" })).toEqual(
+    expect(
+      provider.mapProfileToUser?.({
+        given_name: "Alex",
+        emailVerified: true,
+      }),
+    ).toEqual(
       mapOidcProfileToUser({ given_name: "Alex" }),
     );
 
@@ -194,6 +234,7 @@ describe("createAuth", () => {
         provider.mapProfileToUser?.({
           acme_email: "  Person@Example.com ",
           given_name: "Person",
+          emailVerified: true,
         }),
       ).toEqual({ displayName: "Person", email: "Person@Example.com" });
     });
@@ -206,16 +247,27 @@ describe("createAuth", () => {
         emailClaim: "acme_email",
       });
       // No `acme_email` claim on the profile at all.
-      expect(provider.mapProfileToUser?.({ given_name: "Person" })).toEqual({
-        displayName: "Person",
-      });
+      expect(
+        provider.mapProfileToUser?.({
+          given_name: "Person",
+          emailVerified: true,
+        }),
+      ).toEqual({ displayName: "Person" });
       // A blank claim value is treated the same as absent.
       expect(
-        provider.mapProfileToUser?.({ acme_email: "   ", given_name: "Person" }),
+        provider.mapProfileToUser?.({
+          acme_email: "   ",
+          given_name: "Person",
+          emailVerified: true,
+        }),
       ).toEqual({ displayName: "Person" });
       // A non-string claim value is treated the same as absent.
       expect(
-        provider.mapProfileToUser?.({ acme_email: 12345, given_name: "Person" }),
+        provider.mapProfileToUser?.({
+          acme_email: 12345,
+          given_name: "Person",
+          emailVerified: true,
+        }),
       ).toEqual({ displayName: "Person" });
     });
   });

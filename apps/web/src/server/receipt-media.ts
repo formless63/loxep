@@ -34,6 +34,8 @@
  * fourth. Shared with `documents-media.ts` on purpose: both routes write the
  * same media-object shape through the same `MediaService.upload`.
  */
+import '@tanstack/react-start/server-only';
+
 import { Readable } from 'node:stream';
 import { documentsMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';

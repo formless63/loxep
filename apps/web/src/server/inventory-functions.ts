@@ -40,7 +40,6 @@
  * recording stock or a lot is ordinary operator work, not an administrative
  * action.
  */
-import { randomUUID } from 'node:crypto';
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { mediaObjectPurpose, servingUrlFor } from '@/server/media-serving-url';
@@ -1158,7 +1157,10 @@ export interface RecordInventoryMovementResultDto {
 export const recordInventoryMovement = createServerFn({ method: 'POST' })
   .inputValidator(recordInventoryMovementInput)
   .handler(async ({ data }): Promise<RecordInventoryMovementResultDto> => {
-    const { requireSession, getMovementsService } = await import('@/server/admin');
+    const [{ requireSession, getMovementsService }, { randomUUID }] = await Promise.all([
+      import('@/server/admin'),
+      import('node:crypto')
+    ]);
     const session = await requireSession();
     const movementsService = await getMovementsService();
     const result = await movementsService.record({

@@ -270,14 +270,15 @@ function MappedSettingForm({
     }
   });
 
-  // Closes over `form` rather than taking it as a parameter, so every
-  // `form.AppField` call below keeps the concrete type `useAppForm` just
-  // inferred — no `any`/generic-threading needed for a dynamic field set.
   function renderWidget(widget: SettingFieldWidget) {
+    // Keep the concrete type inferred by `useAppForm` while giving JSX an
+    // upper-case component binding for the dynamic field renderer.
+    const AppField = form.AppField;
+
     switch (widget.kind) {
       case 'switch':
         return (
-          <form.AppField
+          <AppField
             key={widget.name}
             name={widget.name}
             children={(field) => (
@@ -287,7 +288,7 @@ function MappedSettingForm({
         );
       case 'select':
         return (
-          <form.AppField
+          <AppField
             key={widget.name}
             name={widget.name}
             children={(field) => (
@@ -301,7 +302,7 @@ function MappedSettingForm({
         );
       case 'number':
         return (
-          <form.AppField
+          <AppField
             key={widget.name}
             name={widget.name}
             children={(field) => (
@@ -317,7 +318,7 @@ function MappedSettingForm({
         );
       case 'tags':
         return (
-          <form.AppField
+          <AppField
             key={widget.name}
             name={widget.name}
             mode='array'
@@ -328,7 +329,7 @@ function MappedSettingForm({
         );
       case 'text':
         return (
-          <form.AppField
+          <AppField
             key={widget.name}
             name={widget.name}
             children={(field) => (

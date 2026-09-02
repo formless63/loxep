@@ -58,7 +58,7 @@ async function withMaintenanceDb(sql: string): Promise<void> {
 /** Create a migrated scratch database and a pooled handle bound to it. */
 export async function createMigratedScratchDb(prefix: string): Promise<ScratchDb> {
   const name = scratchDbName(prefix);
-  await withMaintenanceDb(`create database "${name}"`);
+  await withMaintenanceDb(`create database "${name}" template template0`);
   const databaseUrl = databaseUrlFor(name);
   await runMigrations({ databaseUrl, logger: silentLogger });
   const handle = createDb(databaseUrl);

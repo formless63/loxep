@@ -18,7 +18,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { registeredApplicationSettings } from '@loxep/domain';
-import { normalizeFleetBaseUrl, settingJsonSchema } from './admin-functions.ts';
+import { normalizeFleetBaseUrl } from './admin-functions.ts';
+import { settingJsonSchema } from './setting-json-schema.server.ts';
 
 describe('normalizeFleetBaseUrl', () => {
   test('strips a trailing /api segment down to the origin', () => {

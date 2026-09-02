@@ -399,13 +399,10 @@ async function buildTradingPartnerNinjaClientInput(
           )
       });
 
-  // `.filter` already returns a fresh array; sorting it mutates nothing the
-  // caller holds. `toSorted` is unavailable under this project's `lib`
-  // target (see `expense-functions.ts`'s identical note).
   const pickChannel = (kinds: string[]) =>
     ownChannels
       .filter((channel) => kinds.includes(channel.channelKind))
-      .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))[0]?.value;
+      .toSorted((a, b) => Number(b.isPrimary) - Number(a.isPrimary))[0]?.value;
 
   const contactsWithEmail = await Promise.all(
     contacts.map(async (contact) => {

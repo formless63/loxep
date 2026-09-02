@@ -16,7 +16,12 @@ import { Icons } from '@/components/icons';
 import { toastError } from '@/lib/errors';
 import { useAppForm } from '@/lib/form';
 import { itemEventsQuery } from '@/features/market/api/queries';
-import { readOpportunityPayload, type MarketItemDetailDto } from '@/server/market-functions';
+import {
+  readOpportunityPayload,
+  type MarketEventDto,
+  type MarketItemDetailDto,
+  type OpportunityPayloadDto
+} from '@/server/market-functions';
 import { createAcquisitionFromMarketItem } from '@/server/inventory-functions';
 
 const buySchema = z.object({
@@ -30,6 +35,16 @@ const buySchema = z.object({
 });
 
 type BuyFormValues = z.infer<typeof buySchema>;
+
+function findLatestOpportunity(
+  events: MarketEventDto[] | undefined
+): { event: MarketEventDto; payload: OpportunityPayloadDto } | null {
+  for (const event of events ?? []) {
+    const payload = readOpportunityPayload(event.payload);
+    if (payload !== null) return { event, payload };
+  }
+  return null;
+}
 
 /**
  * "I bought this" — the `/market` → `/inventory` handoff (loxep-dgf.2, the
@@ -59,13 +74,7 @@ export default function BuyThisDialog({
   const navigate = useNavigate();
   const { data: eventsPage } = useQuery(itemEventsQuery(item.id, 0, 'desc'));
 
-  const latestOpportunity = React.useMemo(() => {
-    for (const event of eventsPage?.events ?? []) {
-      const payload = readOpportunityPayload(event.payload);
-      if (payload !== null) return { event, payload };
-    }
-    return null;
-  }, [eventsPage]);
+  const latestOpportunity = findLatestOpportunity(eventsPage?.events);
 
   const observation = item.latestObservation;
 

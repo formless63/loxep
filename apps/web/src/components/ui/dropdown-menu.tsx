@@ -65,8 +65,10 @@ function DropdownMenuTrigger({
   ...props
 }: React.ComponentPropsWithRef<typeof DropdownMenuPrimitive.Trigger>) {
   const sharedTriggerRef = React.useContext(DropdownMenuTriggerRefContext);
-  const composedRef = React.useMemo(
-    () => (sharedTriggerRef ? composeTriggerRefs(ref, sharedTriggerRef) : ref),
+  const composedRef = React.useCallback(
+    (node: HTMLButtonElement | null) => {
+      composeTriggerRefs(ref, sharedTriggerRef)(node);
+    },
     [ref, sharedTriggerRef]
   );
   return (

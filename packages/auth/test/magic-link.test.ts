@@ -3,7 +3,7 @@
  * the server API with a captured sender, verify the token, and confirm a
  * session exists for the user (with the default `member` role).
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeDb, createDb } from "@loxep/db";
 import type { DbHandle } from "@loxep/db";
 import { createAuth, type LoxepAuth } from "../src/index.ts";
@@ -14,6 +14,7 @@ import {
   createMigratedScratchDb,
   dropScratchDb,
   testBootstrapConfig,
+  testOidcDiscoveryResponse,
 } from "./helpers.ts";
 
 let databaseName: string;
@@ -103,16 +104,23 @@ describe("magic-link login", () => {
   });
 
   it("fails delivery loudly when SMTP is unconfigured and no sender is injected", async () => {
+    const discovery = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(testOidcDiscoveryResponse());
     const config = testBootstrapConfig(databaseUrl, {
       withSmtp: false,
       withOidc: true,
     });
-    const smtpless = createAuth({ config, db });
-    await expect(
-      smtpless.api.signInMagicLink({
-        body: { email: "carol@example.com" },
-        headers: new Headers(),
-      }),
-    ).rejects.toThrowError();
+    try {
+      const smtpless = createAuth({ config, db });
+      await expect(
+        smtpless.api.signInMagicLink({
+          body: { email: "carol@example.com" },
+          headers: new Headers(),
+        }),
+      ).rejects.toThrowError();
+    } finally {
+      discovery.mockRestore();
+    }
   });
 });

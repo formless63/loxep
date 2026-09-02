@@ -367,7 +367,7 @@ export const catalogItems = pgTable(
  * opportunistic link between them.
  *
  * The unique constraint needs `NULLS NOT DISTINCT` (PostgreSQL 15+; the
- * deployment target is `timescale/timescaledb:2.29.1-pg18`). Without it every
+ * deployment target is `timescale/timescaledb-ha:pg18.4-ts2.29.2-all`). Without it every
  * re-sync of a non-variant listing would insert a duplicate, because each null
  * `external_variation_id` counts as distinct.
  */

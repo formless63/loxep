@@ -211,8 +211,8 @@ describe("emailDomainAllowed", () => {
 describe("provisioningMethodForPath", () => {
   it("maps each user-creating endpoint to its method", () => {
     expect(provisioningMethodForPath("/magic-link/verify")).toBe("magic_link");
-    expect(provisioningMethodForPath("/oauth2/callback/:providerId")).toBe("oidc");
-    expect(provisioningMethodForPath("/oauth2/callback/oidc")).toBe("oidc");
+    expect(provisioningMethodForPath("/callback/:id")).toBe("oidc");
+    expect(provisioningMethodForPath("/callback/oidc")).toBe("oidc");
     expect(provisioningMethodForPath("/admin/create-user")).toBe("admin");
   });
 
@@ -471,7 +471,7 @@ describe("the user.create.before gate", () => {
     await setPolicy({ newUsers: { magicLink: "open", oidc: "closed" } });
     expect(
       await mayCreateUser(db, {
-        path: "/oauth2/callback/:providerId",
+        path: "/callback/:id",
         email: "sso@elsewhere.test",
       }),
     ).toEqual({ allowed: false, reason: "method_closed" });
@@ -482,7 +482,7 @@ describe("the user.create.before gate", () => {
     await setPolicy({ newUsers: { magicLink: "closed", oidc: "open" } });
     expect(
       await mayCreateUser(db, {
-        path: "/oauth2/callback/:providerId",
+        path: "/callback/:id",
         email: "sso@elsewhere.test",
       }),
     ).toEqual({ allowed: true });

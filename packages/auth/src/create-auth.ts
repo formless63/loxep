@@ -37,10 +37,21 @@ import {
  * with Better Auth's generic OAuth plugin. Loxep supports exactly one
  * bootstrap OIDC provider, addressed generically — Pocket ID works as a plain
  * OIDC issuer with nothing provider-specific. Sign-in uses
- * `POST /api/auth/sign-in/oauth2` with this providerId; the callback URL to
- * register with the IdP is `<publicOrigin>/api/auth/oauth2/callback/oidc`.
+ * `POST /api/auth/sign-in/social` with this providerId; the callback URL to
+ * register with the IdP is `<publicOrigin>/api/auth/callback/oidc`.
  */
 export const OIDC_PROVIDER_ID = "oidc";
+
+/**
+ * Better Auth 1.7 account namespace for the bootstrap OIDC provider.
+ *
+ * 1.6 recognized accounts by `(providerId, accountId)`. Keeping this stable,
+ * synthetic issuer makes the new `(issuer, accountId)` key preserve that
+ * identity instead of silently re-keying an existing installation to the
+ * discovery document's issuer during its first post-upgrade sign-in. The
+ * append-only database migration uses this same value.
+ */
+export const OIDC_ACCOUNT_ISSUER = "local:oauth:oidc";
 
 /** First non-blank string in `values`, trimmed; `undefined` when there is none. */
 function firstNonBlank(...values: unknown[]): string | undefined {
@@ -142,6 +153,8 @@ export function buildOidcProviderConfig(
     clientSecret: oidc.clientSecret,
     scopes: ["openid", "profile", "email"],
     pkce: true,
+    accountIssuer: OIDC_ACCOUNT_ISSUER,
+    requireIdTokenVerification: true,
     // Standard `name`/`picture` claims are mapped by the plugin itself; this
     // adds Loxep's `displayName` and, when `emailClaim` names a non-standard
     // claim (LOXEP_OIDC_EMAIL_CLAIM), the email address itself. Deliberately
@@ -204,7 +217,7 @@ export function createAuth({ config, db, sendMagicLinkEmail }: CreateAuthOptions
   // Session freshness (loxep-u8c A18): deliberately no `session` block here —
   // `expiresIn`/`updateAge` stay at Better Auth's defaults and
   // `cookieCache` stays OFF (its own default). Verified against the
-  // installed better-auth 1.6.26 dist:
+  // installed better-auth 1.7.2 dist:
   //   - `cookieCache` is opt-in and off by default, so `auth.api.getSession()`
   //     already re-reads `session` AND `user` (hence `role`/`banned`) from
   //     PostgreSQL on every call — enabling it would be the regression here,

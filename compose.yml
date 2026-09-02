@@ -25,7 +25,7 @@ services:
     # TimescaleDB Community image (TSL-licensed features included) is
     # deliberate: the observation hypertable's columnstore policy requires
     # Community capabilities (ADR-0002). Not exposed to the host by default.
-    image: timescale/timescaledb-ha:pg18.4-ts2.29.1-all
+    image: timescale/timescaledb-ha:pg18.4-ts2.29.2-all@sha256:6a617f8a908f6c6787ce0b582226022caff150d16754724d653fdfca0f8ce7de
     container_name: loxep-db
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -70,13 +70,14 @@ services:
   # backend can substitute. Enable with: docker compose --profile rustfs up -d
   rustfs:
     profiles: ["rustfs"]
-    image: rustfs/rustfs:1.0.0-rc.1
+    image: rustfs/rustfs:1.0.0-rc.4@sha256:a9fbb5e5bfce09ccd0869ac9a7b0e39191c6868d75ec4c5d08ebbd5475db5d6b
     container_name: loxep-rustfs
     environment:
       RUSTFS_VOLUMES: /data
       RUSTFS_ADDRESS: 0.0.0.0:9000
       RUSTFS_CONSOLE_ENABLE: "true"
       RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_HEALTH_ENDPOINT_ENABLE: "true"
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
     ports:
@@ -84,6 +85,12 @@ services:
       - "9001:9001"
     volumes:
       - rustfs-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 6
     restart: unless-stopped
 
 volumes:

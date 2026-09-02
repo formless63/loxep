@@ -696,7 +696,7 @@ export const acquisitionCosts = pgTable(
  * A simple tree of physical places. NOT a warehouse management system.
  *
  * `unique nulls not distinct (parent_location_id, name)` requires PostgreSQL
- * 15+, which the `timescale/timescaledb:2.29.1-pg18` target provides. Without
+ * 15+, which the `timescale/timescaledb-ha:pg18.4-ts2.29.2-all` target provides. Without
  * it every root-level location could be created twice, since PostgreSQL treats
  * each null parent as distinct — the identical trap `channel_listings`
  * documented for `external_variation_id`.

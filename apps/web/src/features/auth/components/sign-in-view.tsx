@@ -93,8 +93,8 @@ export function SignInView({ loginPaths }: { loginPaths: LoginPaths }) {
     setSsoPending(true);
     // providerId matches OIDC_PROVIDER_ID in @loxep/auth; hardcoded here so
     // the server package never enters the client bundle.
-    const { error } = await authClient.signIn.oauth2({
-      providerId: 'oidc',
+    const { error } = await authClient.signIn.social({
+      provider: 'oidc',
       callbackURL: SIGN_IN_CALLBACK_PATH,
       errorCallbackURL: SIGN_IN_ERROR_PATH
     });

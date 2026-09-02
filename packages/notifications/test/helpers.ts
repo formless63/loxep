@@ -47,7 +47,9 @@ async function withMaintenanceDb(sql: string): Promise<void> {
 }
 
 export async function createScratchDb(databaseName: string): Promise<string> {
-  await withMaintenanceDb(`create database "${databaseName}"`);
+  await withMaintenanceDb(
+    `create database "${databaseName}" template template0`,
+  );
   return databaseUrlFor(databaseName);
 }
 

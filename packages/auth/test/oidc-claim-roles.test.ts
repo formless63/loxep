@@ -18,6 +18,7 @@ import {
   claimTokens,
   decodeIdTokenClaims,
   DEFAULT_PROVISIONING_POLICY,
+  OIDC_ACCOUNT_ISSUER,
   OIDC_PROVIDER_ID,
   resolveClaimPath,
   type AuthProvisioningPolicy,
@@ -65,12 +66,19 @@ async function seedUser(id: string, options: SeedOptions = {}): Promise<string> 
     [id, options.role ?? "member"],
   );
   if (options.withAccount !== false) {
+    const providerId = options.providerId ?? OIDC_PROVIDER_ID;
+    const issuer =
+      providerId === OIDC_PROVIDER_ID
+        ? OIDC_ACCOUNT_ISSUER
+        : `local:oauth:${encodeURIComponent(providerId)}`;
     await db.pool.query(
-      `insert into account (id, account_id, provider_id, user_id, id_token, updated_at)
-       values ($1, $1, $2, $3, $4, now())`,
+      `insert into account
+         (id, issuer, account_id, provider_id, user_id, id_token, updated_at)
+       values ($1, $2, $1, $3, $4, $5, now())`,
       [
         `${id}-account`,
-        options.providerId ?? OIDC_PROVIDER_ID,
+        issuer,
+        providerId,
         id,
         options.idToken ?? null,
       ],

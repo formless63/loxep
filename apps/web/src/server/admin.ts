@@ -16,6 +16,8 @@
  * This module is server-only. Server-function handlers reach it via dynamic
  * import so nothing here leaks into the client bundle.
  */
+import '@tanstack/react-start/server-only';
+
 import {
   createAccountsService,
   createBooksService,

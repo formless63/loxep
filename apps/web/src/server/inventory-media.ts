@@ -31,6 +31,8 @@
  *    `/inventory`) rather than an ACL — media ownership is a metadata fact,
  *    never a permission container.
  */
+import '@tanstack/react-start/server-only';
+
 import { Readable } from 'node:stream';
 import { inventoryMediaLimitsSetting } from '@loxep/domain';
 import { MediaObjectNotFoundError, StorageBackendError } from '@loxep/storage';
