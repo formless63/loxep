@@ -15,14 +15,14 @@
     "generate:auth": "auth generate --config src/auth.ts --output src/schema/auth.ts --yes"
   },
   "dependencies": {
-    "better-auth": "1.7.2",
+    "better-auth": "1.7.3",
     "drizzle-orm": "0.45.2",
     "pg": "8.23.0"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
     "@types/pg": "8.23.1",
-    "auth": "1.7.2",
+    "auth": "1.7.3",
     "drizzle-kit": "0.31.10",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
