@@ -9,7 +9,7 @@
 # re-runs on any context change, but its output only contains manifests, so
 # downstream install layers stay cached until a manifest actually changes.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS manifests
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS manifests
 WORKDIR /src
 COPY . .
 RUN mkdir -p /manifests \
@@ -19,7 +19,7 @@ RUN mkdir -p /manifests \
 # ---------------------------------------------------------------------------
 # Build stage: full workspace install + apps/web production build (Vite+Nitro)
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS build
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS build
 WORKDIR /app
 
 # Workspace manifests first so the install layer caches across source edits.
@@ -72,7 +72,7 @@ RUN bun run build
 # new workspace package is added — including packages/integrations/*, which an
 # explicit './packages/*' glob silently misses.
 # ---------------------------------------------------------------------------
-FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS deps
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
 WORKDIR /app
 
 COPY --from=manifests /manifests ./
@@ -82,7 +82,7 @@ RUN bun install --frozen-lockfile --production --omit=peer --linker=hoisted --fi
 # Runtime stage: Node.js 24 runs bin/ and packages/ TypeScript natively via
 # type stripping; the web runtime is the prebuilt Nitro output.
 # ---------------------------------------------------------------------------
-FROM node:24.20.0-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS runtime
+FROM node:24.21.0-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
