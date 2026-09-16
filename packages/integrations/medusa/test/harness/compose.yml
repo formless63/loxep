@@ -64,7 +64,7 @@ services:
   # is self-signed and generated locally (harness.md step 2); the live tests
   # trust that one certificate explicitly and nothing else.
   proxy:
-    image: nginx:1.31.4-alpine3.24@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
+    image: nginx:1.31.6-alpine3.24@sha256:092a82dc1cb2fa653ee660f24a8f8603f55b4ea9316923f9a0d394e50714ae10
     container_name: medusa-verify-proxy
     restart: unless-stopped
     volumes:
