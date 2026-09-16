@@ -13,11 +13,11 @@
   "dependencies": {
     "@loxep/db": "workspace:*",
     "@loxep/observability": "workspace:*",
-    "graphile-worker": "0.17.3",
-    "zod": "4.5.4"
+    "graphile-worker": "0.18.0",
+    "zod": "4.6.4"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "24.13.4",
     "@types/pg": "8.23.1",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
